@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.db
+data/
+image/
+011082/
+dist/
+build/
+.vscode/
+*.log
