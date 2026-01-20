@@ -324,7 +324,6 @@ class MainWindow(QWidget):
                 vault = json.load(f)
                 if comp_name in vault:
                     company_path = vault[comp_name]['path']
-                    company_path = "data/NGT Branch (2082_83)"
                     # 1. Final Data लोड करें
                     self.final_data_page.load_and_sync_data(comp_name)
                     # 2. Godown Page का रास्ता सेट करें

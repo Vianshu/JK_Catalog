@@ -355,6 +355,10 @@ class CatalogLogic:
             # Fetch ALL fields needed by A4CatalogPage
             # True/False Logic: Include if NULL, empty, or not explicitly 'false'/'0'
             # Stock Logic: Must have Stock > 0 OR True/False = 1
+            try:
+                with open("debug_logic.log", "a") as f: f.write(f"Executing Query for {group_name}, {sg_sn}\n")
+            except: pass
+            
             cursor.execute("""
                 SELECT [Product Name], [Item_Name], [Image_Path], [Lenth], [MRP], [Product_Size],
                        [MOQ], [Categori], [M_Packing], [Unit], [Update_date]
@@ -374,6 +378,9 @@ class CatalogLogic:
             """, (group_name.strip(), sg_sn))
             
             rows = cursor.fetchall()
+            try:
+                with open("debug_logic.log", "a") as f: f.write(f"Rows found: {len(rows)}\n")
+            except: pass
             print(f"DEBUG ROWS FOUND: {len(rows)}")
             
             if not rows:
