@@ -18,8 +18,18 @@ def main():
 
     window = MainWindow()
     window.showMaximized()
-
+    
     sys.exit(app.exec())
+
+# Suppress Font Warnings
+from PyQt6.QtCore import qInstallMessageHandler
+def qt_message_handler(mode, context, message):
+    if "OpenType support missing" in message:
+        return
+    # Pass others to default or print
+    print(message)
+
+qInstallMessageHandler(qt_message_handler)
 
 if __name__ == "__main__":
     main()

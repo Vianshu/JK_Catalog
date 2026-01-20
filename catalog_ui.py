@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem, QHeaderView, QGridLayout
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtGui import QFont, QColor, QPixmap
 import sqlite3
 from PyQt6.QtWidgets import QMessageBox
 
@@ -18,6 +18,13 @@ class FullCatalogUI(QWidget):
         self.current_page_index = 0
         
         self.setup_ui()
+        
+        # DEBUG LOG
+        try:
+            with open("catalog_path.log", "w") as f:
+                f.write(f"DB Path: {self.db_path}\nAbs Path: {os.path.abspath(self.db_path)}\n")
+        except: pass
+
         self.load_index_data()
         
         # Connections
@@ -206,6 +213,7 @@ class FullCatalogUI(QWidget):
             self.lbl_comp_code.setText(self.company_prefix)
             
         self.catalog_db_path = os.path.join(self.company_path, "catalog.db")
+        self.final_db_path = os.path.join(self.company_path, "final_data.db")
         self.init_catalog_db()
         self.refresh_catalog_data()
     
@@ -265,15 +273,16 @@ class FullCatalogUI(QWidget):
             self.index_table.setItem(row_idx, 1, item_name)
     
     def refresh_catalog_data(self):
+        # STEP 0: Init connection
         conn = sqlite3.connect(self.catalog_db_path)
         cursor = conn.cursor()
 
-        # STEP 1: चेक करें टेबल खाली है या नहीं
+        # STEP 1: Check if empty
         cursor.execute("SELECT COUNT(*) FROM catalog_pages")
         count = cursor.fetchone()[0]
 
         if count == 0:
-            # मास्टर DB से (MG_SN, Group_Name, SG_SN) लेकर आएँ
+            # Init Pages
             base_pages = self.get_page_data_list() 
             for m_sn, g_name, s_sn in base_pages:
                 cursor.execute("""
@@ -281,16 +290,17 @@ class FullCatalogUI(QWidget):
                     VALUES (?, ?, ?, 1)
                 """, (m_sn, g_name, s_sn))
             conn.commit()
-        
         conn.close()
 
-        # STEP 2: अब सीरियल नंबर को MG_SN -> SG_SN -> Page_No के क्रम में फिक्स करें
+        # STEP 1.5: Sync Pages with Dynamic Content (Layout Engine)
+        self.sync_pages_with_content()
+
+        # STEP 2: Rebuild Serial Numbers
         self.rebuild_serial_numbers()
 
-        # STEP 3: अपडेटेड डेटा को UI के लिए लोड करें
+        # STEP 3: Load Data for UI
         conn = sqlite3.connect(self.catalog_db_path)
         cursor = conn.cursor()
-        # यहाँ mg_sn भी शामिल करें ताकि add_page में काम आए
         cursor.execute("""
             SELECT mg_sn, group_name, sg_sn, page_no, serial_no 
             FROM catalog_pages 
@@ -324,53 +334,88 @@ class FullCatalogUI(QWidget):
         if not self.all_pages_data:
             return
 
-        # यहाँ 5 वेरिएबल होने चाहिए क्योंकि SQL में 5 कॉलम हैं
         mg_sn, group_name, sg_sn, page_no, serial_no = self.all_pages_data[self.current_page_index]
 
         self.lbl_header_mid.setText(group_name.upper())
         self.page_input.setText(str(serial_no))
         self.lbl_page_no.setText(f"Page: {serial_no}")
 
-        self.load_products_to_grid(group_name, sg_sn)
+        self.load_products_to_grid(group_name, sg_sn, page_no)
 
-   
-    def load_products_to_grid(self, group_name, sg_sn):
-        # ग्रिड को पूरी तरह खाली करना (Clear Grid)
+    
+    def load_products_to_grid(self, group_name, sg_sn, page_no):
+        # Clear Grid
         if self.grid_layout is not None:
             while self.grid_layout.count():
                 item = self.grid_layout.takeAt(0)
-                widget = item.widget()
-                if widget is not None:
-                    widget.deleteLater() # 'w' की जगह यहाँ 'widget' का उपयोग करें
+                if item.widget():
+                    item.widget().deleteLater()
 
-        # डेटाबेस से प्रोडक्ट्स मंगाना
-        products = self.get_products_for_page(group_name, sg_sn)
+        # Fetch Data via Dynamic Layout
+        products = self.get_items_for_page_dynamic(group_name, sg_sn, page_no)
 
-        # 4x5 ग्रिड को फिर से भरना
-        for i in range(20):
-            row, col = i // 4, i % 4
-            cell = QFrame()
+        # 4x5 Grid State
+        occupied = [[False]*4 for _ in range(5)]
+        
+        def find_slot(h):
+            for r in range(5):
+                for c in range(4):
+                    if not occupied[r][c]:
+                        if r + h <= 5:
+                            fits = True
+                            for k in range(h):
+                                if occupied[r+k][c]: fits = False; break
+                            if fits: return r, c
+            return -1, -1
+
+        # Place Products
+        for p_name, img_path, p_len in products:
+            try: h = int(p_len) if str(p_len).isdigit() else 1
+            except: h = 1
             
-            # लाइनों की बराबर मोटाई के लिए CSS
-            style = "border-left: 1px solid black; border-bottom: 1px solid black;"
-            if col == 3: # आख़िरी कॉलम के लिए राइट बॉर्डर
-                style += " border-right: 1px solid black;"
+            r, c = find_slot(h)
             
-            cell.setStyleSheet(f"QFrame {{ {style} background-color: white; }}")
-            
-            if i < len(products):
+            if r != -1:
+                # Mark occupied
+                for k in range(h):
+                    occupied[r+k][c] = True
+                
+                # Create Card
+                cell = QFrame()
+                # Restore Original Border Logic: Right and Bottom on ALL cells
+                style = "border-bottom: 1px solid black; border-right: 1px solid black;"
+                cell.setStyleSheet(f"QFrame {{ border: none; {style} background-color: white; }}")
+                
                 v_layout = QVBoxLayout(cell)
-                v_layout.setContentsMargins(5, 5, 5, 5) # सेल के अंदर थोड़ी जगह
+                v_layout.setContentsMargins(5, 5, 5, 5) # Restore Original Margins
                 
-                name_label = QLabel(str(products[i][0]))
-                name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                name_label.setWordWrap(True)
-                name_label.setStyleSheet("border: none;") # लेबल का अपना बॉर्डर न हो
-                name_label.setFont(QFont("Arial", 8))
+                # Image
+                if img_path and os.path.exists(img_path):
+                    img_lbl = QLabel()
+                    img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    pix = QPixmap(img_path).scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    img_lbl.setPixmap(pix)
+                    v_layout.addWidget(img_lbl, stretch=1)
                 
-                v_layout.addWidget(name_label)
-            
-            self.grid_layout.addWidget(cell, row, col)
+                # Name
+                name_lbl = QLabel(p_name)
+                name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                name_lbl.setWordWrap(True)
+                name_lbl.setStyleSheet("border: none; font-size: 8pt;")
+                name_lbl.setFont(QFont("Arial", 8))
+                v_layout.addWidget(name_lbl)
+                
+                self.grid_layout.addWidget(cell, r, c, h, 1)
+
+        # Fill Empty Spots
+        for r in range(5):
+            for c in range(4):
+                if not occupied[r][c]:
+                    cell = QFrame()
+                    # Restore Original Border Logic
+                    style = "border-bottom: 1px solid black; border-right: 1px solid black;"
+                    cell.setStyleSheet(f"QFrame {{ border: none; {style} background-color: white; }}")
+                    self.grid_layout.addWidget(cell, r, c)
             
     def handle_item_click(self, item):
         row = item.row()
@@ -439,8 +484,8 @@ class FullCatalogUI(QWidget):
 
         m_sn, group_name, sg_sn, page_no, serial_no = self.all_pages_data[self.current_page_index]
 
-        # check products
-        products = self.get_products_for_page(group_name, sg_sn)
+        # Check products via Dynamic Layout (if layout puts items here, forbidden)
+        products = self.get_items_for_page_dynamic(group_name, sg_sn, page_no)
         if products:
             QMessageBox.warning(self, "Warning", "This page contains data.\nRemove is not allowed.")
             return
@@ -452,23 +497,20 @@ class FullCatalogUI(QWidget):
             conn = sqlite3.connect(self.catalog_db_path)
             cursor = conn.cursor()
 
-        conn = sqlite3.connect(self.catalog_db_path)
-        cursor = conn.cursor()
+            cursor.execute("""
+                DELETE FROM catalog_pages 
+                WHERE group_name=? AND sg_sn=? AND page_no=?
+            """, (group_name, sg_sn, page_no))
 
-        cursor.execute("""
-            DELETE FROM catalog_pages 
-            WHERE group_name=? AND sg_sn=? AND page_no=?
-        """, (group_name, sg_sn, page_no))
+            conn.commit()
+            conn.close()
 
-        conn.commit()
-        conn.close()
-
-        self.refresh_catalog_data()
-        
-        if self.current_page_index >= len(self.all_pages_data):
-            self.current_page_index = max(0, len(self.all_pages_data) - 1)
-        
-        self.update_catalog_page()
+            self.refresh_catalog_data()
+            
+            if self.current_page_index >= len(self.all_pages_data):
+                self.current_page_index = max(0, len(self.all_pages_data) - 1)
+            
+            self.update_catalog_page()
         
     def expand_group(self, row, group_name):
         try:
@@ -545,11 +587,28 @@ class FullCatalogUI(QWidget):
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-            res = cursor.fetchone()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            rows = cursor.fetchall()
+            
+            valid_table = None
+            for r in rows:
+                tbl = r[0]
+                # Check for MG_SN column to be sure it's the right table
+                try:
+                    cursor.execute(f"PRAGMA table_info({tbl})")
+                    columns = [col[1] for col in cursor.fetchall()]
+                    if "MG_SN" in columns or "mg_sn" in columns:
+                        valid_table = tbl
+                        break
+                except:
+                    continue
+            
             conn.close()
-            return res[0] if res else None
-        except:
+            if not valid_table:
+                with open("catalog_error.log", "a") as f: f.write(f"No valid table with MG_SN found in {self.db_path}\n")
+            return valid_table
+        except Exception as e:
+            with open("catalog_error.log", "a") as f: f.write(f"Get Table Error: {e}\n")
             return None
 
 
@@ -570,7 +629,8 @@ class FullCatalogUI(QWidget):
             data = cursor.fetchall()
             conn.close()
             return data
-        except:
+        except Exception as e:
+            with open("catalog_error.log", "a") as f: f.write(f"Index Data Error: {e}\n")
             return []
 
     def get_page_data_list(self):
@@ -632,20 +692,136 @@ class FullCatalogUI(QWidget):
         conn.commit()
         conn.close()
     
-    def get_products_for_page(self, group_name, sg_sn):
-        table = self.get_table_name()
+
+
+    # =========================================================
+    # NEW DYNAMIC LAYOUT ENGINE (Auto-Page & Sorting)
+    # =========================================================
+
+    def sync_pages_with_content(self):
+        """Checks all subgroups and auto-creates pages if content overflows."""
         try:
-            conn = sqlite3.connect(self.db_path)
+            # 1. Get all subgroups
+            all_subgroups = self.get_page_data_list() # Returns (MG, Group, SG)
+            
+            conn = sqlite3.connect(self.catalog_db_path)
             cursor = conn.cursor()
-            query = f"""
-                SELECT Item_Name, Photo
-                FROM {table}
-                WHERE Group_Name=? AND SG_SN=?
-                LIMIT 20
-            """
-            cursor.execute(query, (group_name, sg_sn))
-            data = cursor.fetchall()
+            
+            for mg_sn, group_name, sg_sn in all_subgroups:
+                # Run layout simulation
+                layout_map = self.simulate_page_layout(group_name, sg_sn)
+                max_required_page = max(layout_map.keys()) if layout_map else 1
+                
+                # Check existing pages in DB
+                cursor.execute("SELECT MAX(page_no) FROM catalog_pages WHERE group_name=? AND sg_sn=?", (group_name, sg_sn))
+                res = cursor.fetchone()
+                current_max = res[0] if res and res[0] else 0
+                
+                # If we need more pages, add them
+                if max_required_page > current_max:
+                    for p in range(current_max + 1, max_required_page + 1):
+                        cursor.execute("""
+                            INSERT INTO catalog_pages (mg_sn, group_name, sg_sn, page_no)
+                            VALUES (?, ?, ?, ?)
+                        """, (mg_sn, group_name, sg_sn, p))
+                        print(f"✅ Auto-Added Page {p} for {group_name} - {sg_sn}")
+            
+            conn.commit()
             conn.close()
-            return data
-        except:
-            return []   
+        except Exception as e:
+            print(f"Sync Pages Error: {e}")
+
+    def get_items_for_page_dynamic(self, group_name, sg_sn, page_no):
+        """Returns the specific items for a page based on flow layout."""
+        layout_map = self.simulate_page_layout(group_name, sg_sn)
+        return layout_map.get(page_no, [])
+
+    def simulate_page_layout(self, group_name, sg_sn):
+        """
+        Simulates sorting and packing to determine which item goes to which page.
+        Returns: { page_no: [(ItemName, ImagePath, Length), ...] }
+        """
+        products = self.get_sorted_products_from_db(group_name, sg_sn)
+        layout_map = {}
+        current_page = 1
+        
+        def get_empty_grid():
+            return [[False]*4 for _ in range(5)] # 5 rows, 4 cols
+
+        grid = get_empty_grid()
+        
+        # Helper to find slot
+        def find_slot(g_state, h):
+            for r in range(5):
+                for c in range(4):
+                    if not g_state[r][c]:
+                        # Check vertical availability
+                        if r + h <= 5:
+                            fits = True
+                            for k in range(h):
+                                if g_state[r+k][c]: fits = False
+                                if not fits: break
+                            if fits: return r, c
+            return -1, -1
+
+        def mark_slot(g_state, r, c, h):
+            for k in range(h):
+                g_state[r+k][c] = True
+
+        if not products:
+            return {}
+            
+        layout_map[current_page] = []
+        
+        for p_name, img_path, p_len in products:
+            try:
+                h = int(p_len) if str(p_len).isdigit() else 1
+            except: h = 1
+            
+            # Try to fit in current page
+            r, c = find_slot(grid, h)
+            
+            if r == -1:
+                # Page Full -> New Page
+                current_page += 1
+                grid = get_empty_grid()
+                layout_map[current_page] = []
+                # Try new page
+                r, c = find_slot(grid, h)
+                
+            if r != -1:
+                mark_slot(grid, r, c, h)
+                layout_map[current_page].append((p_name, img_path, h))
+            else:
+                layout_map[current_page].append((p_name + " (TOO BIG)", img_path, h))
+                
+        return layout_map
+
+    def get_sorted_products_from_db(self, group_name, sg_sn):
+        """Fetches products sorted by Price (MRP) asc."""
+        try:
+            conn = sqlite3.connect(self.final_db_path)
+            cursor = conn.cursor()
+            
+            # Sort by MRP (Lowest first)
+            cursor.execute("""
+                SELECT [Product Name], [Item_Name], [Image_Path], [Length], [MRP]
+                FROM catalog
+                WHERE [Group]=? AND [SG_SN]=? AND ([True/False] IS NULL OR [True/False] != 'false')
+                ORDER BY CAST(REPLACE([MRP], ',', '') AS REAL) ASC
+            """, (group_name, sg_sn))
+            
+            rows = cursor.fetchall()
+            conn.close()
+            
+            clean_list = []
+            for r in rows:
+                p_name = r[0] if r[0] and r[0].strip() else r[1]
+                img = r[2]
+                length = r[3]
+                clean_list.append((p_name, img, length))
+                
+            return clean_list
+        except Exception as e:
+            print(f"Data Fetch Error: {e}")
+            return []

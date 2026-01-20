@@ -27,7 +27,7 @@ class FinalDataUI(QWidget):
             "GUID", "ID", "Item_Name", "Alias", "Part_No", "Product Name", 
             "Product_Size", "Category", "Unit", "MOQ", "M_Packing", "MRP", 
             "Stock", "MG_SN", "Group", "SG_SN", "Sub_Group", "Image_Name", 
-            "Image_Path", "Length", "Image_Date", "True/False", "Update_date"
+            "Image_Path", "Lenth", "Image_Date", "True/False", "Update_date"
         ]
         self.setup_ui()
 
@@ -85,7 +85,7 @@ class FinalDataUI(QWidget):
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding
         )
-        self.img_preview.setScaledContents(True)
+        # self.img_preview.setScaledContents(True) # Removed to prevent vertical stretching
         side_layout.addWidget(self.img_preview, 1) # Takes available space
 
         # 4. Stats / Info
@@ -113,6 +113,17 @@ class FinalDataUI(QWidget):
         except:
             pass
         return ""
+
+    # --- HELPER: Calc Length ---
+    def calc_length_from_size(self, size_str):
+        if not size_str: return "1"
+        try:
+            # Assuming comma separated sizes
+            count = len([s for s in size_str.split(',') if s.strip()])
+            if count > 10: return "3"
+            elif count > 5: return "2"
+            return "1"
+        except: return "1"
 
     # --- NAYA: Manual Edit Save karne ka logic ---
     def on_row_changed(self, current, previous):
@@ -151,6 +162,17 @@ class FinalDataUI(QWidget):
                 item.setText(final_bool_val)
                 self.table.blockSignals(False)
                 new_val = final_bool_val
+
+        # --- NAYA: Auto-Update Length if Product_Size changes ---
+        if col_name == "Product_Size":
+             # Recalculate Length
+             new_len = self.calc_length_from_size(new_val)
+             
+             # Setup Update for Length too
+             # We need to update DB for Length AND Product_Size
+             # Doing separate update for Length to keep simple logic or combine?
+             # Simple: Update Product_Size first (below), then Update Length.
+             pass 
 
         # Check if actual change happened (after normalization)
         if str(new_val) == str(old_val):
@@ -193,6 +215,25 @@ class FinalDataUI(QWidget):
             
             self.status_lbl.setText(f"Updated: {col_name}" + (f" & Date at {now}" if should_update_date else ""))
             
+            self.status_lbl.setText(f"Updated: {col_name}" + (f" & Date at {now}" if should_update_date else ""))
+            
+            # --- Post-Update Logic: Update Length if Size Changed ---
+            if col_name == "Product_Size":
+                 new_len = self.calc_length_from_size(new_val)
+                 cur = conn.cursor()
+                 conn = sqlite3.connect(self.db_path) # Reconnect/Reuse? Conn closed above.
+                 cursor = conn.cursor()
+                 cursor.execute("UPDATE catalog SET Lenth=? WHERE GUID=?", (new_len, guid))
+                 conn.commit()
+                 conn.close()
+                 
+                 # UI Update
+                 len_col = self.col_index("Lenth")
+                 self.table.blockSignals(True)
+                 self.table.setItem(row, len_col, QTableWidgetItem(new_len))
+                 self.table.blockSignals(False)
+                 self.status_lbl.setText(f"Updated: Size & Lenth ({new_len})")
+
             # Refresh stats if needed
             # self.calculate_stats() 
 
@@ -244,7 +285,7 @@ class FinalDataUI(QWidget):
                 
                 cur.execute("""
                     SELECT Item_Name, Alias, Part_No, Categori, Unit, 
-                           MRP, Stock, MG_SN, [Group], SG_SN, Sub_Group
+                           MRP, Stock, MG_SN, [Group], SG_SN, Sub_Group, [Product_Size]
                     FROM catalog WHERE GUID=?
                 """, (guid,))
                 old_row_db = cur.fetchone()
@@ -280,11 +321,13 @@ class FinalDataUI(QWidget):
                             WHERE GUID=?"""
                         cur.execute(query, (*new_row, now, guid))
                     else:
-                        query = """UPDATE catalog SET 
-                            Item_Name=?, Alias=?, Part_No=?, Categori=?, Unit=?, 
-                            MRP=?, Stock=?, MG_SN=?, [Group]=?, SG_SN=?, Sub_Group=?
-                            WHERE GUID=?"""
-                        cur.execute(query, (*new_row, guid))
+                        # Data same, but ensure Length is synced/calculated based on Product_Size
+                        current_size = old_row_db[11] if len(old_row_db) > 11 else ""
+                        new_len = self.calc_length_from_size(current_size)
+                        
+                        # Only update if Length is diff? (Optimization). For now just update.
+                        query = "UPDATE catalog SET Lenth=? WHERE GUID=?"
+                        cur.execute(query, (new_len, guid))
                 else:
                     # Bilkul naya item (Insert)
                     f_row = [None] * len(self.headers)
@@ -300,8 +343,14 @@ class FinalDataUI(QWidget):
                     f_row[self.col_index("Group")] = s_data[1]
                     f_row[self.col_index("SG_SN")] = s_data[2]
                     f_row[self.col_index("Sub_Group")] = r[6]
+                    f_row[self.col_index("Lenth")] = "1"
                     f_row[self.col_index("Update_date")] = now
-                    cur.execute(f"INSERT INTO catalog VALUES ({','.join(['?']*len(self.headers))})", f_row)
+                    
+                    # Insert Query
+                    placeholders = ', '.join(['?'] * len(self.headers))
+                    cols = ', '.join([f"[{h}]" for h in self.headers])
+                    query = f"INSERT INTO catalog ({cols}) VALUES ({placeholders})"
+                    cur.execute(query, f_row)
 
             final_conn.commit()
             final_conn.close()
@@ -323,7 +372,7 @@ class FinalDataUI(QWidget):
             print(f"Sync Error: {e}")
             
     def sync_images_after_processing(self):
-        """Processor ke kaam ke baad image paths update karne ke liye"""
+        # Processor ke kaam ke baad image paths update karne ke liye
         try:
             conn = sqlite3.connect(self.db_path)
             img_map = self.get_image_mapping()
@@ -474,7 +523,10 @@ class FinalDataUI(QWidget):
         if it:
             p = it.data(Qt.ItemDataRole.UserRole)
             if p and os.path.exists(p):
-                self.img_preview.setPixmap(QPixmap(p))
+                pix = QPixmap(p)
+                # Scale nicely while keeping Aspect Ratio (Max 800x800)
+                scaled = pix.scaled(800, 800, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                self.img_preview.setPixmap(scaled)
                 return
         self.img_preview.setText("NO IMAGE"); self.img_preview.setPixmap(QPixmap())
 

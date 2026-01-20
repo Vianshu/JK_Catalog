@@ -206,9 +206,10 @@ class MainWindow(QWidget):
         self.payment_list_page = PaymentListUI()
         self.godown_page = GodownListUI("Data/Temp")
         # Stack Pages
+        self.full_catalog_page = FullCatalogUI()
         self.main_stack.addWidget(self.company_login)      # 0
         self.main_stack.addWidget(WelcomeUI())             # 1
-        self.main_stack.addWidget(FullCatalogUI())         # 2
+        self.main_stack.addWidget(self.full_catalog_page)  # 2
         self.main_stack.addWidget(QLabel("Sync..."))       # 3
         self.main_stack.addWidget(self.row_data_page)      # 4
         self.main_stack.addWidget(self.final_data_page)    # 5
@@ -354,7 +355,11 @@ class MainWindow(QWidget):
                 
                     if hasattr(self, 'reports_page'):
                         self.reports_page.current_company_path = company_path
+                        self.reports_page.current_company_path = company_path
                         self.reports_page.refresh_report_data()
+
+                    if hasattr(self, 'full_catalog_page'):
+                        self.full_catalog_page.set_company_path(company_path)
                         
         self.row_data_page.load_data(comp_name)
         self.nav_stack.setCurrentIndex(1) 

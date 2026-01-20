@@ -1,35 +1,149 @@
-import os
+import sys
+import sqlite3
+import os  # Added global import
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFrame, 
     QPushButton, QLineEdit, QLabel, QTableWidget, 
-    QTableWidgetItem, QHeaderView, QGridLayout
+    QTableWidgetItem, QHeaderView, QGridLayout, QMessageBox, QScrollArea, QSizePolicy
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtGui import QFont, QColor, QPixmap
 from catalog_logic import CatalogLogic
+from a4_renderer import A4PageRenderer
+import sqlite3
 
 class FullCatalogUI(QWidget):
     def __init__(self):
         super().__init__()
         db_path = os.path.join("data", "super_master.db")
-        print(db_path)
+        # Ensure Logic gets correct DB path
         self.logic = CatalogLogic(db_path)
+        
+        self.catalog_db_path = None
+        self.final_db_path = None
         
         self.expanded_groups = {}
         self.current_page_index = 0
-        #self.all_pages_data = []
+        self.all_pages_data = []
         
         self.setup_ui()
         self.load_index_data()
+        self.connect_signals()
+        
+        try:
+            with open("ui_interaction.log", "w") as f: f.write("FullCatalog UI Init - Connections Complete\n")
+        except: pass
+
+        
+    def set_company_path(self, company_path):
+        self.company_path = company_path
+        self.catalog_db_path = os.path.join(self.company_path, "catalog.db")
+        self.final_db_path = os.path.join(self.company_path, "final_data.db")
+        
+        # Pass to Logic
+        self.logic.set_paths(self.catalog_db_path, self.final_db_path)
+        
+        # Init DB
+        self.init_catalog_db()
         self.refresh_catalog_data()
         
-        # Connections
-        self.index_table.itemClicked.connect(self.handle_item_click)
+        folder_name = os.path.basename(self.company_path)
+        prefix = folder_name[:3].upper()
+        if hasattr(self, 'lbl_comp_code'): self.lbl_comp_code.setText(prefix)
+
+    def init_catalog_db(self):
+        conn = sqlite3.connect(self.catalog_db_path)
+        cursor = conn.cursor()
+        cursor.execute("CREATE TABLE IF NOT EXISTS catalog_pages (id INTEGER PRIMARY KEY AUTOINCREMENT, mg_sn INTEGER, group_name TEXT, sg_sn INTEGER, page_no INTEGER, serial_no INTEGER)")
+        try: cursor.execute("ALTER TABLE catalog_pages ADD COLUMN mg_sn INTEGER"); 
+        except: pass
+        conn.commit(); conn.close()
+        
+    def rebuild_serial_numbers(self):
+        conn = sqlite3.connect(self.catalog_db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM catalog_pages ORDER BY CAST(mg_sn AS INTEGER), CAST(sg_sn AS INTEGER), CAST(page_no AS INTEGER)")
+        rows = cursor.fetchall()
+        for idx, (rid,) in enumerate(rows, 1):
+            cursor.execute("UPDATE catalog_pages SET serial_no=? WHERE id=?", (idx, rid))
+        conn.commit(); conn.close()
+    
+    def connect_signals(self):
+        # Index Table - Use only cellClicked (not itemClicked to avoid double-fire)
+        self.index_table.cellClicked.connect(self.handle_cell_click)
+        
+        # Navigation
         self.btn_next.clicked.connect(self.next_page)
         self.btn_prev.clicked.connect(self.prev_page)
+        self.page_input.returnPressed.connect(self.go_to_page)
         
+        # Page Management
         self.btn_add_page.clicked.connect(self.add_page)
         self.btn_remove_page.clicked.connect(self.remove_page)
+        
+        # Build & Export
+        self.btn_build.clicked.connect(self.build_catalog)
+        self.btn_export.clicked.connect(self.export_pdf)
+        
+        # Length change from right-click context menu
+        self.renderer.length_changed.connect(self.handle_length_change)
+    
+    def handle_length_change(self, product_name, new_length):
+        """Handle product size change from context menu."""
+        if not self.final_db_path:
+            return
+        
+        try:
+            conn = sqlite3.connect(self.final_db_path)
+            cursor = conn.cursor()
+            
+            # Update length in catalog table (as text to support H|V)
+            cursor.execute("""
+                UPDATE catalog SET [Lenth] = ? 
+                WHERE [Product Name] = ? OR [Item_Name] = ?
+            """, (str(new_length), product_name, product_name))
+            
+            affected = cursor.rowcount
+            conn.commit()
+            conn.close()
+            
+            print(f"DEBUG: Updated {affected} rows with new size '{new_length}'")
+            
+            # Refresh current page to show updated layout
+            self.refresh_catalog_data()
+            
+        except Exception as e:
+            print(f"ERROR updating length: {e}")
+    
+    def go_to_page(self):
+        """Navigate to global page number entered in the input field."""
+        print(f"DEBUG go_to_page: Input='{self.page_input.text()}'")
+        if not hasattr(self, 'all_pages_data') or not self.all_pages_data:
+            print("DEBUG go_to_page: No pages data")
+            return
+        
+        try:
+            target_page = int(self.page_input.text())
+        except ValueError:
+            print("DEBUG go_to_page: Invalid input")
+            return
+        
+        total_pages = len(self.all_pages_data)
+        
+        # Navigate to global page (1-indexed)
+        if 1 <= target_page <= total_pages:
+            self.current_page_index = target_page - 1
+            self.update_catalog_page()
+            print(f"DEBUG go_to_page: Navigated to global page {target_page}")
+    
+    def build_catalog(self):
+        """Build/refresh the catalog."""
+        self.refresh_catalog_data()
+        QMessageBox.information(self, "Build Complete", "Catalog has been built successfully!")
+    
+    def export_pdf(self):
+        """Export catalog to PDF."""
+        QMessageBox.information(self, "Export", "PDF Export feature coming soon!")
     
     def setup_ui(self):
         main_h_layout = QHBoxLayout(self)
@@ -56,83 +170,21 @@ class FullCatalogUI(QWidget):
         index_container.addWidget(self.index_table)
         main_h_layout.addLayout(index_container)
 
-        # --- 2. CENTER: Catalog Page (A4) ---
+        # --- 2. CENTER: Catalog Page (A4 Renderer) ---
         page_v_center_layout = QVBoxLayout()
-        self.catalog_page = QFrame()
-        self.catalog_page.setFixedSize(595, 842)
-        self.catalog_page.setStyleSheet("background-color: white; border: 2px solid #3498db;")
         
-        self.page_main_layout = QVBoxLayout(self.catalog_page)
-        self.page_main_layout.setContentsMargins(0, 0, 0, 0)
-        self.page_main_layout.setSpacing(0)
-
-        # HEADER (Touch Top, 3 Parts)
-        self.header_frame = QFrame()
-        self.header_frame.setFixedHeight(28)
-        self.header_frame.setStyleSheet("border-bottom: 1px solid black;")
-        header_h_layout = QHBoxLayout(self.header_frame)
-        header_h_layout.setContentsMargins(15, 2, 15, 2)
-
-        self.lbl_comp_code = QLabel("NGT")
-        self.lbl_header_mid = QLabel("GROUP NAME")
-        self.lbl_page_no = QLabel("Page: 1")
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setStyleSheet("background-color: #e0e0e0;")
+        self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        for lbl in [self.lbl_comp_code, self.lbl_header_mid, self.lbl_page_no]:
-            lbl.setFont(QFont("Arial", 10))
-            lbl.setStyleSheet("border: none;")
-            
-        self.lbl_header_mid.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_page_no.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
-        header_h_layout.addWidget(self.lbl_comp_code)
-        header_h_layout.addWidget(self.lbl_header_mid, stretch=1)
-        header_h_layout.addWidget(self.lbl_page_no)
-        self.page_main_layout.addWidget(self.header_frame)
-
-        # CONTENT AREA (4x5 Grid)
-        self.content_area = QFrame()
-        self.content_area.setStyleSheet("background-color: white;")
+        self.renderer = A4PageRenderer()
+        # Default DPI for Screen Preview (approx)
+        self.renderer.set_target_dpi(96) 
         
-        # Grid layout mein spacing 0 karni hogi taaki lines jud jayein
-        self.grid_layout = QGridLayout(self.content_area)
-        self.grid_layout.setContentsMargins(15, 15, 15, 15)
-        self.grid_layout.setSpacing(0) # Taaki boxes ke beech gap na rahe
-
-        # 4x5 Grid (Total 20 Cells)
-        for r in range(5):
-            for c in range(4):
-                cell = QFrame()
-                style = "border-bottom: 1px solid black; border-right: 1px solid black;"
-                if r == 0: style += "border-top: 1px solid black;"
-                if c == 0: style += "border-left: 1px solid black;"
-                
-                cell.setStyleSheet(f"QFrame {{ {style} background-color: white; }}")
-                # Yeh line cells ko barabar failne mein madad karegi
-                self.grid_layout.addWidget(cell, r, c)
-                self.grid_layout.setRowStretch(r, 1)
-                self.grid_layout.setColumnStretch(c, 1)
-        self.page_main_layout.addWidget(self.content_area, stretch=1)
-
-        # FOOTER (Touch Bottom, 2 Parts)
-        self.footer_frame = QFrame()
-        self.footer_frame.setFixedHeight(28)
-        self.footer_frame.setStyleSheet("border-top: 1px solid black;")
-        footer_h_layout = QHBoxLayout(self.footer_frame)
-        footer_h_layout.setContentsMargins(15, 2, 15, 2)
-
-        self.lbl_crm_name = QLabel("CRM:Name")
-        self.lbl_update_date = QLabel("03/01/26")
-        for lbl in [self.lbl_crm_name, self.lbl_update_date]:
-            lbl.setFont(QFont("Arial", 10))
-            lbl.setStyleSheet("border: none;")
-        self.lbl_update_date.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
-        footer_h_layout.addWidget(self.lbl_crm_name)
-        footer_h_layout.addStretch()
-        footer_h_layout.addWidget(self.lbl_update_date)
-        self.page_main_layout.addWidget(self.footer_frame)
-
-        page_v_center_layout.addWidget(self.catalog_page, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.scroll_area.setWidget(self.renderer)
+        # self.scroll_area.setWidgetResizable(True) # Fixed size widget better not resize
+        
+        page_v_center_layout.addWidget(self.scroll_area)
         main_h_layout.addLayout(page_v_center_layout)
 
         # --- 3. RIGHT PANEL (Navigation & Buttons) ---
@@ -217,78 +269,117 @@ class FullCatalogUI(QWidget):
             self.index_table.setItem(row_idx, 1, item_name)
     
     def refresh_catalog_data(self):
-        """लॉजिक फाइल से डेटा मंगाना"""
-        self.all_pages_data = self.logic.get_page_data_list()
+        if not self.catalog_db_path: return
+        
+        # 1. Sync Pages (Auto Add)
+        self.logic.sync_pages_with_content()
+        
+        # 2. Rebuild Serials
+        self.rebuild_serial_numbers()
+        
+        # 3. Load Data
+        conn = sqlite3.connect(self.catalog_db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT mg_sn, group_name, sg_sn, page_no, serial_no FROM catalog_pages ORDER BY serial_no")
+        self.all_pages_data = cursor.fetchall()
+        conn.close()
+        
         if self.all_pages_data:
             self.total_lbl.setText(f"/{len(self.all_pages_data)}")
-            self.update_catalog_page()
+            if self.current_page_index >= len(self.all_pages_data):
+                self.current_page_index = 0
+        
+        self.update_catalog_page()
     
     def update_catalog_page(self):
         if not hasattr(self, 'all_pages_data') or not self.all_pages_data:
             return
             
-        # Current page ka data (Group Name aur uska SG_SN)
-        group_name, sg_sn = self.all_pages_data[self.current_page_index]
+        # Current page data
+        mg_sn, group_name, sg_sn, page_no, serial_no = self.all_pages_data[self.current_page_index]
         
-        # --- HEADER (Sirf Group Name) ---
-        self.lbl_header_mid.setText(group_name.upper())
+        # Global page numbering (1-indexed)
+        current_global_page = self.current_page_index + 1
+        total_pages = len(self.all_pages_data)
         
-        # --- PAGE INFO ---
-        self.page_input.setText(str(self.current_page_index + 1))
-        self.lbl_page_no.setText(f" {self.current_page_index + 1}")
+        # Update navigation display with global numbers
+        self.page_input.setText(str(current_global_page))
+        self.total_lbl.setText(f"/{total_pages}")
+        
+        self.renderer.set_header_data(group_name, serial_no)
 
-        # Ab yahan hum Grid bharne ka logic trigger karenge
-        self.load_products_to_grid(group_name, sg_sn)
+        # Grid Load
+        self.load_products_to_grid(group_name, sg_sn, page_no)
    
-    def load_products_to_grid(self, group_name, sg_sn):
-        # ग्रिड साफ करना
-        for i in reversed(range(self.grid_layout.count())): 
-            if self.grid_layout.itemAt(i).widget():
-                self.grid_layout.itemAt(i).widget().setParent(None)
+    def load_products_to_grid(self, group_name, sg_sn, page_no):
+        # 1. Fetch
+        products = self.logic.get_items_for_page_dynamic(group_name, sg_sn, page_no)
+        
+        # 2. Render (empty list will show empty cells)
+        self.renderer.fill_products(products if products else [])
+    
+    def find_page_index_by_subgroup(self, group_name, sn_text):
+        """Find the first page index for a given group and subgroup."""
+        if not hasattr(self, 'all_pages_data') or not self.all_pages_data:
+            return -1
+        
+        # Extract sg_sn from sn_text (format: "      -> 01")
+        sg_sn = sn_text.replace("->", "").strip()
+        
+        # Remove leading zeros for comparison if needed
+        try:
+            sg_sn_int = int(sg_sn)
+        except:
+            sg_sn_int = sg_sn
+        
+        for i, page in enumerate(self.all_pages_data):
+            page_group = page[1]
+            page_sg = page[2]
+            
+            # Compare group names (case insensitive)
+            if page_group.upper().strip() == group_name.upper().strip():
+                # Compare sg_sn
+                try:
+                    page_sg_int = int(page_sg)
+                    if page_sg_int == sg_sn_int:
+                        return i
+                except:
+                    if str(page_sg).strip() == str(sg_sn).strip():
+                        return i
+        
+        return -1
+    def handle_cell_click(self, row, col):
+        item = self.index_table.item(row, col)
+        if item: self.handle_item_click(item)
 
-        # लॉजिक फाइल से प्रोडक्ट्स मंगाना
-        products = self.logic.get_products_for_page(group_name, sg_sn)
-
-        # 4x5 ग्रिड भरना
-        for i in range(20):
-            row, col = i // 4, i % 4
-            cell = QFrame()
-            style = "border-bottom: 1px solid black; border-right: 1px solid black;"
-            if row == 0: style += "border-top: 1px solid black;"
-            if col == 0: style += "border-left: 1px solid black;"
-            cell.setStyleSheet(f"QFrame {{ {style} background-color: white; }}")
-            
-            # अगर प्रोडक्ट है, तो यहाँ उसका नाम/फोटो दिखा सकते हैं
-            if i < len(products):
-                name_label = QLabel(products[i][0], cell) # उदाहरण के लिए नाम
-                name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            
-            self.grid_layout.addWidget(cell, row, col)
-            self.grid_layout.setRowStretch(row, 1)
-            self.grid_layout.setColumnStretch(col, 1)
-            
     def handle_item_click(self, item):
+        print(f"DEBUG handle_item_click: item={item.text()}")
+        try:
+            with open("ui_interaction.log", "a", encoding="utf-8") as f: f.write(f"Click: {item.text()}\n")
+        except: pass
         row = item.row()
         sn_item = self.index_table.item(row, 0)
         name_item = self.index_table.item(row, 1)
 
         if not sn_item or not name_item:
+            print("DEBUG: sn_item or name_item is None")
             return
 
         sn_text = sn_item.text()
         group_text = name_item.text().strip()
+        print(f"DEBUG: sn_text='{sn_text}', group_text='{group_text}'")
 
-        # 🔹 CASE 1: Sub Group click (↳)
-        if "↳" in sn_text:
+        # 🔹 CASE 1: Sub Group click (->)
+        if "->" in sn_text:
+            print("DEBUG: Subgroup click detected")
             main_group = ""
             for r in range(row - 1, -1, -1):
-                if "↳" not in self.index_table.item(r, 0).text():
+                if "->" not in self.index_table.item(r, 0).text():
                     main_group = self.index_table.item(r, 1).text().strip()
                     break
 
-            target_idx = self.logic.find_page_index_by_subgroup(
-                main_group, sn_text
-            )
+            target_idx = self.find_page_index_by_subgroup(main_group, sn_text)
+            print(f"DEBUG: main_group='{main_group}', target_idx={target_idx}")
 
             if target_idx != -1:
                 self.current_page_index = target_idx
@@ -296,58 +387,117 @@ class FullCatalogUI(QWidget):
             return   # 🔴 VERY IMPORTANT
 
         # 🔹 CASE 2: Main Group click → ONLY expand/collapse
+        print(f"DEBUG: Main Group click. expanded_groups={self.expanded_groups}")
         if group_text in self.expanded_groups:
+            print(f"DEBUG: Collapsing {group_text}")
             self.collapse_group(group_text)
         else:
+            print(f"DEBUG: Expanding {group_text}")
             self.expand_group(row, group_text)
 
     def add_page(self):
-        # Temporary empty page
-        self.all_pages_data.append(("NEW PAGE", None))
-        self.current_page_index = len(self.all_pages_data) - 1
+        if not self.catalog_db_path or not self.all_pages_data: return
 
-        self.total_lbl.setText(f"/{len(self.all_pages_data)}")
+        # Get current context
+        mg_sn, group_name, sg_sn, page_no, _ = self.all_pages_data[self.current_page_index]
+        
+        conn = sqlite3.connect(self.catalog_db_path)
+        cursor = conn.cursor()
+        
+        # Find next page number for this subgroup
+        cursor.execute("SELECT MAX(page_no) FROM catalog_pages WHERE group_name=? AND sg_sn=?", (group_name, sg_sn))
+        res = cursor.fetchone()
+        next_page = (res[0] or 0) + 1
+        
+        # Insert new page
+        cursor.execute("INSERT INTO catalog_pages (mg_sn, group_name, sg_sn, page_no) VALUES (?, ?, ?, ?)", 
+                       (mg_sn, group_name, sg_sn, next_page))
+        conn.commit()
+        conn.close()
+        
+        self.refresh_catalog_data()
+        
+        # Navigate to the newly created page
+        for i, row in enumerate(self.all_pages_data):
+            if row[1] == group_name and row[2] == sg_sn and row[3] == next_page:
+                self.current_page_index = i
+                break
+        
         self.update_catalog_page()
+
+    def showEvent(self, event):
+        self.refresh_catalog_data()
+        super().showEvent(event)
+
+    def handle_build(self):
+        if not self.catalog_db_path: return
+        try:
+            self.logic.sync_pages_with_content()
+            self.refresh_catalog_data()
+            QMessageBox.information(self, "Success", "Catalog built successfully!\nPages synced with content.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Build failed: {e}")
 
     def remove_page(self):
-        if not self.all_pages_data:
+        if not hasattr(self, 'all_pages_data') or not self.all_pages_data or len(self.all_pages_data) <= 1: return
+
+        m_sn, group_name, sg_sn, page_no, serial_no = self.all_pages_data[self.current_page_index]
+        
+        # Check if safe to delete
+        items = self.logic.get_items_for_page_dynamic(group_name, sg_sn, page_no)
+        if items:
+            QMessageBox.warning(self, "Warning", "Page contains data. Cannot remove.")
             return
 
-        # Last page remove करने से बचाव
-        if len(self.all_pages_data) == 1:
-            return
-
-        self.all_pages_data.pop(self.current_page_index)
-
-        if self.current_page_index >= len(self.all_pages_data):
-            self.current_page_index = len(self.all_pages_data) - 1
-
-        self.total_lbl.setText(f"/{len(self.all_pages_data)}")
-        self.update_catalog_page()
+        conn = sqlite3.connect(self.catalog_db_path)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM catalog_pages WHERE group_name=? AND sg_sn=? AND page_no=?", (group_name, sg_sn, page_no))
+        conn.commit(); conn.close()
+        
+        self.refresh_catalog_data()
+        
+    def find_page_index_by_subgroup(self, group, sg_sn_text):
+        clean = "".join(filter(str.isdigit, str(sg_sn_text)))
+        if not hasattr(self, 'all_pages_data'): return -1
+        for idx, (m, g, s, p, seq) in enumerate(self.all_pages_data):
+            if g.upper().strip() == group.upper().strip() and str(s).zfill(2) == clean.zfill(2) and p == 1:
+                return idx
+        return -1
 
     def expand_group(self, row, group_name):
         try:
+            print(f"DEBUG expand_group: row={row}, group_name='{group_name}'")
+            try:
+                with open("ui_interaction.log", "a", encoding="utf-8") as f: f.write(f"Expanding: {group_name}\n")
+            except: pass
             sub_data = self.logic.get_subgroups(group_name)
+            print(f"DEBUG expand_group: sub_data={sub_data}")
+            try:
+                with open("ui_interaction.log", "a", encoding="utf-8") as f: f.write(f"Subgroups Found: {len(sub_data) if sub_data else 0}\n")
+            except: pass
+            
             if not sub_data:
+                print("DEBUG expand_group: No sub_data returned!")
                 return
 
             self.index_table.blockSignals(True)
             
-            # डेटा को टेबल में डालना (नीचे से ऊपर की तरफ)
+            # Insert subgroups below the group row (in reverse order)
             for sg_sn, sg_name in reversed(sub_data):
                 next_row = row + 1
                 self.index_table.insertRow(next_row)
+                print(f"DEBUG expand_group: Inserted row {next_row} for sg_sn={sg_sn}, sg_name={sg_name}")
                 
-                # SN को लुक दें ↳ 01
-                sn_str = f"      ↳ {str(sg_sn).zfill(2)}"
+                # SN format: "      -> 01"
+                sn_str = f"      -> {str(sg_sn).zfill(2)}"
                 item_sn = QTableWidgetItem(sn_str)
                 item_name = QTableWidgetItem(str(sg_name).upper())
                 
-                # 🔹 VERY IMPORTANT: group tag
+                # Tag items with parent group
                 item_sn.setData(Qt.ItemDataRole.UserRole, group_name)
                 item_name.setData(Qt.ItemDataRole.UserRole, group_name)
                 
-                # स्टाइलिंग
+                # Styling
                 sub_font = QFont("Arial", 9)
                 item_sn.setFont(sub_font)
                 item_name.setFont(sub_font)
@@ -356,14 +506,21 @@ class FullCatalogUI(QWidget):
                 
                 self.index_table.setItem(next_row, 0, item_sn)
                 self.index_table.setItem(next_row, 1, item_name)
+                self.index_table.setRowHeight(next_row, 28)  # Ensure visible height
             
             self.expanded_groups[group_name] = True
+            print(f"DEBUG expand_group: expanded_groups now={self.expanded_groups}")
             
             self.index_table.blockSignals(False)
             self.index_table.resizeColumnToContents(0)
+            self.index_table.viewport().update()
+            self.index_table.update()
+            print(f"DEBUG expand_group: Table row count now={self.index_table.rowCount()}")
         
         except Exception as e:
             print(f"❌ UI Expand Error: {e}")
+            import traceback
+            traceback.print_exc()
             self.index_table.blockSignals(False)
             
     def collapse_group(self, group_name):
@@ -381,14 +538,21 @@ class FullCatalogUI(QWidget):
         self.index_table.blockSignals(False)
     
     def next_page(self):
-        # Debugging ke liye print lagaya hai taaki pata chale click kaam kar raha hai
+        """Navigate to next page globally."""
         print(f"DEBUG: Next Clicked. Current Index: {self.current_page_index}")
-        if hasattr(self, 'all_pages_data') and self.current_page_index < len(self.all_pages_data) - 1:
+        if not hasattr(self, 'all_pages_data') or not self.all_pages_data:
+            return
+        
+        if self.current_page_index < len(self.all_pages_data) - 1:
             self.current_page_index += 1
             self.update_catalog_page()
 
     def prev_page(self):
-        if hasattr(self, 'all_pages_data') and self.current_page_index > 0:
+        """Navigate to previous page globally."""
+        if not hasattr(self, 'all_pages_data') or not self.all_pages_data:
+            return
+        
+        if self.current_page_index > 0:
             self.current_page_index -= 1
             self.update_catalog_page()
     
