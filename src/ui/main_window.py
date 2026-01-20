@@ -316,7 +316,7 @@ class MainWindow(QWidget):
         self.company_btn.show()
         
         # Load Company Path
-        base_dir = os.path.dirname(os.path.abspath(__file__))
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         vault_path = os.path.join(base_dir, "company_vault.json")
         
         if os.path.exists(vault_path):
