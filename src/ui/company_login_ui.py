@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QSize, pyqtSignal 
 from PyQt6.QtGui import QFont, QKeySequence, QShortcut
 from pathlib import Path
-from settings import save_report_json
+from src.ui.settings import save_report_json
 
 # ================= 1. SET DATA PATH DIALOG =================
 class PathDialog(QDialog):

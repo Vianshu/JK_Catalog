@@ -30,11 +30,12 @@ from src.ui.cheque_list import ChequeListUI
 from src.ui.calendar_mapping import CalendarMappingUI
 
 # Settings & Services
-from settings import (
+# Settings & Services
+from src.ui.settings import (
     CRMDialog, UserManagerDialog, SecurityDialog,
     save_users_to_json, load_crm_list, save_crm_to_json, update_crm_in_json
 )
-from services.tally_sync import fetch_tally_data
+from src.services.tally_sync import fetch_tally_data
 
 class MainWindow(QWidget):
     def __init__(self):

@@ -1,7 +1,7 @@
 import sys
 import os
 from PyQt6.QtWidgets import QApplication
-from main_window import MainWindow
+from src.ui.main_window import MainWindow
 
 def load_stylesheet(app, file_name):
     if os.path.exists(file_name):
@@ -14,7 +14,7 @@ def main():
     app = QApplication(sys.argv)
 
     # --- यहाँ स्टाइलशीट लोड की जा रही है ---
-    load_stylesheet(app, "style.qss")
+    load_stylesheet(app, "src/assets/style.qss")
 
     window = MainWindow()
     window.showMaximized()

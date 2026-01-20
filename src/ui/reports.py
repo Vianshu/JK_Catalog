@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter 
-from settings import load_crm_list, load_report_json, save_report_json
+from src.ui.settings import load_crm_list, load_report_json, save_report_json
 
 class PrintDownloadDialog(QDialog):
     def __init__(self, mode="Print", parent=None, report_data=None, crm_path="crm_data.json"):
