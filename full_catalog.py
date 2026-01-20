@@ -317,6 +317,63 @@ class FullCatalogUI(QWidget):
         
         # 2. Render (empty list will show empty cells)
         self.renderer.fill_products(products if products else [])
+        
+        # 3. Footer Logic (CRM & Date)
+        crm_name = "CRM_NAME" # Placeholder for now, later customizable
+        
+        # Calculate Max Date for this page
+        max_date_str = ""
+        max_dt_obj = None
+        
+        from datetime import datetime
+        
+        if products:
+            for p in products:
+                # p is a dict from layout_map containing "data" key which is the product dict
+                p_data = p.get("data", {})
+                p_date = p_data.get("max_update_date", "")
+                if p_date:
+                    try:
+                        # Extract date part
+                        date_part = p_date.split(" ")[0]
+                        # Parse DD-MM-YYYY
+                        dt = datetime.strptime(date_part, "%d-%m-%Y")
+                        if max_dt_obj is None or dt > max_dt_obj:
+                            max_dt_obj = dt
+                            max_date_str = p_date # Keep original string for display/conversion
+                    except:
+                        # Fallback for string comparison if format fails
+                        if p_date > max_date_str:
+                            max_date_str = p_date
+        
+        # Convert to Nepali Date (DD/MM)
+        footer_date = ""
+        if max_date_str:
+            # max_date_str is YYYY-MM-DD HH:MM:SS (from DB)
+            try:
+                # We need DD-MM-YYYY for our helper function logic? 
+                # Helper expects "DD-MM-YYYY" or "YYYY-MM-DD"?
+                # logic.get_nepali_date code: 
+                # if " " in ad_date_str: ad_date_str = ad_date_str.split(" ")[0]
+                # cursor.execute("SELECT bs_date FROM calendar WHERE ad_date=?", (ad_date_str,))
+                # The calendar DB has "DD-MM-YYYY" (e.g. 01-07-2025).
+                # But our DB Update_date is likely "YYYY-MM-DD" or "DD-MM-YYYY"?
+                # Check check_date_format output: "20-01-2026 23:55:25"
+                # If it's DD-MM-YYYY, then 20 is Day.
+                # If it's YYYY-MM-DD, then 20 is Year? No, 2026 is Year.
+                # So "20-01-2026" is likely DD-MM-YYYY? Or YYYY-MM-DD?
+                # Actually standard SQLite is YYYY-MM-DD. 3rd sample was "20-01-2026". That looks like DD-MM-YYYY.
+                # Wait, check_date_format output: ('20-01-2026 23:55:25',)
+                # Verify if 20 is day. Yes likely.
+                # The helper function handles "splitted by space".
+                # It passes "20-01-2026" to Query.
+                # Calendar DB uses "01-07-2025". So it matches format DD-MM-YYYY.
+                # So just passing the date part is correct.
+                
+                footer_date = self.logic.get_nepali_date(max_date_str)
+            except: pass
+            
+        self.renderer.set_footer_data(crm_name, footer_date)
     
     def find_page_index_by_subgroup(self, group_name, sn_text):
         """Find the first page index for a given group and subgroup."""

@@ -6,10 +6,40 @@ class CatalogLogic:
         self.db_path = db_path
         self.catalog_db_path = None
         self.final_db_path = None
+        # Derive calendar path (assuming 'data/calendar_data.db' relative to app root)
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) # backup code/
+        self.calendar_db_path = os.path.join(base_dir, "data", "calendar_data.db")
+        if not os.path.exists(self.calendar_db_path):
+            # Fallback for testing environment
+            self.calendar_db_path = "data/calendar_data.db"
 
     def set_paths(self, catalog_db, final_db):
         self.catalog_db_path = catalog_db
         self.final_db_path = final_db
+        
+    def get_nepali_date(self, ad_date_str):
+        """Convert AD date (DD-MM-YYYY) to BS date (DD/MM)."""
+        if not os.path.exists(self.calendar_db_path): return ""
+        try:
+            # Parse DD-MM-YYYY from input (e.g. "20-01-2026 23:55:25" -> "20-01-2026")
+            if " " in ad_date_str:
+                ad_date_str = ad_date_str.split(" ")[0]
+            
+            conn = sqlite3.connect(self.calendar_db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT bs_date FROM calendar WHERE ad_date=?", (ad_date_str,))
+            row = cursor.fetchone()
+            conn.close()
+            
+            if row:
+                # bs_date format: YYYY-MM-DD (e.g. 2082-03-17)
+                bs_full = row[0]
+                parts = bs_full.split("-")
+                if len(parts) == 3:
+                    # Return DD/MM
+                    return f"{parts[2]}/{parts[1]}"
+            return ""
+        except: return ""
 
     def get_table_name(self):
         try:
@@ -323,18 +353,22 @@ class CatalogLogic:
             # Robust Query: Handle Spaces, Case, and SG_SN
             # Fetch ALL fields needed by A4CatalogPage
             # True/False Logic: Include if NULL, empty, or not explicitly 'false'/'0'
+            # Stock Logic: Must have Stock > 0 OR True/False = 1
             cursor.execute("""
                 SELECT [Product Name], [Item_Name], [Image_Path], [Lenth], [MRP], [Product_Size],
-                       [MOQ], [Categori], [M_Packing], [Unit]
+                       [MOQ], [Categori], [M_Packing], [Unit], [Update_date]
                 FROM catalog
                 WHERE REPLACE(TRIM([Group]), '.', '') = REPLACE(TRIM(?), '.', '') COLLATE NOCASE 
                   AND CAST([SG_SN] AS INTEGER) = CAST(? AS INTEGER)
                   AND (
                       [True/False] IS NULL 
                       OR TRIM([True/False]) = ''
-                      OR (
-                          LOWER(TRIM(CAST([True/False] AS TEXT))) NOT IN ('false', '0', 'no')
-                      )
+                      OR LOWER(TRIM(CAST([True/False] AS TEXT))) NOT IN ('false', '0', 'no')
+                  )
+                  AND (
+                      CAST(REPLACE(IFNULL([Stock], '0'), ',', '') AS REAL) > 0
+                      OR 
+                      LOWER(TRIM(CAST([True/False] AS TEXT))) IN ('1', 'true', 'yes')
                   )
             """, (group_name.strip(), sg_sn))
             
@@ -388,6 +422,7 @@ class CatalogLogic:
                         "category": cat_display,
                         "master_packing": "",
                         "_mp_set": set(),
+                        "max_update_date": "",
                         "sort_price": p_val
                     }
                 
@@ -401,6 +436,11 @@ class CatalogLogic:
                 g["sizes"].append(s_val)
                 g["mrps"].append(m_val)
                 g["moqs"].append(moq_val)
+                
+                # Update Date Tracking
+                u_date = str(r[10]) if len(r) > 10 and r[10] else ""
+                if u_date and u_date > g["max_update_date"]:
+                    g["max_update_date"] = u_date
                 
                 # Master Packing consolidation
                 mp_raw = r[8]

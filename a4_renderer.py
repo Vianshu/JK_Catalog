@@ -40,6 +40,7 @@ class A4PageRenderer(QWidget):
         
         # Store current products for context menu reference
         self._current_products = []
+        self._widgets = []
 
         self.page_cols = 4
         self.page_rows = 5
@@ -195,23 +196,31 @@ class A4PageRenderer(QWidget):
         fl.setSpacing(0)
 
         self.footer_left = QLabel("")
+        self.footer_center = QLabel("")
         self.footer_right = QLabel("")
 
         self.footer_left.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.footer_center.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.footer_right.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        self.footer_left.setStyleSheet("border:none; color:#000; font-size:16pt; font-weight:600;")
-        self.footer_right.setStyleSheet("border:none; color:#00FF00; font-size:16pt; font-weight:600;")
+        self.footer_left.setStyleSheet("border:none; color:#000; font-size:14pt; font-weight:700;")
+        self.footer_center.setStyleSheet("border:none; color:#000; font-size:12pt; font-weight:600;")
+        self.footer_right.setStyleSheet("border:none; color:#000; font-size:12pt; font-weight:600;") # Changed from Green to Black
 
         fl.addWidget(self.footer_left, 1)
+        fl.addWidget(self.footer_center, 2)
         fl.addWidget(self.footer_right, 1)
 
         self.root.addWidget(self.footer_frame)
-
-        self._widgets = []
+        
         self._struts = []
-
         self._recompute_geometry()
+
+    def set_footer_data(self, crm_name, date_str):
+        """Set footer texts: CRM Left, Date Right."""
+        self.footer_left.setText(crm_name)
+        self.footer_center.setText("") 
+        self.footer_right.setText(date_str)
 
     def set_target_dpi(self, dpi: int):
         dpi = int(dpi) if dpi else 96
