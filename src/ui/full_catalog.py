@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor, QPixmap
 from src.logic.catalog_logic import CatalogLogic
 from src.ui.a4_renderer import A4PageRenderer
+from src.ui.settings import EmptyPagesDialog
 import sqlite3
 
 class FullCatalogUI(QWidget):
@@ -81,6 +82,7 @@ class FullCatalogUI(QWidget):
         # Page Management
         self.btn_add_page.clicked.connect(self.add_page)
         self.btn_remove_page.clicked.connect(self.remove_page)
+        self.btn_check_empty.clicked.connect(self.check_empty_pages)
         
         # Build & Export
         self.btn_build.clicked.connect(self.build_catalog)
@@ -230,9 +232,13 @@ class FullCatalogUI(QWidget):
 
         self.btn_remove_page = QPushButton("➖ Remove Page")
         self.btn_remove_page.setFixedHeight(36)
+        
+        self.btn_check_empty = QPushButton("🔍 Check Empty")
+        self.btn_check_empty.setFixedHeight(36)
 
         right_vbox.addWidget(self.btn_add_page)
         right_vbox.addWidget(self.btn_remove_page)
+        right_vbox.addWidget(self.btn_check_empty)
         
         main_h_layout.addWidget(right_panel_widget)
     
@@ -613,4 +619,27 @@ class FullCatalogUI(QWidget):
         if self.current_page_index > 0:
             self.current_page_index -= 1
             self.update_catalog_page()
+
+    def check_empty_pages(self):
+        if not self.catalog_db_path: return
+        
+        QMessageBox.information(self, "Checking", "Scanning for empty pages... This may take a moment.")
+        
+        empty_list = self.logic.find_empty_pages()
+        
+        dlg = EmptyPagesDialog(empty_list, self)
+        if dlg.exec():
+            # Delete if accepted
+            if empty_list:
+                reply = QMessageBox.question(self, "Confirm Delete", f"Are you sure you want to delete {len(empty_list)} pages?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if reply == QMessageBox.StandardButton.Yes:
+                    conn = sqlite3.connect(self.catalog_db_path)
+                    cursor = conn.cursor()
+                    for g, s, p in empty_list:
+                        cursor.execute("DELETE FROM catalog_pages WHERE group_name=? AND sg_sn=? AND page_no=?", (g, s, p))
+                    conn.commit()
+                    conn.close()
+                    
+                    self.refresh_catalog_data()
+                    QMessageBox.information(self, "Success", "Empty pages deleted.")
     

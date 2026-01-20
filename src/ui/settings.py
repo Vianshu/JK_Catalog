@@ -2,8 +2,50 @@ import json
 import os
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
-    QPushButton, QComboBox, QTableWidget, QMessageBox
+    QPushButton, QComboBox, QTableWidget, QTableWidgetItem, QMessageBox
 )
+
+class EmptyPagesDialog(QDialog):
+    def __init__(self, empty_pages, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Empty Pages Found")
+        self.resize(500, 400)
+        self.empty_pages = empty_pages
+        
+        layout = QVBoxLayout(self)
+        
+        if not empty_pages:
+            layout.addWidget(QLabel("No empty pages found!"))
+            ok_btn = QPushButton("OK")
+            ok_btn.clicked.connect(self.accept)
+            layout.addWidget(ok_btn)
+            return
+
+        layout.addWidget(QLabel(f"Found {len(empty_pages)} empty pages:"))
+        
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Group", "SubGroup (SN)", "Page No"])
+        self.table.setRowCount(len(empty_pages))
+        
+        for i, (g, s, p) in enumerate(empty_pages):
+            self.table.setItem(i, 0, QTableWidgetItem(str(g)))
+            self.table.setItem(i, 1, QTableWidgetItem(str(s)))
+            self.table.setItem(i, 2, QTableWidgetItem(str(p)))
+            
+        layout.addWidget(self.table)
+        
+        btn_box = QHBoxLayout()
+        self.btn_delete = QPushButton("Delete All Empty Pages")
+        self.btn_delete.setStyleSheet("background-color: #ffcccc; color: red;")
+        self.btn_close = QPushButton("Close")
+        
+        self.btn_delete.clicked.connect(self.accept) # Accept means delete
+        self.btn_close.clicked.connect(self.reject)
+        
+        btn_box.addWidget(self.btn_delete)
+        btn_box.addWidget(self.btn_close)
+        layout.addLayout(btn_box)
 from PyQt6.QtCore import Qt
 
 # --- CRM Dialog ---

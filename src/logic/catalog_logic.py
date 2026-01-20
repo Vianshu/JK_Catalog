@@ -485,3 +485,41 @@ class CatalogLogic:
         # Easier to handle in UI or pass DB path.
         # Returning -1 as placeholder if logic depends on UI list state.
         return -1
+
+    def find_empty_pages(self):
+        """Returns a list of (group_name, sg_sn, page_no) that are empty."""
+        if not self.catalog_db_path: return []
+        
+        empty_pages = []
+        try:
+            conn = sqlite3.connect(self.catalog_db_path)
+            cursor = conn.cursor()
+            
+            # Get all defined pages
+            cursor.execute("SELECT group_name, sg_sn, page_no FROM catalog_pages ORDER BY group_name, sg_sn, page_no")
+            rows = cursor.fetchall()
+            conn.close()
+            
+            # Organize by subgroup
+            pages_by_subgroup = {}
+            for g, s, p in rows:
+                key = (g, s)
+                if key not in pages_by_subgroup:
+                    pages_by_subgroup[key] = []
+                pages_by_subgroup[key].append(p)
+                
+            # Check each subgroup
+            for (g, s), pages in pages_by_subgroup.items():
+                layout_map = self.simulate_page_layout(g, s)
+                
+                for p in pages:
+                    # If page not in layout map -> Empty
+                    # OR if page in layout map but empty list -> Empty
+                    if p not in layout_map or not layout_map[p]:
+                        empty_pages.append((g, s, p))
+                        
+            return empty_pages
+            
+        except Exception as e:
+            print(f"Error finding empty pages: {e}")
+            return []
