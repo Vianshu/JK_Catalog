@@ -7,7 +7,8 @@ class CatalogLogic:
         self.catalog_db_path = None
         self.final_db_path = None
         # Derive calendar path (assuming 'data/calendar_data.db' relative to app root)
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) # backup code/
+        # Derive calendar path (assuming 'data/calendar_data.db' relative to app root)
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # backup code/
         self.calendar_db_path = os.path.join(base_dir, "data", "calendar_data.db")
         if not os.path.exists(self.calendar_db_path):
             # Fallback for testing environment

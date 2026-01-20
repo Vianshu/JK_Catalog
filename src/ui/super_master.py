@@ -11,7 +11,7 @@ class SuperMasterUI(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("SuperMasterMain") # QSS: #SuperMasterMain
-        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         self.project_root = self.base_dir 
         self.db_path = self.get_data_folder_db_path()
         self.setup_db()

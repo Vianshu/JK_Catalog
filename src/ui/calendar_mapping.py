@@ -9,7 +9,7 @@ class CalendarMappingUI(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         # Hamesha "Data" folder ke andar calendar_data.db dhundega
-        base_dir = os.path.dirname(os.path.abspath(__file__))
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         data_dir = os.path.join(base_dir, "Data")
         
         if not os.path.exists(data_dir):

@@ -10,24 +10,24 @@ from PyQt6.QtGui import QShortcut, QKeySequence
 import sqlite3
 import pandas as pd
 # UI Imports
-from company_login_ui import CompanyLoginUI
-from welcome import WelcomeUI
-from full_catalog import FullCatalogUI
-from row_data import RowDataUI
-from final_data import FinalDataUI
-from reports import ReportsUI
-from payment_list import PaymentListUI
-from price_list import PriceListUI
-from godown_list import GodownListUI
-from sales_chat import SalesChatUI
-from supp_payment import SuppPaymentUI
-from vat_pages import BalanceUI, StockUI
-from super_master import SuperMasterUI
-from pur_import import PurImportUI
-from int_cost_sheet import IntCostSheetUI
-from catalog_price_list import CatalogPriceListUI
-from cheque_list import ChequeListUI
-from calendar_mapping import CalendarMappingUI
+from src.ui.company_login_ui import CompanyLoginUI
+from src.ui.welcome import WelcomeUI
+from src.ui.full_catalog import FullCatalogUI
+from src.ui.row_data import RowDataUI
+from src.ui.final_data import FinalDataUI
+from src.ui.reports import ReportsUI
+from src.ui.payment_list import PaymentListUI
+from src.ui.price_list import PriceListUI
+from src.ui.godown_list import GodownListUI
+from src.ui.sales_chat import SalesChatUI
+from src.ui.supp_payment import SuppPaymentUI
+from src.ui.vat_pages import BalanceUI, StockUI
+from src.ui.super_master import SuperMasterUI
+from src.ui.pur_import import PurImportUI
+from src.ui.int_cost_sheet import IntCostSheetUI
+from src.ui.catalog_price_list import CatalogPriceListUI
+from src.ui.cheque_list import ChequeListUI
+from src.ui.calendar_mapping import CalendarMappingUI
 
 # Settings & Services
 from settings import (

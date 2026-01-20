@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap, QColor
 # Aapka original processor
-from data_processor import DataProcessor
+from src.logic.data_processor import DataProcessor
 
 class NumericTableWidgetItem(QTableWidgetItem):
     def __lt__(self, other):
@@ -243,7 +243,7 @@ class FinalDataUI(QWidget):
     def load_and_sync_data(self, company_name):
         try:
             # 1. Path Setup
-            base_dir = os.path.dirname(os.path.abspath(__file__))
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             vault_path = os.path.join(base_dir, "company_vault.json")
             with open(vault_path, 'r', encoding='utf-8') as f:
                 vault = json.load(f)

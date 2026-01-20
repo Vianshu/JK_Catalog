@@ -39,7 +39,7 @@ class RowDataUI(QWidget):
         """MainWindow द्वारा ट्रिगर किया जाने वाला डेटा लोडिंग फंक्शन"""
         try:
             # 1. पाथ रेजोल्यूशन
-            base_dir = os.path.dirname(os.path.abspath(__file__))
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             vault_path = os.path.join(base_dir, "company_vault.json")
 
             if not os.path.exists(vault_path):

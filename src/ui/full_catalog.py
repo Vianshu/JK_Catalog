@@ -8,8 +8,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor, QPixmap
-from catalog_logic import CatalogLogic
-from a4_renderer import A4PageRenderer
+from src.logic.catalog_logic import CatalogLogic
+from src.ui.a4_renderer import A4PageRenderer
 import sqlite3
 
 class FullCatalogUI(QWidget):
