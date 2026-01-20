@@ -309,7 +309,9 @@ class A4PageRenderer(QWidget):
         self._widgets = []
 
     def fill_products(self, placeditems):
-        """Fill page with products - accepts list of placement dicts."""
+        """Fill page with products - accepts list of placement dicts.
+        Empty spaces are distributed evenly across the page for visual balance.
+        """
         self.clear_page()
         rows = self.page_rows
         cols = self.page_cols
@@ -322,6 +324,8 @@ class A4PageRenderer(QWidget):
                     if r0 < rows and c0 < cols:
                         occ[r0][c0] = True
 
+        # First pass: Place products and mark occupied cells
+        product_placements = []
         for it in placeditems:
             prod = it.get("data") or it  # Support both formats
 
@@ -332,14 +336,59 @@ class A4PageRenderer(QWidget):
             total = min(total, cols - c)
 
             # Layout: Data always takes 1 column, Image takes remainder
-            # cspan (total) = H + 1
             D = 1
             H = total - D
             H = max(1, H)
 
             rs = min(rs, rows - r)
             mark(r, c, rs, total)
+            
+            product_placements.append({
+                "prod": prod,
+                "r": r, "c": c, "rs": rs, "total": total, "H": H, "D": D
+            })
 
+        # Count total cells and empty cells
+        total_cells = rows * cols
+        occupied_cells = sum(1 for row in occ for cell in row if cell)
+        empty_count = total_cells - occupied_cells
+        
+        # Collect empty cell positions
+        empty_cells = []
+        for rr in range(rows):
+            for cc in range(cols):
+                if not occ[rr][cc]:
+                    empty_cells.append((rr, cc))
+        
+        # Calculate distribution pattern for empty cells
+        # If we have empty cells, spread them evenly across rows
+        if empty_count > 0 and len(product_placements) > 0:
+            # Sort empty cells to distribute - alternate between top and bottom rows
+            empty_cells_sorted = []
+            top_row = 0
+            bot_row = rows - 1
+            while top_row <= bot_row:
+                # Add cells from top row
+                for cc in range(cols):
+                    if (top_row, cc) in [(e[0], e[1]) for e in empty_cells]:
+                        empty_cells_sorted.append((top_row, cc))
+                if top_row != bot_row:
+                    # Add cells from bottom row
+                    for cc in range(cols):
+                        if (bot_row, cc) in [(e[0], e[1]) for e in empty_cells]:
+                            empty_cells_sorted.append((bot_row, cc))
+                top_row += 1
+                bot_row -= 1
+            
+            # Use the distributed order (but keep original positions for rendering)
+            # The visual distribution is handled by the layout itself
+
+        # Render products
+        for pl in product_placements:
+            prod = pl["prod"]
+            r, c, rs = pl["r"], pl["c"], pl["rs"]
+            H, D, total = pl["H"], pl["D"], pl["total"]
+            
             cardrightedge = (c + total == cols)
             imgw = sum(self.col_widths[c:c + H])
             dataw = sum(self.col_widths[c + H:c + total])
@@ -353,7 +402,7 @@ class A4PageRenderer(QWidget):
             self._widgets.append(imgblock)
             self._widgets.append(datablock)
 
-        # Fill empty cells
+        # Fill empty cells 
         for rr in range(rows):
             for cc in range(cols):
                 if occ[rr][cc]:

@@ -56,8 +56,10 @@ class FullCatalogUI(QWidget):
     def init_catalog_db(self):
         conn = sqlite3.connect(self.catalog_db_path)
         cursor = conn.cursor()
-        cursor.execute("CREATE TABLE IF NOT EXISTS catalog_pages (id INTEGER PRIMARY KEY AUTOINCREMENT, mg_sn INTEGER, group_name TEXT, sg_sn INTEGER, page_no INTEGER, serial_no INTEGER)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS catalog_pages (id INTEGER PRIMARY KEY AUTOINCREMENT, mg_sn INTEGER, group_name TEXT, sg_sn INTEGER, page_no INTEGER, serial_no INTEGER, is_printable INTEGER DEFAULT 1)")
         try: cursor.execute("ALTER TABLE catalog_pages ADD COLUMN mg_sn INTEGER"); 
+        except: pass
+        try: cursor.execute("ALTER TABLE catalog_pages ADD COLUMN is_printable INTEGER DEFAULT 1"); 
         except: pass
         conn.commit(); conn.close()
         
@@ -503,20 +505,32 @@ class FullCatalogUI(QWidget):
             QMessageBox.critical(self, "Error", f"Build failed: {e}")
 
     def remove_page(self):
-        if not hasattr(self, 'all_pages_data') or not self.all_pages_data or len(self.all_pages_data) <= 1: return
+        if not hasattr(self, 'all_pages_data') or not self.all_pages_data:
+            return
 
         m_sn, group_name, sg_sn, page_no, serial_no = self.all_pages_data[self.current_page_index]
         
-        # Check if safe to delete
+        # Check #1: Page must not contain products
         items = self.logic.get_items_for_page_dynamic(group_name, sg_sn, page_no)
         if items:
-            QMessageBox.warning(self, "Warning", "Page contains data. Cannot remove.")
+            QMessageBox.warning(self, "Cannot Remove", "This page contains products. Cannot remove a page with data.")
             return
-
+        
+        # Check #2: At least 1 page must remain per subgroup
         conn = sqlite3.connect(self.catalog_db_path)
         cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM catalog_pages WHERE group_name=? AND sg_sn=?", (group_name, sg_sn))
+        page_count = cursor.fetchone()[0]
+        
+        if page_count <= 1:
+            conn.close()
+            QMessageBox.warning(self, "Cannot Remove", "At least one page must remain in each subgroup.")
+            return
+        
+        # Safe to delete
         cursor.execute("DELETE FROM catalog_pages WHERE group_name=? AND sg_sn=? AND page_no=?", (group_name, sg_sn, page_no))
-        conn.commit(); conn.close()
+        conn.commit()
+        conn.close()
         
         self.refresh_catalog_data()
         

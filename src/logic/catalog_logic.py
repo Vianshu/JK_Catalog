@@ -177,7 +177,17 @@ class CatalogLogic:
         layout_map = self.simulate_page_layout(group_name, sg_sn)
         return layout_map.get(relative_page, [])
 
-    def simulate_page_layout(self, group_name, sg_sn):
+    def simulate_page_layout(self, group_name, sg_sn, allow_backward=False, printable_pages=None):
+        """Simulate product layout across pages.
+        
+        Args:
+            group_name: Group name
+            sg_sn: Subgroup serial number
+            allow_backward: If True, products can move to earlier pages. 
+                           If False (default), products stay on same or later pages.
+            printable_pages: Set of page numbers that are marked for print/reflow.
+                            Products can only move backward to printable pages.
+        """
         products = self.get_sorted_products_from_db(group_name, sg_sn)
         layout_map = {}
         current_page = 1
@@ -191,6 +201,9 @@ class CatalogLogic:
             
         # State tracking: grids[page_num] = boolean matrix
         grids = {}
+        
+        # Product page tracking for stability (prevent backward movement)
+        product_page_tracking = {}
         
         # Initialize Page 1
         current_page = 1
@@ -291,29 +304,54 @@ class CatalogLogic:
             rspan = max(1, min(rspan, ROWS))
             cspan = max(1, min(cspan, COLS))  # COLS=4
             
-            # Smart Placement Logic: Try to fit in existing pages first (Gap Filling)
+            # Smart Placement Logic: Place product on page with MOST FREE SPACE
+            # But respect stability rules - don't move products backward unless allowed
             placed = False
             
-            # Iterate through all created pages to find a slot
-            # Note: layout_map keys aren't necessarily sequential if we had gaps, 
-            # but here we generate them sequentially.
-            sorted_pages = sorted(layout_map.keys())
+            def count_free_cells(g_state):
+                """Count unoccupied cells in a grid."""
+                return sum(1 for row in g_state for cell in row if not cell)
             
-            for page_num in sorted_pages:
+            # Get product's last known page (if any) from tracking
+            product_key = p_name.lower().strip() if p_name else ""
+            last_page = product_page_tracking.get(product_key, 0)
+            
+            # Find page with most free space that can fit this product
+            best_page = None
+            best_free_count = -1
+            best_slot = (-1, -1)
+            
+            for page_num in sorted(layout_map.keys()):
+                # Stability check: Don't move product backward unless allowed
+                if not allow_backward and page_num < last_page:
+                    # Can only go back if that page is marked for printing/reflow
+                    if printable_pages and page_num not in printable_pages:
+                        continue  # Skip this page - can't go backward
+                
                 grid = grids[page_num]
                 r, c = find_slot(grid, rspan, cspan)
                 if r != -1:
-                    # Found a slot!
-                    mark_slot(grid, r, c, rspan, cspan)
-                    layout_map[page_num].append({
-                        "data": p_data,
-                        "row": r,
-                        "col": c,
-                        "rspan": rspan,
-                        "cspan": cspan
-                    })
-                    placed = True
-                    break
+                    # Can fit here - check free space
+                    free_count = count_free_cells(grid)
+                    if free_count > best_free_count:
+                        best_free_count = free_count
+                        best_page = page_num
+                        best_slot = (r, c)
+            
+            if best_page is not None:
+                # Place on page with most space
+                r, c = best_slot
+                mark_slot(grids[best_page], r, c, rspan, cspan)
+                layout_map[best_page].append({
+                    "data": p_data,
+                    "row": r,
+                    "col": c,
+                    "rspan": rspan,
+                    "cspan": cspan
+                })
+                # Update tracking
+                product_page_tracking[product_key] = best_page
+                placed = True
             
             if not placed:
                 # Page full or no slot big enough found in any existing page
