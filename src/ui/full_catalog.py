@@ -113,25 +113,23 @@ class FullCatalogUI(QWidget):
             conn.commit()
             conn.close()
             
-            print(f"DEBUG: Updated {affected} rows with new size '{new_length}'")
+            # Invalidate cache after data change
+            self.logic.invalidate_cache()
             
             # Refresh current page to show updated layout
             self.refresh_catalog_data()
             
         except Exception as e:
-            print(f"ERROR updating length: {e}")
+            pass  # Silently handle errors
     
     def go_to_page(self):
         """Navigate to global page number entered in the input field."""
-        print(f"DEBUG go_to_page: Input='{self.page_input.text()}'")
         if not hasattr(self, 'all_pages_data') or not self.all_pages_data:
-            print("DEBUG go_to_page: No pages data")
             return
         
         try:
             target_page = int(self.page_input.text())
         except ValueError:
-            print("DEBUG go_to_page: Invalid input")
             return
         
         total_pages = len(self.all_pages_data)
@@ -140,7 +138,6 @@ class FullCatalogUI(QWidget):
         if 1 <= target_page <= total_pages:
             self.current_page_index = target_page - 1
             self.update_catalog_page()
-            print(f"DEBUG go_to_page: Navigated to global page {target_page}")
     
     def build_catalog(self):
         """Build/refresh the catalog."""
@@ -429,25 +426,18 @@ class FullCatalogUI(QWidget):
         if item: self.handle_item_click(item)
 
     def handle_item_click(self, item):
-        print(f"DEBUG handle_item_click: item={item.text()}")
-        try:
-            with open("ui_interaction.log", "a", encoding="utf-8") as f: f.write(f"Click: {item.text()}\n")
-        except: pass
         row = item.row()
         sn_item = self.index_table.item(row, 0)
         name_item = self.index_table.item(row, 1)
 
         if not sn_item or not name_item:
-            print("DEBUG: sn_item or name_item is None")
             return
 
         sn_text = sn_item.text()
         group_text = name_item.text().strip()
-        print(f"DEBUG: sn_text='{sn_text}', group_text='{group_text}'")
 
-        # 🔹 CASE 1: Sub Group click (->)
+        # CASE 1: Sub Group click (->)
         if "->" in sn_text:
-            print("DEBUG: Subgroup click detected")
             main_group = ""
             for r in range(row - 1, -1, -1):
                 if "->" not in self.index_table.item(r, 0).text():
@@ -455,20 +445,16 @@ class FullCatalogUI(QWidget):
                     break
 
             target_idx = self.find_page_index_by_subgroup(main_group, sn_text)
-            print(f"DEBUG: main_group='{main_group}', target_idx={target_idx}")
 
             if target_idx != -1:
                 self.current_page_index = target_idx
                 self.update_catalog_page()
-            return   # 🔴 VERY IMPORTANT
+            return
 
-        # 🔹 CASE 2: Main Group click → ONLY expand/collapse
-        print(f"DEBUG: Main Group click. expanded_groups={self.expanded_groups}")
+        # CASE 2: Main Group click → ONLY expand/collapse
         if group_text in self.expanded_groups:
-            print(f"DEBUG: Collapsing {group_text}")
             self.collapse_group(group_text)
         else:
-            print(f"DEBUG: Expanding {group_text}")
             self.expand_group(row, group_text)
 
     def add_page(self):
@@ -554,18 +540,9 @@ class FullCatalogUI(QWidget):
 
     def expand_group(self, row, group_name):
         try:
-            print(f"DEBUG expand_group: row={row}, group_name='{group_name}'")
-            try:
-                with open("ui_interaction.log", "a", encoding="utf-8") as f: f.write(f"Expanding: {group_name}\n")
-            except: pass
             sub_data = self.logic.get_subgroups(group_name)
-            print(f"DEBUG expand_group: sub_data={sub_data}")
-            try:
-                with open("ui_interaction.log", "a", encoding="utf-8") as f: f.write(f"Subgroups Found: {len(sub_data) if sub_data else 0}\n")
-            except: pass
             
             if not sub_data:
-                print("DEBUG expand_group: No sub_data returned!")
                 return
 
             self.index_table.blockSignals(True)
@@ -574,7 +551,6 @@ class FullCatalogUI(QWidget):
             for sg_sn, sg_name in reversed(sub_data):
                 next_row = row + 1
                 self.index_table.insertRow(next_row)
-                print(f"DEBUG expand_group: Inserted row {next_row} for sg_sn={sg_sn}, sg_name={sg_name}")
                 
                 # SN format: "      -> 01"
                 sn_str = f"      -> {str(sg_sn).zfill(2)}"
@@ -594,27 +570,22 @@ class FullCatalogUI(QWidget):
                 
                 self.index_table.setItem(next_row, 0, item_sn)
                 self.index_table.setItem(next_row, 1, item_name)
-                self.index_table.setRowHeight(next_row, 28)  # Ensure visible height
+                self.index_table.setRowHeight(next_row, 28)
             
             self.expanded_groups[group_name] = True
-            print(f"DEBUG expand_group: expanded_groups now={self.expanded_groups}")
             
             self.index_table.blockSignals(False)
             self.index_table.resizeColumnToContents(0)
             self.index_table.viewport().update()
             self.index_table.update()
-            print(f"DEBUG expand_group: Table row count now={self.index_table.rowCount()}")
         
         except Exception as e:
-            print(f"❌ UI Expand Error: {e}")
-            import traceback
-            traceback.print_exc()
             self.index_table.blockSignals(False)
             
     def collapse_group(self, group_name):
         self.index_table.blockSignals(True)
 
-        # Bottom से top scan (safe removal)
+        # Bottom to top scan (safe removal)
         for row in range(self.index_table.rowCount() - 1, -1, -1):
             item = self.index_table.item(row, 0)
             if item and item.data(Qt.ItemDataRole.UserRole) == group_name:
@@ -627,7 +598,6 @@ class FullCatalogUI(QWidget):
     
     def next_page(self):
         """Navigate to next page globally."""
-        print(f"DEBUG: Next Clicked. Current Index: {self.current_page_index}")
         if not hasattr(self, 'all_pages_data') or not self.all_pages_data:
             return
         

@@ -493,8 +493,7 @@ class A4PageRenderer(QWidget):
         
         if ok and new_val != current_val:
             # Emit signal with product name and new text value
-            self.length_changed.emit(product_name, new_val)
-            print(f"DEBUG: Size changed for '{product_name}' to '{new_val}'") 
+            self.length_changed.emit(product_name, new_val) 
     
 
     def _data_block(self, w: int, h: int, prod: dict, draw_right: bool) -> QFrame:

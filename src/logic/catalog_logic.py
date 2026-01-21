@@ -6,6 +6,11 @@ class CatalogLogic:
         self.db_path = db_path
         self.catalog_db_path = None
         self.final_db_path = None
+        
+        # Layout cache to avoid recomputing layouts repeatedly
+        self._layout_cache = {}
+        self._cache_valid = False
+        
         # Derive calendar path (assuming 'data/calendar_data.db' relative to app root)
         # Derive calendar path (assuming 'data/calendar_data.db' relative to app root)
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # backup code/
@@ -17,6 +22,14 @@ class CatalogLogic:
     def set_paths(self, catalog_db, final_db):
         self.catalog_db_path = catalog_db
         self.final_db_path = final_db
+        # Invalidate cache when paths change
+        self._layout_cache = {}
+        self._cache_valid = False
+    
+    def invalidate_cache(self):
+        """Call this when product data changes."""
+        self._layout_cache = {}
+        self._cache_valid = False
         
     def get_nepali_date(self, ad_date_str):
         """Convert AD date (DD-MM-YYYY) to BS date (DD/MM)."""
@@ -152,14 +165,25 @@ class CatalogLogic:
             print(f"Sync Pages Error: {e}")
 
     def get_items_for_page_dynamic(self, group_name, sg_sn, page_no):
-        # Calculate Relative Page Offset (Because DB has Absolute Page 11, but Layout generates 1, 2, 3)
+        """Get products for a specific page with caching."""
         if not self.catalog_db_path: return []
         
+        # Create cache key
+        cache_key = f"{group_name}|{sg_sn}"
+        
+        # Check cache first
+        if cache_key in self._layout_cache:
+            layout_map = self._layout_cache[cache_key]
+        else:
+            # Compute and cache
+            layout_map = self._compute_layout(group_name, sg_sn)
+            self._layout_cache[cache_key] = layout_map
+        
+        # Calculate relative page offset
         min_page = 1
         try:
             conn = sqlite3.connect(self.catalog_db_path)
             cursor = conn.cursor()
-            # Handle Group/SG types robustly just in case, but usually strict match ok here
             cursor.execute("""
                 SELECT MIN(page_no) FROM catalog_pages 
                 WHERE TRIM(group_name)=? COLLATE NOCASE 
@@ -168,17 +192,18 @@ class CatalogLogic:
             res = cursor.fetchone()
             conn.close()
             if res and res[0]: min_page = res[0]
-        except Exception as e:
-            print(f"Page Offset Error: {e}")
+        except:
+            pass
 
         relative_page = page_no - min_page + 1
-        print(f"DEBUG: ReqPage={page_no} Min={min_page} Rel={relative_page}")
-
-        layout_map = self.simulate_page_layout(group_name, sg_sn)
         return layout_map.get(relative_page, [])
+    
+    def _compute_layout(self, group_name, sg_sn, allow_backward=False, printable_pages=None):
+        """Internal method to compute layout without caching."""
+        return self._simulate_page_layout_internal(group_name, sg_sn, allow_backward, printable_pages)
 
-    def simulate_page_layout(self, group_name, sg_sn, allow_backward=False, printable_pages=None):
-        """Simulate product layout across pages.
+    def simulate_page_layout(self, group_name, sg_sn, allow_backward=False, printable_pages=None, use_cache=True):
+        """Simulate product layout across pages with optional caching.
         
         Args:
             group_name: Group name
@@ -187,7 +212,20 @@ class CatalogLogic:
                            If False (default), products stay on same or later pages.
             printable_pages: Set of page numbers that are marked for print/reflow.
                             Products can only move backward to printable pages.
+            use_cache: If True, use cached layout if available.
         """
+        if use_cache:
+            cache_key = f"{group_name}|{sg_sn}"
+            if cache_key in self._layout_cache:
+                return self._layout_cache[cache_key]
+            layout_map = self._simulate_page_layout_internal(group_name, sg_sn, allow_backward, printable_pages)
+            self._layout_cache[cache_key] = layout_map
+            return layout_map
+        else:
+            return self._simulate_page_layout_internal(group_name, sg_sn, allow_backward, printable_pages)
+    
+    def _simulate_page_layout_internal(self, group_name, sg_sn, allow_backward=False, printable_pages=None):
+        """Internal layout computation without caching."""
         products = self.get_sorted_products_from_db(group_name, sg_sn)
         layout_map = {}
         current_page = 1
@@ -385,10 +423,6 @@ class CatalogLogic:
             conn = sqlite3.connect(self.final_db_path)
             cursor = conn.cursor()
             
-            # --- DEBUGGING START ---
-            print(f"DEBUG FETCH: Group='{group_name}' SG_SN='{sg_sn}'")
-            # --- DEBUGGING END ---
-            
             # Robust Query: Handle Spaces, Case, and SG_SN
             # Fetch ALL fields needed by A4CatalogPage
             # True/False Logic: Include if NULL, empty, or not explicitly 'false'/'0'
@@ -412,14 +446,6 @@ class CatalogLogic:
             """, (group_name.strip(), sg_sn))
             
             rows = cursor.fetchall()
-            
-            if not rows:
-                 try:
-                     cursor.execute("SELECT COUNT(*) FROM catalog WHERE TRIM([Group])=? COLLATE NOCASE", (group_name.strip(),))
-                     g_count = cursor.fetchone()[0]
-                     print(f"DEBUG: Group '{group_name}' exists? Count={g_count}")
-                 except: pass
-
             conn.close()
             
             # Grouping Logic (Mimic catalog.py)
@@ -511,7 +537,6 @@ class CatalogLogic:
             return final_list
 
         except Exception as e:
-            print(f"DEBUG EXCEPTION IN FETCH: {e}")
             try:
                 with open("catalog_error.log", "a") as f: f.write(f"Fetch Error: {e}\n")
             except: pass
