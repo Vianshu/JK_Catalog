@@ -11,6 +11,7 @@ from PyQt6.QtGui import QFont, QColor, QPixmap
 from src.logic.catalog_logic import CatalogLogic
 from src.ui.a4_renderer import A4PageRenderer
 from src.ui.settings import EmptyPagesDialog
+from src.ui.print_export import PrintExportDialog
 import sqlite3
 
 class FullCatalogUI(QWidget):
@@ -147,8 +148,17 @@ class FullCatalogUI(QWidget):
         QMessageBox.information(self, "Build Complete", "Catalog has been built successfully!")
     
     def export_pdf(self):
-        """Export catalog to PDF."""
-        QMessageBox.information(self, "Export", "PDF Export feature coming soon!")
+        """Open print/export dialog with preview and PDF options."""
+        if not self.catalog_db_path:
+            QMessageBox.warning(self, "No Data", "Please load a company first.")
+            return
+        
+        if not hasattr(self, 'all_pages_data') or not self.all_pages_data:
+            QMessageBox.warning(self, "No Pages", "No catalog pages available. Please build the catalog first.")
+            return
+        
+        dialog = PrintExportDialog(self, self)
+        dialog.exec()
     
     def setup_ui(self):
         main_h_layout = QHBoxLayout(self)
