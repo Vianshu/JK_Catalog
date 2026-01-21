@@ -14,8 +14,9 @@ from PyQt6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 A4_WIDTH_MM = 210.0
 A4_HEIGHT_MM = 297.0
 
-# Print DPI for consistent output
-PRINT_DPI = 300
+# Use screen DPI for rendering - printer will scale appropriately
+# This ensures fonts look the same as on screen
+SCREEN_DPI = 96
 
 
 class PrintExportDialog(QDialog):
@@ -151,10 +152,10 @@ class PrintExportDialog(QDialog):
         return page_indices
     
     def create_print_renderer(self):
-        """Create a renderer configured for print output at 300 DPI."""
+        """Create a renderer configured for print output using screen DPI for consistency."""
         from src.ui.a4_renderer import A4PageRenderer
         renderer = A4PageRenderer()
-        renderer.set_target_dpi(PRINT_DPI)
+        renderer.set_target_dpi(SCREEN_DPI)  # Use screen DPI so fonts match display
         return renderer
     
     def render_page_to_painter(self, painter, page_index, renderer):
@@ -208,7 +209,6 @@ class PrintExportDialog(QDialog):
         
         # Create printer for preview
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-        printer.setResolution(PRINT_DPI)
         
         # Set A4 page size explicitly
         page_size = QPageSize(QPageSize.PageSizeId.A4)
@@ -295,7 +295,6 @@ class PrintExportDialog(QDialog):
             printer = QPrinter(QPrinter.PrinterMode.HighResolution)
             printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
             printer.setOutputFileName(file_path)
-            printer.setResolution(PRINT_DPI)
             
             # Set A4 page size explicitly
             page_size = QPageSize(QPageSize.PageSizeId.A4)
