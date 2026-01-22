@@ -347,6 +347,8 @@ class FullCatalogUI(QWidget):
         right_vbox.addWidget(self.btn_build)
         right_vbox.addWidget(self.btn_export)
         
+        right_vbox.addStretch() # Push Page Mgmt to bottom
+        
         # Page Management
         mgmt_box = QGroupBox("Page Mgmt")
         mgmt_box.setObjectName("PageMgmtBox")
@@ -365,8 +367,7 @@ class FullCatalogUI(QWidget):
         mgmt_layout.addWidget(self.btn_remove_page)
         mgmt_layout.addWidget(self.btn_check_empty)
         
-        right_vbox.addWidget(mgmt_box)
-        right_vbox.addStretch() 
+        right_vbox.addWidget(mgmt_box) 
         
         main_h_layout.addWidget(right_panel_widget)
     
