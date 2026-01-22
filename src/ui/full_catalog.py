@@ -4,7 +4,8 @@ import os  # Added global import
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFrame, 
     QPushButton, QLineEdit, QLabel, QTableWidget, 
-    QTableWidgetItem, QHeaderView, QGridLayout, QMessageBox, QScrollArea, QSizePolicy
+    QTableWidgetItem, QHeaderView, QGridLayout, QMessageBox, QScrollArea, QSizePolicy,
+    QStyle, QGroupBox
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor, QPixmap
@@ -251,11 +252,12 @@ class FullCatalogUI(QWidget):
         # --- 1. LEFT SIDE: Index List ---
         index_container = QVBoxLayout()
         self.index_table = QTableWidget()
-        self.index_table.setFixedWidth(320)
+        self.index_table.setObjectName("CatalogIndexTable")  # For CSS
+        self.index_table.setFixedWidth(260)  # Reduced from 320
         self.index_table.setColumnCount(2)
         self.index_table.setHorizontalHeaderLabels(["SN", "NAME"])
         
-        # >>> यह लाइन जिससे EDIT होना बंद हो जाएगा <<<
+        # Disable editing
         self.index_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         
         header = self.index_table.horizontalHeader()
@@ -272,6 +274,7 @@ class FullCatalogUI(QWidget):
         page_v_center_layout = QVBoxLayout()
         
         self.scroll_area = QScrollArea()
+        self.scroll_area.setObjectName("CatalogScrollArea")
         self.scroll_area.setStyleSheet("background-color: #e0e0e0;")
         self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
@@ -287,23 +290,40 @@ class FullCatalogUI(QWidget):
 
         # --- 3. RIGHT PANEL (Navigation & Buttons) ---
         right_panel_widget = QWidget()
-        right_panel_widget.setFixedWidth(160)
+        right_panel_widget.setFixedWidth(140)  # Reduced from 160
         right_vbox = QVBoxLayout(right_panel_widget)
+        right_vbox.setSpacing(15)
+        right_vbox.setContentsMargins(0, 0, 0, 0)
         
         # Navigation Box
         nav_box = QFrame()
+        nav_box.setObjectName("CatalogNavBox")
         nav_l = QHBoxLayout(nav_box)
-        nav_l.setContentsMargins(0, 0, 0, 0)
+        nav_l.setContentsMargins(2, 2, 2, 2)
+        nav_l.setSpacing(5)
         
-        self.btn_prev = QPushButton("⏴")
-        self.btn_next = QPushButton("⏵")
+        # Icons for Prev/Next
+        icon_prev = self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowLeft)
+        icon_next = self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowRight)
+        
+        self.btn_prev = QPushButton()
+        self.btn_prev.setIcon(icon_prev)
+        self.btn_prev.setObjectName("CatalogPrevBtn")
+        self.btn_prev.setToolTip("Previous Page")
+        
+        self.btn_next = QPushButton()
+        self.btn_next.setIcon(icon_next)
+        self.btn_next.setObjectName("CatalogNextBtn")
+        self.btn_next.setToolTip("Next Page")
         
         self.page_input = QLineEdit("1")
-        self.page_input.setFixedWidth(35)
+        self.page_input.setObjectName("CatalogPageInput")
+        self.page_input.setFixedWidth(40)
         self.page_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_input.returnPressed.connect(self.go_to_page)
         
-        # ERROR YAHAN THA: total_lbl ko class variable banana zaroori hai
-        self.total_lbl = QLabel("/1") 
+        self.total_lbl = QLabel("/1")
+        self.total_lbl.setObjectName("CatalogTotalLabel")
         
         nav_l.addWidget(self.btn_prev)
         nav_l.addWidget(self.page_input)
@@ -314,26 +334,37 @@ class FullCatalogUI(QWidget):
         
         # Buttons
         self.btn_build = QPushButton("🔨 Build")
+        self.btn_build.setObjectName("CatalogBuildBtn")
         self.btn_build.setFixedHeight(40)
-        self.btn_export = QPushButton("📄 Export PDF")
+        
+        self.btn_export = QPushButton("📄 PDF")
+        self.btn_export.setObjectName("CatalogExportBtn")
+        self.btn_export.setToolTip("Export to PDF")
         self.btn_export.setFixedHeight(40)
         
         right_vbox.addWidget(self.btn_build)
         right_vbox.addWidget(self.btn_export)
-        right_vbox.addStretch()
         
-        self.btn_add_page = QPushButton("➕ Add Page")
-        self.btn_add_page.setFixedHeight(36)
-
-        self.btn_remove_page = QPushButton("➖ Remove Page")
-        self.btn_remove_page.setFixedHeight(36)
+        # Page Management
+        mgmt_box = QGroupBox("Page Mgmt")
+        mgmt_box.setObjectName("PageMgmtBox")
+        mgmt_layout = QVBoxLayout(mgmt_box)
+        mgmt_layout.setSpacing(10)
+        mgmt_layout.setContentsMargins(5, 10, 5, 5)
         
-        self.btn_check_empty = QPushButton("🔍 Check Empty")
-        self.btn_check_empty.setFixedHeight(36)
-
-        right_vbox.addWidget(self.btn_add_page)
-        right_vbox.addWidget(self.btn_remove_page)
-        right_vbox.addWidget(self.btn_check_empty)
+        self.btn_add_page = QPushButton("➕ Page")
+        self.btn_add_page.setObjectName("BtnAddPage")
+        self.btn_remove_page = QPushButton("➖ Page")
+        self.btn_remove_page.setObjectName("BtnRemovePage")
+        self.btn_check_empty = QPushButton("🧹 Clean")
+        self.btn_check_empty.setObjectName("BtnCleanPage")
+        
+        mgmt_layout.addWidget(self.btn_add_page)
+        mgmt_layout.addWidget(self.btn_remove_page)
+        mgmt_layout.addWidget(self.btn_check_empty)
+        
+        right_vbox.addWidget(mgmt_box)
+        right_vbox.addStretch() 
         
         main_h_layout.addWidget(right_panel_widget)
     

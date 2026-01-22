@@ -37,7 +37,7 @@ class EmptyPagesDialog(QDialog):
         
         btn_box = QHBoxLayout()
         self.btn_delete = QPushButton("Delete All Empty Pages")
-        self.btn_delete.setStyleSheet("background-color: #ffcccc; color: red;")
+        self.btn_delete.setObjectName("BtnDeleteEmptyPages")
         self.btn_close = QPushButton("Close")
         
         self.btn_delete.clicked.connect(self.accept) # Accept means delete

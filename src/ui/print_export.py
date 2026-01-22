@@ -95,11 +95,11 @@ class PrintExportDialog(QDialog):
         
         # Info Section
         info_frame = QFrame()
-        info_frame.setStyleSheet("background: #f0f0f0; padding: 10px; border-radius: 5px;")
+        info_frame.setObjectName("PrintInfoFrame")
         info_layout = QVBoxLayout(info_frame)
         
         self.lbl_info = QLabel("Total Pages: 0")
-        self.lbl_info.setStyleSheet("font-size: 14pt; font-weight: bold;")
+        self.lbl_info.setObjectName("PrintInfoLabel")
         info_layout.addWidget(self.lbl_info)
         
         self.lbl_size = QLabel("Output Size: A4 (210mm × 297mm)")
