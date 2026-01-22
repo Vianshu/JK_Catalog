@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QSize, QMarginsF, QThread, pyqtSignal
 from PyQt6.QtGui import QPainter, QPageSize, QPageLayout
 from PyQt6.QtPrintSupport import QPrinter, QPrintPreviewDialog
+from src.ui.settings import load_crm_list
 
 # Fixed A4 dimensions in mm (ISO standard)
 A4_WIDTH_MM = 210.0
@@ -27,6 +28,9 @@ class PrintExportDialog(QDialog):
         self.catalog_ui = catalog_ui
         self.setWindowTitle("Print / Export Catalog")
         self.setMinimumSize(500, 400)
+        
+        # Get company path for CRM list
+        self.company_path = getattr(catalog_ui, 'company_path', '') or ''
         
         self.setup_ui()
         self.update_page_info()
@@ -57,6 +61,27 @@ class PrintExportDialog(QDialog):
         
         range_layout.addStretch()
         layout.addWidget(range_group)
+        
+        # CRM Selection Section
+        crm_group = QGroupBox("CRM Name (Footer)")
+        crm_layout = QHBoxLayout(crm_group)
+        
+        crm_layout.addWidget(QLabel("Select CRM:"))
+        self.crm_combo = QComboBox()
+        self.crm_combo.setMinimumWidth(200)
+        
+        # Add default option
+        self.crm_combo.addItem("CRM_NAME (Default)")
+        
+        # Load CRM list from company path
+        crm_path = os.path.join(self.company_path, "crm_data.json") if self.company_path else "crm_data.json"
+        crm_list = load_crm_list(crm_path)
+        for crm in crm_list:
+            self.crm_combo.addItem(crm)
+        
+        crm_layout.addWidget(self.crm_combo)
+        crm_layout.addStretch()
+        layout.addWidget(crm_group)
         
         # Options Section
         options_group = QGroupBox("Options")
@@ -172,8 +197,9 @@ class PrintExportDialog(QDialog):
         products = self.catalog_ui.logic.get_items_for_page_dynamic(group_name, sg_sn, page_no)
         renderer.fill_products(products if products else [])
         
-        # Set footer
-        crm_name = "CRM_NAME"  # TODO: Get from settings
+        # Set footer - get CRM name from selection
+        selected_crm = self.crm_combo.currentText()
+        crm_name = "CRM_NAME" if selected_crm == "CRM_NAME (Default)" else selected_crm
         footer_date = ""
         if products:
             from datetime import datetime
@@ -201,10 +227,42 @@ class PrintExportDialog(QDialog):
         return True
     
     def show_print_preview(self):
-        """Show print preview dialog."""
+        """Show print preview dialog with loading indicator."""
         page_indices = self.get_page_range()
         if not page_indices:
             QMessageBox.warning(self, "No Pages", "No pages available to print.")
+            return
+        
+        # Show loading dialog
+        from PyQt6.QtWidgets import QProgressDialog, QApplication
+        from PyQt6.QtCore import QTimer
+        
+        progress = QProgressDialog("Preparing catalog preview...", None, 0, len(page_indices), self)
+        progress.setWindowTitle("Loading Preview")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        progress.show()
+        QApplication.processEvents()
+        
+        # Pre-calculate page data to check for issues
+        valid_pages = []
+        for i, idx in enumerate(page_indices):
+            progress.setValue(i)
+            progress.setLabelText(f"Preparing page {i+1} of {len(page_indices)}...")
+            QApplication.processEvents()
+            
+            if progress.wasCanceled():
+                return
+            
+            if idx < len(self.catalog_ui.all_pages_data):
+                valid_pages.append(idx)
+        
+        progress.setValue(len(page_indices))
+        progress.close()
+        
+        if not valid_pages:
+            QMessageBox.warning(self, "No Valid Pages", "No valid pages to preview.")
             return
         
         # Create printer for preview
@@ -220,11 +278,12 @@ class PrintExportDialog(QDialog):
         printer.setPageLayout(page_layout)
         
         # Store page indices for the preview handler
-        self._preview_pages = page_indices
+        self._preview_pages = valid_pages
         
         # Create and show preview dialog
         preview = QPrintPreviewDialog(printer, self)
-        preview.setWindowTitle("Print Preview - Catalog")
+        preview.setWindowTitle(f"Print Preview - Catalog ({len(valid_pages)} pages)")
+        preview.resize(900, 700)
         preview.paintRequested.connect(self.handle_paint_request)
         preview.exec()
     

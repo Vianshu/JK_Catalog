@@ -10,7 +10,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor, QPixmap
 from src.logic.catalog_logic import CatalogLogic
 from src.ui.a4_renderer import A4PageRenderer
-from src.ui.settings import EmptyPagesDialog
+from src.ui.settings import EmptyPagesDialog, add_pages_to_all_crms
 from src.ui.print_export import PrintExportDialog
 import sqlite3
 
@@ -100,14 +100,17 @@ class FullCatalogUI(QWidget):
             return
         
         try:
+            import datetime
+            now = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+            
             conn = sqlite3.connect(self.final_db_path)
             cursor = conn.cursor()
             
-            # Update length in catalog table (as text to support H|V)
+            # Update length AND Update_date in catalog table
             cursor.execute("""
-                UPDATE catalog SET [Lenth] = ? 
+                UPDATE catalog SET [Lenth] = ?, [Update_date] = ?
                 WHERE [Product Name] = ? OR [Item_Name] = ?
-            """, (str(new_length), product_name, product_name))
+            """, (str(new_length), now, product_name, product_name))
             
             affected = cursor.rowcount
             conn.commit()
@@ -140,9 +143,92 @@ class FullCatalogUI(QWidget):
             self.update_catalog_page()
     
     def build_catalog(self):
-        """Build/refresh the catalog."""
-        self.refresh_catalog_data()
-        QMessageBox.information(self, "Build Complete", "Catalog has been built successfully!")
+        """Build/refresh the catalog with smart page change detection.
+        
+        Uses page content snapshots to detect:
+        - Products added to a page
+        - Products removed from a page  
+        - Product positions shifted (layout changes)
+        - Product data changed (MRP, image, sizes)
+        
+        Only truly changed pages are added to CRM pending lists.
+        """
+        if not self.catalog_db_path: 
+            QMessageBox.warning(self, "No Data", "Please load a company first.")
+            return
+        
+        # Show loading dialog
+        from PyQt6.QtWidgets import QProgressDialog, QApplication
+        
+        progress = QProgressDialog("Building catalog...", None, 0, 5, self)
+        progress.setWindowTitle("Building Catalog")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setMinimumWidth(300)
+        progress.show()
+        QApplication.processEvents()
+            
+        try:
+            import datetime
+            
+            # Step 1: Sync pages
+            progress.setLabelText("Step 1/5: Syncing pages...")
+            progress.setValue(1)
+            QApplication.processEvents()
+            self.logic.sync_pages_with_content()
+            
+            # Step 2: Detect changes
+            progress.setLabelText("Step 2/5: Detecting changes...")
+            progress.setValue(2)
+            QApplication.processEvents()
+            changed_pages = self.logic.detect_changed_pages()
+            print(f"[BUILD] Changed pages: {changed_pages}")
+            
+            affected_count = len(changed_pages) if changed_pages else 0
+            crm_updated = 0
+            
+            # Step 3: Update CRMs
+            progress.setLabelText("Step 3/5: Updating CRMs...")
+            progress.setValue(3)
+            QApplication.processEvents()
+            if changed_pages and hasattr(self, 'company_path') and self.company_path:
+                crm_updated = add_pages_to_all_crms(list(changed_pages), self.company_path)
+            
+            # Step 4: Save snapshots
+            progress.setLabelText("Step 4/5: Saving snapshots...")
+            progress.setValue(4)
+            QApplication.processEvents()
+            self.logic.save_all_page_snapshots()
+            
+            # Step 5: Finalize
+            progress.setLabelText("Step 5/5: Finalizing...")
+            progress.setValue(5)
+            QApplication.processEvents()
+            
+            now = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+            self.logic.save_last_build_date(now)
+            self.logic.invalidate_cache()
+            self.refresh_catalog_data()
+            
+            progress.close()
+            
+            # Show result
+            msg = f"Catalog built successfully!\n\n"
+            msg += f"• Changed Pages: {affected_count}\n"
+            msg += f"• CRMs Updated: {crm_updated}\n"
+            if affected_count > 0:
+                sample = list(changed_pages)[:5]
+                msg += f"• Sample: {', '.join(map(str, sample))}"
+                if affected_count > 5:
+                    msg += f" (+{affected_count - 5} more)"
+            QMessageBox.information(self, "Build Complete", msg)
+            
+        except Exception as e:
+            progress.close()
+            QMessageBox.critical(self, "Build Error", f"Error during build: {e}")
+            import traceback
+            traceback.print_exc()
+            self.refresh_catalog_data()
     
     def export_pdf(self):
         """Open print/export dialog with preview and PDF options."""
@@ -494,11 +580,35 @@ class FullCatalogUI(QWidget):
     def handle_build(self):
         if not self.catalog_db_path: return
         try:
+            import datetime
+            
+            # 1. Get last build date
+            last_build = self.logic.get_last_build_date()
+            
+            # 2. Sync pages with content (existing logic)
             self.logic.sync_pages_with_content()
+            
+            # 3. Detect changed products since last build
+            changed_products = self.logic.get_changed_products_since(last_build)
+            
+            # 4. Find which pages are affected
+            if changed_products:
+                affected_pages = self.logic.find_pages_for_products(changed_products)
+                
+                # 5. Add affected pages to all CRMs (silent)
+                if affected_pages and hasattr(self, 'company_path') and self.company_path:
+                    add_pages_to_all_crms(list(affected_pages), self.company_path)
+            
+            # 6. Update last build timestamp
+            now = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+            self.logic.save_last_build_date(now)
+            
+            # 7. Invalidate cache and refresh
+            self.logic.invalidate_cache()
             self.refresh_catalog_data()
-            QMessageBox.information(self, "Success", "Catalog built successfully!\nPages synced with content.")
+            
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Build failed: {e}")
+            pass  # Silent error handling
 
     def remove_page(self):
         if not hasattr(self, 'all_pages_data') or not self.all_pages_data:

@@ -3,11 +3,17 @@ import json
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
     QTableWidget, QTableWidgetItem, QHeaderView, QLabel,
-    QDialog, QComboBox, QListWidget, QFileDialog, QMessageBox
+    QDialog, QComboBox, QListWidget, QFileDialog, QMessageBox, QProgressDialog
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtPrintSupport import QPrintDialog, QPrinter 
+from PyQt6.QtCore import Qt, QMarginsF
+from PyQt6.QtPrintSupport import QPrintDialog, QPrinter, QPrintPreviewDialog
+from PyQt6.QtGui import QPainter, QPageSize, QPageLayout
 from src.ui.settings import load_crm_list, load_report_json, save_report_json
+from src.logic.catalog_logic import CatalogLogic
+from src.ui.a4_renderer import A4PageRenderer
+
+# Use screen DPI for consistency with full catalog
+SCREEN_DPI = 96
 
 class PrintDownloadDialog(QDialog):
     def __init__(self, mode="Print", parent=None, report_data=None, crm_path="crm_data.json"):
@@ -30,7 +36,7 @@ class PrintDownloadDialog(QDialog):
         self.crm_combo.currentTextChanged.connect(self.load_pending_pages)
         layout.addWidget(self.crm_combo)
 
-        layout.addWidget(QLabel("<b>Pending Pages:</b>"))
+        layout.addWidget(QLabel("<b>Pending Pages (Serial Nos):</b>"))
         self.pages_list = QListWidget()
         self.pages_list.setObjectName("PendingPagesList")
         layout.addWidget(self.pages_list)
@@ -55,7 +61,8 @@ class PrintDownloadDialog(QDialog):
     def load_pending_pages(self):
         self.pages_list.clear()
         crm_name = self.crm_combo.currentText()
-        pending = self.report_data.get(crm_name, {}).get("pending", [str(i) for i in range(1, 13)])
+        # Default to empty list, not 1-12
+        pending = self.report_data.get(crm_name, {}).get("pending", [])
         self.pages_list.addItems(pending)
 
 class ReportsUI(QWidget):
@@ -63,6 +70,7 @@ class ReportsUI(QWidget):
         super().__init__()
         self.current_company_path = "" 
         self.download_path = "" 
+        self.logic = None
         self.init_ui()
         
     def init_ui(self):
@@ -112,6 +120,19 @@ class ReportsUI(QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
         main_layout.addWidget(self.table)
+        
+    def ensure_logic_init(self):
+        if not self.current_company_path: return False
+        
+        catalog_db = os.path.join(self.current_company_path, "catalog.db")
+        final_db = os.path.join(self.current_company_path, "final_data.db")
+        
+        if not self.logic:
+            self.logic = CatalogLogic(catalog_db) # init with catalog db as primary for now
+            self.logic.set_paths(catalog_db, final_db)
+        else:
+            self.logic.set_paths(catalog_db, final_db)
+        return True
 
     def get_report_path(self):
         if self.current_company_path:
@@ -125,6 +146,10 @@ class ReportsUI(QWidget):
             QMessageBox.information(self, "Success", f"Download location set to:\n{path}")
 
     def open_dialog(self, mode):
+        if not self.ensure_logic_init():
+            QMessageBox.warning(self, "Error", "Please load a company first.")
+            return
+
         current_report_data = load_report_json(self.get_report_path())
         crm_path = os.path.join(self.current_company_path, "crm_data.json") if self.current_company_path else "crm_data.json"
         
@@ -132,27 +157,187 @@ class ReportsUI(QWidget):
         
         if dlg.exec():
             crm_name = dlg.crm_combo.currentText()
-            if mode == "Print":
-                self.handle_actual_print()
-            elif mode == "Download" and not self.download_path:
-                self.set_location()
             
-            self.update_pages_logic(crm_name)
+            # Get pending pages and sort them by serial number
+            pending_serials = current_report_data.get(crm_name, {}).get("pending", [])
+            if not pending_serials:
+                QMessageBox.information(self, "Info", "No pending pages to process.")
+                return
+            
+            # Sort pages by serial number (numeric order)
+            try:
+                pending_serials = sorted(pending_serials, key=lambda x: int(x) if str(x).isdigit() else float('inf'))
+            except:
+                pending_serials = sorted(pending_serials)  # Fallback to string sort
 
-    def handle_actual_print(self):
-        printer = QPrinter()
-        print_dialog = QPrintDialog(printer, self)
-        if print_dialog.exec():
-            # Actual print logic would go here
-            pass
+            success = False
+            if mode == "Print":
+                self._current_crm_name = crm_name  # Store for print preview
+                success = self.handle_actual_print(pending_serials)
+            elif mode == "Download":
+                if not self.download_path:
+                    self.set_location()
+                if self.download_path:
+                    success = self.handle_actual_download(pending_serials, crm_name)
+            
+            if success:
+                self.update_pages_logic(crm_name)
+    
+    def render_page_to_painter(self, painter, serial_no, renderer):
+        """Render a single page by serial number."""
+        page_info = self.logic.get_page_info_by_serial(serial_no)
+        if not page_info:
+            return False
+            
+        group_name = page_info["group_name"]
+        sg_sn = page_info["sg_sn"]
+        page_no = page_info["page_no"]
+        
+        # Set header
+        renderer.set_header_data(group_name, serial_no)
+        
+        # Get products
+        products = self.logic.get_items_for_page_dynamic(group_name, sg_sn, page_no)
+        renderer.fill_products(products if products else [])
+        
+        # Set footer (simplified)
+        renderer.set_footer_data("CRM_NAME", "") # Todo pass real CRM Name?
+        
+        renderer.render(painter)
+        return True
+
+    def handle_actual_print(self, serial_numbers):
+        """Show print preview dialog with the pending pages, similar to catalog tab."""
+        
+        # Store serial numbers for the paint callback
+        self._print_serial_numbers = serial_numbers
+        self._print_crm_name = getattr(self, '_current_crm_name', 'CRM_NAME')
+        
+        # Create printer with A4 settings
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        page_size = QPageSize(QPageSize.PageSizeId.A4)
+        printer.setPageSize(page_size)
+        margins = QMarginsF(0, 0, 0, 0)
+        printer.setPageLayout(QPageLayout(page_size, QPageLayout.Orientation.Portrait, margins))
+        
+        # Create print preview dialog
+        preview = QPrintPreviewDialog(printer, self)
+        preview.setWindowTitle("Print Preview - Pending Pages")
+        preview.resize(900, 700)
+        
+        # Connect paint request
+        preview.paintRequested.connect(self._handle_preview_paint)
+        
+        # Show preview - user can print from there
+        if preview.exec():
+            return True
+        return False
+    
+    def _handle_preview_paint(self, printer):
+        """Paint callback for print preview - renders all pending pages."""
+        serial_numbers = getattr(self, '_print_serial_numbers', [])
+        crm_name = getattr(self, '_print_crm_name', 'CRM_NAME')
+        
+        if not serial_numbers:
+            return
+        
+        painter = QPainter()
+        if not painter.begin(printer):
+            return
+        
+        renderer = A4PageRenderer()
+        renderer.set_target_dpi(SCREEN_DPI)
+        
+        for i, serial in enumerate(serial_numbers):
+            if i > 0:
+                printer.newPage()
+            
+            # Calculate scaling
+            page_rect = printer.pageRect(QPrinter.Unit.DevicePixel)
+            scale_x = page_rect.width() / renderer.width()
+            scale_y = page_rect.height() / renderer.height()
+            scale = min(scale_x, scale_y)
+            
+            painter.save()
+            painter.scale(scale, scale)
+            
+            # Render the page
+            page_info = self.logic.get_page_info_by_serial(serial)
+            if page_info:
+                group_name = page_info["group_name"]
+                sg_sn = page_info["sg_sn"]
+                page_no = page_info["page_no"]
+                
+                renderer.set_header_data(group_name, serial)
+                products = self.logic.get_items_for_page_dynamic(group_name, sg_sn, page_no)
+                renderer.fill_products(products if products else [])
+                renderer.set_footer_data(crm_name, "")
+                renderer.render(painter)
+            
+            painter.restore()
+        
+        painter.end()
+
+    def handle_actual_download(self, serial_numbers, crm_name):
+        filename = f"{crm_name}_Update.pdf"
+        file_path = os.path.join(self.download_path, filename)
+        
+        try:
+            printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+            printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+            printer.setOutputFileName(file_path)
+            
+            # Set A4 properties
+            page_size = QPageSize(QPageSize.PageSizeId.A4)
+            printer.setPageSize(page_size)
+            margins = QMarginsF(0, 0, 0, 0)
+            printer.setPageLayout(QPageLayout(page_size, QPageLayout.Orientation.Portrait, margins))
+            
+            painter = QPainter()
+            if not painter.begin(printer):
+                 return False
+
+            renderer = A4PageRenderer()
+            renderer.set_target_dpi(96)
+
+            progress = QProgressDialog("Exporting Pages...", "Cancel", 0, len(serial_numbers), self)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            
+            for i, serial in enumerate(serial_numbers):
+                if progress.wasCanceled():
+                    painter.end()
+                    return False
+                    
+                if i > 0: printer.newPage()
+                
+                # Scaling logic
+                page_rect = printer.pageRect(QPrinter.Unit.DevicePixel)
+                scale_x = page_rect.width() / renderer.width()
+                scale_y = page_rect.height() / renderer.height()
+                scale = min(scale_x, scale_y)
+                
+                painter.save()
+                painter.scale(scale, scale)
+                self.render_page_to_painter(painter, serial, renderer)
+                painter.restore()
+                
+                progress.setValue(i + 1)
+            
+            painter.end()
+            QMessageBox.information(self, "Export Complete", f"Saved to {file_path}")
+            return True
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", str(e))
+            return False
 
     def update_pages_logic(self, crm_name):
         path = self.get_report_path()
         all_data = load_report_json(path)
         
         if crm_name not in all_data:
-            all_data[crm_name] = {"pending": [str(i) for i in range(1, 13)], "recent": []}
+            all_data[crm_name] = {"pending": [], "recent": []}
             
+        # Move pending to recent
         all_data[crm_name]["recent"] = all_data[crm_name]["pending"]
         all_data[crm_name]["pending"] = []
         

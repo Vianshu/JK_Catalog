@@ -60,13 +60,13 @@ class FinalDataUI(QWidget):
         # --- RIGHT SIDE PANEL (Updated Layout) ---
         side_panel = QWidget()
         side_layout = QVBoxLayout(side_panel)
-        side_layout.setContentsMargins(0, 0, 0, 0)
-        # side_layout.setSpacing(10)
+        side_layout.setContentsMargins(5, 5, 5, 5)
+        side_layout.setSpacing(8)
 
         # 1. Sync Time (Top)
         self.sync_lbl = QLabel("Last Sync: N/A")
         self.sync_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.sync_lbl.setStyleSheet("font-weight: bold; color: #555;")
+        self.sync_lbl.setStyleSheet("font-weight: bold; color: #555; padding: 5px;")
         side_layout.addWidget(self.sync_lbl)
 
         # 2. Search Bar
@@ -75,28 +75,120 @@ class FinalDataUI(QWidget):
         self.search_input.textChanged.connect(self.filter_table)
         side_layout.addWidget(self.search_input)
 
-        # 3. Image (Expanded)
+        # 3. Image Preview (NOW ON TOP)
+        from PyQt6.QtWidgets import QFrame, QGridLayout, QSizePolicy
+        img_container = QFrame()
+        img_container.setStyleSheet("""
+            QFrame {
+                background-color: #ffffff;
+                border: 2px solid #007bff;
+                border-radius: 8px;
+            }
+        """)
+        img_container_layout = QVBoxLayout(img_container)
+        img_container_layout.setContentsMargins(5, 5, 5, 5)
+        
+        img_title = QLabel("🖼️ Image Preview")
+        img_title.setStyleSheet("font-weight: bold; color: #333; border: none;")
+        img_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        img_container_layout.addWidget(img_title)
+        
         self.img_preview = QLabel("NO IMAGE")
         self.img_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.img_preview.setStyleSheet("background-color: #f0f0f0;")
-        self.img_preview.setMinimumSize(250, 250) 
-        from PyQt6.QtWidgets import QSizePolicy
+        self.img_preview.setStyleSheet("background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px;")
+        self.img_preview.setMinimumSize(200, 200)
+        self.img_preview.setMaximumSize(400, 400)
         self.img_preview.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding
         )
-        # self.img_preview.setScaledContents(True) # Removed to prevent vertical stretching
-        side_layout.addWidget(self.img_preview, 1) # Takes available space
+        img_container_layout.addWidget(self.img_preview, 1)
+        
+        side_layout.addWidget(img_container, 1) # Takes available space
 
-        # 4. Stats / Info
+        # 4. Summary Statistics Panel (BELOW IMAGE)
+        summary_frame = QFrame()
+        summary_frame.setStyleSheet("""
+            QFrame {
+                background-color: #f8f9fa;
+                border: 1px solid #dee2e6;
+                border-radius: 8px;
+                padding: 10px;
+            }
+        """)
+        summary_grid = QGridLayout(summary_frame)
+        summary_grid.setSpacing(5)
+        
+        # Summary Title
+        summary_title = QLabel("📊 Summary")
+        summary_title.setStyleSheet("font-weight: bold; font-size: 12pt; color: #333; border: none;")
+        summary_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        summary_grid.addWidget(summary_title, 0, 0, 1, 2)
+        
+        # Catalog Total Items (True/False = 1)
+        self.lbl_catalog_total = QLabel("Catalog Total:")
+        self.lbl_catalog_total.setStyleSheet("font-weight: 500; color: #333; border: none;")
+        self.lbl_catalog_total_val = QLabel("0")
+        self.lbl_catalog_total_val.setStyleSheet("font-weight: bold; color: #28a745; border: none;")
+        self.lbl_catalog_total_val.setAlignment(Qt.AlignmentFlag.AlignRight)
+        summary_grid.addWidget(self.lbl_catalog_total, 1, 0)
+        summary_grid.addWidget(self.lbl_catalog_total_val, 1, 1)
+        
+        # Out of Stock (Stock=0 but True/False != false)
+        self.lbl_out_stock = QLabel("Out of Stock:")
+        self.lbl_out_stock.setStyleSheet("font-weight: 500; color: #333; border: none;")
+        self.lbl_out_stock_val = QLabel("0")
+        self.lbl_out_stock_val.setStyleSheet("font-weight: bold; color: #fd7e14; border: none;")
+        self.lbl_out_stock_val.setAlignment(Qt.AlignmentFlag.AlignRight)
+        summary_grid.addWidget(self.lbl_out_stock, 2, 0)
+        summary_grid.addWidget(self.lbl_out_stock_val, 2, 1)
+        
+        # False Items
+        self.lbl_false = QLabel("False Items:")
+        self.lbl_false.setStyleSheet("font-weight: 500; color: #333; border: none;")
+        self.lbl_false_val = QLabel("0")
+        self.lbl_false_val.setStyleSheet("font-weight: bold; color: #dc3545; border: none;")
+        self.lbl_false_val.setAlignment(Qt.AlignmentFlag.AlignRight)
+        summary_grid.addWidget(self.lbl_false, 3, 0)
+        summary_grid.addWidget(self.lbl_false_val, 3, 1)
+        
+        # Separator
+        sep_line = QLabel("─" * 20)
+        sep_line.setStyleSheet("color: #ccc; border: none;")
+        sep_line.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        summary_grid.addWidget(sep_line, 4, 0, 1, 2)
+        
+        # Final Data Total
+        self.lbl_final_total = QLabel("Final Data Total:")
+        self.lbl_final_total.setStyleSheet("font-weight: 500; color: #333; border: none;")
+        self.lbl_final_total_val = QLabel("0")
+        self.lbl_final_total_val.setStyleSheet("font-weight: bold; color: #007bff; border: none;")
+        self.lbl_final_total_val.setAlignment(Qt.AlignmentFlag.AlignRight)
+        summary_grid.addWidget(self.lbl_final_total, 5, 0)
+        summary_grid.addWidget(self.lbl_final_total_val, 5, 1)
+        
+        # Item Mismatch
+        self.lbl_mismatch = QLabel("Item Mismatch:")
+        self.lbl_mismatch.setStyleSheet("font-weight: 500; color: #333; border: none;")
+        self.lbl_mismatch_val = QLabel("0")
+        self.lbl_mismatch_val.setStyleSheet("font-weight: bold; color: #6f42c1; border: none;")
+        self.lbl_mismatch_val.setAlignment(Qt.AlignmentFlag.AlignRight)
+        summary_grid.addWidget(self.lbl_mismatch, 6, 0)
+        summary_grid.addWidget(self.lbl_mismatch_val, 6, 1)
+        
+        side_layout.addWidget(summary_frame)
+
+        # 5. Status Label
         self.status_lbl = QLabel("Ready")
         self.status_lbl.setWordWrap(True)
+        self.status_lbl.setStyleSheet("color: #666; font-style: italic; padding: 5px;")
         side_layout.addWidget(self.status_lbl)
 
         main_layout.addWidget(side_panel, 1) # Side panel gets 1 part weight
         
         # Connect Selection Change for Arrow Keys
         self.table.selectionModel().currentRowChanged.connect(self.on_row_changed)
+
 
     def col_index(self, name):
         return self.headers.index(name)
@@ -386,7 +478,91 @@ class FinalDataUI(QWidget):
                     conn.execute("UPDATE catalog SET Image_Path='', Image_Date='' WHERE rowid=?", (rid,))
             conn.commit()
             conn.close()
-        except: pass
+            
+            # After image sync, update True/False values
+            self.sync_true_false_values()
+        except Exception as e:
+            print(f"Image Sync Error: {e}")
+    
+    def sync_true_false_values(self):
+        """
+        Update True/False column based on business logic:
+        - If Stock = 0 AND True/False is already '1' -> keep as '1' (user override)
+        - If Stock = 0 AND True/False is not '1' -> 'false'
+        - If Image_Path contains 'no_need' -> 'false'
+        - If Group = 'Price List' -> depends only on stock
+        - Otherwise -> '1'
+        """
+        try:
+            if not self.db_path or not os.path.exists(self.db_path):
+                return
+                
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Get all rows with relevant columns
+            cursor.execute("""
+                SELECT rowid, Stock, Image_Path, [Group], [True/False]
+                FROM catalog
+            """)
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                rid, stock, img_path, group_name, current_tf = row
+                
+                # Normalize current True/False value
+                current_tf_str = str(current_tf).strip().lower() if current_tf else ""
+                current_is_true = current_tf_str in ["1", "true", "yes"]
+                
+                # Determine new True/False value
+                new_tf = "1"  # Default to True (1)
+                
+                # Check Stock - if 0 or empty
+                try:
+                    stock_val = float(str(stock).replace(",", "").strip()) if stock else 0
+                    if stock_val <= 0:
+                        # KEY CHANGE: If True/False is already "1", keep it (user override)
+                        if current_is_true:
+                            new_tf = "1"  # Preserve user's manual override
+                        else:
+                            new_tf = "false"
+                except:
+                    # Invalid stock - check if already true
+                    if current_is_true:
+                        new_tf = "1"
+                    else:
+                        new_tf = "false"
+                
+                # Check Image_Path for 'no_need' - overrides everything including user override
+                img_path_str = str(img_path).lower().strip() if img_path else ""
+                if "no_need" in img_path_str or "noneed" in img_path_str:
+                    new_tf = "false"
+                
+                # Price List group doesn't need images, keep as is based on stock
+                group_str = str(group_name).lower().strip() if group_name else ""
+                if group_str == "price list":
+                    # Price list items only depend on stock
+                    try:
+                        stock_val = float(str(stock).replace(",", "").strip()) if stock else 0
+                        if stock_val > 0:
+                            new_tf = "1"
+                        elif current_is_true:
+                            new_tf = "1"  # Preserve user override
+                        else:
+                            new_tf = "false"
+                    except:
+                        new_tf = "1" if current_is_true else "false"
+                
+                # Update only if changed
+                if current_tf_str != new_tf and not (current_tf_str == "1" and new_tf == "1"):
+                    cursor.execute("UPDATE catalog SET [True/False]=? WHERE rowid=?", (new_tf, rid))
+            
+            conn.commit()
+            conn.close()
+            print(f"True/False sync completed for {len(rows)} items")
+            
+        except Exception as e:
+            print(f"True/False Sync Error: {e}")
 
     def refresh_table(self):
         if not self.db_path: return
@@ -474,8 +650,62 @@ class FinalDataUI(QWidget):
             
             self.table.blockSignals(False)
             self.table.resizeColumnsToContents()
+            
+            # Update summary statistics
+            self.update_summary_stats()
         except Exception as e: 
             print(f"Refresh Error: {e}")
+
+    def update_summary_stats(self):
+        """Calculate and update the summary statistics in the side panel.
+        
+        Statistics:
+        - Catalog Total: Items with True/False = '1' (items that will appear in catalog)
+        - Out of Stock: Items with Stock <= 0, BUT excluding items marked as 'false'
+        - False Items: Items with True/False = 'false'
+        - Final Data Total: Total rows in the database
+        - Item Mismatch: Difference between Final Data Total and Catalog Total
+        """
+        try:
+            if not self.db_path or not os.path.exists(self.db_path):
+                return
+            
+            with sqlite3.connect(self.db_path) as conn:
+                # Final Data Total (all rows in catalog table)
+                final_data_total = conn.execute("SELECT COUNT(*) FROM catalog").fetchone()[0] or 0
+                
+                # Catalog Total (True/False column = "1" - items that appear in catalog)
+                catalog_total = conn.execute("""
+                    SELECT COUNT(*) FROM catalog 
+                    WHERE [True/False] IN ('1', 'true', 'True', 'TRUE')
+                """).fetchone()[0] or 0
+                
+                # Out of Stock (Stock <= 0 or empty, BUT not counting items marked as false)
+                # This counts items that are in catalog (True/False=1) but have no stock
+                out_of_stock = conn.execute("""
+                    SELECT COUNT(*) FROM catalog 
+                    WHERE (Stock IS NULL OR Stock = '' OR CAST(Stock AS REAL) <= 0)
+                    AND [True/False] NOT IN ('false', 'False', 'FALSE', 'f', '0')
+                """).fetchone()[0] or 0
+                
+                # False Items (True/False = false)
+                false_items = conn.execute("""
+                    SELECT COUNT(*) FROM catalog 
+                    WHERE [True/False] IN ('false', 'False', 'FALSE', 'f', '0')
+                """).fetchone()[0] or 0
+                
+                # Item Mismatch (Final Data Total - Catalog Total)
+                item_mismatch = final_data_total - catalog_total
+            
+            # Update labels with new field names
+            self.lbl_catalog_total_val.setText(str(catalog_total))
+            self.lbl_out_stock_val.setText(str(out_of_stock))
+            self.lbl_false_val.setText(str(false_items))
+            self.lbl_final_total_val.setText(str(final_data_total))
+            self.lbl_mismatch_val.setText(str(item_mismatch))
+            
+        except Exception as e:
+            print(f"Summary Stats Error: {e}")
 
     # Aapke baaki functions (get_image_mapping, show_preview, show_path_popup, filter_table) 
     # backup code ke jaise hi kaam karenge...
@@ -524,11 +754,15 @@ class FinalDataUI(QWidget):
             p = it.data(Qt.ItemDataRole.UserRole)
             if p and os.path.exists(p):
                 pix = QPixmap(p)
-                # Scale nicely while keeping Aspect Ratio (Max 800x800)
-                scaled = pix.scaled(800, 800, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                # Scale to fit within the image preview container (max 350x350)
+                preview_size = self.img_preview.size()
+                max_w = min(preview_size.width() - 10, 350)
+                max_h = min(preview_size.height() - 10, 350)
+                scaled = pix.scaled(max_w, max_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                 self.img_preview.setPixmap(scaled)
                 return
-        self.img_preview.setText("NO IMAGE"); self.img_preview.setPixmap(QPixmap())
+        self.img_preview.setText("NO IMAGE")
+        self.img_preview.setPixmap(QPixmap())
 
     def show_path_popup(self, row, col):
         if col == self.col_index("Image_Path"):

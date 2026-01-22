@@ -267,3 +267,57 @@ def save_report_json(data, file_path="REPORT_DATA.JSON"):
         os.makedirs(folder, exist_ok=True)
     with open(file_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=4)
+
+def add_pages_to_all_crms(page_serial_numbers, company_path):
+    """Add page serial numbers to all CRMs' pending lists.
+    
+    Args:
+        page_serial_numbers: List of page serial numbers (from catalog_pages.serial_no)
+        company_path: Path to company folder for finding crm_data.json and REPORT_DATA.JSON
+    
+    Returns:
+        Number of CRMs updated
+    """
+    if not page_serial_numbers:
+        return 0
+    
+    # Convert to strings for JSON storage
+    pages_to_add = [str(p) for p in page_serial_numbers]
+    
+    # Load CRM list
+    crm_path = os.path.join(company_path, "crm_data.json") if company_path else "crm_data.json"
+    crm_list = load_crm_list(crm_path)
+    
+    if not crm_list:
+        return 0
+    
+    # Load report data
+    report_path = os.path.join(company_path, "REPORT_DATA.JSON") if company_path else "REPORT_DATA.JSON"
+    report_data = load_report_json(report_path)
+    
+    updated_count = 0
+    
+    for crm_name in crm_list:
+        if crm_name not in report_data:
+            report_data[crm_name] = {"pending": [], "recent": []}
+        
+        # Get current pending (ensure it's a list)
+        current_pending = report_data[crm_name].get("pending", [])
+        if not isinstance(current_pending, list):
+            current_pending = []
+        
+        # Add new pages (unique only)
+        added_any = False
+        for page in pages_to_add:
+            if page not in current_pending:
+                current_pending.append(page)
+                added_any = True
+        
+        if added_any:
+            report_data[crm_name]["pending"] = current_pending
+            updated_count += 1
+    
+    # Save updated report data
+    save_report_json(report_data, report_path)
+    
+    return updated_count

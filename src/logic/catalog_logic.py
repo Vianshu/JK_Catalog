@@ -162,7 +162,390 @@ class CatalogLogic:
             conn.commit()
             conn.close()
         except Exception as e:
-            print(f"Sync Pages Error: {e}")
+            pass  # Silent error handling
+    
+    # =========================================================
+    # CRM CHANGE TRACKING
+    # =========================================================
+    
+    def init_build_config(self):
+        """Initialize build_config table if not exists."""
+        if not self.catalog_db_path: return
+        try:
+            conn = sqlite3.connect(self.catalog_db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS build_config (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            """)
+            conn.commit()
+            conn.close()
+        except:
+            pass
+    
+    def get_last_build_date(self):
+        """Get timestamp of last catalog build."""
+        if not self.catalog_db_path: return None
+        try:
+            self.init_build_config()
+            conn = sqlite3.connect(self.catalog_db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM build_config WHERE key='last_build_date'")
+            row = cursor.fetchone()
+            conn.close()
+            return row[0] if row else None
+        except:
+            return None
+    
+    def save_last_build_date(self, date_str):
+        """Save current build timestamp."""
+        if not self.catalog_db_path: return
+        try:
+            self.init_build_config()
+            conn = sqlite3.connect(self.catalog_db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO build_config (key, value)
+                VALUES ('last_build_date', ?)
+            """, (date_str,))
+            conn.commit()
+            conn.close()
+        except:
+            pass
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # PAGE SNAPSHOT SYSTEM - Comprehensive change detection
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    def init_page_snapshots_table(self):
+        """Initialize page_snapshots table to store page content hashes."""
+        if not self.catalog_db_path: return
+        try:
+            conn = sqlite3.connect(self.catalog_db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS page_snapshots (
+                    serial_no TEXT PRIMARY KEY,
+                    content_hash TEXT,
+                    product_list TEXT
+                )
+            """)
+            conn.commit()
+            conn.close()
+        except:
+            pass
+    
+    def get_page_content_hash(self, serial_no):
+        """Generate a hash of page content for change detection.
+        
+        The hash includes:
+        - Product names on the page
+        - Product positions (row, col)
+        - Product sizes (rspan, cspan)
+        - Key product data (MRP, stock status, image path)
+        """
+        import hashlib
+        import json
+        
+        page_info = self.get_page_info_by_serial(serial_no)
+        if not page_info:
+            return ""
+        
+        group_name = page_info["group_name"]
+        sg_sn = page_info["sg_sn"]
+        page_no = page_info["page_no"]
+        
+        # Get products for this page
+        products = self.get_items_for_page_dynamic(group_name, sg_sn, page_no)
+        
+        if not products:
+            return "empty_page"
+        
+        # Build content signature
+        content_parts = []
+        for item in products:
+            data = item.get("data", {})
+            signature = {
+                "name": data.get("product_name", ""),
+                "row": item.get("row", 0),
+                "col": item.get("col", 0),
+                "rspan": item.get("rspan", 1),
+                "cspan": item.get("cspan", 2),
+                "mrp": str(data.get("mrp", "")),
+                "img": data.get("image_path", ""),
+                "sizes": str(data.get("sizes", []))
+            }
+            content_parts.append(signature)
+        
+        # Sort by position for consistent hashing
+        content_parts.sort(key=lambda x: (x["row"], x["col"], x["name"]))
+        
+        # Generate hash
+        content_str = json.dumps(content_parts, sort_keys=True)
+        return hashlib.md5(content_str.encode()).hexdigest()
+    
+    def save_page_snapshot(self, serial_no, content_hash, product_list):
+        """Save a page's content snapshot."""
+        if not self.catalog_db_path: return
+        try:
+            self.init_page_snapshots_table()
+            conn = sqlite3.connect(self.catalog_db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO page_snapshots (serial_no, content_hash, product_list)
+                VALUES (?, ?, ?)
+            """, (str(serial_no), content_hash, product_list))
+            conn.commit()
+            conn.close()
+        except:
+            pass
+    
+    def get_page_snapshot(self, serial_no):
+        """Get stored snapshot for a page."""
+        if not self.catalog_db_path: return None
+        try:
+            self.init_page_snapshots_table()
+            conn = sqlite3.connect(self.catalog_db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT content_hash, product_list FROM page_snapshots WHERE serial_no=?
+            """, (str(serial_no),))
+            row = cursor.fetchone()
+            conn.close()
+            return {"hash": row[0], "products": row[1]} if row else None
+        except:
+            return None
+    
+    def detect_changed_pages(self):
+        """Compare current page layouts with stored snapshots.
+        
+        Returns:
+            Set of serial_no values for pages that have changed.
+            
+        Detects:
+        - Products added to a page
+        - Products removed from a page
+        - Product positions shifted
+        - Product data changed (MRP, image, sizes)
+        """
+        changed_pages = set()
+        
+        if not self.catalog_db_path:
+            return changed_pages
+        
+        try:
+            # Get all page serial numbers
+            conn = sqlite3.connect(self.catalog_db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT serial_no FROM catalog_pages ORDER BY serial_no")
+            all_pages = [str(row[0]) for row in cursor.fetchall()]
+            conn.close()
+            
+            for serial_no in all_pages:
+                # Get current content hash
+                current_hash = self.get_page_content_hash(serial_no)
+                
+                # Get stored snapshot
+                snapshot = self.get_page_snapshot(serial_no)
+                
+                if snapshot is None:
+                    # New page (no snapshot) - consider changed
+                    changed_pages.add(serial_no)
+                elif snapshot["hash"] != current_hash:
+                    # Content changed
+                    changed_pages.add(serial_no)
+                # else: Page unchanged, don't add
+            
+            print(f"[SNAPSHOT] Detected {len(changed_pages)} changed pages out of {len(all_pages)}")
+            return changed_pages
+            
+        except Exception as e:
+            print(f"[SNAPSHOT] Error detecting changes: {e}")
+            return changed_pages
+    
+    def save_all_page_snapshots(self):
+        """Save snapshots for all pages after a build."""
+        if not self.catalog_db_path:
+            return
+        
+        try:
+            conn = sqlite3.connect(self.catalog_db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT serial_no FROM catalog_pages ORDER BY serial_no")
+            all_pages = [str(row[0]) for row in cursor.fetchall()]
+            conn.close()
+            
+            for serial_no in all_pages:
+                content_hash = self.get_page_content_hash(serial_no)
+                
+                # Also store product names list for debugging
+                page_info = self.get_page_info_by_serial(serial_no)
+                product_names = []
+                if page_info:
+                    products = self.get_items_for_page_dynamic(
+                        page_info["group_name"], 
+                        page_info["sg_sn"], 
+                        page_info["page_no"]
+                    )
+                    product_names = [p.get("data", {}).get("product_name", "") for p in (products or [])]
+                
+                self.save_page_snapshot(serial_no, content_hash, ",".join(product_names))
+            
+            print(f"[SNAPSHOT] Saved snapshots for {len(all_pages)} pages")
+            
+        except Exception as e:
+            print(f"[SNAPSHOT] Error saving snapshots: {e}")
+    
+    def get_changed_products_since(self, since_date):
+        """Get list of products changed since the given date.
+        
+        Args:
+            since_date: Date string in format "DD-MM-YYYY HH:MM:SS"
+            
+        Returns:
+            List of dicts with product info (product_name, group, sg_sn)
+        """
+        if not self.final_db_path: return []
+        
+        try:
+            from datetime import datetime
+            
+            conn = sqlite3.connect(self.final_db_path)
+            cursor = conn.cursor()
+            
+            # Parse since_date properly
+            since_dt = None
+            if since_date:
+                try:
+                    # Try parsing the expected format
+                    since_dt = datetime.strptime(since_date, "%d-%m-%Y %H:%M:%S")
+                except:
+                    try:
+                        # Alternative format without time
+                        since_dt = datetime.strptime(since_date, "%d-%m-%Y")
+                    except:
+                        since_dt = None
+            
+            # Fetch all products with their update dates
+            cursor.execute("""
+                SELECT [Product Name], [Group], [SG_SN], [Update_date]
+                FROM catalog
+                WHERE [Group] IS NOT NULL
+                AND [SG_SN] IS NOT NULL
+            """)
+            
+            rows = cursor.fetchall()
+            conn.close()
+            
+            changed = []
+            for r in rows:
+                product_name, group, sg_sn, update_date = r
+                
+                # If no since_date provided (first build), include all
+                if since_dt is None:
+                    changed.append({"product_name": product_name, "group": group, "sg_sn": sg_sn})
+                    continue
+                
+                # Parse product's update date
+                if update_date:
+                    try:
+                        prod_dt = datetime.strptime(str(update_date).strip(), "%d-%m-%Y %H:%M:%S")
+                        if prod_dt > since_dt:
+                            changed.append({"product_name": product_name, "group": group, "sg_sn": sg_sn})
+                    except:
+                        try:
+                            prod_dt = datetime.strptime(str(update_date).strip(), "%d-%m-%Y")
+                            if prod_dt > since_dt:
+                                changed.append({"product_name": product_name, "group": group, "sg_sn": sg_sn})
+                        except:
+                            # If date parsing fails, include product (safer)
+                            pass
+            
+            return changed
+        except Exception as e:
+            print(f"Error in get_changed_products_since: {e}")
+            return []
+    
+    def find_pages_for_products(self, changed_products):
+        """Find which pages the changed products are on.
+        
+        Args:
+            changed_products: List from get_changed_products_since()
+            
+        Returns:
+            Set of page serial_no values from catalog_pages
+        """
+        if not changed_products or not self.catalog_db_path:
+            return set()
+        
+        affected_pages = set()
+        
+        # Group products by (group, sg_sn) to minimize layout simulations
+        groups = {}
+        for p in changed_products:
+            key = (p["group"], p["sg_sn"])
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(p["product_name"])
+        
+        # For each group/subgroup, simulate layout and find pages
+        for (group_name, sg_sn), product_names in groups.items():
+            layout_map = self.simulate_page_layout(group_name, sg_sn)
+            
+            for page_num, items in layout_map.items():
+                for item in items:
+                    item_data = item.get("data", {})
+                    item_name = item_data.get("product_name", "")
+                    if item_name in product_names:
+                        # Find the serial_no for this page
+                        serial_no = self._get_page_serial_no(group_name, sg_sn, page_num)
+                        if serial_no:
+                            affected_pages.add(serial_no)
+        
+        return affected_pages
+    
+    def _get_page_serial_no(self, group_name, sg_sn, page_no):
+        """Get serial_no for a specific page."""
+        if not self.catalog_db_path: return None
+        try:
+            conn = sqlite3.connect(self.catalog_db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT serial_no FROM catalog_pages
+                WHERE group_name=? AND sg_sn=? AND page_no=?
+            """, (group_name, sg_sn, page_no))
+            row = cursor.fetchone()
+            conn.close()
+            return row[0] if row else None
+        except:
+            return None
+
+    def get_page_info_by_serial(self, serial_no):
+        """Get page details (mg_sn, group_name, sg_sn, page_no) by global serial number."""
+        if not self.catalog_db_path: return None
+        try:
+            conn = sqlite3.connect(self.catalog_db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT mg_sn, group_name, sg_sn, page_no 
+                FROM catalog_pages 
+                WHERE serial_no=?
+            """, (serial_no,))
+            row = cursor.fetchone()
+            conn.close()
+            if row:
+                return {
+                    "mg_sn": row[0],
+                    "group_name": row[1],
+                    "sg_sn": row[2],
+                    "page_no": row[3],
+                    "serial_no": serial_no
+                }
+            return None
+        except:
+            return None
 
     def get_items_for_page_dynamic(self, group_name, sg_sn, page_no):
         """Get products for a specific page with caching."""
@@ -414,7 +797,103 @@ class CatalogLogic:
                     })
                 else:
                     print(f"CRITICAL: Product '{p_name}' too big for empty page! ({rspan}x{cspan})")
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # POST-PROCESSING: Distribute empty spaces evenly across each page
+        # This makes pages with fewer products look more balanced
+        # ═══════════════════════════════════════════════════════════════════════
+        layout_map = self._distribute_products_evenly(layout_map, ROWS, COLS)
                     
+        return layout_map
+    
+    def _distribute_products_evenly(self, layout_map, ROWS, COLS):
+        """
+        Redistribute products on each page for visual balance.
+        
+        Strategy: Row-based distribution
+        1. Group products by their rows
+        2. Calculate how many physical rows products occupy
+        3. Distribute those rows evenly across the page height
+        4. Products within a row maintain their left-to-right order
+        
+        Example: 2 product-rows on 5-row page → rows 1 and 3 (centered)
+        """
+        for page_num, placements in layout_map.items():
+            if not placements:
+                continue
+            
+            # Group products by their current row
+            row_groups = {}  # row_number -> list of placements
+            for pl in placements:
+                r = pl["row"]
+                if r not in row_groups:
+                    row_groups[r] = []
+                row_groups[r].append(pl)
+            
+            # Get list of used rows (sorted)
+            used_rows = sorted(row_groups.keys())
+            num_product_rows = len(used_rows)
+            
+            # Skip if only 1 row or page is full
+            if num_product_rows <= 1 or num_product_rows >= ROWS:
+                continue
+            
+            # Calculate the maximum row span in each product row
+            row_heights = {}
+            for row_num in used_rows:
+                max_rspan = max(pl.get("rspan", 1) for pl in row_groups[row_num])
+                row_heights[row_num] = max_rspan
+            
+            # Total vertical space needed by products
+            total_product_height = sum(row_heights.values())
+            
+            # If products already fill most rows, skip redistribution
+            if total_product_height >= ROWS - 1:
+                continue
+            
+            # Calculate new row positions - distribute evenly
+            empty_space = ROWS - total_product_height
+            
+            # Distribute gaps evenly (including before first and after last)
+            # For N product-rows, we have N+1 gap positions
+            num_gaps = num_product_rows + 1
+            base_gap = empty_space // num_gaps
+            extra = empty_space % num_gaps  # Distribute extra to middle gaps
+            
+            # Build new positions
+            new_placements = []
+            current_row = base_gap  # Start after first gap
+            
+            # Add extra space to first gap to center content
+            if extra > 0:
+                current_row += extra // 2
+            
+            for orig_row in used_rows:
+                products_in_row = row_groups[orig_row]
+                row_height = row_heights[orig_row]
+                
+                # Sort products in this row by column (left to right)
+                products_in_row_sorted = sorted(products_in_row, key=lambda p: p["col"])
+                
+                for pl in products_in_row_sorted:
+                    rspan = pl.get("rspan", 1)
+                    
+                    # Ensure we don't go off page
+                    new_row = min(current_row, ROWS - rspan)
+                    new_row = max(0, new_row)
+                    
+                    new_placements.append({
+                        **pl,
+                        "row": new_row
+                        # col stays the same - products stay in their horizontal position
+                    })
+                
+                # Move to next position: current products + gap
+                current_row += row_height + base_gap
+            
+            # Update layout
+            layout_map[page_num] = new_placements
+        
         return layout_map
 
     def get_sorted_products_from_db(self, group_name, sg_sn):
