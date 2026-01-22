@@ -318,12 +318,14 @@ class FullCatalogUI(QWidget):
         
         self.page_input = QLineEdit("1")
         self.page_input.setObjectName("CatalogPageInput")
-        self.page_input.setFixedWidth(40)
+        self.page_input.setFixedWidth(60)
         self.page_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_input.setStyleSheet("font-size: 14px; font-weight: bold;") # Ensuring visibility
         self.page_input.returnPressed.connect(self.go_to_page)
         
         self.total_lbl = QLabel("/1")
         self.total_lbl.setObjectName("CatalogTotalLabel")
+        self.total_lbl.setStyleSheet("font-size: 14px; font-weight: bold; padding-left: 5px;")
         
         nav_l.addWidget(self.btn_prev)
         nav_l.addWidget(self.page_input)
