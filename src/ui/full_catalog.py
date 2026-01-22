@@ -608,6 +608,30 @@ class FullCatalogUI(QWidget):
         self.refresh_catalog_data()
         super().showEvent(event)
 
+    def next_page(self):
+        if hasattr(self, 'all_pages_data') and self.all_pages_data:
+            if self.current_page_index < len(self.all_pages_data) - 1:
+                self.current_page_index += 1
+                self.update_catalog_page()
+
+    def prev_page(self):
+        if self.current_page_index > 0:
+            self.current_page_index -= 1
+            self.update_catalog_page()
+            
+    def go_to_page(self):
+        try:
+            val = int(self.page_input.text())
+            if hasattr(self, 'all_pages_data') and self.all_pages_data:
+                if 1 <= val <= len(self.all_pages_data):
+                    self.current_page_index = val - 1
+                    self.update_catalog_page()
+                else:
+                    # Revert
+                    self.page_input.setText(str(self.current_page_index + 1))
+        except:
+            pass
+
     def handle_build(self):
         if not self.catalog_db_path: return
         try:
