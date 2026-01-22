@@ -290,7 +290,7 @@ class FullCatalogUI(QWidget):
 
         # --- 3. RIGHT PANEL (Navigation & Buttons) ---
         right_panel_widget = QWidget()
-        right_panel_widget.setFixedWidth(140)  # Reduced from 160
+        right_panel_widget.setFixedWidth(150)  # Increased for better visibility
         right_vbox = QVBoxLayout(right_panel_widget)
         right_vbox.setSpacing(15)
         right_vbox.setContentsMargins(0, 0, 0, 0)
@@ -298,9 +298,11 @@ class FullCatalogUI(QWidget):
         # Navigation Box
         nav_box = QFrame()
         nav_box.setObjectName("CatalogNavBox")
-        nav_l = QHBoxLayout(nav_box)
-        nav_l.setContentsMargins(2, 2, 2, 2)
-        nav_l.setSpacing(5)
+        
+        # Use Vertical Layout for Navigator
+        nav_layout = QVBoxLayout(nav_box)
+        nav_layout.setContentsMargins(5, 8, 5, 8)
+        nav_layout.setSpacing(8)
         
         # Icons for Prev/Next
         icon_prev = self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowLeft)
@@ -310,27 +312,42 @@ class FullCatalogUI(QWidget):
         self.btn_prev.setIcon(icon_prev)
         self.btn_prev.setObjectName("CatalogPrevBtn")
         self.btn_prev.setToolTip("Previous Page")
+        self.btn_prev.setFixedSize(40, 30) # Wider click area
         
         self.btn_next = QPushButton()
         self.btn_next.setIcon(icon_next)
         self.btn_next.setObjectName("CatalogNextBtn")
         self.btn_next.setToolTip("Next Page")
+        self.btn_next.setFixedSize(40, 30)
+        
+        # Row 1: Arrow Buttons
+        arrows_row = QHBoxLayout()
+        arrows_row.addStretch()
+        arrows_row.addWidget(self.btn_prev)
+        arrows_row.addSpacing(10)
+        arrows_row.addWidget(self.btn_next)
+        arrows_row.addStretch()
+        nav_layout.addLayout(arrows_row)
         
         self.page_input = QLineEdit("1")
         self.page_input.setObjectName("CatalogPageInput")
-        self.page_input.setFixedWidth(60)
+        self.page_input.setFixedWidth(50)
         self.page_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.page_input.setStyleSheet("font-size: 14px; font-weight: bold;") # Ensuring visibility
+        self.page_input.setStyleSheet("font-size: 14px; font-weight: bold;") 
         self.page_input.returnPressed.connect(self.go_to_page)
         
         self.total_lbl = QLabel("/1")
         self.total_lbl.setObjectName("CatalogTotalLabel")
         self.total_lbl.setStyleSheet("font-size: 14px; font-weight: bold; padding-left: 5px;")
         
-        nav_l.addWidget(self.btn_prev)
-        nav_l.addWidget(self.page_input)
-        nav_l.addWidget(self.total_lbl)
-        nav_l.addWidget(self.btn_next)
+        # Row 2: Page Input & Label
+        info_row = QHBoxLayout()
+        info_row.setSpacing(2)
+        info_row.addStretch()
+        info_row.addWidget(self.page_input)
+        info_row.addWidget(self.total_lbl)
+        info_row.addStretch()
+        nav_layout.addLayout(info_row)
         
         right_vbox.addWidget(nav_box)
         
