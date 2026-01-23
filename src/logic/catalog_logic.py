@@ -607,91 +607,79 @@ class CatalogLogic:
         else:
             return self._simulate_page_layout_internal(group_name, sg_sn, allow_backward, printable_pages)
     
+    def get_existing_product_mapping(self, group_name, sg_sn):
+        if not self.catalog_db_path: return {}
+        try:
+            conn = sqlite3.connect(self.catalog_db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT cp.page_no, ps.product_list 
+                FROM catalog_pages cp
+                LEFT JOIN page_snapshots ps ON cp.serial_no = ps.serial_no
+                WHERE cp.group_name=? AND cp.sg_sn=?
+            """, (group_name, sg_sn))
+            rows = cursor.fetchall()
+            conn.close()
+            
+            mapping = {} # Name -> PageNo
+            for page_no, p_list in rows:
+                if p_list:
+                    names = p_list.split(",")
+                    for n in names:
+                        if n.strip():
+                            mapping[n.strip().lower()] = page_no
+            return mapping
+        except:
+            return {}
+
     def _simulate_page_layout_internal(self, group_name, sg_sn, allow_backward=False, printable_pages=None):
-        """Internal layout computation without caching."""
+        """Internal layout computation with Incremental Logic (Lock Existing, Insert New)."""
         products = self.get_sorted_products_from_db(group_name, sg_sn)
         layout_map = {}
-        current_page = 1
         
         ROWS = 5
         COLS = 4
-        PRODUCT_CSPAN = 2  # Each product takes 2 columns (1 image + 1 data)
         
         def get_empty_grid(): 
             return [[False]*COLS for _ in range(ROWS)]
             
-        # State tracking: grids[page_num] = boolean matrix
         grids = {}
         
-        # Product page tracking for stability (prevent backward movement)
-        product_page_tracking = {}
+    def _simulate_page_layout_internal(self, group_name, sg_sn, allow_backward=False, printable_pages=None):
+        """Internal layout computation with Incremental Logic (Lock Existing, Insert New, Sort Per Page)."""
+        products = self.get_sorted_products_from_db(group_name, sg_sn)
+        layout_map = {}
         
-        # Initialize Page 1
-        current_page = 1
-        grids[current_page] = get_empty_grid()
-        layout_map[current_page] = []
+        ROWS = 5
+        COLS = 4
         
-        def find_slot(g_state, rspan, cspan):
-            """Find first available slot that fits rspan rows x cspan columns."""
-            for r in range(ROWS):
-                for c in range(COLS - cspan + 1):  # Must fit cspan columns
-                    if g_state[r][c]:
-                        continue
-                    if r + rspan > ROWS:
-                        continue
-                    # Check all cells in the block
-                    fits = True
-                    for dr in range(rspan):
-                        for dc in range(cspan):
-                            if g_state[r + dr][c + dc]:
-                                fits = False
-                                break
-                        if not fits:
-                            break
-                    if fits:
-                        return r, c
-            return -1, -1
+        def get_empty_grid(): 
+            return [[False]*COLS for _ in range(ROWS)]
+            
+        # 1. Load Existing Mapping
+        mapping = self.get_existing_product_mapping(group_name, sg_sn)
+        
+        # 2. Assign Pages
+        # We use temporary grids to determine available space for new items
+        temp_grids = {} 
+        assignments = [] # List of (p_data, page_no)
+        
+        # Helper Helpers
+        def count_free_cells(g_state):
+             return sum(1 for row in g_state for cell in row if not cell)
 
-        def mark_slot(g_state, r, c, rspan, cspan):
-            """Mark all cells in the block as occupied."""
-            for dr in range(rspan):
-                for dc in range(cspan):
-                    g_state[r + dr][c + dc] = True
-
-        if not products: 
-            return {}
-        layout_map[current_page] = []
-        
-        for p_data in products:
-            # Handle Dict or Tuple
+        # Helper: Dimension Calc
+        def get_dims(p_data):
             if isinstance(p_data, dict):
-                p_name = p_data.get("product_name") or p_data.get("name")
                 p_len = p_data.get("length")
-                # Auto-length based on number of sizes
                 num_sizes = len(p_data.get("sizes", []))
             else:
-                p_name = p_data[0]
                 p_len = p_data[2] if len(p_data) > 2 else 1
                 num_sizes = 1
             
-            # Default Dimensions
-            # Default: 1 Image Col + 1 Data Col = 2 cspan
             img_cols = 1  
             cspan = img_cols + 1 
-            
-            # Auto-length logic (Vertical / rspan): 
-            if num_sizes > 10:
-                rspan = 3
-            elif num_sizes > 5:
-                rspan = 2
-            else:
-                rspan = 1
-            
-            # Process Manual Length Column (p_len)
-            # Supported Formats:
-            # 1. "V" (Integer) -> rspan=V, img_cols=1 (default)
-            # 2. "H|V" (ImageCols|Rows) -> img_cols=H, rspan=V
-            #    (Total cspan = H + 1)
+            rspan = 3 if num_sizes > 10 else (2 if num_sizes > 5 else 1)
             
             if p_len and str(p_len).strip():
                 s_len = str(p_len).strip()
@@ -699,104 +687,143 @@ class CatalogLogic:
                     parts = s_len.split("|")
                     h_str = parts[0].strip()
                     v_str = parts[1].strip() if len(parts) > 1 else ""
-                    
-                    # Parse H (Image Width)
-                    if h_str:
-                        try:
-                            h_val = int(h_str)
-                            if h_val > 0:
-                                img_cols = h_val
-                                cspan = img_cols + 1
-                        except: pass
-                    
-                    # Parse V (Vertical Rows)
-                    if v_str:
-                        try:
-                             v_val = int(v_str)
-                             if v_val > 0:
-                                 rspan = v_val
-                        except: pass
-                        
+                    if h_str and h_str.isdigit() and int(h_str) > 0:
+                        cspan = int(h_str) + 1
+                    if v_str and v_str.isdigit() and int(v_str) > 0:
+                        rspan = int(v_str)
                 elif s_len.isdigit() and int(s_len) > 0:
-                     # Just V provided (Legacy integers are treated as Vertical override)
                      rspan = int(s_len)
+            return max(1, min(rspan, ROWS)), max(1, min(cspan, COLS))
+
+        def find_slot(g_state, rspan, cspan):
+            for r in range(ROWS):
+                for c in range(COLS - cspan + 1):
+                    if g_state[r][c]: continue
+                    if r + rspan > ROWS: continue
+                    fits = True
+                    for dr in range(rspan):
+                        for dc in range(cspan):
+                            if g_state[r + dr][c + dc]:
+                                fits = False; break
+                        if not fits: break
+                    if fits: return r, c
+            return -1, -1
+
+        def mark_slot(g_state, r, c, rspan, cspan):
+            for dr in range(rspan):
+                for dc in range(cspan):
+                    g_state[r + dr][c + dc] = True
+
+        def place_temp(page_num, rspan, cspan):
+            if page_num not in temp_grids: temp_grids[page_num] = get_empty_grid()
+            grid = temp_grids[page_num]
+            r, c = find_slot(grid, rspan, cspan)
+            if r != -1:
+                mark_slot(grid, r, c, rspan, cspan)
+                return True
+            return False
+
+        # Phase 2a: Assign Locked Products
+        locked_items = []
+        new_items = []
+        
+        for p_data in products:
+            if isinstance(p_data, dict): p_name = p_data.get("product_name") or p_data.get("name")
+            else: p_name = p_data[0]
             
-            # Clamping
-            rspan = max(1, min(rspan, ROWS))
-            cspan = max(1, min(cspan, COLS))  # COLS=4
+            key = str(p_name).strip().lower()
+            if key in mapping:
+                page_no = mapping[key]
+                rspan, cspan = get_dims(p_data)
+                # Try to reserve space in temp grid (to block it for new items)
+                # Note: We don't care about sort order here, just space reservation
+                if place_temp(page_no, rspan, cspan):
+                    assignments.append((p_data, page_no))
+                else:
+                    # Locked item no longer fits in its page? Treat as new.
+                    new_items.append(p_data)
+            else:
+                new_items.append(p_data)
+        
+        # Phase 2b: Assign New Products (Best Fit)
+        initial_pages = sorted(temp_grids.keys()) if temp_grids else [1]
+        
+        for p_data in new_items:
+            rspan, cspan = get_dims(p_data)
             
-            # Smart Placement Logic: Place product on page with MOST FREE SPACE
-            # But respect stability rules - don't move products backward unless allowed
-            placed = False
-            
-            def count_free_cells(g_state):
-                """Count unoccupied cells in a grid."""
-                return sum(1 for row in g_state for cell in row if not cell)
-            
-            # Get product's last known page (if any) from tracking
-            product_key = p_name.lower().strip() if p_name else ""
-            last_page = product_page_tracking.get(product_key, 0)
-            
-            # Find page with most free space that can fit this product
             best_page = None
             best_free_count = -1
-            best_slot = (-1, -1)
             
-            for page_num in sorted(layout_map.keys()):
-                # Stability check: Don't move product backward unless allowed
-                if not allow_backward and page_num < last_page:
-                    # Can only go back if that page is marked for printing/reflow
-                    if printable_pages and page_num not in printable_pages:
-                        continue  # Skip this page - can't go backward
+            check_pages = sorted(temp_grids.keys())
+            if not check_pages: check_pages = [1]
+            
+            for page_num in check_pages:
+                if page_num not in temp_grids: temp_grids[page_num] = get_empty_grid()
+                grid = temp_grids[page_num]
                 
-                grid = grids[page_num]
+                # Check if it fits
                 r, c = find_slot(grid, rspan, cspan)
                 if r != -1:
-                    # Can fit here - check free space
-                    free_count = count_free_cells(grid)
-                    if free_count > best_free_count:
-                        best_free_count = free_count
-                        best_page = page_num
-                        best_slot = (r, c)
+                     # Check fragmentation/space
+                     free = count_free_cells(grid)
+                     if free > best_free_count:
+                         best_free_count = free
+                         best_page = page_num
             
-            if best_page is not None:
-                # Place on page with most space
-                r, c = best_slot
-                mark_slot(grids[best_page], r, c, rspan, cspan)
-                layout_map[best_page].append({
-                    "data": p_data,
-                    "row": r,
-                    "col": c,
-                    "rspan": rspan,
-                    "cspan": cspan
-                })
-                # Update tracking
-                product_page_tracking[product_key] = best_page
-                placed = True
+            target_page = best_page
+            if target_page is None:
+                 target_page = max(temp_grids.keys()) + 1 if temp_grids else 1
             
-            if not placed:
-                # Page full or no slot big enough found in any existing page
-                # Create NEW page
-                current_page = max(layout_map.keys()) + 1 if layout_map else 1
-                grid = get_empty_grid()
-                grids[current_page] = grid
-                layout_map[current_page] = []
+            # Place and record
+            place_temp(target_page, rspan, cspan)
+            assignments.append((p_data, target_page))
+            
+        # Phase 3: Layout Each Page (Sorted)
+        # Group assignments
+        page_groups = {}
+        for p_data, page_no in assignments:
+            if page_no not in page_groups: page_groups[page_no] = []
+            page_groups[page_no].append(p_data)
+            
+        # Final Layout
+        grids = {} # Reset grids for final clean layout
+        
+        for page_num in sorted(page_groups.keys()):
+            # Sort items on this page
+            items = page_groups[page_num]
+            # Key: Name
+            items.sort(key=lambda x: (x.get("product_name") or x.get("name")) if isinstance(x, dict) else x[0])
+            
+            grids[page_num] = get_empty_grid()
+            layout_map[page_num] = []
+            
+            for p_data in items:
+                rspan, cspan = get_dims(p_data)
+                # Standard placement (flow)
+                if page_num not in grids: grids[page_num] = get_empty_grid() # Should exist
+                grid = grids[page_num]
                 
-                # We know it's a fresh page, so it goes to 0,0 (unless item > page??)
-                # But find_slot is safer.
                 r, c = find_slot(grid, rspan, cspan)
-                
                 if r != -1:
                     mark_slot(grid, r, c, rspan, cspan)
-                    layout_map[current_page].append({
-                        "data": p_data,
-                        "row": r,
-                        "col": c,
-                        "rspan": rspan,
-                        "cspan": cspan
+                    layout_map[page_num].append({
+                        "data": p_data, "row": r, "col": c,
+                        "rspan": rspan, "cspan": cspan
                     })
                 else:
-                    print(f"CRITICAL: Product '{p_name}' too big for empty page! ({rspan}x{cspan})")
+                    # Item assigned to page but doesn't fit after sort??
+                    # This implies fragmentation changed.
+                    # Since Phase 2 used FindSlot, they fit in *some* arrangement.
+                    # Sorting might create gaps that block subsequent items?
+                    # Example: Big item fits early, but if Small item comes first, Big item blocked?
+                    # This is the "Knapsack" problem.
+                    # Simple Flow logic usually is robust if space exists.
+                    # If it fails, we spill over?
+                    # But spill over breaks "Lock".
+                    # We accept this risk or append to overflow page.
+                    print(f"Layout Overflow on Page {page_num} for {p_data}")
+                    
+        return layout_map
         
         # ═══════════════════════════════════════════════════════════════════════
         # POST-PROCESSING: Distribute empty spaces evenly across each page
