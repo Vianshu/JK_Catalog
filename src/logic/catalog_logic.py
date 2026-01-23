@@ -746,11 +746,11 @@ class CatalogLogic:
                 new_items.append(p_data)
         
         # Phase 2b: Assign New Products (Best Fit)
-        initial_pages = sorted(temp_grids.keys()) if temp_grids else [1]
+        pages_touched = set()
         
-        for p_data in new_items:
+        # Closure for Best Fit
+        def assign_best_fit(p_data, ignore_pages=None):
             rspan, cspan = get_dims(p_data)
-            
             best_page = None
             best_free_count = -1
             
@@ -758,13 +758,12 @@ class CatalogLogic:
             if not check_pages: check_pages = [1]
             
             for page_num in check_pages:
+                if ignore_pages and page_num in ignore_pages: continue
                 if page_num not in temp_grids: temp_grids[page_num] = get_empty_grid()
                 grid = temp_grids[page_num]
                 
-                # Check if it fits
                 r, c = find_slot(grid, rspan, cspan)
                 if r != -1:
-                     # Check fragmentation/space
                      free = count_free_cells(grid)
                      if free > best_free_count:
                          best_free_count = free
@@ -774,9 +773,75 @@ class CatalogLogic:
             if target_page is None:
                  target_page = max(temp_grids.keys()) + 1 if temp_grids else 1
             
-            # Place and record
             place_temp(target_page, rspan, cspan)
-            assignments.append((p_data, target_page))
+            return target_page
+
+        for p_data in new_items:
+            pg = assign_best_fit(p_data)
+            assignments.append((p_data, pg))
+            pages_touched.add(pg)
+            
+        # Optimization: Consecutive Reflow
+        # If multiple consecutive pages are touched, we merge and re-sort them 
+        # to ensure optimal flow/sorting across the boundary.
+        if pages_touched:
+            sorted_touched = sorted(list(pages_touched))
+            ranges = []
+            if sorted_touched:
+                current_range = [sorted_touched[0]]
+                for i in range(1, len(sorted_touched)):
+                    if sorted_touched[i] == sorted_touched[i-1] + 1:
+                        current_range.append(sorted_touched[i])
+                    else:
+                        ranges.append(current_range)
+                        current_range = [sorted_touched[i]]
+                ranges.append(current_range)
+            
+            for rng in ranges:
+                if len(rng) > 1:
+                    # 1. Collect items for this range
+                    range_items = []
+                    preserved_assignments = []
+                    
+                    for p_data, p_no in assignments:
+                        if p_no in rng:
+                            range_items.append(p_data)
+                        else:
+                            preserved_assignments.append((p_data, p_no))
+                    
+                    # 2. Sort range items
+                    range_items.sort(key=lambda x: (x.get("product_name") or x.get("name")) if isinstance(x, dict) else x[0])
+                    
+                    # 3. Clear grids for these pages to refill cleanly
+                    for p_no in rng:
+                        temp_grids[p_no] = get_empty_grid()
+                        
+                    # 4. Refill
+                    overflow_items = []
+                    new_range_assignments = []
+                    
+                    for p_data in range_items:
+                        rspan, cspan = get_dims(p_data)
+                        placed = False
+                        
+                        # Try to fill strictly in order (1, 2, 3...)
+                        for p_no in rng:
+                            if place_temp(p_no, rspan, cspan):
+                                new_range_assignments.append((p_data, p_no))
+                                placed = True
+                                break
+                        
+                        if not placed:
+                            overflow_items.append(p_data)
+                            
+                    # 5. Update Assignments
+                    assignments = preserved_assignments + new_range_assignments
+                    
+                    # 6. Handle Overflow (Best Fit elsewhere)
+                    # We exclude the current RNG pages to avoid infinite loop or re-stuffing them
+                    for p_data in overflow_items:
+                        pg = assign_best_fit(p_data, ignore_pages=set(rng))
+                        assignments.append((p_data, pg))
             
         # Phase 3: Layout Each Page (Sorted)
         # Group assignments
@@ -789,9 +854,8 @@ class CatalogLogic:
         grids = {} # Reset grids for final clean layout
         
         for page_num in sorted(page_groups.keys()):
-            # Sort items on this page
+            # Sort items on this page (Redundant for ranges, but needed for single pages)
             items = page_groups[page_num]
-            # Key: Name
             items.sort(key=lambda x: (x.get("product_name") or x.get("name")) if isinstance(x, dict) else x[0])
             
             grids[page_num] = get_empty_grid()
@@ -799,8 +863,8 @@ class CatalogLogic:
             
             for p_data in items:
                 rspan, cspan = get_dims(p_data)
-                # Standard placement (flow)
-                if page_num not in grids: grids[page_num] = get_empty_grid() # Should exist
+                
+                if page_num not in grids: grids[page_num] = get_empty_grid()
                 grid = grids[page_num]
                 
                 r, c = find_slot(grid, rspan, cspan)
@@ -811,16 +875,6 @@ class CatalogLogic:
                         "rspan": rspan, "cspan": cspan
                     })
                 else:
-                    # Item assigned to page but doesn't fit after sort??
-                    # This implies fragmentation changed.
-                    # Since Phase 2 used FindSlot, they fit in *some* arrangement.
-                    # Sorting might create gaps that block subsequent items?
-                    # Example: Big item fits early, but if Small item comes first, Big item blocked?
-                    # This is the "Knapsack" problem.
-                    # Simple Flow logic usually is robust if space exists.
-                    # If it fails, we spill over?
-                    # But spill over breaks "Lock".
-                    # We accept this risk or append to overflow page.
                     print(f"Layout Overflow on Page {page_num} for {p_data}")
                     
         return layout_map
