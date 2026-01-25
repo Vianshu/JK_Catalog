@@ -5,10 +5,37 @@ QWidget {
     color: #2d3436;
 }
 
+/* Force WHITE TEXT for Login/Launch widgets (assuming Dark Background is preserved) */
+#CompanyListWidget, #LoginDialog, #PathDialog, #FormContent, #ListHeader, #ListHeaderTitle {
+    color: #ecf0f1;
+    background-color: transparent; /* Let container/system bg show through */
+}
+
+/* Ensure List Items have contrast */
+#CompanyListWidget::item {
+    color: #ecf0f1;
+}
+#CompanyListWidget::item:selected {
+    background-color: #3498db;
+    color: white;
+}
+
 /* --- 2. Professional Sidebar (Dark Gradient) --- */
 #MainSidebar {
     background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1e272e, stop:1 #2d3436);
     border-right: 2px solid #000000;
+}
+
+/* Fix: Internal elements of sidebar should be light text */
+#MainSidebar QLabel {
+    color: #ecf0f1;
+}
+
+#QuitHint {
+    color: #bdc3c7; /* Slightly dimmed for hint */
+    font-size: 11px;
+    qproperty-alignment: 'AlignCenter';
+    margin-top: 10px;
 }
 
 .MenuButton, #MenuButton {
