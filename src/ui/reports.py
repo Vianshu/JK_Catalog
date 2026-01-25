@@ -248,7 +248,17 @@ class ReportsUI(QWidget):
         renderer = A4PageRenderer()
         renderer.set_target_dpi(SCREEN_DPI)
         
+        # Add Progress Dialog
+        from PyQt6.QtWidgets import QProgressDialog, QApplication
+        progress = QProgressDialog("Rendering Preview...", None, 0, len(serial_numbers), self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        
         for i, serial in enumerate(serial_numbers):
+            progress.setValue(i)
+            QApplication.processEvents()
+            
             if i > 0:
                 printer.newPage()
             
@@ -322,6 +332,8 @@ class ReportsUI(QWidget):
                 painter.restore()
                 
                 progress.setValue(i + 1)
+                from PyQt6.QtWidgets import QApplication
+                QApplication.processEvents()
             
             painter.end()
             QMessageBox.information(self, "Export Complete", f"Saved to {file_path}")

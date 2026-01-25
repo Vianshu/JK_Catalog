@@ -87,9 +87,9 @@ class PrintExportDialog(QDialog):
         options_group = QGroupBox("Options")
         options_layout = QVBoxLayout(options_group)
         
-        self.chk_skip_empty = QCheckBox("Skip Empty Pages")
-        self.chk_skip_empty.setChecked(True)
-        options_layout.addWidget(self.chk_skip_empty)
+        # Options Section
+        # Only keeping valid options - Skip Empty removed as per request
+        pass
         
         layout.addWidget(options_group)
         
@@ -163,17 +163,8 @@ class PrintExportDialog(QDialog):
             end = self.spin_to.value()  # exclusive
             page_indices = list(range(start, min(end, total)))
         
-        # Filter empty pages if option checked
-        if self.chk_skip_empty.isChecked():
-            filtered = []
-            for idx in page_indices:
-                if idx < len(self.catalog_ui.all_pages_data):
-                    _, group_name, sg_sn, page_no, _ = self.catalog_ui.all_pages_data[idx]
-                    items = self.catalog_ui.logic.get_items_for_page_dynamic(group_name, sg_sn, page_no)
-                    if items:  # Only include pages with content
-                        filtered.append(idx)
-            page_indices = filtered
-        
+        # Filter empty pages if option checked -> REMOVED
+        # Default behavior: Print exactly what is selected (From-To or All)
         return page_indices
     
     def create_print_renderer(self):
@@ -296,6 +287,14 @@ class PrintExportDialog(QDialog):
         page_indices = self._preview_pages
         renderer = self.create_print_renderer()
         
+        # Show progress if we have the bar
+        if hasattr(self, 'progress'):
+            self.progress.setVisible(True)
+            self.progress.setMaximum(len(page_indices))
+            self.progress.setValue(0)
+            
+        from PyQt6.QtWidgets import QApplication
+        
         for i, page_idx in enumerate(page_indices):
             if i > 0:
                 printer.newPage()
@@ -314,9 +313,17 @@ class PrintExportDialog(QDialog):
             self.render_page_to_painter(painter, page_idx, renderer)
             
             painter.restore()
+            
+            # Update Progress
+            if hasattr(self, 'progress'):
+                self.progress.setValue(i + 1)
+            QApplication.processEvents()
         
         painter.end()
         renderer.deleteLater()
+        
+        if hasattr(self, 'progress'):
+            self.progress.setVisible(False)
     
     def export_to_pdf(self):
         """Export catalog to PDF file."""

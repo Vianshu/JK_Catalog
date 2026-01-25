@@ -45,8 +45,7 @@ class ChequeListUI(QWidget):
         
         # 1. Left Side: Clear Button
         self.btn_clear = QPushButton("✅ Clear Chq Unhide")
-        self.btn_clear.setObjectName("BtnClearCheque")
-        # self.btn_clear.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;") # Moved to QSS
+        self.btn_clear.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
         self.btn_clear.clicked.connect(self.toggle_clear_visibility)
         
         self.search_box = QLineEdit()
@@ -62,10 +61,8 @@ class ChequeListUI(QWidget):
         
         self.lbl_count = QLabel("Total No. of Chq.: 0")
         self.lbl_total = QLabel("Amount: 0.00")
-        self.lbl_count.setObjectName("LblChequeCount")
-        self.lbl_total.setObjectName("LblChequeTotal")
-        # self.lbl_count.setStyleSheet("font-weight: 600; margin-right: 10px;")
-        # self.lbl_total.setStyleSheet("font-weight: 600; margin-right: 10px;")
+        self.lbl_count.setStyleSheet("font-weight: 600; margin-right: 10px;")
+        self.lbl_total.setStyleSheet("font-weight: 600; margin-right: 10px;")
         
         top_bar.addWidget(self.lbl_count)
         top_bar.addWidget(self.lbl_total)
@@ -74,18 +71,15 @@ class ChequeListUI(QWidget):
 
         # 3. Right Side: Utility Buttons
         self.btn_print = QPushButton("🖨️ Print")
-        self.btn_print.setObjectName("BtnPrintCheque")
-        # self.btn_print.setStyleSheet("background-color: #3498db; color: white;")
+        self.btn_print.setStyleSheet("background-color: #3498db; color: white;")
         
         self.btn_bank_list = QPushButton("🏦 Bank List")
         self.btn_bank_list.setCheckable(True)
-        self.btn_bank_list.setObjectName("BtnBankList")
-        # self.btn_bank_list.setStyleSheet("background-color: #3498db; color: white;")
+        self.btn_bank_list.setStyleSheet("background-color: #3498db; color: white;")
         self.btn_bank_list.clicked.connect(self.toggle_bank_list)
         
         self.btn_export = QPushButton("Excel")
-        self.btn_export.setObjectName("BtnExportCheque")
-        # self.btn_export.setStyleSheet("background-color: #3498db; color: white;")
+        self.btn_export.setStyleSheet("background-color: #3498db; color: white;")
         self.btn_export.clicked.connect(self.export_to_excel)
         
         top_bar.addWidget(self.btn_print)

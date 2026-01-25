@@ -632,22 +632,24 @@ class CatalogLogic:
         except:
             return {}
 
-    def _simulate_page_layout_internal(self, group_name, sg_sn, allow_backward=False, printable_pages=None):
-        """Internal layout computation with Incremental Logic (Lock Existing, Insert New)."""
-        products = self.get_sorted_products_from_db(group_name, sg_sn)
-        layout_map = {}
-        
-        ROWS = 5
-        COLS = 4
-        
-        def get_empty_grid(): 
-            return [[False]*COLS for _ in range(ROWS)]
-            
-        grids = {}
-        
+
     def _simulate_page_layout_internal(self, group_name, sg_sn, allow_backward=False, printable_pages=None):
         """Internal layout computation with Incremental Logic (Lock Existing, Insert New, Sort Per Page)."""
         products = self.get_sorted_products_from_db(group_name, sg_sn)
+        
+        # --- SORT BY PRICE (Low to High) ---
+        def get_price_val(x):
+            try:
+                # If dict: x.get("mrp")
+                # If tuple: index 4 is usually MRP based on query
+                val = x.get("mrp") if isinstance(x, dict) else x[4]
+                if not val: return 0.0
+                return float(str(val).replace(",", "").strip())
+            except:
+                return 0.0
+        
+        # Sort globally so they flow into pages in price order
+        products.sort(key=get_price_val)
         layout_map = {}
         
         ROWS = 5
@@ -674,7 +676,7 @@ class CatalogLogic:
                 p_len = p_data.get("length")
                 num_sizes = len(p_data.get("sizes", []))
             else:
-                p_len = p_data[2] if len(p_data) > 2 else 1
+                p_len = p_data[3] if len(p_data) > 3 else 1
                 num_sizes = 1
             
             img_cols = 1  
@@ -704,6 +706,36 @@ class CatalogLogic:
                     for dr in range(rspan):
                         for dc in range(cspan):
                             if g_state[r + dr][c + dc]:
+                                fits = False; break
+                        if not fits: break
+                    if fits: return r, c
+            return -1, -1
+
+        # Helper for Linear Search (Moved Up for Phase 2 access)
+        def find_slot_linear(g_state, rspan, cspan, start_r, start_c):
+            # 1. Try rest of the start_row
+            for c in range(start_c, COLS - cspan + 1):
+                # Check fit
+                fits = True
+                for ir in range(start_r, start_r + rspan):
+                    if ir >= ROWS: 
+                        fits = False; break
+                    for ic in range(c, c + cspan):
+                        if g_state[ir][ic]: 
+                            fits = False; break
+                    if not fits: break
+                if fits: return start_r, c
+            
+            # 2. Try subsequent rows
+            for r in range(start_r + 1, ROWS):
+                for c in range(0, COLS - cspan + 1):
+                    # Check fit
+                    fits = True
+                    for ir in range(r, r + rspan):
+                        if ir >= ROWS: 
+                            fits = False; break
+                        for ic in range(c, c + cspan):
+                            if g_state[ir][ic]: 
                                 fits = False; break
                         if not fits: break
                     if fits: return r, c
@@ -752,24 +784,64 @@ class CatalogLogic:
         def assign_best_fit(p_data, ignore_pages=None):
             rspan, cspan = get_dims(p_data)
             best_page = None
-            best_free_count = -1
+            max_remaining_space = -1
             
-            check_pages = sorted(temp_grids.keys())
+            # Determine pages to check
+            check_pages = sorted(list(set([pg for _, pg in assignments])))
             if not check_pages: check_pages = [1]
             
+            # Also optionally consider a new page if existing are full? 
+            # Logic: Try existing pages first. If none work, use new page.
+            
+            candidates = []
             for page_num in check_pages:
                 if ignore_pages and page_num in ignore_pages: continue
-                if page_num not in temp_grids: temp_grids[page_num] = get_empty_grid()
-                grid = temp_grids[page_num]
-                
-                r, c = find_slot(grid, rspan, cspan)
-                if r != -1:
-                     free = count_free_cells(grid)
-                     if free > best_free_count:
-                         best_free_count = free
-                         best_page = page_num
+                candidates.append(page_num)
             
+            # Helper to simulate layout success
+            def check_sim(page_n, added_item):
+                # 1. Gather all items for this page + new item
+                page_items = [p for p, pg in assignments if pg == page_n]
+                page_items.append(added_item)
+                
+                # 2. Sort by Price
+                page_items.sort(key=get_price_val)
+                
+                # 3. Simulate Linear Layout
+                sim_grid = get_empty_grid()
+                cursor_r, cursor_c = 0, 0
+                valid = True
+                
+                for item in page_items:
+                    ir, ic = get_dims(item)
+                    found_r, found_c = find_slot_linear(sim_grid, ir, ic, cursor_r, cursor_c)
+                    if found_r == -1:
+                        valid = False; break
+                    mark_slot(sim_grid, found_r, found_c, ir, ic)
+                    cursor_r, cursor_c = found_r, found_c
+                
+                if valid:
+                    return count_free_cells(sim_grid)
+                return -1
+
+            # Iterate candidates
+            for page_num in candidates:
+                remaining = check_sim(page_num, p_data)
+                if remaining > max_remaining_space:
+                    max_remaining_space = remaining
+                    best_page = page_num
+            
+            # If no fit found on existing pages, create new page
             target_page = best_page
+            if target_page is None:
+                 target_page = max(check_pages) + 1 if check_pages else 1
+                 # If we create a new page, it's empty, so it definitely fits.
+            
+            # NOTE: We don't actually update temp_grids here because we use assignments list 
+            # as the source of truth for the NEXT checks. temp_grids are less relevant now
+            # but we update it anyway for legacy consistency if needed.
+            # Actually, simply returning target_page is enough because caller updates assignments.
+            return target_page
             if target_page is None:
                  target_page = max(temp_grids.keys()) + 1 if temp_grids else 1
             
@@ -810,7 +882,8 @@ class CatalogLogic:
                             preserved_assignments.append((p_data, p_no))
                     
                     # 2. Sort range items
-                    range_items.sort(key=lambda x: (x.get("product_name") or x.get("name")) if isinstance(x, dict) else x[0])
+                    # 2. Sort range items BY PRICE
+                    range_items.sort(key=get_price_val)
                     
                     # 3. Clear grids for these pages to refill cleanly
                     for p_no in rng:
@@ -843,23 +916,33 @@ class CatalogLogic:
                         pg = assign_best_fit(p_data, ignore_pages=set(rng))
                         assignments.append((p_data, pg))
             
-        # Phase 3: Layout Each Page (Sorted)
+        # Phase 3: Layout Each Page (Sorted) with Ripple Overflow
         # Group assignments
         page_groups = {}
         for p_data, page_no in assignments:
             if page_no not in page_groups: page_groups[page_no] = []
             page_groups[page_no].append(p_data)
             
-        # Final Layout
         grids = {} # Reset grids for final clean layout
         
-        for page_num in sorted(page_groups.keys()):
-            # Sort items on this page (Redundant for ranges, but needed for single pages)
+        # Dynamic processing queue for Ripple Effect
+        page_queue = sorted(page_groups.keys())
+        idx = 0
+        
+        while idx < len(page_queue):
+            page_num = page_queue[idx]
+            
+            # Sort items on this page BY PRICE (Re-sort needed because ripple might add items)
             items = page_groups[page_num]
-            items.sort(key=lambda x: (x.get("product_name") or x.get("name")) if isinstance(x, dict) else x[0])
+            items.sort(key=get_price_val)
             
             grids[page_num] = get_empty_grid()
             layout_map[page_num] = []
+            
+            grid = grids[page_num]
+            cursor_r, cursor_c = 0, 0
+            
+            overflow_items = []
             
             for p_data in items:
                 rspan, cspan = get_dims(p_data)
@@ -867,18 +950,35 @@ class CatalogLogic:
                 if page_num not in grids: grids[page_num] = get_empty_grid()
                 grid = grids[page_num]
                 
-                r, c = find_slot(grid, rspan, cspan)
+                # Strict Linear Search (Start from cursor)
+                # NO FALLBACK allowed to prevent "Hole Jumping"
+                r, c = find_slot_linear(grid, rspan, cspan, cursor_r, cursor_c)
+                
                 if r != -1:
                     mark_slot(grid, r, c, rspan, cspan)
                     layout_map[page_num].append({
                         "data": p_data, "row": r, "col": c,
                         "rspan": rspan, "cspan": cspan
                     })
+                    cursor_r, cursor_c = r, c
                 else:
-                    print(f"Layout Overflow on Page {page_num} for {p_data}")
-                    
-        return layout_map
-        
+                    # Overflow: Push to next page in the chain
+                    overflow_items.append(p_data)
+            
+            # Handle Overflow
+            if overflow_items:
+                target_page = page_num + 1
+                if target_page not in page_groups:
+                    page_groups[target_page] = []
+                    # Identify if we need to insert this page into our queue
+                    if target_page not in page_queue:
+                         page_queue.append(target_page)
+                         page_queue.sort() # Reshuffle queue to ensure we visit target_page in order
+                
+                page_groups[target_page].extend(overflow_items)
+            
+            idx += 1
+            
         # ═══════════════════════════════════════════════════════════════════════
         # POST-PROCESSING: Distribute empty spaces evenly across each page
         # This makes pages with fewer products look more balanced
@@ -989,7 +1089,7 @@ class CatalogLogic:
             # Stock Logic: Must have Stock > 0 OR True/False = 1
             cursor.execute("""
                 SELECT [Product Name], [Item_Name], [Image_Path], [Lenth], [MRP], [Product_Size],
-                       [MOQ], [Categori], [M_Packing], [Unit], [Update_date]
+                       [MOQ], [Category], [M_Packing], [Unit], [Update_date]
                 FROM catalog
                 WHERE REPLACE(TRIM([Group]), '.', '') = REPLACE(TRIM(?), '.', '') COLLATE NOCASE 
                   AND CAST([SG_SN] AS INTEGER) = CAST(? AS INTEGER)
@@ -1038,7 +1138,7 @@ class CatalogLogic:
                     grouped_map[norm_key] = {
                         "product_name": raw_name,
                         "image_path": r[2],
-                        "length": r[3] if r[3] else "1",
+                        "length": r[3] if r[3] else "1|0",
                         "sizes": [],
                         "mrps": [],
                         "moqs": [],

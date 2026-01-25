@@ -208,14 +208,10 @@ class FinalDataUI(QWidget):
 
     # --- HELPER: Calc Length ---
     def calc_length_from_size(self, size_str):
-        if not size_str: return "1"
-        try:
-            # Assuming comma separated sizes
-            count = len([s for s in size_str.split(',') if s.strip()])
-            if count > 10: return "3"
-            elif count > 5: return "2"
-            return "1"
-        except: return "1"
+        # Always default to "1|0" (Auto Height)
+        # 1 = One extra column (total 2 cols)
+        # 0 = Auto Vertical Height (calculated based on num sizes in Logic)
+        return "1|0"
 
     # --- NAYA: Manual Edit Save karne ka logic ---
     def on_row_changed(self, current, previous):
@@ -238,7 +234,7 @@ class FinalDataUI(QWidget):
             img_path_item = self.table.item(row, self.col_index("Image_Path"))
             img_path_val = img_path_item.data(Qt.ItemDataRole.UserRole) if img_path_item else ""
             
-            if "no_need" in str(img_path_val).lower():
+            if "no_need" in str(img_path_val).lower() or "no need" in str(img_path_val).lower():
                 final_bool_val = "false"
             elif lower_val in ["f", "false", "flase", "0", "no"]:
                 final_bool_val = "false"
@@ -270,7 +266,7 @@ class FinalDataUI(QWidget):
         if str(new_val) == str(old_val):
             return 
 
-        # --- UPDATE DATE TRIGGER ---
+            # --- UPDATE DATE TRIGGER ---
         # List of columns that trigger update_date
         trigger_cols = [
             "Product Name", "Product_Size", "Category", "Unit", "MOQ", 
@@ -294,6 +290,18 @@ class FinalDataUI(QWidget):
                 cur.execute(f"UPDATE catalog SET [{col_name}]=?, Update_date=? WHERE GUID=?", (new_val, now, guid))
             else:
                 cur.execute(f"UPDATE catalog SET [{col_name}]=? WHERE GUID=?", (new_val, guid))
+            
+            # --- If Image_Path was just set to 'no need', force True/False to 'false' ---
+            if col_name == "Image_Path":
+                if "no_need" in new_val.lower() or "no need" in new_val.lower() or "noneed" in new_val.lower():
+                    cur.execute("UPDATE catalog SET [True/False]='false' WHERE GUID=?", (guid,))
+                    # Also update the UI
+                    tf_col = self.col_index("True/False")
+                    self.table.blockSignals(True)
+                    tf_item = self.table.item(row, tf_col)
+                    if tf_item:
+                        tf_item.setText("false")
+                    self.table.blockSignals(False)
                 
             conn.commit()
             conn.close()
@@ -376,7 +384,7 @@ class FinalDataUI(QWidget):
                 s_data = super_mapping.get(sub_group_name, ("", "", ""))
                 
                 cur.execute("""
-                    SELECT Item_Name, Alias, Part_No, Categori, Unit, 
+                    SELECT Item_Name, Alias, Part_No, Category, Unit, 
                            MRP, Stock, MG_SN, [Group], SG_SN, Sub_Group, [Product_Size]
                     FROM catalog WHERE GUID=?
                 """, (guid,))
@@ -386,7 +394,7 @@ class FinalDataUI(QWidget):
                     r[1],          # Item_Name
                     r[2],          # Alias
                     r[3],          # Part_No
-                    r[4],          # Categori
+                    r[4],          # Category
                     r[5],          # Unit
                     r[7],          # MRP
                     r[8],          # Stock
@@ -407,19 +415,15 @@ class FinalDataUI(QWidget):
                 if old_row_db:
                     if data_changed:
                         query = """UPDATE catalog SET 
-                            Item_Name=?, Alias=?, Part_No=?, Categori=?, Unit=?, 
+                            Item_Name=?, Alias=?, Part_No=?, Category=?, Unit=?, 
                             MRP=?, Stock=?, MG_SN=?, [Group]=?, SG_SN=?, Sub_Group=?, 
                             Update_date=? 
                             WHERE GUID=?"""
                         cur.execute(query, (*new_row, now, guid))
                     else:
-                        # Data same, but ensure Length is synced/calculated based on Product_Size
-                        current_size = old_row_db[11] if len(old_row_db) > 11 else ""
-                        new_len = self.calc_length_from_size(current_size)
-                        
-                        # Only update if Length is diff? (Optimization). For now just update.
-                        query = "UPDATE catalog SET Lenth=? WHERE GUID=?"
-                        cur.execute(query, (new_len, guid))
+                        # Data unchanged. Do NOT touch Lenth.
+                        # This preserves manual edits (e.g. 1|0, 2|2) in the catalog.
+                        pass
                 else:
                     # Bilkul naya item (Insert)
                     f_row = [None] * len(self.headers)
@@ -427,7 +431,7 @@ class FinalDataUI(QWidget):
                     f_row[self.col_index("Item_Name")] = r[1]
                     f_row[self.col_index("Alias")] = r[2]
                     f_row[self.col_index("Part_No")] = r[3]
-                    f_row[self.col_index("Categori")] = r[4]
+                    f_row[self.col_index("Category")] = r[4]
                     f_row[self.col_index("Unit")] = r[5]
                     f_row[self.col_index("MRP")] = r[7]
                     f_row[self.col_index("Stock")] = r[8]
@@ -470,6 +474,12 @@ class FinalDataUI(QWidget):
             img_map = self.get_image_mapping()
             for rid, img_name in conn.execute("SELECT rowid, Image_Name FROM catalog"):
                 clean = img_name.lower().strip() if img_name else ""
+                
+                # Check for "no need" in Image Name
+                if "no_need" in clean or "no need" in clean or "noneed" in clean:
+                     conn.execute("UPDATE catalog SET Image_Path='no_need', [True/False]='false' WHERE rowid=?", (rid,))
+                     continue
+
                 if clean in img_map:
                     path = img_map[clean]
                     date = self.get_file_modify_date(path)
@@ -533,11 +543,6 @@ class FinalDataUI(QWidget):
                     else:
                         new_tf = "false"
                 
-                # Check Image_Path for 'no_need' - overrides everything including user override
-                img_path_str = str(img_path).lower().strip() if img_path else ""
-                if "no_need" in img_path_str or "noneed" in img_path_str:
-                    new_tf = "false"
-                
                 # Price List group doesn't need images, keep as is based on stock
                 group_str = str(group_name).lower().strip() if group_name else ""
                 if group_str == "price list":
@@ -552,10 +557,25 @@ class FinalDataUI(QWidget):
                             new_tf = "false"
                     except:
                         new_tf = "1" if current_is_true else "false"
+                else:
+                    # For NON-Price List items:
+                    # 1. If Image Path is empty (Missing), MUST be False
+                    if not img_path or not str(img_path).strip():
+                        new_tf = "false"
+
+                # Check Image_Path for 'no_need' - overrides everything including user override AND Price List
+                img_path_str = str(img_path).lower().strip() if img_path else ""
+                if "no_need" in img_path_str or "noneed" in img_path_str or "no need" in img_path_str:
+                    new_tf = "false"
                 
                 # Update only if changed
                 if current_tf_str != new_tf and not (current_tf_str == "1" and new_tf == "1"):
                     cursor.execute("UPDATE catalog SET [True/False]=? WHERE rowid=?", (new_tf, rid))
+            
+            # --- FORCE DEFAULT LENGTH 1|0 ---
+            cursor.execute("UPDATE catalog SET Lenth='1|0' WHERE Lenth IS NULL OR TRIM(Lenth)=''")
+            # Also fix existing '1' entries to auto-height '1|0'
+            cursor.execute("UPDATE catalog SET Lenth='1|0' WHERE TRIM(Lenth)='1'")
             
             conn.commit()
             conn.close()
