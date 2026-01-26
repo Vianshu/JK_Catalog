@@ -189,13 +189,11 @@ class SuperMasterUI(QWidget):
         self.table.setSortingEnabled(True)
         self.table.blockSignals(False)
 
-    def load_super_master_data(self, company_name):
-        if not company_name: return
+    def load_super_master_data(self, company_path):
+        if not company_path or not os.path.exists(company_path): return
         try:
-            vault_path = os.path.join(self.project_root, "company_vault.json")
-            with open(vault_path, 'r', encoding='utf-8') as f:
-                vault = json.load(f)
-            row_db = os.path.join(vault[company_name]['path'], "row_data.db")
+            # Removed redundant vault lookup; use passed path directly
+            row_db = os.path.join(company_path, "row_data.db")
             unique_subs = []
             if os.path.exists(row_db):
                 conn = sqlite3.connect(row_db)

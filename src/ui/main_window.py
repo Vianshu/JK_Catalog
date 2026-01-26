@@ -329,43 +329,46 @@ class MainWindow(QWidget):
                     # 2. Godown Page का रास्ता सेट करें
                     self.godown_page.db_path = os.path.join(company_path, "godown_stock.db")
                     # 3. बैकअप चेक: अगर final_df अभी तक लोड नहीं हुआ, तो सीधे SQLite से उठाएं
-                   
-                    try:
-                        final_db_path = os.path.join(company_path, "final_data.db")
-                        if os.path.exists(final_db_path):
-                            conn = sqlite3.connect(final_db_path)
-                            self.godown_page.final_data = pd.read_sql_query("SELECT * FROM catalog", conn)
-                            self.godown_page.update_completer() # सर्च के लिए लिस्ट अपडेट करें
-                            conn.close()
-                            
-                        elif hasattr(self.final_data_page, 'final_df'):
-                            self.godown_page.final_data = self.final_data_page.final_df
-                            
-                        self.godown_page.update_completer()
-                    except Exception as e:
-                        print(f"Error syncing data to Godown: {e}")
+        try:
+            self.current_company = comp_name
+            self.company_btn.setText(f"🏢 {comp_name} ▼")
+            self.company_btn.show()
 
-                    self.godown_page.load_data_from_db()
-                    
-                    if hasattr(self, 'calendar_page'):
-                        self.calendar_page.set_company_path(company_path)
-    
-                    if hasattr(self, 'cheque_list_page'):
-                        self.cheque_list_page.set_company_path(company_path)
-                
-                    if hasattr(self, 'reports_page'):
-                        self.reports_page.current_company_path = company_path
-                        self.reports_page.current_company_path = company_path
-                        self.reports_page.refresh_report_data()
-
-                    if hasattr(self, 'full_catalog_page'):
-                        self.full_catalog_page.set_company_path(company_path)
+            # Load Company Path (Vault se)
+            vault_file = self.company_login.vault_file
+            company_path = ""
+            if os.path.exists(vault_file):
+                with open(vault_file, 'r', encoding='utf-8') as f:
+                    vault = json.load(f)
+                    if comp_name in vault:
+                        company_path = vault[comp_name].get("path", "")
                         
-        self.row_data_page.load_data(comp_name)
-        self.nav_stack.setCurrentIndex(1) 
-        self.main_stack.setCurrentIndex(1)
-        self.main_stack.setCurrentIndex(1)
-        # QTimer.singleShot(2000, lambda: self.main_stack.setCurrentIndex(2)) # User requested to stay on Welcome screen
+            # Distribute Path to all pages
+            self.final_data_page.set_company_path(company_path)
+            self.super_master_page.load_super_master_data(company_path) 
+            self.godown_page = GodownListUI(company_path, getattr(self.final_data_page, 'final_df', None))
+            self.main_stack.removeWidget(self.main_stack.widget(10)) # Remove old godown
+            self.main_stack.insertWidget(10, self.godown_page) # Insert new
+
+            if hasattr(self, 'calendar_page'):
+                self.calendar_page.set_company_path(company_path)
+
+            if hasattr(self, 'cheque_list_page'):
+                self.cheque_list_page.set_company_path(company_path)
+        
+            if hasattr(self, 'reports_page'):
+                self.reports_page.current_company_path = company_path
+                self.reports_page.refresh_report_data()
+
+            if hasattr(self, 'full_catalog_page'):
+                self.full_catalog_page.set_company_path(company_path)
+                
+            self.row_data_page.load_data(comp_name)
+            self.nav_stack.setCurrentIndex(1) 
+            self.main_stack.setCurrentIndex(1)
+        except Exception as e:
+            QMessageBox.critical(self, "Login Error", f"Failed to load company data:\n{str(e)}")
+            print(f"Login Crash: {e}")
 
     def on_sync_tally_clicked(self):
         if not self.current_company: return

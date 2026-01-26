@@ -347,11 +347,40 @@ class CompanyLoginUI(QWidget):
 
         if os.path.exists(self.vault_file):
             with open(self.vault_file, 'r', encoding='utf-8') as f:
-                try:
-                    vault = json.load(f)
-                    for comp_name in vault.keys():
-                        self.add_item(comp_name, role="company_folder")
-                except: pass
+                try: vault = json.load(f)
+                except: vault = {}
+        else:
+            vault = {}
+            
+        # 1. Registered Companies (In Vault)
+        registered_paths = set()
+        for comp_name, data in vault.items():
+            itm = self.add_item(f"🏢 {comp_name}", role="company_folder")
+            itm.setData(Qt.ItemDataRole.UserRole + 1, comp_name) # Store RAW Name
+            if "path" in data and data["path"]:
+                registered_paths.add(os.path.abspath(data["path"]).lower())
+
+        # 2. Unregistered Folders (In Data Path)
+        if os.path.exists(self.current_data_path):
+            try:
+                found_any = False
+                for d in os.listdir(self.current_data_path):
+                    full_path = os.path.join(self.current_data_path, d)
+                    if os.path.isdir(full_path):
+                        # Show if NOT already registered
+                        if os.path.abspath(full_path).lower() not in registered_paths:
+                            itm = self.add_item(f"📂 {d} (Unregistered)", role="unregistered_folder")
+                            itm.setData(Qt.ItemDataRole.UserRole + 1, full_path)
+                            found_any = True
+                
+                if not found_any and not vault:
+                    self.add_item("(No folders found)", role=None)
+            except Exception as e:
+                self.add_item(f"Error: {str(e)}", role=None)
+        else:
+            self.add_item(f"⚠️ Path Not Found:\n{self.current_data_path}", role="set_path")
+            self.add_item("Click here to set correct path", role="set_path", is_bold=True)
+                
         self.list.setCurrentRow(0)
 
     def add_item(self, text, role=None, align_right=False, is_bold=False):
@@ -363,6 +392,7 @@ class CompanyLoginUI(QWidget):
             item.setFont(font)
         item.setData(Qt.ItemDataRole.UserRole, role)
         self.list.addItem(item)
+        return item
 
     def on_enter(self, item):
         if not item: return
@@ -380,7 +410,18 @@ class CompanyLoginUI(QWidget):
                     self.current_data_path = new_p
                     self.load_main_list()
         elif role == "company_folder": 
-            self.handle_company_login(item.text())
+            comp_name = item.data(Qt.ItemDataRole.UserRole + 1)
+            self.handle_company_login(comp_name)
+        elif role == "unregistered_folder":
+            # Jump to Create Form, pre-fill details
+            full_path = item.data(Qt.ItemDataRole.UserRole + 1)
+            folder_name = os.path.basename(full_path)
+            
+            self.stack.setCurrentIndex(1) # Show Form
+            # Pre-fill fields
+            self.form_screen.fields[0].setText(folder_name) # Name
+            self.form_screen.fields[4].setText(os.path.dirname(full_path)) # Location
+            self.form_screen.header_label.setText(f"  Register: {folder_name}")
 
     def handle_company_login(self, comp_name):
         vault = {}

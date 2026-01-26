@@ -3,7 +3,7 @@ import json
 import sqlite3
 import datetime
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QLabel, 
+    QWidget, QHBoxLayout, QVBoxLayout, QLabel, QGroupBox,
     QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox
 )
 from PyQt6.QtCore import Qt
@@ -30,6 +30,9 @@ class FinalDataUI(QWidget):
             "Image_Path", "Lenth", "Image_Date", "True/False", "Update_date"
         ]
         self.setup_ui()
+
+    def set_company_path(self, path):
+        self.db_path = os.path.join(path, "final_data.db")
 
     def setup_ui(self):
         main_layout = QHBoxLayout(self)
@@ -135,7 +138,7 @@ class FinalDataUI(QWidget):
         summary_grid.addWidget(self.lbl_catalog_total_val, 1, 1)
         
         # Out of Stock (Stock=0 but True/False != false)
-        self.lbl_out_stock = QLabel("Out of Stock:")
+        self.lbl_out_stock = QLabel("Out of Stock (False):")
         self.lbl_out_stock.setStyleSheet("font-weight: 500; color: #333; border: none;")
         self.lbl_out_stock_val = QLabel("0")
         self.lbl_out_stock_val.setStyleSheet("font-weight: bold; color: #fd7e14; border: none;")
@@ -179,10 +182,8 @@ class FinalDataUI(QWidget):
         side_layout.addWidget(summary_frame)
 
         # 5. Status Label
-        self.status_lbl = QLabel("Ready")
-        self.status_lbl.setWordWrap(True)
-        self.status_lbl.setStyleSheet("color: #666; font-style: italic; padding: 5px;")
-        side_layout.addWidget(self.status_lbl)
+        # 5. Status Label (MOVED TO SUMMARY GROUP)
+        # self.status_lbl = QLabel("Ready") ... REMOVED
 
         main_layout.addWidget(side_panel, 1) # Side panel gets 1 part weight
         
@@ -244,12 +245,15 @@ class FinalDataUI(QWidget):
                  # "For all other valid cases... print true" -> Default to "1"
                  final_bool_val = "1"
             
-            # If value changed due to auto-correct, update UI immediately
             if final_bool_val != new_val:
                 self.table.blockSignals(True)
                 item.setText(final_bool_val)
                 self.table.blockSignals(False)
-                new_val = final_bool_val
+                new_val = final_bool_val # Update variable for DB save
+
+                new_val = final_bool_val # Update variable for DB save
+
+            self.update_summary_stats() # Update counts on change
 
         # --- NAYA: Auto-Update Length if Product_Size changes ---
         if col_name == "Product_Size":
@@ -797,3 +801,44 @@ class FinalDataUI(QWidget):
                     QMessageBox.warning(self, "Error", f"Could not open image: {e}")
             else:
                  QMessageBox.information(self, "Info", f"No valid image path found.")
+
+    def update_summary_stats(self):
+        total = self.table.rowCount()
+        false_cnt = 0
+        oos_false = 0
+        true_cnt = 0
+        
+        idx_tf = self.col_index("True/False")
+        idx_stk = self.col_index("Stock")
+        
+        for r in range(total):
+            it_tf = self.table.item(r, idx_tf)
+            tf_val = it_tf.text().lower().strip() if it_tf else "false"
+            
+            it_stk = self.table.item(r, idx_stk)
+            try: stk = float(it_stk.text().replace(",","")) if it_stk and it_stk.text() else 0
+            except: stk = 0
+            
+            if tf_val in ["1", "true", "yes", "t"]:
+                true_cnt += 1
+            else:
+                false_cnt += 1
+                if stk <= 0: oos_false += 1
+                
+        mismatch = total - (false_cnt + true_cnt)
+        
+        mismatch = total - (false_cnt + true_cnt)
+        
+        # Update UI Labels directly
+        if hasattr(self, 'lbl_catalog_total_val'):
+            self.lbl_catalog_total_val.setText(str(total))
+            self.lbl_false_val.setText(str(false_cnt))
+            self.lbl_out_stock_val.setText(str(oos_false))
+            self.lbl_final_total_val.setText(str(true_cnt))
+            self.lbl_mismatch_val.setText(str(mismatch))
+            
+            # Styling for Mismatch
+            if mismatch != 0:
+                self.lbl_mismatch_val.setStyleSheet("font-weight: bold; color: #dc3545; border: none;") # Red
+            else:
+                self.lbl_mismatch_val.setStyleSheet("font-weight: bold; color: #28a745; border: none;") # Green
