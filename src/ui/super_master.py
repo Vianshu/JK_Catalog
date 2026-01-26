@@ -24,17 +24,23 @@ class SuperMasterUI(QWidget):
             if os.path.exists(vault_path):
                 with open(vault_path, 'r', encoding='utf-8') as f:
                     vault = json.load(f)
-                if vault:
+            if vault:
+                    # Attempt to use the first company's data path
                     first_comp_path = list(vault.values())[0]['path']
-                    data_folder = os.path.dirname(first_comp_path)
-                    return os.path.join(data_folder, "super_master.db")
-            return os.path.join(self.base_dir, "super_master.db")
+                    # Assuming sibling to company folder? or just "Data" folder usage
+                    # Better default: Just use the local Data folder in the project
+                    pass
+            
+            # Default to local Data folder if vault logic is complex/unreliable for Master DB
+            return os.path.join(self.base_dir, "Data", "super_master.db")
         except:
-            return os.path.join(self.base_dir, "super_master.db")
+            return os.path.join(self.base_dir, "Data", "super_master.db")
 
     def setup_db(self):
-        print(self.db_path)
-        self.db_path="data\super_master.db"
+        # Ensure Data directory exists
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        print(f"Super Master DB Path: {self.db_path}")
+        
         conn = sqlite3.connect(self.db_path)
         conn.execute("""CREATE TABLE IF NOT EXISTS super_master 
                       (id TEXT, MG_SN TEXT, Group_Name TEXT, SG_SN TEXT, Sub_Group TEXT PRIMARY KEY)""")
