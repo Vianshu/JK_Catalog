@@ -28,6 +28,7 @@ from src.ui.int_cost_sheet import IntCostSheetUI
 from src.ui.catalog_price_list import CatalogPriceListUI
 from src.ui.cheque_list import ChequeListUI
 from src.ui.calendar_mapping import CalendarMappingUI
+from src.utils.path_utils import get_writable_data_path
 
 # Settings & Services
 # Settings & Services
@@ -205,7 +206,7 @@ class MainWindow(QWidget):
         self.super_master_page = SuperMasterUI()
         self.reports_page = ReportsUI()
         self.payment_list_page = PaymentListUI()
-        self.godown_page = GodownListUI("Data/Temp")
+        self.godown_page = GodownListUI(get_writable_data_path("Temp"))
         # Stack Pages
         self.full_catalog_page = FullCatalogUI()
         self.main_stack.addWidget(self.company_login)      # 0
@@ -311,24 +312,6 @@ class MainWindow(QWidget):
 
     # --- Business Logic Methods (Login, Sync, CRM etc.) ---
     def handle_login_success(self, comp_name):
-        self.current_company = comp_name
-        self.company_btn.setText(f"🏢 {comp_name} ▼")
-        self.company_btn.show()
-        
-        # Load Company Path
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        vault_path = os.path.join(base_dir, "company_vault.json")
-        
-        if os.path.exists(vault_path):
-            with open(vault_path, 'r', encoding='utf-8') as f:
-                vault = json.load(f)
-                if comp_name in vault:
-                    company_path = vault[comp_name]['path']
-                    # 1. Final Data लोड करें
-                    self.final_data_page.load_and_sync_data(comp_name)
-                    # 2. Godown Page का रास्ता सेट करें
-                    self.godown_page.db_path = os.path.join(company_path, "godown_stock.db")
-                    # 3. बैकअप चेक: अगर final_df अभी तक लोड नहीं हुआ, तो सीधे SQLite से उठाएं
         try:
             self.current_company = comp_name
             self.company_btn.setText(f"🏢 {comp_name} ▼")
@@ -343,13 +326,23 @@ class MainWindow(QWidget):
                     if comp_name in vault:
                         company_path = vault[comp_name].get("path", "")
                         
-            # Distribute Path to all pages
-            self.final_data_page.set_company_path(company_path)
-            self.super_master_page.load_super_master_data(company_path) 
-            self.godown_page = GodownListUI(company_path, getattr(self.final_data_page, 'final_df', None))
-            self.main_stack.removeWidget(self.main_stack.widget(10)) # Remove old godown
-            self.main_stack.insertWidget(10, self.godown_page) # Insert new
+            if not company_path:
+                print(f"Error: Path not found for company {comp_name}")
+                return
 
+            # 1. Final Data Loads
+            self.final_data_page.load_and_sync_data(comp_name) 
+            self.final_data_page.set_company_path(company_path)
+
+            # 2. Super Master
+            self.super_master_page.load_super_master_data(company_path) 
+
+            # 3. Godown - UPDATE existing instance
+            # Use change_data_folder instead of creating new instance
+            final_df = getattr(self.final_data_page, 'final_df', None)
+            self.godown_page.change_data_folder(company_path, final_df)
+
+            # 4. Other pages
             if hasattr(self, 'calendar_page'):
                 self.calendar_page.set_company_path(company_path)
 
@@ -357,15 +350,19 @@ class MainWindow(QWidget):
                 self.cheque_list_page.set_company_path(company_path)
         
             if hasattr(self, 'reports_page'):
-                self.reports_page.current_company_path = company_path
-                self.reports_page.refresh_report_data()
+                 self.reports_page.current_company_path = company_path
+                 self.reports_page.refresh_report_data()
 
             if hasattr(self, 'full_catalog_page'):
                 self.full_catalog_page.set_company_path(company_path)
-                
+
+            # Row Data
             self.row_data_page.load_data(comp_name)
+            
+            # Go to Welcome
             self.nav_stack.setCurrentIndex(1) 
             self.main_stack.setCurrentIndex(1)
+            
         except Exception as e:
             QMessageBox.critical(self, "Login Error", f"Failed to load company data:\n{str(e)}")
             print(f"Login Crash: {e}")

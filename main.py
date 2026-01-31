@@ -2,6 +2,7 @@ import sys
 import os
 from PyQt6.QtWidgets import QApplication
 from src.ui.main_window import MainWindow
+from src.utils.path_utils import get_asset_path
 
 def load_stylesheet(app, file_name):
     if os.path.exists(file_name):
@@ -13,10 +14,8 @@ def load_stylesheet(app, file_name):
 def main():
     app = QApplication(sys.argv)
 
-    # --- यहाँ स्टाइलशीट लोड की जा रही है ---
-    # --- Load stylesheet with absolute path ---
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    style_path = os.path.join(base_dir, "src", "assets", "style.qss")
+    # --- Load stylesheet with absolute path (works in EXE too) ---
+    style_path = get_asset_path("style.qss")
     load_stylesheet(app, style_path)
 
     window = MainWindow()

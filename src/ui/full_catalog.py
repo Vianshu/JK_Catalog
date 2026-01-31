@@ -13,12 +13,14 @@ from src.logic.catalog_logic import CatalogLogic
 from src.ui.a4_renderer import A4PageRenderer
 from src.ui.settings import EmptyPagesDialog, add_pages_to_all_crms
 from src.ui.print_export import PrintExportDialog
+from src.utils.path_utils import get_data_file_path
 import sqlite3
 
 class FullCatalogUI(QWidget):
     def __init__(self):
         super().__init__()
-        db_path = os.path.join("data", "super_master.db")
+        # Use path utility for EXE compatibility
+        db_path = get_data_file_path("super_master.db")
         # Ensure Logic gets correct DB path
         self.logic = CatalogLogic(db_path)
         

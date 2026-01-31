@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
     QHeaderView, QMessageBox, QLabel, QLineEdit, QFrame
 )
 from PyQt6.QtCore import Qt, QEvent
+from src.utils.path_utils import get_data_file_path
 
 class SuperMasterUI(QWidget):
     def __init__(self, parent=None):
@@ -13,7 +14,8 @@ class SuperMasterUI(QWidget):
         self.setObjectName("SuperMasterMain") # QSS: #SuperMasterMain
         self.base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         self.project_root = self.base_dir 
-        self.db_path = self.get_data_folder_db_path()
+        # Use path utility for EXE compatibility
+        self.db_path = get_data_file_path("super_master.db")
         self.setup_db()
         self.init_ui()
 
