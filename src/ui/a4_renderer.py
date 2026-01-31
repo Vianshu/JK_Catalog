@@ -512,6 +512,10 @@ class A4PageRenderer(QWidget):
             f"{('border-right:%dpx solid %s;' % (b, blue)) if draw_right else 'border-right:none;'}"
             "border-radius:0px;}"
         )
+        
+        # Enable right-click context menu (Same as Image Block)
+        f.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        f.customContextMenuRequested.connect(lambda pos, p=prod: self._show_context_menu(f, pos, p))
 
         lay = QVBoxLayout(f)
         lay.setContentsMargins(0, 0, 0, 0)

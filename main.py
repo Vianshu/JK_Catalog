@@ -14,7 +14,10 @@ def main():
     app = QApplication(sys.argv)
 
     # --- यहाँ स्टाइलशीट लोड की जा रही है ---
-    load_stylesheet(app, "src/assets/style.qss")
+    # --- Load stylesheet with absolute path ---
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    style_path = os.path.join(base_dir, "src", "assets", "style.qss")
+    load_stylesheet(app, style_path)
 
     window = MainWindow()
     window.showMaximized()
