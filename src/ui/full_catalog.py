@@ -7,8 +7,9 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem, QHeaderView, QGridLayout, QMessageBox, QScrollArea, QSizePolicy,
     QStyle, QGroupBox
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QColor, QPixmap
+from PyQt6.QtCore import Qt, QMarginsF
+from PyQt6.QtGui import QFont, QColor, QPixmap, QPageSize, QPageLayout, QPainter
+from PyQt6.QtPrintSupport import QPrinter, QPrintDialog, QPrintPreviewDialog
 from src.logic.catalog_logic import CatalogLogic
 from src.ui.a4_renderer import A4PageRenderer
 from src.ui.settings import EmptyPagesDialog, add_pages_to_all_crms
@@ -93,6 +94,7 @@ class FullCatalogUI(QWidget):
         # Build & Export
         self.btn_build.clicked.connect(self.build_catalog)
         self.btn_export.clicked.connect(self.export_pdf)
+        self.btn_print.clicked.connect(self.handle_direct_print)
         
         # Length change from right-click context menu
         self.renderer.length_changed.connect(self.handle_length_change)
@@ -254,8 +256,20 @@ class FullCatalogUI(QWidget):
             QMessageBox.warning(self, "No Pages", "No catalog pages available. Please build the catalog first.")
             return
         
-        dialog = PrintExportDialog(self, self)
+        dialog = PrintExportDialog(self, self, mode="pdf")
         dialog.exec()
+
+    def handle_direct_print(self):
+        """Open Print Dialog (Print Mode)."""
+        if not self.catalog_db_path: return
+        
+        # Open Dialog in Print Mode
+        dialog = PrintExportDialog(self, self, mode="print")
+        dialog.exec()
+
+    def _handle_print_preview_paint(self, printer):
+        # Deprecated logic - reused logic handles painting
+        pass
     
     def setup_ui(self):
         main_h_layout = QHBoxLayout(self)
@@ -376,6 +390,12 @@ class FullCatalogUI(QWidget):
         
         right_vbox.addWidget(self.btn_build)
         right_vbox.addWidget(self.btn_export)
+        
+        self.btn_print = QPushButton("🖨️ Print")
+        self.btn_print.setObjectName("CatalogPrintBtn")
+        self.btn_print.setToolTip("Direct Print (Full Page)")
+        self.btn_print.setFixedHeight(40)
+        right_vbox.addWidget(self.btn_print)
         
         right_vbox.addStretch() # Push Page Mgmt to bottom
         

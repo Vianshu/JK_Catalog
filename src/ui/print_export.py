@@ -23,16 +23,43 @@ SCREEN_DPI = 96
 class PrintExportDialog(QDialog):
     """Dialog for print preview and PDF export."""
     
-    def __init__(self, catalog_ui, parent=None):
+    def __init__(self, catalog_ui, parent=None, mode="both"):
         super().__init__(parent)
         self.catalog_ui = catalog_ui
+        self.mode = mode
         self.setWindowTitle("Print / Export Catalog")
         self.setMinimumSize(500, 400)
+        
+        # PROPER STYLING to fix visibility issues (Dark Mode)
+        self.setStyleSheet("""
+            QDialog { background-color: #1e1e1e; color: #ffffff; }
+            QLabel { color: #ffffff; font-size: 13px; }
+            QGroupBox { font-weight: bold; color: #ffffff; border: 1px solid #555; margin-top: 10px; }
+            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; }
+            QCheckBox { color: #ffffff; spacing: 5px; }
+            QSpinBox { background-color: #333333; color: #ffffff; padding: 4px; border: 1px solid #555; border-radius: 4px; }
+            QComboBox { background-color: #333333; color: #ffffff; padding: 4px; border: 1px solid #555; border-radius: 4px; }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView { background-color: #333333; color: #ffffff; selection-background-color: #007bff; }
+            QPushButton { background-color: #007bff; color: white; border-radius: 4px; font-weight: bold; }
+            QPushButton:hover { background-color: #0056b3; }
+            QPushButton#BtnCancel { background-color: #555555; }
+            QPushButton#BtnCancel:hover { background-color: #444444; }
+        """)
         
         # Get company path for CRM list
         self.company_path = getattr(catalog_ui, 'company_path', '') or ''
         
         self.setup_ui()
+        
+        # Apply Mode
+        if self.mode == "pdf":
+            self.btn_preview.setVisible(False)
+            self.setWindowTitle("Export PDF")
+        elif self.mode == "print":
+            self.btn_pdf.setVisible(False)
+            self.setWindowTitle("Print Catalog")
+            
         self.update_page_info()
     
     def setup_ui(self):
@@ -83,15 +110,7 @@ class PrintExportDialog(QDialog):
         crm_layout.addStretch()
         layout.addWidget(crm_group)
         
-        # Options Section
-        options_group = QGroupBox("Options")
-        options_layout = QVBoxLayout(options_group)
-        
-        # Options Section
-        # Only keeping valid options - Skip Empty removed as per request
-        pass
-        
-        layout.addWidget(options_group)
+        # Options Section REMOVED (Empty)
         
         # Info Section
         info_frame = QFrame()
@@ -126,6 +145,7 @@ class PrintExportDialog(QDialog):
         btn_layout.addWidget(self.btn_pdf)
         
         self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.setObjectName("BtnCancel")
         self.btn_cancel.setFixedHeight(40)
         self.btn_cancel.clicked.connect(self.reject)
         btn_layout.addWidget(self.btn_cancel)

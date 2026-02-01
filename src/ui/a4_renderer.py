@@ -218,12 +218,12 @@ class A4PageRenderer(QWidget):
         self.page_w_mm = 210.0
         self.page_h_mm = 297.0
 
-        self.margin_l_mm = 2.65
-        self.margin_r_mm = 2.65
-        self.margin_t_mm = 2.65
-        self.margin_b_mm = 2.65
-        self.header_h_mm = 11.6
-        self.footer_h_mm = 11.6
+        self.margin_l_mm = 0.0
+        self.margin_r_mm = 0.0
+        self.margin_t_mm = 0.0
+        self.margin_b_mm = 0.0
+        self.header_h_mm = 9.0
+        self.footer_h_mm = 9.0
 
         self.target_dpi = 96
 
@@ -467,7 +467,7 @@ class A4PageRenderer(QWidget):
     def set_header_data(self, group_name, page_no):
         self.header_left.setText("NGT")
         self.header_center.setText(str(group_name).upper())
-        self.header_right.setText(f"Page: {page_no}")
+        self.header_right.setText(f"{page_no}")
 
     def clear_page(self):
         for w in self._widgets:

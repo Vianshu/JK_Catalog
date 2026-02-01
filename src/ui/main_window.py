@@ -5,10 +5,11 @@ from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, 
     QFrame, QStackedWidget, QMenu, QMessageBox, QProgressDialog, QApplication
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QEvent
 from PyQt6.QtGui import QShortcut, QKeySequence
 import sqlite3
 import pandas as pd
+import re
 # UI Imports
 from src.ui.company_login_ui import CompanyLoginUI
 from src.ui.welcome import WelcomeUI
@@ -38,11 +39,107 @@ from src.ui.settings import (
 )
 from src.services.tally_sync import fetch_tally_data
 
+class AltKeyFilter(QObject):
+    def __init__(self, main_window):
+        super().__init__()
+        self.mw = main_window
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.KeyPress:
+             if event.key() == Qt.Key.Key_Alt:
+                 self.mw.toggle_hotkey_hints(True)
+        elif event.type() == QEvent.Type.KeyRelease:
+             if event.key() == Qt.Key.Key_Alt:
+                 self.mw.toggle_hotkey_hints(False)
+        return False
+
+class MenuButtonWidget(QFrame):
+    clicked = pyqtSignal()
+    
+    def __init__(self, text, is_back=False, parent=None):
+        super().__init__(parent)
+        self.setObjectName("MenuButtonWidget") 
+        self.setProperty("active", False)
+        self.hotkey_char = None 
+        
+        # Prepare content
+        self.plain_text = text.replace("&", "")
+        self.html_text = self.plain_text
+        
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(15, 12, 15, 12)
+        layout.setSpacing(0)
+        
+        if "&" in text:
+            try:
+                idx = text.index("&")
+                if idx < len(text) - 1:
+                    char = text[idx+1]
+                    # BADGE STYLE (Front) - High Contrast Red Badge
+                    # User requested: "add the letter on the front itself"
+                    self.html_text = f"<font color='#ff4d4d'><b>[{char.upper()}]</b></font> {self.plain_text}"
+                    self.hotkey_char = char.upper()
+            except: pass
+            
+        # Default to PLAIN text (Clean state)
+        self.lbl = QLabel(self.plain_text)
+        self.lbl.setObjectName("MenuLabel")
+        layout.addWidget(self.lbl)
+        layout.addStretch()
+        
+        # Inline Style
+        self.setStyleSheet("""
+            #MenuButtonWidget {
+                background: transparent;
+                border-radius: 8px;
+                margin: 4px 12px;
+            }
+            #MenuButtonWidget:hover {
+                background-color: rgba(255, 255, 255, 0.08);
+            }
+            #MenuButtonWidget[active="true"] {
+                background-color: rgba(255, 255, 255, 0.15);
+                border-left: 4px solid #3498db;
+            }
+            QLabel {
+                color: #dcdde1;
+                font-size: 14px;
+                background: transparent;
+            }
+            #MenuButtonWidget:hover QLabel {
+                color: #3498db;
+                font-weight: bold;
+            }
+            #MenuButtonWidget[active="true"] QLabel {
+                color: #3498db;
+                font-weight: bold;
+            }
+        """)
+
+    def set_hotkey_visibility(self, visible):
+        """Toggle between Plain text and HTML Badge."""
+        if visible and self.hotkey_char:
+            self.lbl.setText(self.html_text)
+        else:
+            self.lbl.setText(self.plain_text)
+
+    def mousePressEvent(self, e):
+        self.clicked.emit()
+        
+    def animateClick(self):
+        self.clicked.emit()
+
+
+
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         
+        # Global Event Filter for Alt Key
+        self.alt_filter = AltKeyFilter(self)
+        QApplication.instance().installEventFilter(self.alt_filter)
+
         self.current_company = ""
         self.is_maximized = True
         self.current_active_btn = None
@@ -51,6 +148,41 @@ class MainWindow(QWidget):
         QShortcut(QKeySequence("Ctrl+Q"), self, activated=self.close)
         QShortcut(QKeySequence("Ctrl+M"), self, activated=self.toggle_min_max)
         self.setup_ui()
+    
+    def toggle_hotkey_hints(self, visible):
+        """Show/Hide hotkey highlights on current menu."""
+        current_page = self.nav_stack.currentWidget()
+        if current_page:
+            for btn in current_page.findChildren(MenuButtonWidget):
+                btn.set_hotkey_visibility(visible)
+
+    def keyPressEvent(self, event):
+        """Handle Alt+Key shortcuts contextually and Toggle Highlights."""
+        if event.key() == Qt.Key.Key_Alt:
+            self.toggle_hotkey_hints(True)
+
+        if event.modifiers() & Qt.KeyboardModifier.AltModifier:
+            txt = event.text()
+            if txt:
+                key = txt.upper()
+                # Find current menu page
+                current_page = self.nav_stack.currentWidget()
+                if current_page:
+                    # Find buttons in this page
+                    buttons = current_page.findChildren(MenuButtonWidget)
+                    for btn in buttons:
+                        if hasattr(btn, 'hotkey_char') and btn.hotkey_char == key:
+                            btn.animateClick()
+                            return # Handled
+        
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        """Hide highlights when Alt is released."""
+        if event.key() == Qt.Key.Key_Alt:
+            self.toggle_hotkey_hints(False)
+        super().keyReleaseEvent(event)
+
     
     def toggle_min_max(self):
         if self.isMinimized():
@@ -66,7 +198,7 @@ class MainWindow(QWidget):
         # ========== LEFT SIDEBAR ==========
         self.sidebar = QFrame()
         self.sidebar.setObjectName("MainSidebar")
-        self.sidebar.setFixedWidth(220)
+        self.sidebar.setFixedWidth(180)
         
         sidebar_layout = QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(10, 20, 10, 10)
@@ -124,29 +256,28 @@ class MainWindow(QWidget):
         self.root_layout.addWidget(self.content_container, 1)
 
     def init_nav_menus(self):
-        """सभी लेफ्ट मेनू लेआउट्स को यहाँ डिफाइन किया गया है"""
-        # Index 0: Blank (Login Screen ke liye)
-        self.nav_stack.addWidget(QWidget())
+        """Define menus with Tally-style mnemonics (&Letter)."""
+        self.nav_stack.addWidget(QWidget()) # 0: Blank
 
         # Index 1: Main Menu
         m_main = self.create_menu_widget([
-            ("📁 Catalog", self.show_catalog_submenu),
-            ("📊 Vat Working", self.show_vat_submenu),
-            ("⚙️ Tally Internal", self.show_tally_internal_submenu),
-            ("⚙️ Settings", self.show_settings_submenu)
-        ], enable_hotkeys=True)
+            ("📁 &Catalog", self.show_catalog_submenu),
+            ("📊 &Vat Working", self.show_vat_submenu),
+            ("⚙️ &Tally Internal", self.show_tally_internal_submenu),
+            ("⚙️ &Settings", self.show_settings_submenu)
+        ])
         self.nav_stack.addWidget(m_main)
 
         # Index 2: Catalog Menu
         m_catalog = self.create_menu_widget([
-            ("⬅️ Back", self.go_back_to_main, True),
-            ("🔄 Sync Tally", self.on_sync_tally_clicked),
-            ("📝 Row Data", self.on_row_data_clicked),
-            ("📑 Super Master", self.handle_super_master),
-            ("✅ Final Data", self.final_data),
-            ("📖 Full Catalog", lambda: self.main_stack.setCurrentIndex(2)),
-            ("📈 Reports", lambda: self.main_stack.setCurrentIndex(7)),
-            ("🏷 Price List", self.handle_catalog_price_list),
+            ("⬅️ &Back", self.go_back_to_main, True),
+            ("🔄 S&ync Tally", self.on_sync_tally_clicked),
+            ("📝 &Row Data", self.on_row_data_clicked),
+            ("📑 Super &Master", self.handle_super_master),
+            ("✅ &Final Data", self.final_data),
+            ("📖 Full Catalo&g", lambda: self.main_stack.setCurrentIndex(2)),
+            ("📈 Rep&orts", lambda: self.main_stack.setCurrentIndex(7)),
+            ("🏷 &Price List", self.handle_catalog_price_list),
             ("➕ Create CRM", self.handle_create_crm, False, "F1"),
             ("✏️ Alter CRM", self.handle_alter_crm, False, "F2")
         ])
@@ -154,46 +285,46 @@ class MainWindow(QWidget):
 
         # Index 3: Settings Menu
         m_settings = self.create_menu_widget([
-            ("⬅️ Back", self.go_back_to_main, True),
-            ("🏢 Alter Company", self.handle_alter_company),
-            ("🔄 Switch Co.", self.back_to_login_screen),
-            ("👤 Create User", self.handle_create_user),
-            ("✏️ Alter User", self.handle_alter_user),
-            ("🛡️ Security", self.handle_security),
-            ("📅 Calendar", self.handle_calendar_mapping)
-        ]) # Bracket yahan band hoga
+            ("⬅️ &Back", self.go_back_to_main, True),
+            ("🏢 &Alter Company", self.handle_alter_company),
+            ("🔄 S&witch Co.", self.back_to_login_screen),
+            ("👤 &Create User", self.handle_create_user),
+            ("✏️ Alter &User", self.handle_alter_user),
+            ("🛡️ Secu&rity", self.handle_security),
+            ("📅 Ca&lendar", self.handle_calendar_mapping)
+        ])
         self.nav_stack.addWidget(m_settings)
 
         # Index 4: Tally Internal
         m_tally = self.create_menu_widget([
-            ("⬅️ Back", self.go_back_to_main, True),
-            ("💰 On Account", lambda: self.main_stack.setCurrentIndex(9)),
-            ("🧾 Chq. list", self.handle_cheque_list),
-            ("🏠 Godown List", lambda: self.main_stack.setCurrentIndex(10)),
-            ("📈 Sales Chat", lambda: self.main_stack.setCurrentIndex(11)),
-            ("💸 Supp. Payment", lambda: self.main_stack.setCurrentIndex(12)),
-            ("🏷 Price List", lambda: self.main_stack.setCurrentIndex(8)),
-            ("📥 Pur Import", self.handle_pur_import),
-            ("📊 Cost Sheet", self.handle_int_cost_sheet),
-            ("🏢 For Branch", self.show_branch_submenu)
+            ("⬅️ &Back", self.go_back_to_main, True),
+            ("💰 &On Account", lambda: self.main_stack.setCurrentIndex(9)),
+            ("🧾 C&hq. List", self.handle_cheque_list),
+            ("🏠 &Godown List", lambda: self.main_stack.setCurrentIndex(10)),
+            ("📈 &Sales Chat", lambda: self.main_stack.setCurrentIndex(11)),
+            ("💸 Supp. Pa&yment", lambda: self.main_stack.setCurrentIndex(12)),
+            ("🏷 Pri&ce List", lambda: self.main_stack.setCurrentIndex(8)),
+            ("📥 Pur &Import", self.handle_pur_import),
+            ("📊 Cos&t Sheet", self.handle_int_cost_sheet),
+            ("🏢 For &Branch", self.show_branch_submenu)
         ])
         self.nav_stack.addWidget(m_tally)
 
         # Index 5: Vat Working
         m_vat = self.create_menu_widget([
-            ("⬅️ Back", self.go_back_to_main, True),
-            ("💰 Balance", lambda: self.main_stack.setCurrentIndex(13)),
-            ("📦 Stock", lambda: self.main_stack.setCurrentIndex(14))
+            ("⬅️ &Back", self.go_back_to_main, True),
+            ("💰 Ba&lance", lambda: self.main_stack.setCurrentIndex(13)),
+            ("📦 Stoc&k", lambda: self.main_stack.setCurrentIndex(14))
         ])
         self.nav_stack.addWidget(m_vat)
 
         # Index 6: Branch Menu
         m_branch = self.create_menu_widget([
-            ("⬅️ Back", self.show_tally_internal_submenu, True),
-            ("📦 BTM Order", None),
-            ("📦 NGT Order", None),
-            ("📥 BTM Receive", None),
-            ("📥 NGT Receive", None)
+            ("⬅️ &Back", self.show_tally_internal_submenu, True),
+            ("📦 &BTM Order", None),
+            ("📦 &NGT Order", None),
+            ("📥 BTM &Receive", None),
+            ("📥 N&GT Receive", None)
         ])
         self.nav_stack.addWidget(m_branch)
 
@@ -242,49 +373,37 @@ class MainWindow(QWidget):
         self.main_stack.addWidget(self.calendar_page) # Maan lijiye index 16 hai
     # --- Helper UI Functions ---
     # --- Helper UI Functions ---
-    def create_menu_widget(self, buttons_data, enable_hotkeys=False):
+    def create_menu_widget(self, buttons_data):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(5, 10, 5, 10)
         layout.setSpacing(10)
         
-        shortcut_counter = 1
-        
         for data in buttons_data:
             text = data[0]
             func = data[1]
-            is_back = data[2] if len(data) > 2 else False # Check if tuple has 3rd element
+            is_back = data[2] if len(data) > 2 else False
             custom_key = data[3] if len(data) > 3 else None
             
+            # --- Shortcut Logic (Custom Keys only) ---
             sc = None
-            display_text = text
-
-            # --- Hotkey Logic ---
             if custom_key:
-                display_text = f"{text} ({custom_key})"
-                sc = QShortcut(QKeySequence(custom_key), self)
-            elif enable_hotkeys and not is_back:
-                key_seq = f"Shift+{shortcut_counter}"
-                display_text = f"{text} ({key_seq})"
-                sc = QShortcut(QKeySequence(key_seq), self)
-                shortcut_counter += 1
-
-            btn = QPushButton(display_text)
-            btn.setObjectName("MenuButton")
-            if is_back:
-                btn.setObjectName("MenuBackButton")
+                 sc = QShortcut(QKeySequence(custom_key), self)
+                 
+            # --- Create Custom Menu Widget ---
+            # Append custom key to text for display
+            display_text = text
+            if custom_key: 
+                 display_text = f"{text} ({custom_key})"
+                 
+            btn = MenuButtonWidget(display_text, is_back)
             
-            # --- Click & Active Logic ---
             if func:
-                # We wrap to ensure highlighting happens
                 btn.clicked.connect(lambda checked=False, b=btn: self.set_active_menu_btn(b))
                 btn.clicked.connect(func)
                 
-            # --- Connect Hotkey ---
             if sc:
-                # Capture 'widget' (container) and 'btn'
-                # Note: We must bind arguments to lambda properly
-                sc.activated.connect(lambda w=widget, b=btn: self.safe_trigger_menu(w, b))
+                 sc.activated.connect(lambda w=widget, b=btn: self.safe_trigger_menu(w, b))
 
             layout.addWidget(btn)
         
@@ -292,9 +411,10 @@ class MainWindow(QWidget):
         return widget
 
     def safe_trigger_menu(self, parent_widget, btn):
-        """Global trigger for main menu hotkeys (Works from any tab)"""
-        # User requested global access, so we removed the visibility check
-        btn.animateClick()
+        """Global trigger for main menu hotkeys (Context Sensitive)"""
+        # Only trigger if the button is actually visible (Context Sensitive)
+        if btn.isVisible():
+            btn.animateClick()
 
     def set_active_menu_btn(self, btn):
         """Highlights the clicked menu button"""
@@ -325,7 +445,12 @@ class MainWindow(QWidget):
         try:
             self.current_company = comp_name
             self.current_company_path = company_path # Store Path
-            self.company_btn.setText(f"🏢 {comp_name} ▼")
+            
+            # Clean display name (Remove Year like (2081/82))
+            clean_name = re.sub(r'\s*\(\d{4}[-/].*?\)', '', comp_name)
+            self.company_btn.setText(f"🏢 {clean_name} ▼")
+            # Force left alignment via stylesheet if needed, but text removal usually solves it.
+            self.company_btn.setStyleSheet("text-align: left; padding-left: 10px;")
             self.company_btn.show()
 
             if not company_path or not os.path.exists(company_path):

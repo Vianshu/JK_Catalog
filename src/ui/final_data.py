@@ -540,12 +540,13 @@ class FinalDataUI(QWidget):
     
     def sync_true_false_values(self):
         """
-        Update True/False column based on business logic:
-        - If Stock = 0 AND True/False is already '1' -> keep as '1' (user override)
-        - If Stock = 0 AND True/False is not '1' -> 'false'
+        Update True/False column based on image availability ONLY.
+        Stock-based inclusion is now handled dynamically by the SQL query (Empty + Stock > 0).
+        
+        Logic:
         - If Image_Path contains 'no_need' -> 'false'
-        - If Group = 'Price List' -> depends only on stock
-        - Otherwise -> '1'
+        - If Image_Path is Empty (and not Price List) -> 'false'
+        - Otherwise -> Keep existing value (1, false, or empty)
         """
         try:
             if not self.db_path or not os.path.exists(self.db_path):
@@ -569,48 +570,23 @@ class FinalDataUI(QWidget):
                 current_is_true = current_tf_str in ["1", "true", "yes"]
                 
                 # Determine new True/False value
-                new_tf = "1"  # Default to True (1)
+                # Default: Keep current value
+                new_tf = current_tf_str
                 
-                # Check Stock - if 0 or empty
-                try:
-                    stock_val = float(str(stock).replace(",", "").strip()) if stock else 0
-                    if stock_val <= 0:
-                        # KEY CHANGE: If True/False is already "1", keep it (user override)
-                        if current_is_true:
-                            new_tf = "1"  # Preserve user's manual override
-                        else:
-                            new_tf = "false"
-                except:
-                    # Invalid stock - check if already true
-                    if current_is_true:
-                        new_tf = "1"
-                    else:
-                        new_tf = "false"
-                
-                # Price List group doesn't need images, keep as is based on stock
-                group_str = str(group_name).lower().strip() if group_name else ""
-                if group_str == "price list":
-                    # Price list items only depend on stock
-                    try:
-                        stock_val = float(str(stock).replace(",", "").strip()) if stock else 0
-                        if stock_val > 0:
-                            new_tf = "1"
-                        elif current_is_true:
-                            new_tf = "1"  # Preserve user override
-                        else:
-                            new_tf = "false"
-                    except:
-                        new_tf = "1" if current_is_true else "false"
-                else:
-                    # For NON-Price List items:
-                    # 1. If Image Path is empty (Missing), MUST be False
-                    if not img_path or not str(img_path).strip():
-                        new_tf = "false"
-
-                # Check Image_Path for 'no_need' - overrides everything including user override AND Price List
+                # Helper Flags
                 img_path_str = str(img_path).lower().strip() if img_path else ""
-                if "no_need" in img_path_str or "noneed" in img_path_str or "no need" in img_path_str:
+                is_price_list = str(group_name).lower().strip() == "price list" if group_name else False
+                has_no_need = "no_need" in img_path_str or "noneed" in img_path_str or "no need" in img_path_str
+                has_image = bool(img_path_str)
+                
+                # Logic 1: 'no_need' forces False
+                if has_no_need:
                     new_tf = "false"
+                # Logic 2: Missing Image (Non-PriceList) forces False
+                elif not is_price_list and not has_image:
+                    new_tf = "false"
+
+
                 
                 # Update only if changed
                 if current_tf_str != new_tf and not (current_tf_str == "1" and new_tf == "1"):
