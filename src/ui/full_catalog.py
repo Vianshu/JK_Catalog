@@ -145,44 +145,42 @@ class FullCatalogUI(QWidget):
             self.current_page_index = target_page - 1
             self.update_catalog_page()
     
-    def build_catalog(self):
-        """Build/refresh the catalog with smart page change detection.
-        
-        Uses page content snapshots to detect:
-        - Products added to a page
-        - Products removed from a page  
-        - Product positions shifted (layout changes)
-        - Product data changed (MRP, image, sizes)
-        
-        Only truly changed pages are added to CRM pending lists.
-        """
+    def build_catalog(self, silent=False):
+        """Build/refresh the catalog with smart page change detection (Silent Mode Supported)."""
         if not self.catalog_db_path: 
-            QMessageBox.warning(self, "No Data", "Please load a company first.")
+            if not silent:
+                QMessageBox.warning(self, "No Data", "Please load a company first.")
             return
         
-        # Show loading dialog
         from PyQt6.QtWidgets import QProgressDialog, QApplication
-        
-        progress = QProgressDialog("Building catalog...", None, 0, 5, self)
-        progress.setWindowTitle("Building Catalog")
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
-        progress.setMinimumWidth(300)
-        progress.show()
-        QApplication.processEvents()
+        progress = None
+
+        if not silent:
+            progress = QProgressDialog("Building catalog...", None, 0, 5, self)
+            progress.setWindowTitle("Building Catalog")
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            progress.setMinimumDuration(0)
+            progress.setMinimumWidth(300)
+            progress.show()
+            QApplication.processEvents()
+        else:
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            QApplication.processEvents()
             
         try:
             import datetime
             
             # Step 1: Sync pages
-            progress.setLabelText("Step 1/5: Syncing pages...")
-            progress.setValue(1)
+            if progress:
+                progress.setLabelText("Step 1/5: Syncing pages...")
+                progress.setValue(1)
             QApplication.processEvents()
             self.logic.sync_pages_with_content()
             
             # Step 2: Detect changes
-            progress.setLabelText("Step 2/5: Detecting changes...")
-            progress.setValue(2)
+            if progress:
+                progress.setLabelText("Step 2/5: Detecting changes...")
+                progress.setValue(2)
             QApplication.processEvents()
             changed_pages = self.logic.detect_changed_pages()
             print(f"[BUILD] Changed pages: {changed_pages}")
@@ -191,21 +189,25 @@ class FullCatalogUI(QWidget):
             crm_updated = 0
             
             # Step 3: Update CRMs
-            progress.setLabelText("Step 3/5: Updating CRMs...")
-            progress.setValue(3)
+            if progress:
+                progress.setLabelText("Step 3/5: Updating CRMs...")
+                progress.setValue(3)
             QApplication.processEvents()
+            
             if changed_pages and hasattr(self, 'company_path') and self.company_path:
                 crm_updated = add_pages_to_all_crms(list(changed_pages), self.company_path)
             
             # Step 4: Save snapshots
-            progress.setLabelText("Step 4/5: Saving snapshots...")
-            progress.setValue(4)
+            if progress:
+                progress.setLabelText("Step 4/5: Saving snapshots...")
+                progress.setValue(4)
             QApplication.processEvents()
             self.logic.save_all_page_snapshots()
             
             # Step 5: Finalize
-            progress.setLabelText("Step 5/5: Finalizing...")
-            progress.setValue(5)
+            if progress:
+                progress.setLabelText("Step 5/5: Finalizing...")
+                progress.setValue(5)
             QApplication.processEvents()
             
             now = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
@@ -213,22 +215,31 @@ class FullCatalogUI(QWidget):
             self.logic.invalidate_cache()
             self.refresh_catalog_data()
             
-            progress.close()
+            if progress: progress.close()
+            if silent: QApplication.restoreOverrideCursor()
             
-            # Show result
-            msg = f"Catalog built successfully!\n\n"
-            msg += f"• Changed Pages: {affected_count}\n"
-            msg += f"• CRMs Updated: {crm_updated}\n"
-            if affected_count > 0:
-                sample = list(changed_pages)[:5]
-                msg += f"• Sample: {', '.join(map(str, sample))}"
-                if affected_count > 5:
-                    msg += f" (+{affected_count - 5} more)"
-            QMessageBox.information(self, "Build Complete", msg)
+            # Show result only if NOT silent
+            if not silent:
+                msg = f"Catalog built successfully!\n\n"
+                msg += f"• Changed Pages: {affected_count}\n"
+                msg += f"• CRMs Updated: {crm_updated}\n"
+                if affected_count > 0:
+                    sample = list(changed_pages)[:5]
+                    msg += f"• Sample: {', '.join(map(str, sample))}"
+                    if affected_count > 5:
+                        msg += f" (+{affected_count - 5} more)"
+                QMessageBox.information(self, "Build Complete", msg)
             
         except Exception as e:
-            progress.close()
-            QMessageBox.critical(self, "Build Error", f"Error during build: {e}")
+            if progress: progress.close()
+            if silent: QApplication.restoreOverrideCursor()
+            
+            if not silent:
+                QMessageBox.critical(self, "Build Error", f"Error during build: {e}")
+                import traceback
+                traceback.print_exc()
+            else:
+                print(f"Auto-Build Error: {e}")
             import traceback
             traceback.print_exc()
             self.refresh_catalog_data()

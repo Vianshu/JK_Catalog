@@ -10,6 +10,10 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QMenu,
     QInputDialog,
+    QDialog,
+    QSpinBox,
+    QCheckBox,
+    QPushButton,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QAction
@@ -21,6 +25,171 @@ MM_PER_INCH = 25.4
 def mm_to_px(mm: float, dpi: int) -> int:
     return int(round(mm * dpi / MM_PER_INCH))
 
+
+class ProductSizeDialog(QDialog):
+    def __init__(self, current_str, prod_data, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Product Dimensions Setup")
+        self.setFixedSize(400, 300)
+        self.result_str = current_str
+        self.prod_data = prod_data
+        
+        # Calculate Auto Height
+        num_sizes = len(prod_data.get("sizes", []))
+        if num_sizes > 10: self.auto_h = 3
+        elif num_sizes > 5: self.auto_h = 2
+        else: self.auto_h = 1
+        
+        product_name = prod_data.get("product_name", "Unknown")
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.addWidget(QLabel(f"<b>Set Size for: {product_name}</b>"))
+        
+        # Parse current
+        curr_img_w, curr_data_w, curr_h = 2, 1, 0  # Defaults
+        parts = current_str.split("|")
+        if len(parts) > 0:
+            w_part = parts[0]
+            if ":" in w_part:
+                d = w_part.split(":")
+                if len(d) > 1 and d[0].isdigit() and d[1].isdigit():
+                    curr_img_w = int(d[0])
+                    curr_data_w = int(d[1])
+            elif w_part.isdigit():
+                curr_img_w = int(w_part)
+                curr_data_w = 1 
+        
+        if len(parts) > 1 and parts[1].isdigit():
+            curr_h = int(parts[1])
+
+        # Form
+        form = QGridLayout()
+        form.setVerticalSpacing(15)
+        
+        # Image Width
+        form.addWidget(QLabel("Image Width (Cols):"), 0, 0)
+        self.spin_img = QSpinBox()
+        self.spin_img.setRange(1, 4)
+        self.spin_img.setValue(curr_img_w)
+        form.addWidget(self.spin_img, 0, 1)
+        
+        # Data Width
+        form.addWidget(QLabel("Data Width (Cols):"), 1, 0)
+        self.spin_data = QSpinBox()
+        self.spin_data.setRange(1, 4)
+        self.spin_data.setValue(curr_data_w)
+        form.addWidget(self.spin_data, 1, 1)
+        
+        # Total Preview
+        self.lbl_total = QLabel("Total Width: -")
+        form.addWidget(self.lbl_total, 2, 1)
+        
+        # Height
+        form.addWidget(QLabel("Vertical Height (Rows):"), 3, 0)
+        self.spin_h = QSpinBox()
+        self.spin_h.setRange(1, 5) # Minimum 1 visually
+        # Set initial value (if curr_h is 0, show auto_h)
+        val_to_show = self.auto_h if curr_h == 0 else curr_h
+        self.spin_h.setValue(val_to_show)
+        form.addWidget(self.spin_h, 3, 1)
+        
+        self.check_auto = QCheckBox(f"Automatic Height (Calc: {self.auto_h})")
+        self.check_auto.setChecked(curr_h == 0)
+        self.check_auto.toggled.connect(self.toggle_auto)
+        form.addWidget(self.check_auto, 4, 1)
+        
+        # Initial state update (disable spin if auto)
+        self.toggle_auto(self.check_auto.isChecked())
+        
+        layout.addLayout(form)
+        
+        # Update Total Calc
+        self.spin_img.valueChanged.connect(self.update_total)
+        self.spin_data.valueChanged.connect(self.update_total)
+        self.update_total()
+
+        # Buttons
+        btns = QHBoxLayout()
+        ok = QPushButton("Apply")
+        ok.setStyleSheet("background-color: #28a745; color: white; font-weight: bold; border-radius: 4px; padding: 6px;")
+        ok.clicked.connect(self.save)
+        cancel = QPushButton("Cancel")
+        cancel.setStyleSheet("background-color: #dc3545; color: white; font-weight: bold; border-radius: 4px; padding: 6px;")
+        cancel.clicked.connect(self.reject)
+        btns.addStretch()
+        btns.addWidget(ok)
+        btns.addWidget(cancel)
+        layout.addLayout(btns)
+        
+    def toggle_auto(self, checked):
+        self.spin_h.setEnabled(not checked)
+        if checked: 
+            self.spin_h.setValue(self.auto_h)
+        
+    def update_total(self):
+        sender = self.sender()
+        i = self.spin_img.value()
+        d = self.spin_data.value()
+        
+        # Enforce max 4 columns (Page Width)
+        if i + d > 4:
+            if sender == self.spin_img:
+                # Prioritize Image change, reduce Data
+                new_d = 4 - i
+                if new_d < 1: # If Image set to 4, clamp to 3
+                    new_d = 1
+                    self.spin_img.blockSignals(True)
+                    self.spin_img.setValue(3)
+                    self.spin_img.blockSignals(False)
+                self.spin_data.blockSignals(True)
+                self.spin_data.setValue(new_d)
+                self.spin_data.blockSignals(False)
+            
+            elif sender == self.spin_data:
+                # Prioritize Data change, reduce Image
+                new_i = 4 - d
+                if new_i < 1: # If Data set to 4, clamp to 3
+                    new_i = 1
+                    self.spin_data.blockSignals(True)
+                    self.spin_data.setValue(3)
+                    self.spin_data.blockSignals(False)
+                self.spin_img.blockSignals(True)
+                self.spin_img.setValue(new_i)
+                self.spin_img.blockSignals(False)
+        
+        # Refresh values
+        i = self.spin_img.value()
+        d = self.spin_data.value()
+        tot = i + d
+        self.lbl_total.setText(f"Total Width: {tot} Columns (Max 4)")
+        
+    def save(self):
+        i = self.spin_img.value()
+        d = self.spin_data.value()
+        # If Auto checked, save 0, else save spin value
+        h = 0 if self.check_auto.isChecked() else self.spin_h.value()
+        self.result_str = f"{i}:{d}|{h}"
+        self.accept()
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            fw = self.focusWidget()
+            if fw == self.spin_img:
+                self.spin_data.setFocus()
+            elif fw == self.spin_data:
+                if self.spin_h.isEnabled(): self.spin_h.setFocus()
+                else: self.check_auto.setFocus()
+            elif fw == self.spin_h:
+                self.check_auto.setFocus()
+            elif fw == self.check_auto:
+                self.save() # Last field -> Apply
+            else:
+                 from PyQt6.QtWidgets import QPushButton
+                 if isinstance(fw, QPushButton): fw.animateClick()
+                 else: self.focusNextChild()
+            return
+        super().keyPressEvent(event)
 
 class A4PageRenderer(QWidget):
     """Exact implementation from A4Catalog.py for consistent printing."""
@@ -335,10 +504,31 @@ class A4PageRenderer(QWidget):
             total = max(2, int(it.get("cspan", 2)))
             total = min(total, cols - c)
 
-            # Layout: Data always takes 1 column, Image takes remainder
+            # Determine split from stored data string to respect custom layout
             D = 1
-            H = total - D
+            H = total - 1
+            
+            p_len = str(prod.get("length", "")).strip()
+            if "|" in p_len:
+                w_str = p_len.split("|")[0]
+                if ":" in w_str:
+                    try:
+                        pts = w_str.split(":")
+                        iw = int(pts[0])
+                        dw = int(pts[1])
+                        # Only apply if it matches total cspan or fits
+                        if iw + dw == total:
+                            H = iw
+                            D = dw
+                        elif iw + dw > total:
+                            # Always Priority Image (User Request)
+                            H = total - 1
+                            D = 1 
+                    except: pass
+            
+            # Fallback / Safety
             H = max(1, H)
+            D = max(1, D)
 
             rs = min(rs, rows - r)
             mark(r, c, rs, total)
@@ -464,7 +654,7 @@ class A4PageRenderer(QWidget):
                 pixmap = QPixmap.fromImage(img)
                 scaled = pixmap.scaled(
                     w, h,
-                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.AspectRatioMode.IgnoreAspectRatio,
                     Qt.TransformationMode.SmoothTransformation,
                 )
                 lbl.setPixmap(scaled)
@@ -478,32 +668,26 @@ class A4PageRenderer(QWidget):
         
         product_name = prod.get("product_name", "Unknown")
         current_len_str = str(prod.get("length", "")).strip()
-        if not current_len_str: current_len_str = "1|0" # Default: Std Width, Auto Height
+        if not current_len_str: current_len_str = "1|0" 
         
         # Set Size action
-        set_size_action = QAction(f"Set Size (H|V) [Curr: {current_len_str}]", menu)
+        set_size_action = QAction(f"Set Size/Layout... [Curr: {current_len_str}]", menu)
         set_size_action.triggered.connect(lambda: self._set_product_length(prod))
         menu.addAction(set_size_action)
         
         menu.exec(widget.mapToGlobal(pos))
     
     def _set_product_length(self, prod):
-        """Show dialog to set product size (H|V) and emit signal."""
+        """Show dialog to set product size (ImgW:DataW|Height) and emit signal."""
         product_name = prod.get("product_name", "Unknown")
         current_val = str(prod.get("length", "")).strip()
-        if not current_val: current_val = "1|0" # Default: Std Width, Auto Height
+        if not current_val: current_val = "1|0"
         
-        # QInputDialog.getText(parent, title, label, echo, text)
-        new_val, ok = QInputDialog.getText(
-            self,
-            "Set Product Size",
-            f"Enter Dimensions 'ImgWidth | Height' for '{product_name}':\nImgWidth: 1=Standard (2 cols), 3=Full (4 cols)\nHeight: 0=Auto (based on size), 1-5=Manual\nFormat e.g.: '1|0' (Auto Ht), '3|0' (Full W, Auto Ht), '1|2' (Fixed Ht)",
-            text=current_val
-        )
-        
-        if ok and new_val != current_val:
-            # Emit signal with product name and new text value
-            self.length_changed.emit(product_name, new_val) 
+        dlg = ProductSizeDialog(current_val, prod, self)
+        if dlg.exec():
+            new_val = dlg.result_str
+            if new_val != current_val:
+                self.length_changed.emit(product_name, new_val) 
     
 
     def _data_block(self, w: int, h: int, prod: dict, draw_right: bool) -> QFrame:
@@ -647,9 +831,33 @@ class A4PageRenderer(QWidget):
             )
             lay.addWidget(h, 0, col)
 
-        sizes = list(prod.get("sizes", []))
-        mrps = list(prod.get("mrps", []))
-        moqs = list(prod.get("moqs", []))
+        raw_sizes = prod.get("sizes", [])
+        raw_mrps = prod.get("mrps", [])
+        raw_moqs = prod.get("moqs", [])
+        
+        # Combine and Sort
+        combined = []
+        for i in range(len(raw_sizes)):
+            s = str(raw_sizes[i])
+            m = raw_mrps[i] if i < len(raw_mrps) else ""
+            q = raw_moqs[i] if i < len(raw_moqs) else ""
+            
+            # Helper for sorting price
+            try:
+                import re
+                clean_m = re.sub(r"[^\d\.]", "", str(m))
+                p_val = float(clean_m) if clean_m else 0.0
+            except:
+                p_val = 0.0
+                
+            combined.append((p_val, s, m, q))
+            
+        # Sort by Price ASC, then Size ASC
+        combined.sort(key=lambda x: (x[0], x[1]))
+        
+        sizes = [x[1] for x in combined]
+        mrps = [x[2] for x in combined]
+        moqs = [x[3] for x in combined]
 
         total_rows = len(sizes)
         last_col_idx = 2 if self.show_moq else 1

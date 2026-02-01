@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QFileDialog, QStackedWidget, QDialog, QMessageBox
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal 
-from PyQt6.QtGui import QFont, QKeySequence, QShortcut
+from PyQt6.QtGui import QFont, QKeySequence, QShortcut, QColor
 from pathlib import Path
 from src.ui.settings import save_report_json
 
@@ -111,6 +111,8 @@ class LoginDialog(QDialog):
         layout.addWidget(self.btn_login)
 
     def verify_login(self):
+        # Empty credentials logic if needed? 
+        # Current logic checks exact match. If correct_user is "", then input must be "".
         if self.user_edit.text() == self.correct_user and self.pass_edit.text() == self.correct_pass: 
             self.accept()
         else: 
@@ -123,12 +125,11 @@ class LoginDialog(QDialog):
             else: self.verify_login()
         elif event.key() == Qt.Key.Key_Escape: self.reject()
 
-# ================= 3. COMPANY CREATE FORM =================
+# ================= 3. COMPANY CREATE FORM (DECENTRALIZED LOGIC) =================
 class CompanyCreateForm(QWidget):
     def __init__(self, back_callback):
         super().__init__()
         self.back_callback = back_callback
-        self.app_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         self.fields = [] 
         self.edit_mode = False 
         self.target_folder_path = "" 
@@ -167,7 +168,7 @@ class CompanyCreateForm(QWidget):
             if "Password" in text: edit.setEchoMode(QLineEdit.EchoMode.Password)
             
             if "Folder Path" in text:
-                edit.setReadOnly(True) # Path is usually set from caller
+                edit.setReadOnly(True) 
                 
             if "Image Location" in text:
                  hb = QHBoxLayout()
@@ -200,22 +201,35 @@ class CompanyCreateForm(QWidget):
         self.error_lbl.setObjectName("FormErrorLabel")
         grid.addWidget(self.error_lbl, 7, 1)
         layout.addWidget(content, 1)
-    
-    def load_for_create(self, folder_path, folder_name):
-        self.edit_mode = False
-        self.target_folder_path = folder_path
-        self.header_label.setText(f"  Setup: {folder_name}")
-        self.save_btn.setText("CREATE LOGIN")
         
-        for f in self.fields: f.clear()
-        
-        self.fields[0].setText(folder_name) # Display Name
-        self.fields[4].setText(folder_path) # Path
-        self.fields[1].setFocus()
-
-    def browse_img(self, target):
+    def browse_img(self, edit_field):
         p = QFileDialog.getExistingDirectory(self, "Select Image Folder")
-        if p: target.setText(p)
+        if p: edit_field.setText(p)
+
+    def load_for_setup(self, path):
+        self.edit_mode = False
+        self.target_folder_path = path
+        self.header_label.setText("  Create New Company")
+        for f in self.fields: 
+            if isinstance(f, QLineEdit): f.clear()
+        self.fields[4].setText(path) # Folder Path
+        
+    def load_for_alter(self, path):
+        self.edit_mode = True
+        self.target_folder_path = path
+        self.header_label.setText("  Edit Company Config")
+        try:
+             info_p = os.path.join(path, "company_info.json")
+             if os.path.exists(info_p):
+                 with open(info_p, 'r') as f:
+                     d = json.load(f)
+                     self.fields[0].setText(d.get("display_name", ""))
+                     self.fields[1].setText(d.get("user", ""))
+                     self.fields[2].setText(d.get("pass", ""))
+                     self.fields[3].setText(d.get("pass", ""))
+                     self.fields[4].setText(path)
+                     self.fields[5].setText(d.get("image_path", ""))
+        except: pass
 
     def back_to_list(self):
         self.back_callback()
@@ -228,8 +242,8 @@ class CompanyCreateForm(QWidget):
         path = self.fields[4].text().strip()
         img_path = self.fields[5].text().strip()
 
-        if not display_name or not user or not password:
-            self.error_lbl.setText("❌ Name, User, and Password are required!")
+        if not display_name:
+            self.error_lbl.setText("❌ Display Name is required!")
             return
             
         if password != conf_pass:
@@ -240,11 +254,10 @@ class CompanyCreateForm(QWidget):
             target_path = Path(path)
             target_path.mkdir(parents=True, exist_ok=True)
             
-            # 1. Create company_info.json inside the folder
             info = {
                 "display_name": display_name,
                 "user": user,
-                "pass": password, # In real app, hash this!
+                "pass": password, 
                 "image_path": img_path
             }
             
@@ -252,7 +265,6 @@ class CompanyCreateForm(QWidget):
             with open(info_file, 'w', encoding='utf-8') as f:
                 json.dump(info, f, indent=4)
                 
-            # 2. Init Report Data if missing
             report_file = target_path / "REPORT_DATA.JSON"
             if not report_file.exists():
                 save_report_json({}, str(report_file))
@@ -263,16 +275,15 @@ class CompanyCreateForm(QWidget):
         except Exception as e:
             self.error_lbl.setText(f"Error: {str(e)}")
 
-# ================= 4. MAIN UI MANAGER =================
+# ================= 4. MAIN UI MANAGER (DECENTRALIZED) =================
 class CompanyLoginUI(QWidget):
-    # Sends (Company Name, Company Path)
     login_success_signal = pyqtSignal(str, str) 
 
     def __init__(self):
         super().__init__()
         self.app_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         self.config_file = os.path.join(self.app_path, "config.json")
-        self.history_file = os.path.join(self.app_path, "company_history.json") # Replaces vault
+        self.history_file = os.path.join(self.app_path, "company_history.json") 
         self.current_data_path = self.load_saved_path()
         
         self.main_layout = QVBoxLayout(self)
@@ -282,6 +293,7 @@ class CompanyLoginUI(QWidget):
         self.main_layout.addWidget(self.stack)
 
         self.list_screen = QWidget()
+        # Use simple List UI from request
         self.init_list_ui()
         self.stack.addWidget(self.list_screen)
 
@@ -303,24 +315,13 @@ class CompanyLoginUI(QWidget):
         header = QFrame()
         header.setObjectName("ListHeader")
         hl = QVBoxLayout(header)
-        title = QLabel("  Select Company")
+        title = QLabel("  Select Company (Decentralized)")
         title.setObjectName("ListHeaderTitle")
         hl.addWidget(title)
         layout.addWidget(header)
         
         cl = QVBoxLayout()
         cl.setContentsMargins(40, 20, 40, 20)
-        
-        # Path Selector
-        path_row = QHBoxLayout()
-        path_row.addWidget(QLabel("<b>Looking in:</b>"))
-        self.lbl_path = QLabel(self.current_data_path)
-        path_row.addWidget(self.lbl_path)
-        btn_change = QPushButton("Change")
-        btn_change.clicked.connect(self.change_path)
-        path_row.addWidget(btn_change)
-        path_row.addStretch()
-        cl.addLayout(path_row)
         
         self.list = QListWidget()
         self.list.setObjectName("CompanyListWidget") 
@@ -335,66 +336,63 @@ class CompanyLoginUI(QWidget):
 
     def load_main_list(self):
         self.list.clear()
-        self.lbl_path.setText(self.current_data_path)
         
-        # 1. Scan Data Directory
+        # User Requested Layout: Create and Path as Items
+        self.add_item("➕ Create New Company", align_right=True, role="create")
+        self.add_item("📂 Change Data Path", align_right=True, role="set_path")
+        
+        line = QListWidgetItem()
+        line.setFlags(Qt.ItemFlag.NoItemFlags)
+        line.setSizeHint(QSize(100, 2))
+        self.list.addItem(line)
+        f = QFrame(); f.setFixedHeight(2); f.setStyleSheet("background-color: #eee;") 
+        self.list.setItemWidget(line, f)
+        
+        self.add_item(f"Current Path: {self.current_data_path}", is_bold=True)
+        
+        # DECENTRALIZED SCANNING
         found_folders = []
+        seen_paths = set()
+        
         if os.path.exists(self.current_data_path):
             try:
                 for d in os.listdir(self.current_data_path):
-                    full = os.path.join(self.current_data_path, d)
+                    full = os.path.normpath(os.path.abspath(os.path.join(self.current_data_path, d)))
                     if os.path.isdir(full):
-                        found_folders.append(full)
+                        if full.lower() not in seen_paths:
+                            found_folders.append(full)
+                            seen_paths.add(full.lower())
             except: pass
             
-        # 2. Add History Folders (if valid)
+        # Add History
         history = self.load_history()
         for h_path in history:
-            if os.path.exists(h_path) and h_path not in found_folders:
-                found_folders.append(h_path)
-                
+            norm_h = os.path.normpath(os.path.abspath(h_path))
+            if os.path.exists(norm_h) and norm_h.lower() not in seen_paths:
+                found_folders.append(norm_h)
+                seen_paths.add(norm_h.lower())
+        
         if not found_folders:
-             self.add_item("(No company folders found)", role=None)
-             return
-
-        # 3. Process Folders
+             self.add_item("(No folders found)", role=None)
+        
         for path in found_folders:
             info_file = os.path.join(path, "company_info.json")
             folder_name = os.path.basename(path)
             
             if os.path.exists(info_file):
-                # Registered Company
+                # Registered
                 try:
                     with open(info_file, 'r', encoding='utf-8') as f:
                         data = json.load(f)
                         disp_name = data.get("display_name", folder_name)
-                        img_path = data.get("image_path", "")
-                        
                         itm = self.add_item(f"🏢 {disp_name}", role="login")
                         itm.setData(Qt.ItemDataRole.UserRole + 1, path)
-                        itm.setToolTip(path)
                 except:
-                    self.add_item(f"⚠️ {folder_name} (Corrupt Config)", role="error")
+                    self.add_item(f"⚠️ {folder_name} (Error)", role="error")
             else:
                 # Unregistered
                 itm = self.add_item(f"📂 {folder_name} (Unconfigured)", role="setup")
                 itm.setData(Qt.ItemDataRole.UserRole + 1, path)
-                # Style logic for unconfigured can be in QSS
-
-    def load_history(self):
-        if os.path.exists(self.history_file):
-            try:
-                with open(self.history_file, 'r') as f:
-                    return json.load(f)
-            except: return []
-        return []
-
-    def save_history(self, new_path):
-        hist = self.load_history()
-        if new_path not in hist:
-            hist.append(new_path)
-            with open(self.history_file, 'w') as f:
-                json.dump(hist, f)
 
     def add_item(self, text, role=None, align_right=False, is_bold=False):
         item = QListWidgetItem(text)
@@ -403,10 +401,41 @@ class CompanyLoginUI(QWidget):
             font = QFont()
             font.setBold(True)
             item.setFont(font)
-        item.setData(Qt.ItemDataRole.UserRole, role)
+            
+        if role:
+            item.setData(Qt.ItemDataRole.UserRole, role)
+            if role == "error": item.setForeground(QColor("red"))
+            if role == "setup": item.setForeground(QColor("gray"))
+            if role == "create": item.setForeground(QColor("#28a745")); item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+
         self.list.addItem(item)
         return item
 
+    def on_enter(self, item):
+        if not item: return
+        role = item.data(Qt.ItemDataRole.UserRole)
+        
+        if role == "create": 
+            self.create_new_company()
+        elif role == "set_path":
+            self.change_path()
+        elif role == "login": 
+            path = item.data(Qt.ItemDataRole.UserRole + 1)
+            self.handle_login(path)
+        elif role == "setup": 
+            path = item.data(Qt.ItemDataRole.UserRole + 1)
+            self.form_screen.load_for_setup(path)
+            self.stack.setCurrentIndex(1)
+
+    def create_new_company(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Empty Folder for New Company")
+        if folder:
+            if os.path.exists(os.path.join(folder, "company_info.json")):
+                 QMessageBox.warning(self, "Warning", "This folder already has a company configuration.")
+                 return
+            self.form_screen.load_for_setup(folder)
+            self.stack.setCurrentIndex(1)
+            
     def change_path(self):
         dlg = PathDialog(self.current_data_path, self)
         if dlg.exec():
@@ -417,35 +446,30 @@ class CompanyLoginUI(QWidget):
                 self.current_data_path = new_p
                 self.load_main_list()
 
-    def on_enter(self, item):
-        if not item: return
-        role = item.data(Qt.ItemDataRole.UserRole)
-        path = item.data(Qt.ItemDataRole.UserRole + 1)
-        
-        if role == "login":
-            self.handle_login(path)
-        elif role == "setup":
-            folder_name = os.path.basename(path)
-            self.stack.setCurrentIndex(1)
-            self.form_screen.load_for_create(path, folder_name)
-    
     def handle_login(self, path):
+        path = os.path.normpath(os.path.abspath(path))
         info_file = os.path.join(path, "company_info.json")
         try:
-            with open(info_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                
-            name = data.get("display_name", "Unknown")
-            user = data.get("user", "")
-            pwd = data.get("pass", "")
-            
-            dlg = LoginDialog(name, user, pwd, self)
+            with open(info_file, 'r', encoding='utf-8') as f: data = json.load(f)
+            dlg = LoginDialog(data.get("display_name", ""), data.get("user", ""), data.get("pass", ""), self)
             if dlg.exec():
-                # Success!
                 self.save_history(path)
-                self.login_success_signal.emit(name, path)
+                self.login_success_signal.emit(data.get("display_name", ""), path)
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Could not read company data:\n{e}")
+            QMessageBox.critical(self, "Login Error", str(e))
+
+    def load_history(self):
+        if os.path.exists(self.history_file):
+            try:
+                with open(self.history_file, 'r') as f: return json.load(f)
+            except: return []
+        return []
+
+    def save_history(self, new_path):
+        hist = self.load_history()
+        if new_path not in hist:
+            hist.append(new_path)
+            with open(self.history_file, 'w') as f: json.dump(hist, f)
 
     def show_list(self):
         self.stack.setCurrentIndex(0)

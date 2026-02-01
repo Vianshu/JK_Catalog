@@ -689,8 +689,18 @@ class CatalogLogic:
                     parts = s_len.split("|")
                     h_str = parts[0].strip()
                     v_str = parts[1].strip() if len(parts) > 1 else ""
-                    if h_str and h_str.isdigit() and int(h_str) > 0:
-                        cspan = int(h_str) + 1
+                    
+                    # Handle "Img:Data" format
+                    if ":" in h_str:
+                        h_parts = h_str.split(":")
+                        iw = int(h_parts[0]) if h_parts[0].isdigit() else 1
+                        dw = int(h_parts[1]) if len(h_parts) > 1 and h_parts[1].isdigit() else 1
+                        cspan = iw + dw
+                    else:
+                        # Old format: h_str is Image Width, assume Data=1
+                        if h_str and h_str.isdigit() and int(h_str) > 0:
+                            cspan = int(h_str) + 1
+                            
                     if v_str and v_str.isdigit() and int(v_str) > 0:
                         rspan = int(v_str)
                 elif s_len.isdigit() and int(s_len) > 0:

@@ -120,6 +120,7 @@ class MainWindow(QWidget):
         self.init_main_pages()
         
         self.content_layout.addWidget(self.main_stack)
+        self.main_stack.currentChanged.connect(self.on_main_stack_change)
         self.root_layout.addWidget(self.content_container, 1)
 
     def init_nav_menus(self):
@@ -195,6 +196,15 @@ class MainWindow(QWidget):
             ("📥 NGT Receive", None)
         ])
         self.nav_stack.addWidget(m_branch)
+
+    def on_main_stack_change(self, idx):
+        """Handle main tab changes -> Auto-save/Build Catalog if needed."""
+        # If entering Reports (7) or Full Catalog (2), ensure catalog layout is updated
+        # This acts as the "Auto Save" feature when switching tabs
+        if idx in [2, 7]:
+            if hasattr(self, 'full_catalog_page'):
+                # Silent build (only processes changes if any)
+                self.full_catalog_page.build_catalog(silent=True)
 
     def init_main_pages(self):
         """राइट साइड के सभी पेजों को लोड करना"""
@@ -314,6 +324,7 @@ class MainWindow(QWidget):
     def handle_login_success(self, comp_name, company_path):
         try:
             self.current_company = comp_name
+            self.current_company_path = company_path # Store Path
             self.company_btn.setText(f"🏢 {comp_name} ▼")
             self.company_btn.show()
 
@@ -323,7 +334,7 @@ class MainWindow(QWidget):
                 return
 
             # 1. Final Data Loads
-            self.final_data_page.load_and_sync_data(comp_name) 
+            self.final_data_page.load_and_sync_data(comp_name, company_path) 
             self.final_data_page.set_company_path(company_path)
 
             # 2. Super Master
@@ -349,7 +360,7 @@ class MainWindow(QWidget):
                 self.full_catalog_page.set_company_path(company_path)
 
             # Row Data
-            self.row_data_page.load_data(comp_name)
+            self.row_data_page.load_data(company_path)
             
             # Go to Welcome
             self.nav_stack.setCurrentIndex(1) 
@@ -362,31 +373,40 @@ class MainWindow(QWidget):
     def on_sync_tally_clicked(self):
         if not self.current_company: return
         progress = QProgressDialog("Syncing Tally Data...", None, 0, 0, self)
+        progress.setWindowTitle("Please Wait")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
         progress.show()
+        QApplication.processEvents()
+        
         try:
-            df, error = fetch_tally_data(company_name=self.current_company)
+            df, error = fetch_tally_data(company_name=self.current_company, company_path=self.current_company_path)
             progress.close()
+            
             if not error and not df.empty:
-                self.row_data_page.load_data(self.current_company)
-                QMessageBox.information(self, "Success", "Data Synced!")
+                self.row_data_page.load_data(self.current_company_path)
+                QMessageBox.information(self, "Sync Complete", f"Data Synced Successfully!\nLoaded {len(df)} rows.\n\nClick OK to close.")
                 self.main_stack.setCurrentIndex(4)
+            else:
+                msg = error if error else "No data received from Tally. Check connection."
+                QMessageBox.warning(self, "Sync Issue", f"{msg}\n\nClick OK to close.")
         except Exception as e:
             progress.close()
-            QMessageBox.critical(self, "Error", str(e))
+            QMessageBox.critical(self, "Error", f"Sync Failed: {str(e)}")
 
     def on_row_data_clicked(self):
-        if self.current_company:
-            self.row_data_page.load_data(self.current_company)
+        if self.current_company and hasattr(self, 'current_company_path'):
+            self.row_data_page.load_data(self.current_company_path)
             self.main_stack.setCurrentIndex(4)
 
     def final_data(self):
-        if self.current_company:
-            self.final_data_page.load_and_sync_data(self.current_company)
+        if self.current_company and hasattr(self, 'current_company_path'):
+            self.final_data_page.load_and_sync_data(self.current_company, self.current_company_path)
             self.main_stack.setCurrentIndex(5)
 
     def handle_super_master(self):
-        if self.current_company:
-            self.super_master_page.load_super_master_data(self.current_company)
+        if self.current_company and hasattr(self, 'current_company_path'):
+            self.super_master_page.load_super_master_data(self.current_company_path)
             self.main_stack.setCurrentIndex(6)
 
     def handle_catalog_price_list(self): CatalogPriceListUI(self).exec()

@@ -35,29 +35,17 @@ class RowDataUI(QWidget):
         self.main_layout.addWidget(self.table)
         self.table.hide() 
 
-    def load_data(self, company_name):
-        """MainWindow द्वारा ट्रिगर किया जाने वाला डेटा लोडिंग फंक्शन"""
+    def load_data(self, company_path):
+        """MainWindow द्वारा ट्रिगर किया जाने वाला डेटा लोडिंग फंक्शन (Path Based)"""
         try:
-            # 1. पाथ रेजोल्यूशन
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            vault_path = os.path.join(base_dir, "company_vault.json")
-
-            if not os.path.exists(vault_path):
-                self.show_error("Vault file missing. Please re-login.")
+            if not company_path or not os.path.exists(company_path):
+                self.show_error("Invalid Company Path.")
                 return
 
-            # 2. JSON से पाथ निकालें
-            with open(vault_path, 'r', encoding='utf-8') as f:
-                vault = json.load(f)
-
-            if company_name not in vault:
-                self.show_error(f"Settings for '{company_name}' not found.")
-                return
-
-            db_path = os.path.join(vault[company_name]['path'], "row_data.db")
+            db_path = os.path.join(company_path, "row_data.db")
 
             if not os.path.exists(db_path):
-                self.show_error(f"No database found. Please Sync '{company_name}' from Tally.")
+                self.show_error(f"No database found at: {db_path}\nPlease Sync Data from Tally.")
                 self.table.hide()
                 return
 

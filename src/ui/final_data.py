@@ -99,8 +99,8 @@ class FinalDataUI(QWidget):
         self.img_preview = QLabel("NO IMAGE")
         self.img_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.img_preview.setStyleSheet("background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px;")
-        self.img_preview.setMinimumSize(200, 200)
-        self.img_preview.setMaximumSize(400, 400)
+        self.img_preview.setMinimumSize(200, 150)
+        self.img_preview.setMaximumSize(400, 300)
         self.img_preview.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding
@@ -344,18 +344,40 @@ class FinalDataUI(QWidget):
         except Exception as e:
             print(f"Update Error: {e}")
 
-    def load_and_sync_data(self, company_name):
+    def load_and_sync_data(self, company_name, company_path=None):
         try:
             # 1. Path Setup
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            vault_path = os.path.join(base_dir, "company_vault.json")
-            with open(vault_path, 'r', encoding='utf-8') as f:
-                vault = json.load(f)
+            
+            # Determine Folder Path
+            folder_path = company_path
+            self.image_folder = ""
+            
+            if not folder_path:
+                # Vault Fallback (For legacy compatibility)
+                vault_path = os.path.join(base_dir, "company_vault.json")
+                if os.path.exists(vault_path):
+                    with open(vault_path, 'r', encoding='utf-8') as f:
+                        vault = json.load(f)
+                    if company_name in vault:
+                        folder_path = vault[company_name]['path']
+                        self.image_folder = vault[company_name].get('image_path', "")
 
-            comp_data = vault[company_name]
-            self.image_folder = comp_data.get('image_path', "")
-            self.db_path = os.path.join(comp_data['path'], "final_data.db")
-            row_db_path = os.path.join(comp_data['path'], "row_data.db")
+            if not folder_path or not os.path.exists(folder_path):
+                 print(f"Error: Invalid Company Path: {folder_path}")
+                 return
+
+            # Read company_info.json for Image Path (Decentralized Priority)
+            info_file = os.path.join(folder_path, "company_info.json")
+            if os.path.exists(info_file):
+                 try:
+                     with open(info_file, 'r', encoding='utf-8') as f:
+                         info = json.load(f)
+                         if "image_path" in info: self.image_folder = info["image_path"]
+                 except: pass
+
+            self.db_path = os.path.join(folder_path, "final_data.db")
+            row_db_path = os.path.join(folder_path, "row_data.db")
             
             final_conn = sqlite3.connect(self.db_path)
             cur = final_conn.cursor()
@@ -364,21 +386,39 @@ class FinalDataUI(QWidget):
             cur.execute(f"CREATE TABLE IF NOT EXISTS catalog ({', '.join([f'[{h}] TEXT' for h in self.headers])})")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_guid ON catalog (GUID)")
 
-            # 3. Super Master Mapping (ID banane ke liye zaroori)
+            # 3. Super Master Mapping
+            # Assuming super_master.db is in 'data' folder at app root or adjacent to company folders?
+            # From logs: ...\data\super_master.db
+            super_db = os.path.join(base_dir, "data", "super_master.db")
+            if not os.path.exists(super_db):
+                 # Fallback to parent directory of company path
+                 super_db = os.path.join(os.path.dirname(folder_path), "super_master.db")
+            
             super_mapping = {}
-            super_db = os.path.join(os.path.dirname(comp_data['path']), "super_master.db")
             if os.path.exists(super_db):
-                with sqlite3.connect(super_db) as s_conn:
-                    for r in s_conn.execute("SELECT Sub_Group, MG_SN, Group_Name, SG_SN FROM super_master"):
-                        # Mapping: SubGroup -> (MG_SN, GroupName, SG_SN)
-                        super_mapping[r[0]] = (r[1], r[2], r[3])
+                try:
+                    with sqlite3.connect(super_db) as s_conn:
+                        # Check table exists first
+                        s_conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='super_master'").fetchone() 
+                        # Assuming it exists if code reached here
+                        for r in s_conn.execute("SELECT Sub_Group, MG_SN, Group_Name, SG_SN FROM super_master"):
+                            super_mapping[r[0]] = (r[1], r[2], r[3])
+                except Exception as e:
+                    print(f"Super Master Read Error: {e}")
             
             # 4. Tally Data Fetch
             with sqlite3.connect(row_db_path) as row_conn:
                 rows = row_conn.execute("SELECT GUID, Item_Name, FirstAlias, Part_No, Category, Unit, SubGroup, MRP, Closing_Qty FROM stock_items").fetchall()
 
             now = self.current_datetime()
-            self.sync_lbl.setText(f"Last Sync: {now}")
+
+            # Update Sync Label with Row Data DB Modification Time
+            if os.path.exists(row_db_path):
+                mod_time = os.path.getmtime(row_db_path)
+                sync_dt = datetime.datetime.fromtimestamp(mod_time).strftime("%d-%m-%Y %H:%M:%S")
+                self.sync_lbl.setText(f"Last Sync: {sync_dt}")
+            else:
+                 self.sync_lbl.setText(f"Last Sync: {now}")
             
             for r in rows:
                 guid = r[0]
@@ -780,8 +820,8 @@ class FinalDataUI(QWidget):
                 pix = QPixmap(p)
                 # Scale to fit within the image preview container (max 350x350)
                 preview_size = self.img_preview.size()
-                max_w = min(preview_size.width() - 10, 350)
-                max_h = min(preview_size.height() - 10, 350)
+                max_w = min(preview_size.width() - 10, 260)
+                max_h = min(preview_size.height() - 10, 260)
                 scaled = pix.scaled(max_w, max_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                 self.img_preview.setPixmap(scaled)
                 return

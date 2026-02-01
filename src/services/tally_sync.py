@@ -38,21 +38,34 @@ class TallyService:
             return False
         except: return False
 
-    def save_to_sql_file(self, df, company_name):
+    def save_to_sql_file(self, df, company_name, company_path=None):
         import sqlite3
         try:
-            # 1. JSON से कंपनी का फोल्डर पाथ निकालें
-            vault_path = os.path.join(self.app_path, "company_vault.json")
-            if not os.path.exists(vault_path):
-                raise Exception("company_vault.json not found")
+            folder_path = ""
+            if company_path and os.path.exists(company_path):
+                folder_path = company_path
+            else:
+                # Fallback to vault (Legacy/Centralized Mode)
+                vault_path = os.path.join(self.app_path, "company_vault.json")
+                if not os.path.exists(vault_path):
+                    # If vault missing and no path provided -> Error
+                    if not company_path: raise Exception("Company Path not provided and Vault missing")
+                
+                else:
+                    with open(vault_path, 'r', encoding='utf-8') as f:
+                        vault = json.load(f)
 
-            with open(vault_path, 'r', encoding='utf-8') as f:
-                vault = json.load(f)
+                    if company_name not in vault:
+                         if not company_path: raise Exception(f"Company '{company_name}' not found in vault")
+                    else:
+                        folder_path = vault[company_name]['path']
+            
+            # Final check
+            if not folder_path: folder_path = company_path
+            
+            if not folder_path or not os.path.exists(folder_path):
+                 raise Exception(f"Invalid Data Folder: {folder_path}")
 
-            if company_name not in vault:
-                raise Exception(f"Company '{company_name}' not found in vault")
-
-            folder_path = vault[company_name]['path']
             db_file_path = os.path.join(folder_path, "row_data.db")
 
             # 2. SQLite डेटाबेस से कनेक्ट करें
@@ -99,9 +112,9 @@ class TallyService:
 
         except Exception as e:
             print(f"❌ SQLite Save Error: {e}")
-            return False
+            raise e # Raise to notify Caller
 
-    def fetch_stock_items(self, company_name=None):
+    def fetch_stock_items(self, company_name=None, company_path=None):
         try:
             if not self.connection:
                 if not self.connect():
@@ -111,10 +124,13 @@ class TallyService:
                 comp_df = pd.read_sql("SELECT $Name from Company", self.connection)
                 active_company = comp_df.iloc[0, 0].strip()
                 
+                # Check active company (Case insensitive match helps)
                 if active_company.lower() != company_name.strip().lower():
-                    raise Exception(f"Wrong company open in Tally: '{active_company}'")
+                    # Check if date range part causes mismatch (e.g. 2082/83)
+                    if company_name.split('(')[0].strip().lower() not in active_company.lower():
+                        raise Exception(f"Wrong company open in Tally: '{active_company}'")
 
-           # --- अपडेटेड SQL QUERY सभी कॉलम्स के साथ ---
+            # --- अपडेटेड SQL QUERY सभी कॉलम्स के साथ ---
             sql = """
             SELECT 
                 $GUID, $Name, $Parent, $Category, $MailingName, $StandardPrice,
@@ -130,8 +146,8 @@ class TallyService:
             if df.empty: return pd.DataFrame()
 
             # डेटा फेच होते ही SQL फाइल में सेव करें
-            if company_name:
-                self.save_to_sql_file(df, company_name)
+            if company_name or company_path:
+                self.save_to_sql_file(df, company_name, company_path)
 
             return df
 
@@ -142,10 +158,10 @@ class TallyService:
                 self.connection.close()
                 self.connection = None
 
-def fetch_tally_data(company_name=None):
+def fetch_tally_data(company_name=None, company_path=None):
     service = TallyService()
     try:
-        df = service.fetch_stock_items(company_name=company_name)
+        df = service.fetch_stock_items(company_name=company_name, company_path=company_path)
         return df, ""
     except Exception as e:
         return pd.DataFrame(), str(e)
