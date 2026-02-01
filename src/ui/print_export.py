@@ -287,15 +287,20 @@ class PrintExportDialog(QDialog):
         page_indices = self._preview_pages
         renderer = self.create_print_renderer()
         
-        # Show progress if we have the bar
-        if hasattr(self, 'progress'):
-            self.progress.setVisible(True)
-            self.progress.setMaximum(len(page_indices))
-            self.progress.setValue(0)
-            
-        from PyQt6.QtWidgets import QApplication
+        # Use QProgressDialog for cancellation support
+        from PyQt6.QtWidgets import QProgressDialog, QApplication
         
+        progress = QProgressDialog("Rendering Preview...", "Cancel", 0, len(page_indices), self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+            
         for i, page_idx in enumerate(page_indices):
+            if progress.wasCanceled():
+                painter.end()
+                renderer.deleteLater()
+                return
+
             if i > 0:
                 printer.newPage()
             
@@ -314,16 +319,12 @@ class PrintExportDialog(QDialog):
             
             painter.restore()
             
-            # Update Progress
-            if hasattr(self, 'progress'):
-                self.progress.setValue(i + 1)
+            progress.setValue(i + 1)
             QApplication.processEvents()
         
         painter.end()
         renderer.deleteLater()
-        
-        if hasattr(self, 'progress'):
-            self.progress.setVisible(False)
+        progress.close()
     
     def export_to_pdf(self):
         """Export catalog to PDF file."""
@@ -352,9 +353,11 @@ class PrintExportDialog(QDialog):
         if not file_path.lower().endswith('.pdf'):
             file_path += '.pdf'
         
-        self.progress.setVisible(True)
-        self.progress.setMaximum(len(page_indices))
-        self.progress.setValue(0)
+        from PyQt6.QtWidgets import QProgressDialog, QApplication
+        progress = QProgressDialog("Exporting PDF...", "Cancel", 0, len(page_indices), self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
         
         try:
             # Create PDF printer
@@ -379,6 +382,14 @@ class PrintExportDialog(QDialog):
             renderer = self.create_print_renderer()
             
             for i, page_idx in enumerate(page_indices):
+                if progress.wasCanceled():
+                    painter.end()
+                    renderer.deleteLater()
+                    try:
+                         if os.path.exists(file_path): os.remove(file_path)
+                    except: pass
+                    return
+
                 if i > 0:
                     printer.newPage()
                 
@@ -397,15 +408,12 @@ class PrintExportDialog(QDialog):
                 
                 painter.restore()
                 
-                self.progress.setValue(i + 1)
-                # Allow UI to update
-                from PyQt6.QtWidgets import QApplication
+                progress.setValue(i + 1)
                 QApplication.processEvents()
             
             painter.end()
             renderer.deleteLater()
-            
-            self.progress.setVisible(False)
+            progress.close()
             
             QMessageBox.information(
                 self, 
@@ -424,5 +432,5 @@ class PrintExportDialog(QDialog):
                 os.startfile(file_path)
             
         except Exception as e:
-            self.progress.setVisible(False)
+            progress.close()
             QMessageBox.critical(self, "Export Failed", f"Failed to export PDF:\n{e}")

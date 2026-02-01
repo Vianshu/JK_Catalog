@@ -448,6 +448,16 @@ class A4PageRenderer(QWidget):
             from PyQt6.QtGui import QImageReader
             reader = QImageReader(image_path)
             reader.setAutoTransform(True)
+            
+            # Optimization: Scale extremely large images during read
+            # This prevents loading 4K/8K images for small thumbnails
+            if w > 0 and h > 0:
+                orig_size = reader.size()
+                if orig_size.isValid() and (orig_size.width() > w * 3 or orig_size.height() > h * 3):
+                    # Scale to 3x target size (preserves good quality while reducing memory I/O)
+                    new_size = orig_size.scaled(w * 3, h * 3, Qt.AspectRatioMode.KeepAspectRatio)
+                    reader.setScaledSize(new_size)
+
             img = reader.read()
 
             if not img.isNull():

@@ -311,23 +311,15 @@ class MainWindow(QWidget):
     def show_branch_submenu(self): self.nav_stack.setCurrentIndex(6)
 
     # --- Business Logic Methods (Login, Sync, CRM etc.) ---
-    def handle_login_success(self, comp_name):
+    def handle_login_success(self, comp_name, company_path):
         try:
             self.current_company = comp_name
             self.company_btn.setText(f"🏢 {comp_name} ▼")
             self.company_btn.show()
 
-            # Load Company Path (Vault se)
-            vault_file = self.company_login.vault_file
-            company_path = ""
-            if os.path.exists(vault_file):
-                with open(vault_file, 'r', encoding='utf-8') as f:
-                    vault = json.load(f)
-                    if comp_name in vault:
-                        company_path = vault[comp_name].get("path", "")
-                        
-            if not company_path:
-                print(f"Error: Path not found for company {comp_name}")
+            if not company_path or not os.path.exists(company_path):
+                print(f"Error: Path not found for company {comp_name}: {company_path}")
+                QMessageBox.critical(self, "Error", f"Company path not found:\n{company_path}")
                 return
 
             # 1. Final Data Loads

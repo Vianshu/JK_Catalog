@@ -256,6 +256,11 @@ class ReportsUI(QWidget):
         progress.setValue(0)
         
         for i, serial in enumerate(serial_numbers):
+            if progress.wasCanceled():
+                painter.end()
+                renderer.deleteLater()
+                return
+
             progress.setValue(i)
             QApplication.processEvents()
             
