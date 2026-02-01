@@ -63,6 +63,11 @@ class PrintDownloadDialog(QDialog):
         crm_name = self.crm_combo.currentText()
         # Default to empty list, not 1-12
         pending = self.report_data.get(crm_name, {}).get("pending", [])
+        if pending:
+            try:
+                pending.sort(key=lambda x: int(x) if str(x).isdigit() else float('inf'))
+            except:
+                pending.sort()
         self.pages_list.addItems(pending)
 
 class ReportsUI(QWidget):
@@ -382,7 +387,13 @@ class ReportsUI(QWidget):
             data = report_db.get(name, {"pending": [], "recent": []})
             
             self.table.setItem(row, 0, QTableWidgetItem(name))
-            p_pages = ", ".join(data["pending"]) if data["pending"] else "Completed"
+            
+            p_list = data["pending"]
+            if p_list:
+                try: p_list.sort(key=lambda x: int(x) if str(x).isdigit() else float('inf'))
+                except: p_list.sort()
+            
+            p_pages = ", ".join(p_list) if p_list else "Completed"
             self.table.setItem(row, 1, QTableWidgetItem(p_pages))
             r_pages = ", ".join(data["recent"]) if data["recent"] else "None"
             self.table.setItem(row, 2, QTableWidgetItem(r_pages))

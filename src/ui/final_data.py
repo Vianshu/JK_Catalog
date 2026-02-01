@@ -137,8 +137,8 @@ class FinalDataUI(QWidget):
         summary_grid.addWidget(self.lbl_catalog_total, 1, 0)
         summary_grid.addWidget(self.lbl_catalog_total_val, 1, 1)
         
-        # Out of Stock (Stock=0 but True/False != false)
-        self.lbl_out_stock = QLabel("Out of Stock (False):")
+        # Excluded by Stock (Empty TF + 0 Stock)
+        self.lbl_out_stock = QLabel("Excluded (Stock):")
         self.lbl_out_stock.setStyleSheet("font-weight: 500; color: #333; border: none;")
         self.lbl_out_stock_val = QLabel("0")
         self.lbl_out_stock_val.setStyleSheet("font-weight: bold; color: #fd7e14; border: none;")
@@ -146,8 +146,8 @@ class FinalDataUI(QWidget):
         summary_grid.addWidget(self.lbl_out_stock, 2, 0)
         summary_grid.addWidget(self.lbl_out_stock_val, 2, 1)
         
-        # False Items
-        self.lbl_false = QLabel("False Items:")
+        # Manual False Items
+        self.lbl_false = QLabel("Manual False:")
         self.lbl_false.setStyleSheet("font-weight: 500; color: #333; border: none;")
         self.lbl_false_val = QLabel("0")
         self.lbl_false_val.setStyleSheet("font-weight: bold; color: #dc3545; border: none;")
@@ -339,7 +339,8 @@ class FinalDataUI(QWidget):
                  self.status_lbl.setText(f"Updated: Size & Lenth ({new_len})")
 
             # Refresh stats if needed
-            # self.calculate_stats() 
+            # print("DEBUG: Cell Save - Updating Summary Stats")
+            self.update_summary_stats()
 
         except Exception as e:
             print(f"Update Error: {e}")
@@ -505,11 +506,21 @@ class FinalDataUI(QWidget):
             # 4. Image Sync (Files check karna)
             self.sync_images_after_processing()
             
-            self.refresh_table()
+            print("Attempting to refresh table...")
+            try:
+                self.refresh_table()
+                print("Table refresh returned successfully.")
+            except Exception as e:
+                print(f"CRITICAL: Refresh Table Failed: {e}")
+                import traceback
+                traceback.print_exc()
+
             # self.status_lbl.setText("Sync Complete! All Processor logic applied.")
 
         except Exception as e:
             print(f"Sync Error: {e}")
+            import traceback
+            traceback.print_exc()
             
     def sync_images_after_processing(self):
         # Processor ke kaam ke baad image paths update karne ke liye
@@ -520,10 +531,7 @@ class FinalDataUI(QWidget):
                 clean = img_name.lower().strip() if img_name else ""
                 
                 # Check for "no need" in Image Name
-                if "no_need" in clean or "no need" in clean or "noneed" in clean:
-                     conn.execute("UPDATE catalog SET Image_Path='no_need', [True/False]='false' WHERE rowid=?", (rid,))
-                     continue
-
+                # Removed "no_need" check from Image Name as per user request to keep "NO NEED" as display-only for Price List items.
                 if clean in img_map:
                     path = img_map[clean]
                     date = self.get_file_modify_date(path)
@@ -579,12 +587,15 @@ class FinalDataUI(QWidget):
                 has_no_need = "no_need" in img_path_str or "noneed" in img_path_str or "no need" in img_path_str
                 has_image = bool(img_path_str)
                 
-                # Logic 1: 'no_need' forces False
-                if has_no_need:
+                # Logic 1: 'no_need' or 'Price List' forces False (Strongest Rule)
+                if has_no_need or is_price_list:
                     new_tf = "false"
-                # Logic 2: Missing Image (Non-PriceList) forces False
-                elif not is_price_list and not has_image:
-                    new_tf = "false"
+                
+                # Logic 2: Missing Image check REMOVED.
+                # We do NOT force 'false' just because an image is missing, 
+                # unless it is explicitly 'no_need' (handled above).
+                # This allows items with missing images to remain 'Empty' (Active by Stock) or '1'.
+                pass
 
 
                 
@@ -597,15 +608,31 @@ class FinalDataUI(QWidget):
             # Also fix existing '1' entries to auto-height '1|0'
             cursor.execute("UPDATE catalog SET Lenth='1|0' WHERE TRIM(Lenth)='1'")
             
+            # --- RESCUE LOGIC: Fix items that were wrongly forced to 'false' ---
+            # If item is 'false', but has Stock, and is NOT Price List/No Need... 
+            # We revert it to empty (Active state) so the user doesn't lose data.
+            rescue_query = """
+                UPDATE catalog 
+                SET [True/False]='' 
+                WHERE LOWER(TRIM(CAST([True/False] AS TEXT))) IN ('false', '0', 'no')
+                AND LOWER(TRIM([Group])) != 'price list'
+                AND (Image_Path NOT LIKE '%no_need%' AND Image_Path NOT LIKE '%noneed%')
+                AND (CAST(REPLACE(REPLACE(Stock, ',', ''), ' ', '') AS REAL) > 0)
+            """
+            cursor.execute(rescue_query)
+            
             conn.commit()
             conn.close()
-            print(f"True/False sync completed for {len(rows)} items")
+            print(f"True/False sync completed for {len(rows)} items (Rescue Logic Applied)")
             
         except Exception as e:
             print(f"True/False Sync Error: {e}")
 
     def refresh_table(self):
-        if not self.db_path: return
+        print("CALLED: refresh_table") # DEBUG TRACE
+        if not self.db_path: 
+            print("ABORT: No db_path in refresh_table")
+            return
         try:
             self.table.blockSignals(True)
             self.table.setSortingEnabled(False)
@@ -673,6 +700,8 @@ class FinalDataUI(QWidget):
                     if c_idx == path_idx:
                         item.setData(Qt.ItemDataRole.UserRole, path_val)
                         if grp_name == "price list":
+                             # User Requirement: Price List items display "NO NEED" (Green).
+                             # This is strictly visual. Underlying UserRole keeps original path.
                             item.setText("NO NEED"); item.setForeground(QColor("green"))
                         elif is_row_missing:
                             item.setText("❌ NOT FOUND"); item.setForeground(QColor("red"))
@@ -688,64 +717,80 @@ class FinalDataUI(QWidget):
                     
                     self.table.setItem(r_idx, c_idx, item)
             
-            self.table.blockSignals(False)
             self.table.resizeColumnsToContents()
             
-            # Update summary statistics
+            # print("DEBUG: Calling update_stats now...")
             self.update_summary_stats()
         except Exception as e: 
             print(f"Refresh Error: {e}")
 
     def update_summary_stats(self):
         """Calculate and update the summary statistics in the side panel.
-        
-        Statistics:
-        - Catalog Total: Items with True/False = '1' (items that will appear in catalog)
-        - Out of Stock: Items with Stock <= 0, BUT excluding items marked as 'false'
-        - False Items: Items with True/False = 'false'
-        - Final Data Total: Total rows in the database
-        - Item Mismatch: Difference between Final Data Total and Catalog Total
+           RE-WRITTEN as per user request to ensure correctness and add debug.
         """
+        # print("CALLED: update_summary_stats") # DEBUG TRACE
         try:
             if not self.db_path or not os.path.exists(self.db_path):
+                print(f"ABORT: db_path invalid: {self.db_path}")
                 return
             
+            print(f"\n--- DEBUG: Updating Summary Stats [DB: {self.db_path}] ---")
             with sqlite3.connect(self.db_path) as conn:
-                # Final Data Total (all rows in catalog table)
+                # 1. Final Data Total (Simple Count)
                 final_data_total = conn.execute("SELECT COUNT(*) FROM catalog").fetchone()[0] or 0
-                
-                # Catalog Total (True/False column = "1" - items that appear in catalog)
+                print(f"Debug: Final Total = {final_data_total}")
+
+                # 2. Catalog Total (Passed Inclusion Logic)
+                # TF is '1' OR (TF is Empty AND Stock > 0)
                 catalog_total = conn.execute("""
                     SELECT COUNT(*) FROM catalog 
-                    WHERE [True/False] IN ('1', 'true', 'True', 'TRUE')
+                    WHERE (LOWER(TRIM(CAST([True/False] AS TEXT))) IN ('1', 'true', 'yes'))
+                    OR (
+                        (IFNULL(TRIM([True/False]), '') = '') 
+                        AND (IFNULL(CAST(REPLACE(REPLACE(Stock, ',', ''), ' ', '') AS REAL), 0) > 0)
+                    )
                 """).fetchone()[0] or 0
+                print(f"Debug: Catalog Total = {catalog_total}")
                 
-                # Out of Stock (Stock <= 0 or empty, BUT not counting items marked as false)
-                # This counts items that are in catalog (True/False=1) but have no stock
+                # 3. Excluded by Stock (Stock <= 0 AND TF is Empty)
                 out_of_stock = conn.execute("""
                     SELECT COUNT(*) FROM catalog 
-                    WHERE (Stock IS NULL OR Stock = '' OR CAST(Stock AS REAL) <= 0)
-                    AND [True/False] NOT IN ('false', 'False', 'FALSE', 'f', '0')
+                    WHERE (IFNULL(CAST(REPLACE(REPLACE(Stock, ',', ''), ' ', '') AS REAL), 0) <= 0)
+                    AND (IFNULL(TRIM([True/False]), '') = '')
                 """).fetchone()[0] or 0
+                print(f"Debug: Excluded (Stock) = {out_of_stock}")
                 
-                # False Items (True/False = false)
+                # 4. Manual False (Explicitly marked 'false', '0', 'no')
                 false_items = conn.execute("""
                     SELECT COUNT(*) FROM catalog 
-                    WHERE [True/False] IN ('false', 'False', 'FALSE', 'f', '0')
+                    WHERE LOWER(TRIM(CAST([True/False] AS TEXT))) IN ('false', '0', 'no')
                 """).fetchone()[0] or 0
+                print(f"Debug: Manual False = {false_items}")
                 
-                # Item Mismatch (Final Data Total - Catalog Total)
-                item_mismatch = final_data_total - catalog_total
+                # 5. Item Mismatch
+                sum_parts = catalog_total + out_of_stock + false_items
+                item_mismatch = final_data_total - sum_parts
+                print(f"Debug: Mismatch = {item_mismatch} (Total {final_data_total} - Sum {sum_parts})")
             
-            # Update labels with new field names
+            # Update labels
             self.lbl_catalog_total_val.setText(str(catalog_total))
             self.lbl_out_stock_val.setText(str(out_of_stock))
             self.lbl_false_val.setText(str(false_items))
             self.lbl_final_total_val.setText(str(final_data_total))
-            self.lbl_mismatch_val.setText(str(item_mismatch))
             
+            # Special Visual for Mismatch
+            self.lbl_mismatch_val.setText(str(item_mismatch))
+            if item_mismatch != 0:
+                self.lbl_mismatch_val.setStyleSheet("font-weight: bold; color: red; border: 1px solid red; padding: 2px;")
+            else:
+                 self.lbl_mismatch_val.setStyleSheet("font-weight: bold; color: #6f42c1; border: none;")
+
         except Exception as e:
             print(f"Summary Stats Error: {e}")
+            import traceback
+            traceback.print_exc()
+            import traceback
+            traceback.print_exc()
 
     # Aapke baaki functions (get_image_mapping, show_preview, show_path_popup, filter_table) 
     # backup code ke jaise hi kaam karenge...
@@ -818,43 +863,4 @@ class FinalDataUI(QWidget):
             else:
                  QMessageBox.information(self, "Info", f"No valid image path found.")
 
-    def update_summary_stats(self):
-        total = self.table.rowCount()
-        false_cnt = 0
-        oos_false = 0
-        true_cnt = 0
-        
-        idx_tf = self.col_index("True/False")
-        idx_stk = self.col_index("Stock")
-        
-        for r in range(total):
-            it_tf = self.table.item(r, idx_tf)
-            tf_val = it_tf.text().lower().strip() if it_tf else "false"
-            
-            it_stk = self.table.item(r, idx_stk)
-            try: stk = float(it_stk.text().replace(",","")) if it_stk and it_stk.text() else 0
-            except: stk = 0
-            
-            if tf_val in ["1", "true", "yes", "t"]:
-                true_cnt += 1
-            else:
-                false_cnt += 1
-                if stk <= 0: oos_false += 1
-                
-        mismatch = total - (false_cnt + true_cnt)
-        
-        mismatch = total - (false_cnt + true_cnt)
-        
-        # Update UI Labels directly
-        if hasattr(self, 'lbl_catalog_total_val'):
-            self.lbl_catalog_total_val.setText(str(total))
-            self.lbl_false_val.setText(str(false_cnt))
-            self.lbl_out_stock_val.setText(str(oos_false))
-            self.lbl_final_total_val.setText(str(true_cnt))
-            self.lbl_mismatch_val.setText(str(mismatch))
-            
-            # Styling for Mismatch
-            if mismatch != 0:
-                self.lbl_mismatch_val.setStyleSheet("font-weight: bold; color: #dc3545; border: none;") # Red
-            else:
-                self.lbl_mismatch_val.setStyleSheet("font-weight: bold; color: #28a745; border: none;") # Green
+

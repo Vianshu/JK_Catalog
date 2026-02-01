@@ -315,7 +315,7 @@ class CompanyLoginUI(QWidget):
         header = QFrame()
         header.setObjectName("ListHeader")
         hl = QVBoxLayout(header)
-        title = QLabel("  Select Company (Decentralized)")
+        title = QLabel("  Select Company")
         title.setObjectName("ListHeaderTitle")
         hl.addWidget(title)
         layout.addWidget(header)

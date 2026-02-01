@@ -89,7 +89,7 @@ class CatalogLogic:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            query = f"SELECT DISTINCT [MG_SN], [Group_Name] FROM {table} WHERE [MG_SN] IS NOT NULL ORDER BY CAST([MG_SN] AS INTEGER)"
+            query = f"SELECT DISTINCT [MG_SN], [Group_Name] FROM {table} WHERE [MG_SN] IS NOT NULL AND TRIM([Group_Name]) != 'Price List' COLLATE NOCASE ORDER BY CAST([MG_SN] AS INTEGER)"
             cursor.execute(query)
             data = cursor.fetchall()
             conn.close()
@@ -104,6 +104,9 @@ class CatalogLogic:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
+            if group_name.strip().lower() == "price list":
+                conn.close()
+                return []
             query = f"SELECT DISTINCT [SG_SN], [Sub_Group] FROM {table} WHERE TRIM([Group_Name])=? COLLATE NOCASE AND [Sub_Group] IS NOT NULL AND [Sub_Group]!='' ORDER BY CAST([SG_SN] AS INTEGER)"
             cursor.execute(query, (group_name.strip(),))
             data = cursor.fetchall()
@@ -120,7 +123,7 @@ class CatalogLogic:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            query = f"SELECT DISTINCT [MG_SN], [Group_Name], [SG_SN] FROM {table} WHERE [Group_Name] IS NOT NULL AND [SG_SN] IS NOT NULL ORDER BY CAST([MG_SN] AS INTEGER), CAST([SG_SN] AS INTEGER)"
+            query = f"SELECT DISTINCT [MG_SN], [Group_Name], [SG_SN] FROM {table} WHERE [Group_Name] IS NOT NULL AND [SG_SN] IS NOT NULL AND TRIM([Group_Name]) != 'Price List' COLLATE NOCASE ORDER BY CAST([MG_SN] AS INTEGER), CAST([SG_SN] AS INTEGER)"
             cursor.execute(query)
             data = cursor.fetchall()
             conn.close()

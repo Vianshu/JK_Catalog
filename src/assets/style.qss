@@ -5,15 +5,15 @@ QWidget {
     color: #2d3436;
 }
 
-/* Force WHITE TEXT for Login/Launch widgets (assuming Dark Background is preserved) */
+/* Force DARK TEXT for Login/Launch widgets (since we enforce Light Theme) */
 #CompanyListWidget, #LoginDialog, #PathDialog, #FormContent, #ListHeader, #ListHeaderTitle {
-    color: #ecf0f1;
+    color: #2d3436;
     background-color: transparent; /* Let container/system bg show through */
 }
 
 /* Ensure List Items have contrast */
 #CompanyListWidget::item {
-    color: #ecf0f1;
+    color: #2d3436;
 }
 #CompanyListWidget::item:selected {
     background-color: #3498db;

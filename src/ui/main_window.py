@@ -347,7 +347,7 @@ class MainWindow(QWidget):
         self.super_master_page = SuperMasterUI()
         self.reports_page = ReportsUI()
         self.payment_list_page = PaymentListUI()
-        self.godown_page = GodownListUI(get_writable_data_path("Temp"))
+        self.godown_page = GodownListUI("") # Will be initialized on login
         # Stack Pages
         self.full_catalog_page = FullCatalogUI()
         self.main_stack.addWidget(self.company_login)      # 0

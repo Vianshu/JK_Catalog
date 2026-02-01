@@ -11,19 +11,21 @@ class GodownListUI(QWidget):
         super().__init__()
         self.change_data_folder(data_folder_path, final_data_df, init_ui=True)
 
-    def change_data_folder(self, data_folder_path, final_data_df=None, init_ui=False):
-        os.makedirs(data_folder_path, exist_ok=True)
-        self.db_path = os.path.join(data_folder_path, "godown_stock.db")
+    def change_data_folder(self, company_path, final_data_df=None, init_ui=False):
+        if not company_path: return
+        self.db_path = os.path.join(company_path, "godown_stock.db")
         self.final_data = final_data_df
 
-        self.init_db()
         if init_ui:
             self.init_ui()
-        else:
-            self.table.setRowCount(0) # Clear existing
-            
-        self.load_data_from_db()
-        self.update_completer()
+        
+        self.init_db()
+        
+        # Safety check: Only clear table if it was initialized
+        if hasattr(self, 'table'):
+            self.table.setRowCount(0) 
+            self.load_data_from_db()
+            self.update_completer()
 
     # ---------------- DATABASE ----------------
     def init_db(self):
