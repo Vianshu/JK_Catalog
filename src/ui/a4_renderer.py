@@ -26,6 +26,18 @@ def mm_to_px(mm: float, dpi: int) -> int:
     return int(round(mm * dpi / MM_PER_INCH))
 
 
+class InteractiveProductFrame(QFrame):
+    """A Frame that handles double-clicks and tooltips."""
+    def __init__(self, parent=None, double_click_callback=None):
+        super().__init__(parent)
+        self.double_click_callback = double_click_callback
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.double_click_callback:
+            self.double_click_callback()
+        super().mouseDoubleClickEvent(event)
+
+
 class ProductSizeDialog(QDialog):
     def __init__(self, current_str, prod_data, parent=None):
         super().__init__(parent)
@@ -605,15 +617,40 @@ class A4PageRenderer(QWidget):
 
         self.update()
 
+    def _format_tooltip(self, raw_str):
+        """Convert '2:2|1' into readable 'Image: 2, Data: 2, Height: 1'."""
+        try:
+            parts = raw_str.split("|")
+            w_part = parts[0]
+            h_part = parts[1] if len(parts) > 1 else "Auto"
+            
+            img_w, data_w = "1", "1"
+            if ":" in w_part:
+                d = w_part.split(":")
+                img_w, data_w = d[0], d[1]
+            elif w_part.isdigit():
+                img_w = w_part
+            
+            return f"Image Width: {img_w}\nData Width: {data_w}\nHeight (Rows): {h_part}"
+        except:
+            return raw_str
+
     def _img_block(self, w: int, h: int, prod: dict, draw_right: bool) -> QFrame:
         b = self.border_width
         blue = self.grid_line_color
 
-        f = QFrame()
+        # Use InteractiveFrame for Double Click
+        f = InteractiveProductFrame(double_click_callback=lambda: self._set_product_length(prod))
+        
+        # Tooltip for dimensions
+        dim_txt = str(prod.get("length", "1|0")).strip()
+        final_tooltip = self._format_tooltip(dim_txt)
+        f.setToolTip(final_tooltip)
+        
         f.setFixedSize(w, h)
         f.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         f.setStyleSheet(
-            "QFrame {background:#ffffff;"
+            "InteractiveProductFrame {background:#ffffff;"
             f"border-top:{b}px solid {blue};"
             f"border-left:{b}px solid {blue};"
             "border-bottom:none;"
@@ -621,9 +658,7 @@ class A4PageRenderer(QWidget):
             "border-radius:0px;}"
         )
         
-        # Enable right-click context menu
-        f.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        f.customContextMenuRequested.connect(lambda pos, p=prod: self._show_context_menu(f, pos, p))
+
 
         lay = QVBoxLayout(f)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -659,6 +694,7 @@ class A4PageRenderer(QWidget):
                 )
                 lbl.setPixmap(scaled)
 
+        lbl.setToolTip(f.toolTip()) # Ensure hover works on image too
         lay.addWidget(lbl, 1)
         return f
     
@@ -695,11 +731,18 @@ class A4PageRenderer(QWidget):
         blue = self.grid_line_color
         red = self.divider_color
 
-        f = QFrame()
+        # Use InteractiveFrame for Double Click
+        f = InteractiveProductFrame(double_click_callback=lambda: self._set_product_length(prod))
+
+        # Tooltip for dimensions
+        dim_txt = str(prod.get("length", "1|0")).strip()
+        final_tooltip = self._format_tooltip(dim_txt)
+        f.setToolTip(final_tooltip)
+
         f.setFixedSize(w, h)
         f.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         f.setStyleSheet(
-            "QFrame {background:#ffffff;"
+            "InteractiveProductFrame {background:#ffffff;"
             f"border-top:{b}px solid {blue};"
             f"border-left:{b}px solid {red};"
             "border-bottom:none;"
@@ -707,14 +750,15 @@ class A4PageRenderer(QWidget):
             "border-radius:0px;}"
         )
         
-        # Enable right-click context menu (Same as Image Block)
-        f.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        f.customContextMenuRequested.connect(lambda pos, p=prod: self._show_context_menu(f, pos, p))
+
 
         lay = QVBoxLayout(f)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        lay.addWidget(self._build_info_container(prod))
+        
+        info_widget = self._build_info_container(prod)
+        info_widget.setToolTip(f.toolTip()) # Ensure hover works on text area
+        lay.addWidget(info_widget)
         return f
 
     def _empty_cell(self, w: int, h: int, draw_right: bool) -> QFrame:
