@@ -132,7 +132,8 @@ class CompanyCreateForm(QWidget):
         self.back_callback = back_callback
         self.fields = [] 
         self.edit_mode = False 
-        self.target_folder_path = "" 
+        self.base_folder_path = "" # Parent folder where new company folder will be created
+        self.defined_company_path = "" # Actual company folder path (for Edit mode)
         self.init_ui()
 
     def init_ui(self):
@@ -159,7 +160,8 @@ class CompanyCreateForm(QWidget):
         grid.setContentsMargins(50, 40, 50, 40)
         grid.setSpacing(15)
         
-        labels = ["Display Name :-", "User Name :-", "Password :-", "Confirm Password :-", "Folder Path :-", "Image Location :-"]
+        # Labels modified to reflect logic: "Location" instead of "Folder Path"
+        labels = ["Display Name :-", "User Name :-", "Password :-", "Confirm Password :-", "Location :-", "Image Location :-"]
         
         for i, text in enumerate(labels):
             grid.addWidget(QLabel(f"<b>{text}</b>"), i, 0)
@@ -167,8 +169,9 @@ class CompanyCreateForm(QWidget):
             edit.setObjectName("FormInput") 
             if "Password" in text: edit.setEchoMode(QLineEdit.EchoMode.Password)
             
-            if "Folder Path" in text:
+            if "Location" in text and "Image" not in text:
                 edit.setReadOnly(True) 
+                edit.setPlaceholderText("Selected Data Folder")
                 
             if "Image Location" in text:
                  hb = QHBoxLayout()
@@ -206,20 +209,28 @@ class CompanyCreateForm(QWidget):
         p = QFileDialog.getExistingDirectory(self, "Select Image Folder")
         if p: edit_field.setText(p)
 
-    def load_for_setup(self, path):
+    def load_for_setup(self, parent_path):
+        """Called when Creating specific new company inside parent_path"""
         self.edit_mode = False
-        self.target_folder_path = path
+        self.base_folder_path = parent_path
+        self.defined_company_path = ""
         self.header_label.setText("  Create New Company")
+        
         for f in self.fields: 
             if isinstance(f, QLineEdit): f.clear()
-        self.fields[4].setText(path) # Folder Path
+            
+        # Show parent path to user
+        self.fields[4].setText(parent_path) 
         
-    def load_for_alter(self, path):
+    def load_for_alter(self, company_path):
+        """Called when Editing existing company at company_path"""
         self.edit_mode = True
-        self.target_folder_path = path
+        self.defined_company_path = company_path
+        self.base_folder_path = os.path.dirname(company_path)
         self.header_label.setText("  Edit Company Config")
+        
         try:
-             info_p = os.path.join(path, "company_info.json")
+             info_p = os.path.join(company_path, "company_info.json")
              if os.path.exists(info_p):
                  with open(info_p, 'r') as f:
                      d = json.load(f)
@@ -227,19 +238,22 @@ class CompanyCreateForm(QWidget):
                      self.fields[1].setText(d.get("user", ""))
                      self.fields[2].setText(d.get("pass", ""))
                      self.fields[3].setText(d.get("pass", ""))
-                     self.fields[4].setText(path)
+                     self.fields[4].setText(self.base_folder_path) # Show parent loc
                      self.fields[5].setText(d.get("image_path", ""))
         except: pass
 
     def back_to_list(self):
         self.back_callback()
 
+    def sanitize_filename(self, name):
+        # Remove invalid chars for folder name
+        return "".join([c for c in name if c.isalpha() or c.isdigit() or c in (' ', '_', '-')]).strip()
+
     def save_data(self):
         display_name = self.fields[0].text().strip()
         user = self.fields[1].text().strip()
         password = self.fields[2].text().strip()
         conf_pass = self.fields[3].text().strip()
-        path = self.fields[4].text().strip()
         img_path = self.fields[5].text().strip()
 
         if not display_name:
@@ -251,7 +265,23 @@ class CompanyCreateForm(QWidget):
             return
             
         try:
-            target_path = Path(path)
+            # Determine Final Folder Path
+            if self.edit_mode and self.defined_company_path:
+                # In Edit Mode, we generally don't rename the folder to avoid breaking paths
+                # But we update the info inside
+                final_folder_path = self.defined_company_path
+            else:
+                # Create Mode: Create folder inside base_folder_path
+                clean_name = self.sanitize_filename(display_name)
+                if not clean_name: clean_name = "Company_Data"
+                
+                final_folder_path = os.path.join(self.base_folder_path, clean_name)
+                
+                # Check for duplicacy
+                if os.path.exists(final_folder_path) and not self.edit_mode:
+                    QMessageBox.warning(self, "Exists", f"Folder already exists:\n{final_folder_path}\nUsing existing folder.")
+            
+            target_path = Path(final_folder_path)
             target_path.mkdir(parents=True, exist_ok=True)
             
             info = {
@@ -269,7 +299,7 @@ class CompanyCreateForm(QWidget):
             if not report_file.exists():
                 save_report_json({}, str(report_file))
 
-            QMessageBox.information(self, "Success", f"Company '{display_name}' configured successfully!")
+            QMessageBox.information(self, "Success", f"Company '{display_name}' configured successfully!\nLocation: {final_folder_path}")
             self.back_to_list()
             
         except Exception as e:
@@ -428,11 +458,11 @@ class CompanyLoginUI(QWidget):
             self.stack.setCurrentIndex(1)
 
     def create_new_company(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Empty Folder for New Company")
+        # Allow user to select the ROOT data folder (e.g. D:/Data)
+        # The new company folder will be created INSIDE this.
+        folder = QFileDialog.getExistingDirectory(self, "Select Data Directory (Where company folder will be created)")
         if folder:
-            if os.path.exists(os.path.join(folder, "company_info.json")):
-                 QMessageBox.warning(self, "Warning", "This folder already has a company configuration.")
-                 return
+            # No need to check for company_info.json here, as we are creating a SUBFOLDER
             self.form_screen.load_for_setup(folder)
             self.stack.setCurrentIndex(1)
             

@@ -5,17 +5,17 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTableWidget, QTableWidgetIte
                              QPushButton, QLabel, QHeaderView, QMessageBox, QHBoxLayout)
 from PyQt6.QtCore import Qt
 
+from src.utils.path_utils import get_data_file_path
+
 class CalendarMappingUI(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Hamesha "Data" folder ke andar calendar_data.db dhundega
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        data_dir = os.path.join(base_dir, "Data")
+        # Use centralized utility for data path
+        self.db_path = get_data_file_path("calendar_data.db")
         
-        if not os.path.exists(data_dir):
-            os.makedirs(data_dir, exist_ok=True)
-            
-        self.db_path = os.path.join(data_dir, "calendar_data.db")
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        
         self.setup_ui()
         self.init_db()
 

@@ -1,6 +1,8 @@
 import sqlite3
 import os
 
+from src.utils.path_utils import get_data_file_path
+
 class CatalogLogic:
     def __init__(self, db_path):
         self.db_path = db_path
@@ -11,13 +13,8 @@ class CatalogLogic:
         self._layout_cache = {}
         self._cache_valid = False
         
-        # Derive calendar path (assuming 'data/calendar_data.db' relative to app root)
-        # Derive calendar path (assuming 'data/calendar_data.db' relative to app root)
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # backup code/
-        self.calendar_db_path = os.path.join(base_dir, "data", "calendar_data.db")
-        if not os.path.exists(self.calendar_db_path):
-            # Fallback for testing environment
-            self.calendar_db_path = "data/calendar_data.db"
+        # Derive calendar path using utility
+        self.calendar_db_path = get_data_file_path("calendar_data.db")
 
     def set_paths(self, catalog_db, final_db):
         self.catalog_db_path = catalog_db

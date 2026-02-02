@@ -388,12 +388,8 @@ class FinalDataUI(QWidget):
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_guid ON catalog (GUID)")
 
             # 3. Super Master Mapping
-            # Assuming super_master.db is in 'data' folder at app root or adjacent to company folders?
-            # From logs: ...\data\super_master.db
-            super_db = os.path.join(base_dir, "data", "super_master.db")
-            if not os.path.exists(super_db):
-                 # Fallback to parent directory of company path
-                 super_db = os.path.join(os.path.dirname(folder_path), "super_master.db")
+            from src.utils.path_utils import get_data_file_path
+            super_db = get_data_file_path("super_master.db")
             
             super_mapping = {}
             if os.path.exists(super_db):
