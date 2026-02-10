@@ -29,6 +29,7 @@ from src.ui.int_cost_sheet import IntCostSheetUI
 from src.ui.catalog_price_list import CatalogPriceListUI
 from src.ui.cheque_list import ChequeListUI
 from src.ui.calendar_mapping import CalendarMappingUI
+from src.ui.group_test_tab import GroupTestTab
 from src.utils.path_utils import get_writable_data_path
 
 # Settings & Services
@@ -278,6 +279,7 @@ class MainWindow(QWidget):
             ("📖 Full Catalo&g", lambda: self.main_stack.setCurrentIndex(2)),
             ("📈 Rep&orts", lambda: self.main_stack.setCurrentIndex(7)),
             ("🏷 &Price List", self.handle_catalog_price_list),
+            ("🧪 Preview &Rows", lambda: self.main_stack.setCurrentIndex(17)),
             ("➕ Create CRM", self.handle_create_crm, False, "F1"),
             ("✏️ Alter CRM", self.handle_alter_crm, False, "F2")
         ])
@@ -371,6 +373,9 @@ class MainWindow(QWidget):
         
         self.calendar_page = CalendarMappingUI()
         self.main_stack.addWidget(self.calendar_page) # Maan lijiye index 16 hai
+
+        self.group_test_page = GroupTestTab()
+        self.main_stack.addWidget(self.group_test_page) # Index 17
     # --- Helper UI Functions ---
     # --- Helper UI Functions ---
     def create_menu_widget(self, buttons_data):
@@ -483,6 +488,9 @@ class MainWindow(QWidget):
 
             if hasattr(self, 'full_catalog_page'):
                 self.full_catalog_page.set_company_path(company_path)
+
+            if hasattr(self, 'group_test_page') and hasattr(self, 'full_catalog_page'):
+                 self.group_test_page.set_logic(self.full_catalog_page.logic, company_path)
 
             # Row Data
             self.row_data_page.load_data(company_path)

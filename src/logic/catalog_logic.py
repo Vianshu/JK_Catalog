@@ -637,19 +637,89 @@ class CatalogLogic:
         """Internal layout computation with Incremental Logic (Lock Existing, Insert New, Sort Per Page)."""
         products = self.get_sorted_products_from_db(group_name, sg_sn)
         
-        # --- SORT BY PRICE (Low to High) ---
-        def get_price_val(x):
-            try:
-                # If dict: x.get("mrp")
-                # If tuple: index 4 is usually MRP based on query
-                val = x.get("mrp") if isinstance(x, dict) else x[4]
-                if not val: return 0.0
-                return float(str(val).replace(",", "").strip())
-            except:
-                return 0.0
+        # --- NEW SORTING LOGIC (Smart Grouping - Validated) ---
+        # 1. Clustering with Bracket/Long-Word Heuristics
+        # 2. Sort Clusters by Min Price
+        # 3. Sort Items within by Price
         
-        # Sort globally so they flow into pages in price order
-        products.sort(key=get_price_val)
+        from difflib import SequenceMatcher
+        import re
+
+        def clean_cat_name(n):
+            n = str(n).lower()
+            n = re.sub(r'chain\s*saw', 'chainsaw', n)
+            n = re.sub(r'\(.*?\)', '', n) 
+            n = re.sub(r'\[.*?\]', '', n)
+            n = re.sub(r'\d+', '', n)
+            n = re.sub(r'[^\w\s]', ' ', n)
+            return " ".join(n.split())
+
+        def has_long_common_word(n1, n2, min_len=5):
+            COMMON_IGNORE = {'black', 'white', 'heavy', 'super', 'power', 'auto', 'manual'}
+            w1 = set(n1.split())
+            w2 = set(n2.split())
+            common = w1.intersection(w2)
+            for w in common:
+                if len(w) >= min_len and w not in COMMON_IGNORE:
+                    return True
+            return False
+
+        def get_p_name(x):
+            if isinstance(x, dict): return x.get("product_name", "") or x.get("name", "")
+            return x[0] if x else ""
+
+        def get_p_price(x):
+            if isinstance(x, dict): return x.get("sort_price", 0)
+            try: return float(str(x[4]).replace(",", "").strip()) if len(x)>4 else 0
+            except: return 0
+
+        def is_similar(clean_a, clean_b):
+            if not clean_a or not clean_b: return False
+            if clean_a == clean_b: return True
+            if has_long_common_word(clean_a, clean_b, min_len=5): return True
+            ratio = SequenceMatcher(None, clean_a, clean_b).ratio()
+            return ratio >= 0.85
+
+        # 1. Cluster Items
+        clusters = []
+        for item in products:
+            name = get_p_name(item)
+            clean_n = clean_cat_name(name)
+            
+            added = False
+            for cluster in clusters:
+                rep_name = get_p_name(cluster[0])
+                rep_clean = clean_cat_name(rep_name)
+                
+                if is_similar(clean_n, rep_clean):
+                    cluster.append(item)
+                    added = True
+                    break
+            
+            if not added:
+                clusters.append([item])
+        
+        # 2. Sort Items WITHIN Clusters by Price (ASC)
+        for cluster in clusters:
+            cluster.sort(key=get_p_price)
+
+        # 3. Sort Clusters Themselves by MIN Price
+        clusters.sort(key=lambda c: get_p_price(c[0]) if c else 0)
+
+        # 4. Flatten back to products list
+        products = [item for cluster in clusters for item in cluster]
+        
+        # 5. Inject Sort Order to Preserve Clustering during Reflow
+        for i, p in enumerate(products):
+            if isinstance(p, dict):
+                p["exact_sort_order"] = i
+        
+        def get_sort_order(x):
+            if isinstance(x, dict): return x.get("exact_sort_order", 999999)
+            return 999999
+        
+        # ------------------------------------------
+
         layout_map = {}
         
         ROWS = 5
@@ -659,7 +729,8 @@ class CatalogLogic:
             return [[False]*COLS for _ in range(ROWS)]
             
         # 1. Load Existing Mapping
-        mapping = self.get_existing_product_mapping(group_name, sg_sn)
+        # mapping = self.get_existing_product_mapping(group_name, sg_sn)
+        mapping = {} # FORCE REFLLOW: Ignore old positions to enforce new Sorting Logic globally
         
         # 2. Assign Pages
         # We use temporary grids to determine available space for new items
@@ -814,8 +885,8 @@ class CatalogLogic:
                 page_items = [p for p, pg in assignments if pg == page_n]
                 page_items.append(added_item)
                 
-                # 2. Sort by Price
-                page_items.sort(key=get_price_val)
+                # 2. Sort by Order Index (Preserve Clustering)
+                page_items.sort(key=get_sort_order)
                 
                 # 3. Simulate Linear Layout
                 sim_grid = get_empty_grid()
@@ -892,8 +963,8 @@ class CatalogLogic:
                             preserved_assignments.append((p_data, p_no))
                     
                     # 2. Sort range items
-                    # 2. Sort range items BY PRICE
-                    range_items.sort(key=get_price_val)
+                    # 2. Sort range items BY ORDER INDEX (Preserve Clustering)
+                    range_items.sort(key=get_sort_order)
                     
                     # 3. Clear grids for these pages to refill cleanly
                     for p_no in rng:
@@ -942,9 +1013,9 @@ class CatalogLogic:
         while idx < len(page_queue):
             page_num = page_queue[idx]
             
-            # Sort items on this page BY PRICE (Re-sort needed because ripple might add items)
+            # Sort items on this page BY ORDER INDEX (Preserve Clustering)
             items = page_groups[page_num]
-            items.sort(key=get_price_val)
+            items.sort(key=get_sort_order)
             
             grids[page_num] = get_empty_grid()
             layout_map[page_num] = []
