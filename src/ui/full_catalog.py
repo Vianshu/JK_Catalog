@@ -95,6 +95,7 @@ class FullCatalogUI(QWidget):
         self.btn_build.clicked.connect(self.build_catalog)
         self.btn_export.clicked.connect(self.export_pdf)
         self.btn_print.clicked.connect(self.handle_direct_print)
+        self.btn_reshuffle.clicked.connect(self.reshuffle_catalog)
         
         # Length change from right-click context menu
         self.renderer.length_changed.connect(self.handle_length_change)
@@ -242,6 +243,96 @@ class FullCatalogUI(QWidget):
                 traceback.print_exc()
             else:
                 print(f"Auto-Build Error: {e}")
+            import traceback
+            traceback.print_exc()
+            self.refresh_catalog_data()
+    
+    def reshuffle_catalog(self):
+        """Force a re-sort/re-clustering of products in the CURRENT subgroup.
+        
+        This is useful when new items are added to the catalog — they initially
+        appear at the end, but reshuffling groups them with similar products
+        and re-sorts by price within each cluster.
+        """
+        if not self.catalog_db_path:
+            QMessageBox.warning(self, "No Data", "Please load a company first.")
+            return
+        
+        if not hasattr(self, 'all_pages_data') or not self.all_pages_data:
+            QMessageBox.warning(self, "No Pages", "No catalog pages available.")
+            return
+        
+        # Get current subgroup from the page being viewed
+        mg_sn, group_name, sg_sn, page_no, serial_no = self.all_pages_data[self.current_page_index]
+        
+        # Confirmation dialog
+        reply = QMessageBox.question(
+            self, "Reshuffle Subgroup",
+            f"This will re-sort all products in:\n\n"
+            f"   📂 {group_name} > {sg_sn}\n\n"
+            f"Products will be grouped by name similarity\n"
+            f"and sorted by price within each group.\n\n"
+            f"Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        from PyQt6.QtWidgets import QApplication
+        
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+        
+        try:
+            # Clear only this subgroup's cache entry
+            cache_key = f"{group_name}|{sg_sn}"
+            if cache_key in self.logic._layout_cache:
+                del self.logic._layout_cache[cache_key]
+            
+            # Sync pages for this subgroup (auto-create if overflow)
+            layout_map = self.logic.simulate_page_layout(group_name, sg_sn, use_cache=False, reshuffle=True)
+            max_required_page = max(layout_map.keys()) if layout_map else 1
+            
+            conn = sqlite3.connect(self.catalog_db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT MAX(page_no) FROM catalog_pages WHERE group_name=? AND sg_sn=?", 
+                          (group_name, sg_sn))
+            res = cursor.fetchone()
+            current_max = res[0] if res and res[0] else 0
+            
+            if max_required_page > current_max:
+                for p in range(current_max + 1, max_required_page + 1):
+                    cursor.execute("""
+                        INSERT INTO catalog_pages (mg_sn, group_name, sg_sn, page_no)
+                        VALUES (?, ?, ?, ?)
+                    """, (mg_sn, group_name, sg_sn, p))
+                conn.commit()
+            conn.close()
+            
+            # Rebuild serial numbers and refresh display
+            self.rebuild_serial_numbers()
+            
+            # Clear cache again so display uses fresh layout
+            if cache_key in self.logic._layout_cache:
+                del self.logic._layout_cache[cache_key]
+            
+            self.refresh_catalog_data()
+            
+            QApplication.restoreOverrideCursor()
+            
+            QMessageBox.information(
+                self, "Reshuffle Complete",
+                f"Subgroup '{group_name} > {sg_sn}' reshuffled!\n\n"
+                "• Similar products are now grouped together\n"
+                "• Groups are sorted by minimum price\n"
+                "• Items within groups are sorted by price"
+            )
+            
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.critical(self, "Reshuffle Error", f"Error during reshuffle: {e}")
             import traceback
             traceback.print_exc()
             self.refresh_catalog_data()
@@ -396,6 +487,27 @@ class FullCatalogUI(QWidget):
         self.btn_print.setToolTip("Direct Print (Full Page)")
         self.btn_print.setFixedHeight(40)
         right_vbox.addWidget(self.btn_print)
+        
+        self.btn_reshuffle = QPushButton("🔀 Reshuffle")
+        self.btn_reshuffle.setObjectName("CatalogReshuffleBtn")
+        self.btn_reshuffle.setToolTip("Re-sort all products into proper groups\n(Use after adding new items)")
+        self.btn_reshuffle.setFixedHeight(40)
+        self.btn_reshuffle.setStyleSheet("""
+            QPushButton {
+                background-color: #8e44ad;
+                color: white;
+                font-weight: bold;
+                border: none;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #9b59b6;
+            }
+            QPushButton:pressed {
+                background-color: #7d3c98;
+            }
+        """)
+        right_vbox.addWidget(self.btn_reshuffle)
         
         right_vbox.addStretch() # Push Page Mgmt to bottom
         

@@ -226,6 +226,8 @@ class FinalDataUI(QWidget):
         old_val = item.data(Qt.ItemDataRole.UserRole)
         row, col = item.row(), item.column()
         col_name = self.headers[col]
+        
+        print(f"[SAVE_CELL] col={col} ({col_name}), new_val='{new_val}', old_val='{old_val}', old_type={type(old_val)}")
 
         # --- VALIDATION: True/False Column (Index 21) ---
         if col == 21: # True/False Column
@@ -251,7 +253,24 @@ class FinalDataUI(QWidget):
                 self.table.blockSignals(False)
                 new_val = final_bool_val # Update variable for DB save
 
-                new_val = final_bool_val # Update variable for DB save
+            # When setting to 'false', remove from known_layout_products
+            # so if re-added later, it appears at the end of the subgroup
+            if final_bool_val == "false":
+                try:
+                    catalog_db = os.path.join(os.path.dirname(self.db_path), "catalog.db")
+                    if os.path.exists(catalog_db):
+                        pname_item = self.table.item(row, self.col_index("Product Name"))
+                        product_name = pname_item.text().strip().lower() if pname_item else ""
+                        if product_name:
+                            import sqlite3 as _sql
+                            with _sql.connect(catalog_db) as _conn:
+                                _conn.execute(
+                                    "DELETE FROM known_layout_products WHERE product_name=?",
+                                    (product_name,)
+                                )
+                                _conn.commit()
+                except Exception as e:
+                    print(f"Known products cleanup error: {e}")
 
             self.update_summary_stats() # Update counts on change
 
@@ -317,9 +336,8 @@ class FinalDataUI(QWidget):
                 self.table.setItem(row, self.col_index("Update_date"), QTableWidgetItem(now))
                 self.table.blockSignals(False)
             
-            self.status_lbl.setText(f"Updated: {col_name}" + (f" & Date at {now}" if should_update_date else ""))
-            
-            self.status_lbl.setText(f"Updated: {col_name}" + (f" & Date at {now}" if should_update_date else ""))
+            if hasattr(self, 'status_lbl') and self.status_lbl:
+                self.status_lbl.setText(f"Updated: {col_name}" + (f" & Date at {now}" if should_update_date else ""))
             
             # --- Post-Update Logic: Update Length if Size Changed ---
             if col_name == "Product_Size":
@@ -336,7 +354,8 @@ class FinalDataUI(QWidget):
                  self.table.blockSignals(True)
                  self.table.setItem(row, len_col, QTableWidgetItem(new_len))
                  self.table.blockSignals(False)
-                 self.status_lbl.setText(f"Updated: Size & Lenth ({new_len})")
+                 if hasattr(self, 'status_lbl') and self.status_lbl:
+                     self.status_lbl.setText(f"Updated: Size & Lenth ({new_len})")
 
             # Refresh stats if needed
             # print("DEBUG: Cell Save - Updating Summary Stats")
@@ -604,22 +623,13 @@ class FinalDataUI(QWidget):
             # Also fix existing '1' entries to auto-height '1|0'
             cursor.execute("UPDATE catalog SET Lenth='1|0' WHERE TRIM(Lenth)='1'")
             
-            # --- RESCUE LOGIC: Fix items that were wrongly forced to 'false' ---
-            # If item is 'false', but has Stock, and is NOT Price List/No Need... 
-            # We revert it to empty (Active state) so the user doesn't lose data.
-            rescue_query = """
-                UPDATE catalog 
-                SET [True/False]='' 
-                WHERE LOWER(TRIM(CAST([True/False] AS TEXT))) IN ('false', '0', 'no')
-                AND LOWER(TRIM([Group])) != 'price list'
-                AND (Image_Path NOT LIKE '%no_need%' AND Image_Path NOT LIKE '%noneed%')
-                AND (CAST(REPLACE(REPLACE(Stock, ',', ''), ' ', '') AS REAL) > 0)
-            """
-            cursor.execute(rescue_query)
+            # RESCUE LOGIC REMOVED: Previously this overwrote user-set 'false' 
+            # values back to empty when stock > 0. This prevented manual exclusions
+            # from sticking. Manual 'false' edits are now preserved.
             
             conn.commit()
             conn.close()
-            print(f"True/False sync completed for {len(rows)} items (Rescue Logic Applied)")
+            print(f"True/False sync completed for {len(rows)} items")
             
         except Exception as e:
             print(f"True/False Sync Error: {e}")
@@ -715,9 +725,15 @@ class FinalDataUI(QWidget):
             
             self.table.resizeColumnsToContents()
             
+            # Re-enable signals so itemChanged fires on user edits
+            self.table.blockSignals(False)
+            self.table.setSortingEnabled(True)
+            
             # print("DEBUG: Calling update_stats now...")
             self.update_summary_stats()
         except Exception as e: 
+            self.table.blockSignals(False)  # Always unblock on error too
+            self.table.setSortingEnabled(True)
             print(f"Refresh Error: {e}")
 
     def update_summary_stats(self):

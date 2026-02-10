@@ -13,6 +13,10 @@ class CatalogLogic:
         self._layout_cache = {}
         self._cache_valid = False
         
+        # Known product names per subgroup (persisted to DB)
+        # Key: "group_name|sg_sn", Value: set of lowercase product names
+        self._known_products = {}
+        
         # Derive calendar path using utility
         self.calendar_db_path = get_data_file_path("calendar_data.db")
 
@@ -22,11 +26,65 @@ class CatalogLogic:
         # Invalidate cache when paths change
         self._layout_cache = {}
         self._cache_valid = False
+        # Load persisted known products from DB
+        self._known_products = self._load_known_products()
     
     def invalidate_cache(self):
-        """Call this when product data changes."""
+        """Call this when product data changes. Does NOT clear known products."""
         self._layout_cache = {}
         self._cache_valid = False
+    
+    def _load_known_products(self):
+        """Load known products from catalog.db table."""
+        result = {}
+        if not self.catalog_db_path or not os.path.exists(self.catalog_db_path):
+            return result
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.catalog_db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS known_layout_products (
+                    cache_key TEXT,
+                    product_name TEXT,
+                    PRIMARY KEY (cache_key, product_name)
+                )
+            """)
+            conn.commit()
+            for row in cursor.execute("SELECT cache_key, product_name FROM known_layout_products"):
+                key, name = row
+                if key not in result:
+                    result[key] = set()
+                result[key].add(name)
+            conn.close()
+        except Exception as e:
+            print(f"Load known products error: {e}")
+        return result
+    
+    def _save_known_products(self, cache_key, product_names):
+        """Save known products for a subgroup to catalog.db."""
+        if not self.catalog_db_path:
+            return
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.catalog_db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS known_layout_products (
+                    cache_key TEXT,
+                    product_name TEXT,
+                    PRIMARY KEY (cache_key, product_name)
+                )
+            """)
+            # Clear old entries for this subgroup
+            cursor.execute("DELETE FROM known_layout_products WHERE cache_key=?", (cache_key,))
+            # Insert current set
+            for name in product_names:
+                cursor.execute("INSERT INTO known_layout_products (cache_key, product_name) VALUES (?, ?)", (cache_key, name))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Save known products error: {e}")
         
     def get_nepali_date(self, ad_date_str):
         """Convert AD date (DD-MM-YYYY) to BS date (DD/MM)."""
@@ -142,8 +200,8 @@ class CatalogLogic:
             cursor = conn.cursor()
             
             for mg_sn, group_name, sg_sn in all_subgroups:
-                # Run layout simulation
-                layout_map = self.simulate_page_layout(group_name, sg_sn)
+                # Run layout simulation (don't save known products - intermediate step)
+                layout_map = self.simulate_page_layout(group_name, sg_sn, save_known=False)
                 max_required_page = max(layout_map.keys()) if layout_map else 1
                 
                 # Check existing pages in DB
@@ -585,7 +643,7 @@ class CatalogLogic:
         """Internal method to compute layout without caching."""
         return self._simulate_page_layout_internal(group_name, sg_sn, allow_backward, printable_pages)
 
-    def simulate_page_layout(self, group_name, sg_sn, allow_backward=False, printable_pages=None, use_cache=True):
+    def simulate_page_layout(self, group_name, sg_sn, allow_backward=False, printable_pages=None, use_cache=True, reshuffle=False, save_known=True):
         """Simulate product layout across pages with optional caching.
         
         Args:
@@ -596,16 +654,46 @@ class CatalogLogic:
             printable_pages: Set of page numbers that are marked for print/reflow.
                             Products can only move backward to printable pages.
             use_cache: If True, use cached layout if available.
+            reshuffle: If True, force full re-clustering/sorting of all products.
+                      If False (default), new products are appended at the end.
+            save_known: If True, persist known products to DB after computation.
+                       Set to False for intermediate computations (e.g. sync_pages).
         """
-        if use_cache:
-            cache_key = f"{group_name}|{sg_sn}"
+        cache_key = f"{group_name}|{sg_sn}"
+        
+        # If reshuffling, clear known products for this subgroup so everything re-sorts
+        if reshuffle:
+            self._known_products.pop(cache_key, None)
+            self._save_known_products(cache_key, set())  # Clear from DB too
+        
+        if use_cache and not reshuffle:
             if cache_key in self._layout_cache:
                 return self._layout_cache[cache_key]
-            layout_map = self._simulate_page_layout_internal(group_name, sg_sn, allow_backward, printable_pages)
-            self._layout_cache[cache_key] = layout_map
-            return layout_map
-        else:
-            return self._simulate_page_layout_internal(group_name, sg_sn, allow_backward, printable_pages)
+        
+        # Reload known products from DB (may have been modified by final_data.py)
+        self._known_products = self._load_known_products()
+        
+        # Get known products for this subgroup
+        known = self._known_products.get(cache_key, set())
+        
+        layout_map = self._simulate_page_layout_internal(group_name, sg_sn, allow_backward, printable_pages, reshuffle=reshuffle, known_products=known)
+        self._layout_cache[cache_key] = layout_map
+        
+        # After layout, update known products with ALL products now in the layout
+        all_product_names = set()
+        for page_num, placements in layout_map.items():
+            for pl in placements:
+                p_data = pl.get("data", {})
+                p_name = p_data.get("product_name", "") or p_data.get("name", "")
+                if p_name:
+                    all_product_names.add(p_name.strip().lower())
+        self._known_products[cache_key] = all_product_names
+        
+        # Only persist to DB when this is the final computation
+        if save_known:
+            self._save_known_products(cache_key, all_product_names)
+        
+        return layout_map
     
     def get_existing_product_mapping(self, group_name, sg_sn):
         if not self.catalog_db_path: return {}
@@ -633,11 +721,36 @@ class CatalogLogic:
             return {}
 
 
-    def _simulate_page_layout_internal(self, group_name, sg_sn, allow_backward=False, printable_pages=None):
+    def get_ordered_product_names(self, group_name, sg_sn):
+        """Get product names in order from previous snapshots (to preserve layout)."""
+        if not self.catalog_db_path: return []
+        try:
+            conn = sqlite3.connect(self.catalog_db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT ps.product_list 
+                FROM catalog_pages cp
+                LEFT JOIN page_snapshots ps ON cp.serial_no = ps.serial_no
+                WHERE cp.group_name=? AND cp.sg_sn=?
+                ORDER BY cp.page_no, cp.serial_no
+            """, (group_name, sg_sn))
+            rows = cursor.fetchall()
+            conn.close()
+            
+            ordered = []
+            for (p_list,) in rows:
+                if p_list:
+                    names = [n.strip().lower() for n in p_list.split(",") if n.strip()]
+                    ordered.extend(names)
+            return ordered
+        except:
+            return []
+
+    def _simulate_page_layout_internal(self, group_name, sg_sn, allow_backward=False, printable_pages=None, reshuffle=False, known_products=None):
         """Internal layout computation with Incremental Logic (Lock Existing, Insert New, Sort Per Page)."""
         products = self.get_sorted_products_from_db(group_name, sg_sn)
         
-        # --- NEW SORTING LOGIC (Smart Grouping - Validated) ---
+        # --- SORTING LOGIC (Smart Grouping) ---
         # 1. Clustering with Bracket/Long-Word Heuristics
         # 2. Sort Clusters by Min Price
         # 3. Sort Items within by Price
@@ -680,36 +793,115 @@ class CatalogLogic:
             ratio = SequenceMatcher(None, clean_a, clean_b).ratio()
             return ratio >= 0.85
 
-        # 1. Cluster Items
-        clusters = []
-        for item in products:
-            name = get_p_name(item)
-            clean_n = clean_cat_name(name)
-            
-            added = False
-            for cluster in clusters:
-                rep_name = get_p_name(cluster[0])
-                rep_clean = clean_cat_name(rep_name)
+        # --- TWO-MODE SORTING ---
+        # DEBUG: Write to file since terminal output isn't visible
+        import datetime as _dt
+        _debug_ts = _dt.datetime.now().strftime("%H:%M:%S")
+        try:
+            with open("layout_debug.log", "a") as _dbg:
+                _dbg.write(f"\n[{_debug_ts}] === LAYOUT for {group_name}|{sg_sn} ===\n")
+                _dbg.write(f"  reshuffle={reshuffle}, known_products count={len(known_products) if known_products else 0}\n")
+                _dbg.write(f"  total products from DB: {len(products)}\n")
+                if known_products:
+                    product_names = [get_p_name(p).strip().lower() for p in products]
+                    new_names = [n for n in product_names if n not in known_products]
+                    _dbg.write(f"  NEW products (not in known): {new_names}\n")
+                    _dbg.write(f"  EXISTING products: {len(product_names) - len(new_names)}\n")
+        except: pass
+        
+        if reshuffle:
+            # RESHUFFLE MODE: Full clustering and sorting for ALL products
+            # 1. Cluster Items
+            clusters = []
+            for item in products:
+                name = get_p_name(item)
+                clean_n = clean_cat_name(name)
                 
-                if is_similar(clean_n, rep_clean):
-                    cluster.append(item)
-                    added = True
-                    break
+                added = False
+                for cluster in clusters:
+                    rep_name = get_p_name(cluster[0])
+                    rep_clean = clean_cat_name(rep_name)
+                    
+                    if is_similar(clean_n, rep_clean):
+                        cluster.append(item)
+                        added = True
+                        break
+                
+                if not added:
+                    clusters.append([item])
             
-            if not added:
-                clusters.append([item])
-        
-        # 2. Sort Items WITHIN Clusters by Price (ASC)
-        for cluster in clusters:
-            cluster.sort(key=get_p_price)
+            # 2. Sort Items WITHIN Clusters by Price (ASC)
+            for cluster in clusters:
+                cluster.sort(key=get_p_price)
 
-        # 3. Sort Clusters Themselves by MIN Price
-        clusters.sort(key=lambda c: get_p_price(c[0]) if c else 0)
+            # 3. Sort Clusters Themselves by MIN Price
+            clusters.sort(key=lambda c: get_p_price(c[0]) if c else 0)
 
-        # 4. Flatten back to products list
-        products = [item for cluster in clusters for item in cluster]
+            # 4. Flatten back to products list
+            products = [item for cluster in clusters for item in cluster]
+            print(f"[LAYOUT] RESHUFFLE mode: {len(products)} products fully re-sorted")
+        else:
+            ordered_names = []
+            # Check for history in snapshots if known_products (cache) is empty but snapshots exist
+            if not known_products:
+                ordered_names = self.get_ordered_product_names(group_name, sg_sn)
+                if ordered_names:
+                    known_products = set(ordered_names)
+
+            # DEFAULT MODE: Keep existing order, append new products at end
+            if known_products:
+                # Separate existing and new products
+                existing_products = []
+                new_products = []
+                for item in products:
+                    p_name = get_p_name(item).strip().lower()
+                    if p_name in known_products:
+                        existing_products.append(item)
+                    else:
+                        new_products.append(item)
+                
+                # Existing products: DO NOT re-sort or re-cluster.
+                # Keep them in their current order (as returned from DB).
+                # New products: append at end WITHOUT sorting.
+                
+                # RECOVERY: Since DB return order is arbitrary (no longer price-sorted),
+                # we MUST recover the previous display order from snapshots.
+                if not ordered_names:
+                    ordered_names = self.get_ordered_product_names(group_name, sg_sn)
+                
+                if ordered_names:
+                    order_map = {name: i for i, name in enumerate(ordered_names)}
+                    existing_products.sort(key=lambda x: order_map.get(get_p_name(x).strip().lower(), 999999))
+                else:
+                    # Fallback if no snapshots: Sort by Price
+                    existing_products.sort(key=get_p_price)
+                
+                products = existing_products + new_products
+                print(f"[LAYOUT] DEFAULT mode: {len(existing_products)} existing (restored order) + {len(new_products)} new (appended at end)")
+            else:
+                # No known products — FIRST TIME catalog creation, do full clustering
+                clusters = []
+                for item in products:
+                    name = get_p_name(item)
+                    clean_n = clean_cat_name(name)
+                    added = False
+                    for cluster in clusters:
+                        rep_name = get_p_name(cluster[0])
+                        rep_clean = clean_cat_name(rep_name)
+                        if is_similar(clean_n, rep_clean):
+                            cluster.append(item)
+                            added = True
+                            break
+                    if not added:
+                        clusters.append([item])
+                
+                for cluster in clusters:
+                    cluster.sort(key=get_p_price)
+                clusters.sort(key=lambda c: get_p_price(c[0]) if c else 0)
+                products = [item for cluster in clusters for item in cluster]
+                print(f"[LAYOUT] FIRST-TIME mode: {len(products)} products fully clustered & sorted")
         
-        # 5. Inject Sort Order to Preserve Clustering during Reflow
+        # Inject Sort Order to Preserve Clustering during Reflow
         for i, p in enumerate(products):
             if isinstance(p, dict):
                 p["exact_sort_order"] = i
@@ -729,8 +921,7 @@ class CatalogLogic:
             return [[False]*COLS for _ in range(ROWS)]
             
         # 1. Load Existing Mapping
-        # mapping = self.get_existing_product_mapping(group_name, sg_sn)
-        mapping = {} # FORCE REFLLOW: Ignore old positions to enforce new Sorting Logic globally
+        mapping = {} # Positions are determined by sort order above
         
         # 2. Assign Pages
         # We use temporary grids to determine available space for new items
@@ -858,144 +1049,27 @@ class CatalogLogic:
             else:
                 new_items.append(p_data)
         
-        # Phase 2b: Assign New Products (Best Fit)
+        # Phase 2b: Assign Products Sequentially (Respects Sort Order)
+        # Fill pages in order: page 1, then 2, then 3...
+        # This ensures products at the end of the list (new products) land on later pages
         pages_touched = set()
+        current_page = 1
         
-        # Closure for Best Fit
-        def assign_best_fit(p_data, ignore_pages=None):
-            rspan, cspan = get_dims(p_data)
-            best_page = None
-            max_remaining_space = -1
-            
-            # Determine pages to check
-            check_pages = sorted(list(set([pg for _, pg in assignments])))
-            if not check_pages: check_pages = [1]
-            
-            # Also optionally consider a new page if existing are full? 
-            # Logic: Try existing pages first. If none work, use new page.
-            
-            candidates = []
-            for page_num in check_pages:
-                if ignore_pages and page_num in ignore_pages: continue
-                candidates.append(page_num)
-            
-            # Helper to simulate layout success
-            def check_sim(page_n, added_item):
-                # 1. Gather all items for this page + new item
-                page_items = [p for p, pg in assignments if pg == page_n]
-                page_items.append(added_item)
-                
-                # 2. Sort by Order Index (Preserve Clustering)
-                page_items.sort(key=get_sort_order)
-                
-                # 3. Simulate Linear Layout
-                sim_grid = get_empty_grid()
-                cursor_r, cursor_c = 0, 0
-                valid = True
-                
-                for item in page_items:
-                    ir, ic = get_dims(item)
-                    found_r, found_c = find_slot_linear(sim_grid, ir, ic, cursor_r, cursor_c)
-                    if found_r == -1:
-                        valid = False; break
-                    mark_slot(sim_grid, found_r, found_c, ir, ic)
-                    cursor_r, cursor_c = found_r, found_c
-                
-                if valid:
-                    return count_free_cells(sim_grid)
-                return -1
-
-            # Iterate candidates
-            for page_num in candidates:
-                remaining = check_sim(page_num, p_data)
-                if remaining > max_remaining_space:
-                    max_remaining_space = remaining
-                    best_page = page_num
-            
-            # If no fit found on existing pages, create new page
-            target_page = best_page
-            if target_page is None:
-                 target_page = max(check_pages) + 1 if check_pages else 1
-                 # If we create a new page, it's empty, so it definitely fits.
-            
-            # NOTE: We don't actually update temp_grids here because we use assignments list 
-            # as the source of truth for the NEXT checks. temp_grids are less relevant now
-            # but we update it anyway for legacy consistency if needed.
-            # Actually, simply returning target_page is enough because caller updates assignments.
-            return target_page
-            if target_page is None:
-                 target_page = max(temp_grids.keys()) + 1 if temp_grids else 1
-            
-            place_temp(target_page, rspan, cspan)
-            return target_page
-
         for p_data in new_items:
-            pg = assign_best_fit(p_data)
-            assignments.append((p_data, pg))
-            pages_touched.add(pg)
+            rspan, cspan = get_dims(p_data)
+            placed = False
             
-        # Optimization: Consecutive Reflow
-        # If multiple consecutive pages are touched, we merge and re-sort them 
-        # to ensure optimal flow/sorting across the boundary.
-        if pages_touched:
-            sorted_touched = sorted(list(pages_touched))
-            ranges = []
-            if sorted_touched:
-                current_range = [sorted_touched[0]]
-                for i in range(1, len(sorted_touched)):
-                    if sorted_touched[i] == sorted_touched[i-1] + 1:
-                        current_range.append(sorted_touched[i])
-                    else:
-                        ranges.append(current_range)
-                        current_range = [sorted_touched[i]]
-                ranges.append(current_range)
+            # Try current page first, then subsequent pages
+            while not placed:
+                if place_temp(current_page, rspan, cspan):
+                    assignments.append((p_data, current_page))
+                    pages_touched.add(current_page)
+                    placed = True
+                else:
+                    # Current page is full, move to next
+                    current_page += 1
             
-            for rng in ranges:
-                if len(rng) > 1:
-                    # 1. Collect items for this range
-                    range_items = []
-                    preserved_assignments = []
-                    
-                    for p_data, p_no in assignments:
-                        if p_no in rng:
-                            range_items.append(p_data)
-                        else:
-                            preserved_assignments.append((p_data, p_no))
-                    
-                    # 2. Sort range items
-                    # 2. Sort range items BY ORDER INDEX (Preserve Clustering)
-                    range_items.sort(key=get_sort_order)
-                    
-                    # 3. Clear grids for these pages to refill cleanly
-                    for p_no in rng:
-                        temp_grids[p_no] = get_empty_grid()
-                        
-                    # 4. Refill
-                    overflow_items = []
-                    new_range_assignments = []
-                    
-                    for p_data in range_items:
-                        rspan, cspan = get_dims(p_data)
-                        placed = False
-                        
-                        # Try to fill strictly in order (1, 2, 3...)
-                        for p_no in rng:
-                            if place_temp(p_no, rspan, cspan):
-                                new_range_assignments.append((p_data, p_no))
-                                placed = True
-                                break
-                        
-                        if not placed:
-                            overflow_items.append(p_data)
-                            
-                    # 5. Update Assignments
-                    assignments = preserved_assignments + new_range_assignments
-                    
-                    # 6. Handle Overflow (Best Fit elsewhere)
-                    # We exclude the current RNG pages to avoid infinite loop or re-stuffing them
-                    for p_data in overflow_items:
-                        pg = assign_best_fit(p_data, ignore_pages=set(rng))
-                        assignments.append((p_data, pg))
+        # (Consecutive Reflow removed — sequential fill already handles ordering correctly)
             
         # Phase 3: Layout Each Page (Sorted) with Ripple Overflow
         # Group assignments
@@ -1272,8 +1346,9 @@ class CatalogLogic:
                 g.pop("_mp_set", None)
                 final_list.append(g)
             
-            # Sort by price
-            final_list.sort(key=lambda x: x["sort_price"])
+            # NOTE: Do NOT sort here. Sorting is handled by the layout engine
+            # only on first catalog creation or when Reshuffle is pressed.
+            # final_list.sort(key=lambda x: x["sort_price"])
             
             return final_list
 
