@@ -13,10 +13,6 @@ class CatalogLogic:
         self._layout_cache = {}
         self._cache_valid = False
         
-        # Known product names per subgroup (persisted to DB)
-        # Key: "group_name|sg_sn", Value: set of lowercase product names
-        self._known_products = {}
-        
         # Derive calendar path using utility
         self.calendar_db_path = get_data_file_path("calendar_data.db")
 
@@ -26,65 +22,79 @@ class CatalogLogic:
         # Invalidate cache when paths change
         self._layout_cache = {}
         self._cache_valid = False
-        # Load persisted known products from DB
-        self._known_products = self._load_known_products()
     
     def invalidate_cache(self):
         """Call this when product data changes. Does NOT clear known products."""
         self._layout_cache = {}
         self._cache_valid = False
     
-    def _load_known_products(self):
-        """Load known products from catalog.db table."""
-        result = {}
+    def _load_display_order(self, cache_key):
+        """Load the saved display order for a subgroup. Returns list of lowercase product names or None."""
         if not self.catalog_db_path or not os.path.exists(self.catalog_db_path):
-            return result
+            return None
         try:
-            import sqlite3
+            import json
             conn = sqlite3.connect(self.catalog_db_path)
             cursor = conn.cursor()
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS known_layout_products (
-                    cache_key TEXT,
-                    product_name TEXT,
-                    PRIMARY KEY (cache_key, product_name)
+                CREATE TABLE IF NOT EXISTS subgroup_display_order (
+                    cache_key TEXT PRIMARY KEY,
+                    product_order TEXT
                 )
             """)
             conn.commit()
-            for row in cursor.execute("SELECT cache_key, product_name FROM known_layout_products"):
-                key, name = row
-                if key not in result:
-                    result[key] = set()
-                result[key].add(name)
+            cursor.execute("SELECT product_order FROM subgroup_display_order WHERE cache_key=?", (cache_key,))
+            row = cursor.fetchone()
             conn.close()
+            if row and row[0]:
+                order = json.loads(row[0])
+                if isinstance(order, list) and len(order) > 0:
+                    print(f"[ORDER] Loaded {len(order)} items for '{cache_key}'")
+                    return order
+            
+            # --- MIGRATION FALLBACK ---
+            # No entry in new table. Check if we have data from the OLD system
+            # (page_snapshots.product_list). This handles existing catalogs upgraded
+            # to the new ordering system.
+            parts = cache_key.split("|", 1)
+            if len(parts) == 2:
+                group_name, sg_sn = parts
+                old_order = self.get_ordered_product_names(group_name, sg_sn)
+                if old_order:
+                    # Migrate: save old order into the new table
+                    self._save_display_order(cache_key, old_order)
+                    print(f"[ORDER] Migrated {len(old_order)} items from snapshots for '{cache_key}'")
+                    return old_order
+            
+            print(f"[ORDER] No saved order for '{cache_key}'")
+            return None
         except Exception as e:
-            print(f"Load known products error: {e}")
-        return result
+            print(f"[ORDER] Load error for '{cache_key}': {e}")
+            return None
     
-    def _save_known_products(self, cache_key, product_names):
-        """Save known products for a subgroup to catalog.db."""
+    def _save_display_order(self, cache_key, ordered_names):
+        """Save the display order for a subgroup. ordered_names = list of lowercase product names."""
         if not self.catalog_db_path:
             return
         try:
-            import sqlite3
+            import json
             conn = sqlite3.connect(self.catalog_db_path)
             cursor = conn.cursor()
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS known_layout_products (
-                    cache_key TEXT,
-                    product_name TEXT,
-                    PRIMARY KEY (cache_key, product_name)
+                CREATE TABLE IF NOT EXISTS subgroup_display_order (
+                    cache_key TEXT PRIMARY KEY,
+                    product_order TEXT
                 )
             """)
-            # Clear old entries for this subgroup
-            cursor.execute("DELETE FROM known_layout_products WHERE cache_key=?", (cache_key,))
-            # Insert current set
-            for name in product_names:
-                cursor.execute("INSERT INTO known_layout_products (cache_key, product_name) VALUES (?, ?)", (cache_key, name))
+            cursor.execute("""
+                INSERT OR REPLACE INTO subgroup_display_order (cache_key, product_order)
+                VALUES (?, ?)
+            """, (cache_key, json.dumps(ordered_names)))
             conn.commit()
             conn.close()
+            print(f"[ORDER] Saved {len(ordered_names)} items for '{cache_key}'")
         except Exception as e:
-            print(f"Save known products error: {e}")
+            print(f"[ORDER] Save FAILED for '{cache_key}': {e}")
         
     def get_nepali_date(self, ad_date_str):
         """Convert AD date (DD-MM-YYYY) to BS date (DD/MM)."""
@@ -196,20 +206,23 @@ class CatalogLogic:
             # 1. Get all master subgroups
             all_subgroups = self.get_page_data_list() 
             
+            # Phase 1: Compute all layouts FIRST (no open DB connection)
+            # This allows simulate_page_layout → _save_display_order to write freely
+            page_requirements = []
+            for mg_sn, group_name, sg_sn in all_subgroups:
+                layout_map = self.simulate_page_layout(group_name, sg_sn)
+                max_required_page = max(layout_map.keys()) if layout_map else 1
+                page_requirements.append((mg_sn, group_name, sg_sn, max_required_page))
+            
+            # Phase 2: Update page counts (single connection, no conflicts)
             conn = sqlite3.connect(self.catalog_db_path)
             cursor = conn.cursor()
             
-            for mg_sn, group_name, sg_sn in all_subgroups:
-                # Run layout simulation (don't save known products - intermediate step)
-                layout_map = self.simulate_page_layout(group_name, sg_sn, save_known=False)
-                max_required_page = max(layout_map.keys()) if layout_map else 1
-                
-                # Check existing pages in DB
+            for mg_sn, group_name, sg_sn, max_required_page in page_requirements:
                 cursor.execute("SELECT MAX(page_no) FROM catalog_pages WHERE group_name=? AND sg_sn=?", (group_name, sg_sn))
                 res = cursor.fetchone()
                 current_max = res[0] if res and res[0] else 0
                 
-                # If we need more pages, add them
                 if max_required_page > current_max:
                     for p in range(current_max + 1, max_required_page + 1):
                         cursor.execute("""
@@ -345,9 +358,13 @@ class CatalogLogic:
         return hashlib.md5(content_str.encode()).hexdigest()
     
     def save_page_snapshot(self, serial_no, content_hash, product_list):
-        """Save a page's content snapshot."""
+        """Save a page's content snapshot. Supports list (saved as JSON) or string."""
         if not self.catalog_db_path: return
         try:
+            import json
+            if isinstance(product_list, list):
+                product_list = json.dumps(product_list)
+                
             self.init_page_snapshots_table()
             conn = sqlite3.connect(self.catalog_db_path)
             cursor = conn.cursor()
@@ -449,13 +466,66 @@ class CatalogLogic:
                     )
                     product_names = [p.get("data", {}).get("product_name", "") for p in (products or [])]
                 
-                self.save_page_snapshot(serial_no, content_hash, ",".join(product_names))
+                self.save_page_snapshot(serial_no, content_hash, product_names)
             
             print(f"[SNAPSHOT] Saved snapshots for {len(all_pages)} pages")
             
         except Exception as e:
             print(f"[SNAPSHOT] Error saving snapshots: {e}")
     
+    def save_layout_snapshots(self, layout_map, group_name, sg_sn):
+        """Force save snapshots from a computed layout map (used after Reshuffle)."""
+        if not self.catalog_db_path: return
+        try:
+            conn = sqlite3.connect(self.catalog_db_path)
+            cursor = conn.cursor()
+            
+            # 1. Get Serial Numbers for this group/subgroup (Robust Match)
+            cursor.execute("""
+                SELECT page_no, serial_no FROM catalog_pages 
+                WHERE TRIM(group_name) = TRIM(?) COLLATE NOCASE 
+                AND (sg_sn = ? OR CAST(sg_sn AS INTEGER) = CAST(? AS INTEGER))
+            """, (group_name, sg_sn, sg_sn))
+            page_serial_map = {row[0]: row[1] for row in cursor.fetchall()}
+            
+            if not page_serial_map:
+                print(f"[SNAPSHOT] Warning: No pages found for {group_name} > {sg_sn} to save snapshots.")
+            
+            # 2. Iterate layout and save
+            import json, hashlib
+            
+            for page_no, items in layout_map.items():
+                serial_no = page_serial_map.get(page_no)
+                if not serial_no: continue
+                
+                product_names = [p.get("data", {}).get("product_name", "") for p in items]
+                
+                # Compute Hash manually since we have the items
+                content_parts = []
+                for item in items:
+                    data = item.get("data", {})
+                    signature = {
+                        "name": data.get("product_name", ""),
+                        "row": item.get("row", 0),
+                        "col": item.get("col", 0),
+                        "rspan": item.get("rspan", 1),
+                        "cspan": item.get("cspan", 2),
+                        "mrp": str(data.get("mrp", "")),
+                        "img": data.get("image_path", ""),
+                        "sizes": str(data.get("sizes", []))
+                    }
+                    content_parts.append(signature)
+                content_parts.sort(key=lambda x: (x["row"], x["col"], x["name"]))
+                content_hash = hashlib.md5(json.dumps(content_parts, sort_keys=True).encode()).hexdigest()
+                
+                # Use JSON list instead of comma-join to handle names with commas
+                self.save_page_snapshot(serial_no, content_hash, product_names)
+                
+            conn.close()
+            print("[SNAPSHOT] Force-saved snapshots from Reshuffle layout.")
+        except Exception as e:
+            print(f"[SNAPSHOT] Error force-saving snapshots: {e}")
+
     def get_changed_products_since(self, since_date):
         """Get list of products changed since the given date.
         
@@ -640,8 +710,8 @@ class CatalogLogic:
         return layout_map.get(relative_page, [])
     
     def _compute_layout(self, group_name, sg_sn, allow_backward=False, printable_pages=None):
-        """Internal method to compute layout without caching."""
-        return self._simulate_page_layout_internal(group_name, sg_sn, allow_backward, printable_pages)
+        """Internal method to compute layout (routes through simulate_page_layout for consistency)."""
+        return self.simulate_page_layout(group_name, sg_sn, allow_backward, printable_pages)
 
     def simulate_page_layout(self, group_name, sg_sn, allow_backward=False, printable_pages=None, use_cache=True, reshuffle=False, save_known=True):
         """Simulate product layout across pages with optional caching.
@@ -656,42 +726,29 @@ class CatalogLogic:
             use_cache: If True, use cached layout if available.
             reshuffle: If True, force full re-clustering/sorting of all products.
                       If False (default), new products are appended at the end.
-            save_known: If True, persist known products to DB after computation.
+            save_known: If True, persist display order to DB after computation.
                        Set to False for intermediate computations (e.g. sync_pages).
         """
         cache_key = f"{group_name}|{sg_sn}"
-        
-        # If reshuffling, clear known products for this subgroup so everything re-sorts
-        if reshuffle:
-            self._known_products.pop(cache_key, None)
-            self._save_known_products(cache_key, set())  # Clear from DB too
         
         if use_cache and not reshuffle:
             if cache_key in self._layout_cache:
                 return self._layout_cache[cache_key]
         
-        # Reload known products from DB (may have been modified by final_data.py)
-        self._known_products = self._load_known_products()
-        
-        # Get known products for this subgroup
-        known = self._known_products.get(cache_key, set())
-        
-        layout_map = self._simulate_page_layout_internal(group_name, sg_sn, allow_backward, printable_pages, reshuffle=reshuffle, known_products=known)
+        layout_map = self._simulate_page_layout_internal(group_name, sg_sn, allow_backward, printable_pages, reshuffle=reshuffle)
         self._layout_cache[cache_key] = layout_map
         
-        # After layout, update known products with ALL products now in the layout
-        all_product_names = set()
-        for page_num, placements in layout_map.items():
-            for pl in placements:
-                p_data = pl.get("data", {})
-                p_name = p_data.get("product_name", "") or p_data.get("name", "")
-                if p_name:
-                    all_product_names.add(p_name.strip().lower())
-        self._known_products[cache_key] = all_product_names
-        
-        # Only persist to DB when this is the final computation
+        # After layout, save the final product order (single source of truth)
         if save_known:
-            self._save_known_products(cache_key, all_product_names)
+            all_product_names = []
+            # Collect in page order → placement order
+            for page_num in sorted(layout_map.keys()):
+                for pl in layout_map[page_num]:
+                    p_data = pl.get("data", {})
+                    p_name = p_data.get("product_name", "") or p_data.get("name", "")
+                    if p_name:
+                        all_product_names.append(p_name.strip().lower())
+            self._save_display_order(cache_key, all_product_names)
         
         return layout_map
     
@@ -738,15 +795,27 @@ class CatalogLogic:
             conn.close()
             
             ordered = []
+            import json
             for (p_list,) in rows:
                 if p_list:
+                    # Support both JSON (new) and Comma-Separated (old)
+                    try:
+                        # Try parsing as JSON list
+                        names = json.loads(p_list)
+                        if isinstance(names, list):
+                            ordered.extend([str(n).strip().lower() for n in names])
+                            continue
+                    except:
+                        pass
+                        
+                    # Fallback to legacy comma splitting
                     names = [n.strip().lower() for n in p_list.split(",") if n.strip()]
                     ordered.extend(names)
             return ordered
         except:
             return []
 
-    def _simulate_page_layout_internal(self, group_name, sg_sn, allow_backward=False, printable_pages=None, reshuffle=False, known_products=None):
+    def _simulate_page_layout_internal(self, group_name, sg_sn, allow_backward=False, printable_pages=None, reshuffle=False):
         """Internal layout computation with Incremental Logic (Lock Existing, Insert New, Sort Per Page)."""
         products = self.get_sorted_products_from_db(group_name, sg_sn)
         
@@ -761,13 +830,17 @@ class CatalogLogic:
         def clean_cat_name(n):
             n = str(n).lower()
             n = re.sub(r'chain\s*saw', 'chainsaw', n)
+            # Remove content in brackets
             n = re.sub(r'\(.*?\)', '', n) 
             n = re.sub(r'\[.*?\]', '', n)
+            # Remove digits
             n = re.sub(r'\d+', '', n)
+            # Remove punctuation
             n = re.sub(r'[^\w\s]', ' ', n)
             return " ".join(n.split())
 
         def has_long_common_word(n1, n2, min_len=5):
+            # Exclude common weak words from this "magic link" check
             COMMON_IGNORE = {'black', 'white', 'heavy', 'super', 'power', 'auto', 'manual'}
             w1 = set(n1.split())
             w2 = set(n2.split())
@@ -788,117 +861,73 @@ class CatalogLogic:
 
         def is_similar(clean_a, clean_b):
             if not clean_a or not clean_b: return False
+            
+            # 1. Exact Match (after cleaning) - Fast path for bracket variants
             if clean_a == clean_b: return True
-            if has_long_common_word(clean_a, clean_b, min_len=5): return True
+            
+            # 2. Long Common Word (The "Chainsaw" Rule)
+            if has_long_common_word(clean_a, clean_b, min_len=5):
+                return True
+                
+            # 3. High Fuzzy Match (Fallback for typos/small diffs)
             ratio = SequenceMatcher(None, clean_a, clean_b).ratio()
             return ratio >= 0.85
 
         # --- TWO-MODE SORTING ---
-        # DEBUG: Write to file since terminal output isn't visible
-        import datetime as _dt
-        _debug_ts = _dt.datetime.now().strftime("%H:%M:%S")
-        try:
-            with open("layout_debug.log", "a") as _dbg:
-                _dbg.write(f"\n[{_debug_ts}] === LAYOUT for {group_name}|{sg_sn} ===\n")
-                _dbg.write(f"  reshuffle={reshuffle}, known_products count={len(known_products) if known_products else 0}\n")
-                _dbg.write(f"  total products from DB: {len(products)}\n")
-                if known_products:
-                    product_names = [get_p_name(p).strip().lower() for p in products]
-                    new_names = [n for n in product_names if n not in known_products]
-                    _dbg.write(f"  NEW products (not in known): {new_names}\n")
-                    _dbg.write(f"  EXISTING products: {len(product_names) - len(new_names)}\n")
-        except: pass
+        cache_key = f"{group_name}|{sg_sn}"
         
-        if reshuffle:
-            # RESHUFFLE MODE: Full clustering and sorting for ALL products
-            # 1. Cluster Items
+        def do_full_clustering(items):
+            """Full clustering+sorting (used for FIRST TIME and RESHUFFLE)."""
             clusters = []
-            for item in products:
+            for item in items:
                 name = get_p_name(item)
                 clean_n = clean_cat_name(name)
-                
                 added = False
                 for cluster in clusters:
                     rep_name = get_p_name(cluster[0])
                     rep_clean = clean_cat_name(rep_name)
-                    
                     if is_similar(clean_n, rep_clean):
                         cluster.append(item)
                         added = True
                         break
-                
                 if not added:
                     clusters.append([item])
-            
-            # 2. Sort Items WITHIN Clusters by Price (ASC)
             for cluster in clusters:
                 cluster.sort(key=get_p_price)
-
-            # 3. Sort Clusters Themselves by MIN Price
             clusters.sort(key=lambda c: get_p_price(c[0]) if c else 0)
-
-            # 4. Flatten back to products list
-            products = [item for cluster in clusters for item in cluster]
+            return [item for cluster in clusters for item in cluster]
+        
+        if reshuffle:
+            # RESHUFFLE MODE: Full clustering and sorting for ALL products
+            products = do_full_clustering(products)
             print(f"[LAYOUT] RESHUFFLE mode: {len(products)} products fully re-sorted")
         else:
-            ordered_names = []
-            # Check for history in snapshots if known_products (cache) is empty but snapshots exist
-            if not known_products:
-                ordered_names = self.get_ordered_product_names(group_name, sg_sn)
-                if ordered_names:
-                    known_products = set(ordered_names)
-
-            # DEFAULT MODE: Keep existing order, append new products at end
-            if known_products:
-                # Separate existing and new products
+            # DEFAULT MODE: Use saved display order as the single source of truth
+            saved_order = self._load_display_order(cache_key)
+            
+            if saved_order:
+                # We have a saved order — separate existing vs new
+                saved_set = set(saved_order)
+                order_map = {name: i for i, name in enumerate(saved_order)}
+                
                 existing_products = []
                 new_products = []
                 for item in products:
                     p_name = get_p_name(item).strip().lower()
-                    if p_name in known_products:
+                    if p_name in saved_set:
                         existing_products.append(item)
                     else:
                         new_products.append(item)
                 
-                # Existing products: DO NOT re-sort or re-cluster.
-                # Keep them in their current order (as returned from DB).
-                # New products: append at end WITHOUT sorting.
+                # Sort existing by their saved display order
+                existing_products.sort(key=lambda x: order_map.get(get_p_name(x).strip().lower(), 999999))
                 
-                # RECOVERY: Since DB return order is arbitrary (no longer price-sorted),
-                # we MUST recover the previous display order from snapshots.
-                if not ordered_names:
-                    ordered_names = self.get_ordered_product_names(group_name, sg_sn)
-                
-                if ordered_names:
-                    order_map = {name: i for i, name in enumerate(ordered_names)}
-                    existing_products.sort(key=lambda x: order_map.get(get_p_name(x).strip().lower(), 999999))
-                else:
-                    # Fallback if no snapshots: Sort by Price
-                    existing_products.sort(key=get_p_price)
-                
+                # Append new at end (unsorted — user must Reshuffle to sort)
                 products = existing_products + new_products
-                print(f"[LAYOUT] DEFAULT mode: {len(existing_products)} existing (restored order) + {len(new_products)} new (appended at end)")
+                print(f"[LAYOUT] DEFAULT mode: {len(existing_products)} existing (saved order) + {len(new_products)} new (appended at end)")
             else:
-                # No known products — FIRST TIME catalog creation, do full clustering
-                clusters = []
-                for item in products:
-                    name = get_p_name(item)
-                    clean_n = clean_cat_name(name)
-                    added = False
-                    for cluster in clusters:
-                        rep_name = get_p_name(cluster[0])
-                        rep_clean = clean_cat_name(rep_name)
-                        if is_similar(clean_n, rep_clean):
-                            cluster.append(item)
-                            added = True
-                            break
-                    if not added:
-                        clusters.append([item])
-                
-                for cluster in clusters:
-                    cluster.sort(key=get_p_price)
-                clusters.sort(key=lambda c: get_p_price(c[0]) if c else 0)
-                products = [item for cluster in clusters for item in cluster]
+                # No saved order = FIRST TIME catalog creation → full clustering
+                products = do_full_clustering(products)
                 print(f"[LAYOUT] FIRST-TIME mode: {len(products)} products fully clustered & sorted")
         
         # Inject Sort Order to Preserve Clustering during Reflow

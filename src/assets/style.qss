@@ -324,3 +324,43 @@ QTabBar::tab:selected {
     border: 1px solid #bdc3c7;
     background-color: #ffffff;
 }
+
+/* --- 16. Report Action Dialog --- */
+#ReportActionDialog {
+    background-color: #ffffff;
+}
+#ReportActionDialog QLabel {
+    font-size: 14px;
+    font-weight: 500;
+}
+#ReportActionDialog #CrmSelector {
+    padding: 8px;
+    border: 1px solid #bdc3c7;
+    border-radius: 4px;
+}
+#ReportActionDialog #PendingPagesList {
+    border: 1px solid #bdc3c7;
+    background-color: #f8f9fa;
+    border-radius: 4px;
+}
+#ReportActionDialog #PrimaryActionButton {
+    background-color: #27ae60; 
+    color: white; 
+    font-weight: bold;
+    font-size: 14px;
+    border-radius: 6px;
+    padding: 8px 16px;
+}
+#ReportActionDialog #PrimaryActionButton:hover {
+    background-color: #2ecc71;
+}
+#ReportActionDialog #SecondaryButton {
+    background-color: #95a5a6;
+    color: white;
+    font-weight: bold;
+    border-radius: 6px;
+    padding: 8px 16px;
+}
+#ReportActionDialog #SecondaryButton:hover {
+    background-color: #7f8c8d;
+}

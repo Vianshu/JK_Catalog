@@ -314,7 +314,7 @@ class FullCatalogUI(QWidget):
             # Rebuild serial numbers and refresh display
             self.rebuild_serial_numbers()
             
-            # Clear cache again so display uses fresh layout
+            # Clear cache so display uses fresh layout
             if cache_key in self.logic._layout_cache:
                 del self.logic._layout_cache[cache_key]
             

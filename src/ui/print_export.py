@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QSpinBox, QCheckBox, QProgressBar, QFileDialog, QMessageBox,
     QScrollArea, QWidget, QFrame, QComboBox, QGroupBox
 )
-from PyQt6.QtCore import Qt, QSize, QMarginsF, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, QMarginsF, QThread, pyqtSignal, QSettings
 from PyQt6.QtGui import QPainter, QPageSize, QPageLayout
 from PyQt6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from src.ui.settings import load_crm_list
@@ -23,10 +23,15 @@ SCREEN_DPI = 96
 class PrintExportDialog(QDialog):
     """Dialog for print preview and PDF export."""
     
-    def __init__(self, catalog_ui, parent=None, mode="both"):
+    def __init__(self, catalog_ui, parent=None, mode="both", page_list=None, renderer_callback=None, initial_crm=None):
         super().__init__(parent)
         self.catalog_ui = catalog_ui
         self.mode = mode
+        self.page_list = page_list
+        self.renderer_callback = renderer_callback
+        self.initial_crm = initial_crm
+        self.settings = QSettings("CatalogApp", "PrinterSettings")
+        
         self.setWindowTitle("Print / Export Catalog")
         self.setMinimumSize(500, 400)
         
@@ -51,6 +56,13 @@ class PrintExportDialog(QDialog):
         self.company_path = getattr(catalog_ui, 'company_path', '') or ''
         
         self.setup_ui()
+        self.load_settings()
+        
+        # Set initial CRM if provided
+        if self.initial_crm:
+            idx = self.crm_combo.findText(self.initial_crm)
+            if idx >= 0:
+                self.crm_combo.setCurrentIndex(idx)
         
         # Apply Mode
         if self.mode == "pdf":
@@ -69,9 +81,15 @@ class PrintExportDialog(QDialog):
         range_group = QGroupBox("Page Range")
         range_layout = QHBoxLayout(range_group)
         
-        self.radio_all = QCheckBox("All Pages")
+        self.radio_all = QCheckBox("All Pages" if not self.page_list else f"All {len(self.page_list)} Pending Pages")
         self.radio_all.setChecked(True)
-        self.radio_all.stateChanged.connect(self.toggle_range)
+        # Disable radio if we are in page_list mode (force all pending)
+        if self.page_list:
+             self.radio_all.setEnabled(False)
+             self.radio_all.setChecked(True)
+        else:
+             self.radio_all.stateChanged.connect(self.toggle_range)
+        
         range_layout.addWidget(self.radio_all)
         
         range_layout.addWidget(QLabel("From:"))
@@ -154,13 +172,33 @@ class PrintExportDialog(QDialog):
     
     def toggle_range(self, state):
         """Enable/disable range spinboxes."""
-        enabled = not self.radio_all.isChecked()
-        self.spin_from.setEnabled(enabled)
-        self.spin_to.setEnabled(enabled)
+        if self.page_list:
+            # Always disabled in page list mode
+            self.spin_from.setEnabled(False)
+            self.spin_to.setEnabled(False)
+        else:
+            enabled = not self.radio_all.isChecked()
+            self.spin_from.setEnabled(enabled)
+            self.spin_to.setEnabled(enabled)
+    
+    def save_settings(self):
+        """Persist current settings (CRM, Path, etc)."""
+        self.settings.setValue("last_crm", self.crm_combo.currentText())
+        
+    def load_settings(self):
+        """Load persisted settings."""
+        last_crm = self.settings.value("last_crm", "")
+        if last_crm:
+            idx = self.crm_combo.findText(last_crm)
+            if idx >= 0:
+                self.crm_combo.setCurrentIndex(idx)
     
     def update_page_info(self):
         """Update page count info."""
-        if hasattr(self.catalog_ui, 'all_pages_data') and self.catalog_ui.all_pages_data:
+        if self.page_list:
+            total = len(self.page_list)
+            self.lbl_info.setText(f"Total Pages: {total} (Pending)")
+        elif hasattr(self.catalog_ui, 'all_pages_data') and self.catalog_ui.all_pages_data:
             total = len(self.catalog_ui.all_pages_data)
             self.spin_from.setMaximum(total)
             self.spin_to.setMaximum(total)
@@ -170,7 +208,14 @@ class PrintExportDialog(QDialog):
             self.lbl_info.setText("Total Pages: 0 (No data loaded)")
     
     def get_page_range(self):
-        """Get list of page indices to print/export."""
+        """Get list of page indices/identifiers to print/export."""
+        self.save_settings() # Save settings when action starts
+        
+        if self.page_list:
+            # In page list mode, return the list itself (or indices if they map to it)
+            # The renderer_callback needs to know what to do with these items
+            return self.page_list
+            
         if not hasattr(self.catalog_ui, 'all_pages_data') or not self.catalog_ui.all_pages_data:
             return []
         
@@ -183,8 +228,6 @@ class PrintExportDialog(QDialog):
             end = self.spin_to.value()  # exclusive
             page_indices = list(range(start, min(end, total)))
         
-        # Filter empty pages if option checked -> REMOVED
-        # Default behavior: Print exactly what is selected (From-To or All)
         return page_indices
     
     def create_print_renderer(self):
@@ -194,8 +237,20 @@ class PrintExportDialog(QDialog):
         renderer.set_target_dpi(SCREEN_DPI)  # Use screen DPI so fonts match display
         return renderer
     
-    def render_page_to_painter(self, painter, page_index, renderer):
-        """Render a single page to the given painter."""
+    def render_page_to_painter(self, painter, page_item, renderer):
+        """Render a single page to the given painter.
+           page_item: Index (int) for Catalog, or Serial (str) for Reports.
+        """
+        # Set footer - get CRM name from selection
+        selected_crm = self.crm_combo.currentText()
+        crm_name = "CRM_NAME" if selected_crm == "CRM_NAME (Default)" else selected_crm
+        
+        # --- Custom Callback Mode (Reports) ---
+        if self.renderer_callback:
+            return self.renderer_callback(painter, page_item, renderer, crm_name)
+            
+        # --- Default Catalog Logic ---
+        page_index = page_item
         if page_index >= len(self.catalog_ui.all_pages_data):
             return False
         
@@ -208,9 +263,6 @@ class PrintExportDialog(QDialog):
         products = self.catalog_ui.logic.get_items_for_page_dynamic(group_name, sg_sn, page_no)
         renderer.fill_products(products if products else [])
         
-        # Set footer - get CRM name from selection
-        selected_crm = self.crm_combo.currentText()
-        crm_name = "CRM_NAME" if selected_crm == "CRM_NAME (Default)" else selected_crm
         footer_date = ""
         if products:
             from datetime import datetime
@@ -266,8 +318,9 @@ class PrintExportDialog(QDialog):
             if progress.wasCanceled():
                 return
             
-            if idx < len(self.catalog_ui.all_pages_data):
-                valid_pages.append(idx)
+            valid_pages.append(idx)
+            # if idx < len(self.catalog_ui.all_pages_data):
+            #    valid_pages.append(idx)
         
         progress.setValue(len(page_indices))
         progress.close()
@@ -368,6 +421,12 @@ class PrintExportDialog(QDialog):
         
         if not file_path:
             return
+            
+        # Save Last Path
+        try:
+            folder = os.path.dirname(file_path)
+            self.settings.setValue("last_export_dir", folder)
+        except: pass
         
         # Ensure .pdf extension
         if not file_path.lower().endswith('.pdf'):
