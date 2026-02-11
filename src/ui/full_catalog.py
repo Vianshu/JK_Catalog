@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem, QHeaderView, QGridLayout, QMessageBox, QScrollArea, QSizePolicy,
     QStyle, QGroupBox
 )
-from PyQt6.QtCore import Qt, QMarginsF
+from PyQt6.QtCore import Qt, QMarginsF, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QColor, QPixmap, QPageSize, QPageLayout, QPainter
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog, QPrintPreviewDialog
 from src.logic.catalog_logic import CatalogLogic
@@ -16,6 +16,66 @@ from src.ui.settings import EmptyPagesDialog, add_pages_to_all_crms
 from src.ui.print_export import PrintExportDialog
 from src.utils.path_utils import get_data_file_path
 import sqlite3
+import datetime
+
+
+class CatalogBuildWorker(QThread):
+    """Background worker for catalog building.
+    Performs all heavy DB operations off the main thread."""
+    progress_update = pyqtSignal(int, str)  # (step_number, step_label)
+    build_finished = pyqtSignal(dict)       # {success, affected_count, crm_updated, changed_pages, error}
+    
+    def __init__(self, logic, company_path=None):
+        super().__init__()
+        self.logic = logic
+        self.company_path = company_path
+    
+    def run(self):
+        try:
+            # Step 1: Sync pages
+            self.progress_update.emit(1, "Step 1/5: Syncing pages...")
+            self.logic.sync_pages_with_content()
+            
+            # Step 2: Detect changes
+            self.progress_update.emit(2, "Step 2/5: Detecting changes...")
+            changed_pages = self.logic.detect_changed_pages()
+            
+            affected_count = len(changed_pages) if changed_pages else 0
+            crm_updated = 0
+            
+            # Step 3: Update CRMs
+            self.progress_update.emit(3, "Step 3/5: Updating CRMs...")
+            if changed_pages and self.company_path:
+                crm_updated = add_pages_to_all_crms(list(changed_pages), self.company_path)
+            
+            # Step 4: Save snapshots
+            self.progress_update.emit(4, "Step 4/5: Saving snapshots...")
+            self.logic.save_all_page_snapshots()
+            
+            # Step 5: Finalize
+            self.progress_update.emit(5, "Step 5/5: Finalizing...")
+            now = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+            self.logic.save_last_build_date(now)
+            self.logic.invalidate_cache()
+            
+            self.build_finished.emit({
+                "success": True,
+                "affected_count": affected_count,
+                "crm_updated": crm_updated,
+                "changed_pages": list(changed_pages) if changed_pages else [],
+                "error": None
+            })
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.build_finished.emit({
+                "success": False,
+                "affected_count": 0,
+                "crm_updated": 0,
+                "changed_pages": [],
+                "error": str(e)
+            })
+
 
 class FullCatalogUI(QWidget):
     def __init__(self):
@@ -149,103 +209,75 @@ class FullCatalogUI(QWidget):
             self.update_catalog_page()
     
     def build_catalog(self, silent=False):
-        """Build/refresh the catalog with smart page change detection (Silent Mode Supported)."""
+        """Build/refresh the catalog with smart page change detection.
+        Runs heavy operations in a background thread to keep UI responsive."""
         if not self.catalog_db_path: 
             if not silent:
                 QMessageBox.warning(self, "No Data", "Please load a company first.")
             return
         
+        # Prevent double-builds
+        if hasattr(self, '_build_worker') and self._build_worker and self._build_worker.isRunning():
+            return
+        
         from PyQt6.QtWidgets import QProgressDialog, QApplication
-        progress = None
-
+        
+        self._build_silent = silent
+        
         if not silent:
-            progress = QProgressDialog("Building catalog...", None, 0, 5, self)
-            progress.setWindowTitle("Building Catalog")
-            progress.setWindowModality(Qt.WindowModality.WindowModal)
-            progress.setMinimumDuration(0)
-            progress.setMinimumWidth(300)
-            progress.show()
-            QApplication.processEvents()
+            self._build_progress = QProgressDialog("Building catalog...", None, 0, 5, self)
+            self._build_progress.setWindowTitle("Building Catalog")
+            self._build_progress.setWindowModality(Qt.WindowModality.WindowModal)
+            self._build_progress.setMinimumDuration(0)
+            self._build_progress.setMinimumWidth(300)
+            self._build_progress.show()
         else:
+            self._build_progress = None
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            QApplication.processEvents()
-            
-        try:
-            import datetime
-            
-            # Step 1: Sync pages
-            if progress:
-                progress.setLabelText("Step 1/5: Syncing pages...")
-                progress.setValue(1)
-            QApplication.processEvents()
-            self.logic.sync_pages_with_content()
-            
-            # Step 2: Detect changes
-            if progress:
-                progress.setLabelText("Step 2/5: Detecting changes...")
-                progress.setValue(2)
-            QApplication.processEvents()
-            changed_pages = self.logic.detect_changed_pages()
-            print(f"[BUILD] Changed pages: {changed_pages}")
-            
-            affected_count = len(changed_pages) if changed_pages else 0
-            crm_updated = 0
-            
-            # Step 3: Update CRMs
-            if progress:
-                progress.setLabelText("Step 3/5: Updating CRMs...")
-                progress.setValue(3)
-            QApplication.processEvents()
-            
-            if changed_pages and hasattr(self, 'company_path') and self.company_path:
-                crm_updated = add_pages_to_all_crms(list(changed_pages), self.company_path)
-            
-            # Step 4: Save snapshots
-            if progress:
-                progress.setLabelText("Step 4/5: Saving snapshots...")
-                progress.setValue(4)
-            QApplication.processEvents()
-            self.logic.save_all_page_snapshots()
-            
-            # Step 5: Finalize
-            if progress:
-                progress.setLabelText("Step 5/5: Finalizing...")
-                progress.setValue(5)
-            QApplication.processEvents()
-            
-            now = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-            self.logic.save_last_build_date(now)
-            self.logic.invalidate_cache()
-            self.refresh_catalog_data()
-            
-            if progress: progress.close()
-            if silent: QApplication.restoreOverrideCursor()
-            
-            # Show result only if NOT silent
-            if not silent:
+        
+        # Create and start worker thread
+        company_path = getattr(self, 'company_path', None)
+        self._build_worker = CatalogBuildWorker(self.logic, company_path)
+        self._build_worker.progress_update.connect(self._on_build_progress)
+        self._build_worker.build_finished.connect(self._on_build_finished)
+        self._build_worker.start()
+    
+    def _on_build_progress(self, step, label):
+        """Handle progress updates from the build worker."""
+        if self._build_progress:
+            self._build_progress.setLabelText(label)
+            self._build_progress.setValue(step)
+    
+    def _on_build_finished(self, result):
+        """Handle build completion from the worker thread."""
+        from PyQt6.QtWidgets import QApplication
+        
+        if self._build_progress:
+            self._build_progress.close()
+        if self._build_silent:
+            QApplication.restoreOverrideCursor()
+        
+        self.refresh_catalog_data()
+        
+        if result["success"]:
+            if not self._build_silent:
                 msg = f"Catalog built successfully!\n\n"
-                msg += f"• Changed Pages: {affected_count}\n"
-                msg += f"• CRMs Updated: {crm_updated}\n"
-                if affected_count > 0:
-                    sample = list(changed_pages)[:5]
+                msg += f"• Changed Pages: {result['affected_count']}\n"
+                msg += f"• CRMs Updated: {result['crm_updated']}\n"
+                if result['affected_count'] > 0:
+                    sample = result['changed_pages'][:5]
                     msg += f"• Sample: {', '.join(map(str, sample))}"
-                    if affected_count > 5:
-                        msg += f" (+{affected_count - 5} more)"
+                    if result['affected_count'] > 5:
+                        msg += f" (+{result['affected_count'] - 5} more)"
                 QMessageBox.information(self, "Build Complete", msg)
-            
-        except Exception as e:
-            if progress: progress.close()
-            if silent: QApplication.restoreOverrideCursor()
-            
-            if not silent:
-                QMessageBox.critical(self, "Build Error", f"Error during build: {e}")
-                import traceback
-                traceback.print_exc()
+        else:
+            if not self._build_silent:
+                QMessageBox.critical(self, "Build Error", f"Error during build: {result['error']}")
             else:
-                print(f"Auto-Build Error: {e}")
-            import traceback
-            traceback.print_exc()
-            self.refresh_catalog_data()
+                print(f"Auto-Build Error: {result['error']}")
+        
+        # Clean up worker reference
+        self._build_worker = None
     
     def reshuffle_catalog(self):
         """Force a re-sort/re-clustering of products in the CURRENT subgroup.
@@ -619,57 +651,9 @@ class FullCatalogUI(QWidget):
         # 3. Footer Logic (CRM & Date)
         crm_name = "CRM_NAME" # Placeholder for now, later customizable
         
-        # Calculate Max Date for this page
-        max_date_str = ""
-        max_dt_obj = None
-        
-        from datetime import datetime
-        
-        if products:
-            for p in products:
-                # p is a dict from layout_map containing "data" key which is the product dict
-                p_data = p.get("data", {})
-                p_date = p_data.get("max_update_date", "")
-                if p_date:
-                    try:
-                        # Extract date part
-                        date_part = p_date.split(" ")[0]
-                        # Parse DD-MM-YYYY
-                        dt = datetime.strptime(date_part, "%d-%m-%Y")
-                        if max_dt_obj is None or dt > max_dt_obj:
-                            max_dt_obj = dt
-                            max_date_str = p_date # Keep original string for display/conversion
-                    except:
-                        # Fallback for string comparison if format fails
-                        if p_date > max_date_str:
-                            max_date_str = p_date
-        
-        # Convert to Nepali Date (DD/MM)
-        footer_date = ""
-        if max_date_str:
-            # max_date_str is YYYY-MM-DD HH:MM:SS (from DB)
-            try:
-                # We need DD-MM-YYYY for our helper function logic? 
-                # Helper expects "DD-MM-YYYY" or "YYYY-MM-DD"?
-                # logic.get_nepali_date code: 
-                # if " " in ad_date_str: ad_date_str = ad_date_str.split(" ")[0]
-                # cursor.execute("SELECT bs_date FROM calendar WHERE ad_date=?", (ad_date_str,))
-                # The calendar DB has "DD-MM-YYYY" (e.g. 01-07-2025).
-                # But our DB Update_date is likely "YYYY-MM-DD" or "DD-MM-YYYY"?
-                # Check check_date_format output: "20-01-2026 23:55:25"
-                # If it's DD-MM-YYYY, then 20 is Day.
-                # If it's YYYY-MM-DD, then 20 is Year? No, 2026 is Year.
-                # So "20-01-2026" is likely DD-MM-YYYY? Or YYYY-MM-DD?
-                # Actually standard SQLite is YYYY-MM-DD. 3rd sample was "20-01-2026". That looks like DD-MM-YYYY.
-                # Wait, check_date_format output: ('20-01-2026 23:55:25',)
-                # Verify if 20 is day. Yes likely.
-                # The helper function handles "splitted by space".
-                # It passes "20-01-2026" to Query.
-                # Calendar DB uses "01-07-2025". So it matches format DD-MM-YYYY.
-                # So just passing the date part is correct.
-                
-                footer_date = self.logic.get_nepali_date(max_date_str)
-            except: pass
+        # Footer Date (using centralized date_utils)
+        from src.utils.date_utils import get_footer_date
+        footer_date = get_footer_date(products, self.logic)
             
         self.renderer.set_footer_data(crm_name, footer_date)
     

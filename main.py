@@ -1,8 +1,54 @@
 import sys
 import os
+import traceback
+import logging
+from datetime import datetime
 from PyQt6.QtWidgets import QApplication
 from src.ui.main_window import MainWindow
-from src.utils.path_utils import get_asset_path
+from src.utils.path_utils import get_asset_path, get_app_dir
+
+# --- Global Crash Logger ---
+def setup_crash_logger():
+    """Set up a global exception handler that logs crashes to error.log.
+    This is critical for EXE mode where console=False means no stdout."""
+    # Place error.log next to the EXE/main.py (not in bundled data/ folder)
+    log_path = os.path.join(get_app_dir(), "error.log")
+    
+    # Configure file logger with fallback
+    try:
+        logging.basicConfig(
+            filename=log_path,
+            level=logging.ERROR,
+            format='%(asctime)s | %(levelname)s | %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+    except PermissionError:
+        # Fallback: use temp directory if app dir is not writable
+        import tempfile
+        log_path = os.path.join(tempfile.gettempdir(), "jk_catalog_error.log")
+        logging.basicConfig(
+            filename=log_path,
+            level=logging.ERROR,
+            format='%(asctime)s | %(levelname)s | %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+    
+    def global_exception_handler(exc_type, exc_value, exc_tb):
+        """Catches all unhandled exceptions and writes them to error.log."""
+        # Don't intercept KeyboardInterrupt
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_tb)
+            return
+        
+        error_msg = ''.join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        logging.error(f"Unhandled Exception:\n{error_msg}")
+        
+        # Also print to stderr if available (development mode)
+        print(f"[CRASH] {exc_type.__name__}: {exc_value}", file=sys.stderr)
+        print(f"[CRASH] Full traceback saved to: {log_path}", file=sys.stderr)
+    
+    sys.excepthook = global_exception_handler
+    print(f"[LOG] Crash logger active → {log_path}")
 
 def load_stylesheet(app, file_name):
     if os.path.exists(file_name):
@@ -12,6 +58,9 @@ def load_stylesheet(app, file_name):
         print(f"Warning: {file_name} file not found!")
 
 def main():
+    # Initialize crash logger FIRST, before anything else
+    setup_crash_logger()
+    
     app = QApplication(sys.argv)
 
     # --- Enforce Fusion Style (Cross-platform consistency) ---

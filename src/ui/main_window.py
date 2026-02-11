@@ -10,6 +10,7 @@ from PyQt6.QtGui import QShortcut, QKeySequence
 import sqlite3
 import pandas as pd
 import re
+from src.logic.session_manager import SessionManager
 # UI Imports
 from src.ui.company_login_ui import CompanyLoginUI
 from src.ui.welcome import WelcomeUI
@@ -449,53 +450,65 @@ class MainWindow(QWidget):
     def handle_login_success(self, comp_name, company_path):
         try:
             self.current_company = comp_name
-            self.current_company_path = company_path # Store Path
+            self.current_company_path = company_path
             
-            # Clean display name (Remove Year like (2081/82))
+            # Update UI with company name
             clean_name = re.sub(r'\s*\(\d{4}[-/].*?\)', '', comp_name)
-            self.company_btn.setText(f"🏢 {clean_name} ▼")
-            # Force left alignment via stylesheet if needed, but text removal usually solves it.
+            self.company_btn.setText(f"\U0001f3e2 {clean_name} \u25bc")
             self.company_btn.setStyleSheet("text-align: left; padding-left: 10px;")
             self.company_btn.show()
 
             if not company_path or not os.path.exists(company_path):
-                print(f"Error: Path not found for company {comp_name}: {company_path}")
                 QMessageBox.critical(self, "Error", f"Company path not found:\n{company_path}")
                 return
 
-            # 1. Final Data Loads
-            self.final_data_page.load_and_sync_data(comp_name, company_path) 
-            self.final_data_page.set_company_path(company_path)
-
-            # 2. Super Master
-            self.super_master_page.load_super_master_data(company_path) 
-
-            # 3. Godown - UPDATE existing instance
-            # Use change_data_folder instead of creating new instance
+            # --- Use SessionManager for structured page initialization ---
+            session = SessionManager()
+            
+            # Register all pages with their setup functions
+            session.register("Final Data", self.final_data_page,
+                lambda page, path: (page.load_and_sync_data(comp_name, path), page.set_company_path(path)))
+            
+            session.register("Super Master", self.super_master_page,
+                lambda page, path: page.load_super_master_data(path))
+            
             final_df = getattr(self.final_data_page, 'final_df', None)
-            self.godown_page.change_data_folder(company_path, final_df)
-
-            # 4. Other pages
+            session.register("Godown", self.godown_page,
+                lambda page, path: page.change_data_folder(path, final_df))
+            
             if hasattr(self, 'calendar_page'):
-                self.calendar_page.set_company_path(company_path)
+                session.register("Calendar", self.calendar_page,
+                    lambda page, path: page.set_company_path(path))
 
             if hasattr(self, 'cheque_list_page'):
-                self.cheque_list_page.set_company_path(company_path)
+                session.register("Cheque List", self.cheque_list_page,
+                    lambda page, path: page.set_company_path(path))
         
             if hasattr(self, 'reports_page'):
-                 self.reports_page.current_company_path = company_path
-                 self.reports_page.refresh_report_data()
+                session.register("Reports", self.reports_page,
+                    lambda page, path: (setattr(page, 'current_company_path', path), page.refresh_report_data()))
 
             if hasattr(self, 'full_catalog_page'):
-                self.full_catalog_page.set_company_path(company_path)
+                session.register("Full Catalog", self.full_catalog_page,
+                    lambda page, path: page.set_company_path(path))
 
             if hasattr(self, 'group_test_page') and hasattr(self, 'full_catalog_page'):
-                 self.group_test_page.set_logic(self.full_catalog_page.logic, company_path)
+                session.register("Group Test", self.group_test_page,
+                    lambda page, path: page.set_logic(self.full_catalog_page.logic, path))
 
-            # Row Data
-            self.row_data_page.load_data(company_path)
+            session.register("Row Data", self.row_data_page,
+                lambda page, path: page.load_data(path))
             
-            # Go to Welcome
+            # Activate session — all pages get initialized
+            result = session.activate(comp_name, company_path)
+            
+            if result["errors"]:
+                error_names = [e[0] for e in result["errors"]]
+                print(f"[SESSION] Partial errors in: {', '.join(error_names)}")
+            
+            self.session = session  # Store for later use
+            
+            # Navigate to welcome
             self.nav_stack.setCurrentIndex(1) 
             self.main_stack.setCurrentIndex(1)
             

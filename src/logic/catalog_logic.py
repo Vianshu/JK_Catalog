@@ -2,6 +2,10 @@ import sqlite3
 import os
 
 from src.utils.path_utils import get_data_file_path
+from src.logic.text_utils import clean_cat_name, has_long_common_word, is_similar
+from src.utils.app_logger import get_logger
+
+logger = get_logger(__name__)
 
 class CatalogLogic:
     def __init__(self, db_path):
@@ -823,32 +827,8 @@ class CatalogLogic:
         # 1. Clustering with Bracket/Long-Word Heuristics
         # 2. Sort Clusters by Min Price
         # 3. Sort Items within by Price
-        
-        from difflib import SequenceMatcher
-        import re
+        # Text cleaning & similarity functions imported from text_utils at module level
 
-        def clean_cat_name(n):
-            n = str(n).lower()
-            n = re.sub(r'chain\s*saw', 'chainsaw', n)
-            # Remove content in brackets
-            n = re.sub(r'\(.*?\)', '', n) 
-            n = re.sub(r'\[.*?\]', '', n)
-            # Remove digits
-            n = re.sub(r'\d+', '', n)
-            # Remove punctuation
-            n = re.sub(r'[^\w\s]', ' ', n)
-            return " ".join(n.split())
-
-        def has_long_common_word(n1, n2, min_len=5):
-            # Exclude common weak words from this "magic link" check
-            COMMON_IGNORE = {'black', 'white', 'heavy', 'super', 'power', 'auto', 'manual'}
-            w1 = set(n1.split())
-            w2 = set(n2.split())
-            common = w1.intersection(w2)
-            for w in common:
-                if len(w) >= min_len and w not in COMMON_IGNORE:
-                    return True
-            return False
 
         def get_p_name(x):
             if isinstance(x, dict): return x.get("product_name", "") or x.get("name", "")
@@ -858,20 +838,6 @@ class CatalogLogic:
             if isinstance(x, dict): return x.get("sort_price", 0)
             try: return float(str(x[4]).replace(",", "").strip()) if len(x)>4 else 0
             except: return 0
-
-        def is_similar(clean_a, clean_b):
-            if not clean_a or not clean_b: return False
-            
-            # 1. Exact Match (after cleaning) - Fast path for bracket variants
-            if clean_a == clean_b: return True
-            
-            # 2. Long Common Word (The "Chainsaw" Rule)
-            if has_long_common_word(clean_a, clean_b, min_len=5):
-                return True
-                
-            # 3. High Fuzzy Match (Fallback for typos/small diffs)
-            ratio = SequenceMatcher(None, clean_a, clean_b).ratio()
-            return ratio >= 0.85
 
         # --- TWO-MODE SORTING ---
         cache_key = f"{group_name}|{sg_sn}"

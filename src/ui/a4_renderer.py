@@ -18,6 +18,29 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QAction
 import os
+import json
+
+
+# --- Load catalog rendering config ---
+_CATALOG_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "config", "catalog_config.json"
+)
+
+_CATALOG_CONFIG = {"default": {"header_text": "NGT"}, "overrides": {}}
+try:
+    with open(_CATALOG_CONFIG_PATH, 'r', encoding='utf-8') as _f:
+        _CATALOG_CONFIG = json.load(_f)
+except (FileNotFoundError, json.JSONDecodeError):
+    pass  # Use hardcoded default
+
+def _get_header_text(company_prefix=None):
+    """Get the header text for the catalog, optionally per company."""
+    default_text = _CATALOG_CONFIG.get("default", {}).get("header_text", "NGT")
+    if company_prefix:
+        overrides = _CATALOG_CONFIG.get("overrides", {})
+        return overrides.get(company_prefix, {}).get("header_text", default_text)
+    return default_text
 
 
 MM_PER_INCH = 25.4
@@ -477,7 +500,7 @@ class A4PageRenderer(QWidget):
         self.cell_h = base_h
 
     def set_header_data(self, group_name, page_no):
-        self.header_left.setText("NGT")
+        self.header_left.setText(_get_header_text(getattr(self, '_company_prefix', None)))
         self.header_center.setText(str(group_name).upper())
         self.header_right.setText(f"{page_no}")
 

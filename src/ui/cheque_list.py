@@ -277,23 +277,29 @@ class ChequeListUI(QWidget):
         if not self.db_path: return
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
-        cur.execute("DELETE FROM cheques")
+        try:
+            cur.execute("BEGIN TRANSACTION")
+            cur.execute("DELETE FROM cheques")
 
-        for r in range(self.table.rowCount()):
-            bw = self.table.cellWidget(r, 3)
-            bank_val = bw.text().strip() if bw else (self.table.item(r, 3).text().strip() if self.table.item(r, 3) else "")
+            for r in range(self.table.rowCount()):
+                bw = self.table.cellWidget(r, 3)
+                bank_val = bw.text().strip() if bw else (self.table.item(r, 3).text().strip() if self.table.item(r, 3) else "")
 
-            def txt(c):
-                it = self.table.item(r, c)
-                return it.text().strip() if it and it.text().strip() else None
+                def txt(c):
+                    it = self.table.item(r, c)
+                    return it.text().strip() if it and it.text().strip() else None
 
-            # 🔥 Yahan self.get_status_value(r) hata kar txt(7) kar diya
-            cur.execute("INSERT INTO cheques VALUES (?,?,?,?,?,?,?,?,?,?)", (
-                txt(0), txt(1), txt(2), bank_val,
-                txt(4), txt(5), txt(6), txt(7), txt(8), txt(9)
-            ))
-        conn.commit()
-        conn.close()
+                # 🔥 Yahan self.get_status_value(r) hata kar txt(7) kar diya
+                cur.execute("INSERT INTO cheques VALUES (?,?,?,?,?,?,?,?,?,?)", (
+                    txt(0), txt(1), txt(2), bank_val,
+                    txt(4), txt(5), txt(6), txt(7), txt(8), txt(9)
+                ))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print(f"[ERROR] Failed to save cheques: {e}")
+        finally:
+            conn.close()
         self.update_summary()
         
     # ================= BANK LIST =================

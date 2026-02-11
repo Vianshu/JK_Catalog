@@ -3,10 +3,68 @@ from PyQt6.QtWidgets import (
     QScrollArea, QFrame, QCheckBox, QComboBox, QMessageBox,
     QProgressBar, QApplication, QLineEdit
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QThread
 from PyQt6.QtGui import QPixmap, QFont, QColor
 import os
 import sqlite3
+from src.logic.text_utils import clean_cat_name, is_similar, cluster_products
+
+
+class GroupPreviewWorker(QThread):
+    """Background worker for loading and clustering products.
+    Runs DB queries and clustering off the main thread."""
+    progress_update = pyqtSignal(int, int, str)  # (current, total, status_text)
+    data_ready = pyqtSignal(list)  # List of {group_name, sg_sn, items, clusters}
+    finished_signal = pyqtSignal(str)  # Final status message
+    
+    def __init__(self, logic, company_path):
+        super().__init__()
+        self.logic = logic
+        self.company_path = company_path
+    
+    def run(self):
+        try:
+            catalog_db = os.path.join(self.company_path, "catalog.db")
+            if not os.path.exists(catalog_db):
+                self.finished_signal.emit("Catalog DB not found.")
+                return
+            
+            conn = sqlite3.connect(catalog_db)
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT group_name, sg_sn FROM catalog_pages ORDER BY group_name, CAST(sg_sn AS INTEGER)")
+            subgroups = cursor.fetchall()
+            conn.close()
+            
+            total_groups = len(subgroups)
+            if total_groups == 0:
+                self.finished_signal.emit("No subgroups found.")
+                return
+            
+            all_results = []
+            
+            for i, (group_name, sg_sn) in enumerate(subgroups):
+                self.progress_update.emit(i + 1, total_groups, f"Processing {group_name} > {sg_sn}...")
+                
+                # Heavy work: DB fetch + clustering
+                items = self.logic.get_sorted_products_from_db(group_name, sg_sn)
+                clusters = cluster_products(items)
+                
+                all_results.append({
+                    "group_name": group_name,
+                    "sg_sn": sg_sn,
+                    "items": items,
+                    "clusters": clusters
+                })
+            
+            # Emit all data at once for main thread to render
+            self.data_ready.emit(all_results)
+            self.finished_signal.emit(f"Loaded successfully. Subgroups: {total_groups}")
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.finished_signal.emit(f"Error: {str(e)}")
+
 
 class ProductCardRow(QFrame):
     def __init__(self, product_data, page_info):
@@ -172,172 +230,82 @@ class GroupTestTab(QWidget):
         if not self.logic or not self.company_path:
             QMessageBox.warning(self, "Error", "Company not loaded.")
             return
-            
+        
+        # Prevent double-loads
+        if hasattr(self, '_load_worker') and self._load_worker and self._load_worker.isRunning():
+            return
+        
         self.clear_list()
         self.btn_load.setEnabled(False)
         self.progress.setValue(0)
         self.progress.setVisible(True)
         self.lbl_status.setText("Fetching pages...")
         
-        # Use QTimer to allow UI update start
-        QTimer.singleShot(100, self._load_process)
-
-    def _load_process(self):
-        try:
-            # 1. Get distinct Subgroups (Group, SG_SN)
-            catalog_db = os.path.join(self.company_path, "catalog.db")
-            if not os.path.exists(catalog_db):
-                self.loading_finished("Catalog DB not found.")
-                return
-
-            conn = sqlite3.connect(catalog_db)
-            cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT group_name, sg_sn FROM catalog_pages ORDER BY group_name, CAST(sg_sn AS INTEGER)")
-            subgroups = cursor.fetchall()
-            conn.close()
+        # Create and start worker thread
+        self._load_worker = GroupPreviewWorker(self.logic, self.company_path)
+        self._load_worker.progress_update.connect(self._on_load_progress)
+        self._load_worker.data_ready.connect(self._on_data_ready)
+        self._load_worker.finished_signal.connect(self._on_load_finished)
+        self._load_worker.start()
+    
+    def _on_load_progress(self, current, total, status_text):
+        """Handle progress updates from the worker."""
+        self.progress.setMaximum(total)
+        self.progress.setValue(current)
+        self.lbl_status.setText(status_text)
+    
+    def _on_data_ready(self, all_results):
+        """Render the processed data into widgets (runs on main thread)."""
+        for result in all_results:
+            group_name = result["group_name"]
+            sg_sn = result["sg_sn"]
+            items = result["items"]
+            clusters = result["clusters"]
             
-            total_groups = len(subgroups)
-            if total_groups == 0:
-                self.loading_finished("No subgroups found.")
-                return
-            
-            self.lbl_status.setText(f"Found {total_groups} subgroups. Processing...")
-            self.progress.setMaximum(total_groups)
-            
-            # 2. Iterate and fetch items per subgroup
-            for i, (group_name, sg_sn) in enumerate(subgroups):
-                # Fetch raw products (pre-sorted by price in logic, but we will re-sort)
-                items = self.logic.get_sorted_products_from_db(group_name, sg_sn)
-                
-                # --- SORTING LOGIC ---
-                # "Bracket Sanitization + Long Word Heuristic"
-                # 1. Cleaning: Remove (…) and […] content aggressively to unify variants.
-                # 2. Matching:
-                #    A. High Fuzzy Score (>85%) -> Same Group
-                #    B. Shared LONG Word (>5 chars) -> Same Group (Catch "Chainsaw")
-                
-                import re
-                from difflib import SequenceMatcher
+            # Add Header
+            header_lbl = QLabel(f"\U0001f4c2 {group_name} > {sg_sn} ({len(items)} items)")
+            header_lbl.setStyleSheet("background: #555; color: white; font-weight: bold; padding: 5px; margin-top: 10px;")
+            self.container_layout.addWidget(header_lbl)
 
-                def clean_cat_name(n):
-                    n = n.lower()
-                    n = re.sub(r'chain\s*saw', 'chainsaw', n)
-                    # Remove content in brackets
-                    n = re.sub(r'\(.*?\)', '', n) 
-                    n = re.sub(r'\[.*?\]', '', n)
-                    # Remove digits
-                    n = re.sub(r'\d+', '', n)
-                    # Remove punctuation
-                    n = re.sub(r'[^\w\s]', ' ', n)
-                    return " ".join(n.split())
-
-                def has_long_common_word(n1, n2, min_len=5):
-                    # Exclude common weak words from this "magic link" check
-                    COMMON_IGNORE = {'black', 'white', 'heavy', 'super', 'power', 'auto', 'manual'}
-                    w1 = set(n1.split())
-                    w2 = set(n2.split())
-                    common = w1.intersection(w2)
-                    for w in common:
-                        if len(w) >= min_len and w not in COMMON_IGNORE:
-                            return True
-                    return False
-
-                def is_similar(clean_a, clean_b):
-                    if not clean_a or not clean_b: return False
-                    
-                    # 1. Exact Match (after cleaning) - Fast path for bracket variants
-                    if clean_a == clean_b: return True
-                    
-                    # 2. Long Common Word (The "Chainsaw" Rule)
-                    # Use length > 5 to catch "Chainsaw" (8), "Hammer" (6), "Driver" (6)
-                    # But avoid "Cock" (4), "Sink" (4), "Bib" (3)
-                    if has_long_common_word(clean_a, clean_b, min_len=5):
-                        return True
-                        
-                    # 3. High Fuzzy Match (Fallback for typos/small diffs)
-                    # 85% is strict enough to separate "Sink Cock" from "Bib Cock"
-                    # "pvc sink cock" vs "pvc bib cock" -> ratio ~ 70-75% -> Fails (Correct)
-                    ratio = SequenceMatcher(None, clean_a, clean_b).ratio()
-                    return ratio >= 0.85
-
-                clusters = [] # List of lists
+            for c_idx, cluster in enumerate(clusters):
+                if not cluster: continue
                 
-                for item in items:
-                    name = item.get("product_name", "")
-                    clean_n = clean_cat_name(name)
-                    
-                    added = False
-                    for cluster in clusters:
-                        # Compare with representative
-                        rep_name = cluster[0].get("product_name", "")
-                        rep_clean = clean_cat_name(rep_name)
-                        
-                        if is_similar(clean_n, rep_clean):
-                            cluster.append(item)
-                            added = True
-                            break
-                    
-                    if not added:
-                        clusters.append([item])
+                # Visual Separator
+                cluster_rep = cluster[0].get("product_name", "Unknown")
+                min_p = cluster[0].get("sort_price", 0)
                 
-                # Sort Items WITHIN Clusters by Price (ASC)
-                for cluster in clusters:
-                    cluster.sort(key=lambda x: x.get("sort_price", 0))
-
-                # Sort Clusters Themselves by the MIN Price of their content
-                # (Cheapest group appears first)
-                clusters.sort(key=lambda c: (c[0].get("sort_price", 0) if c else 0))
+                c_header = QLabel(f"   \U0001f539 Group {c_idx+1}: ~ {cluster_rep} (Starts \u20b9{min_p})")
+                c_header.setStyleSheet("color: #2c3e50; font-weight: bold; font-style: italic; margin-top: 5px;")
+                self.container_layout.addWidget(c_header)
                 
-                # Display Logic
-                # Add Header
-                header_lbl = QLabel(f"📂 {group_name} > {sg_sn} ({len(items)} items)")
-                header_lbl.setStyleSheet("background: #555; color: white; font-weight: bold; padding: 5px; margin-top: 10px;")
-                self.container_layout.addWidget(header_lbl)
-
-                for c_idx, cluster in enumerate(clusters):
-                    if not cluster: continue
+                for item in cluster:
+                    page_info = {
+                        "group_name": group_name,
+                        "sg_sn": sg_sn,
+                        "page_no": "-"
+                    }
                     
-                    # Visual Separator
-                    cluster_rep = cluster[0].get("product_name", "Unknown")
-                    min_p = cluster[0].get("sort_price", 0)
-                    
-                    c_header = QLabel(f"   🔹 Group {c_idx+1}: ~ {cluster_rep} (Starts ₹{min_p})")
-                    c_header.setStyleSheet("color: #2c3e50; font-weight: bold; font-style: italic; margin-top: 5px;")
-                    self.container_layout.addWidget(c_header)
-                    
-                    for item in cluster:
-                        page_info = {
-                            "group_name": group_name,
-                            "sg_sn": sg_sn,
-                            "page_no": "-"
-                        }
-                        
-                        card = ProductCardRow(item, page_info)
-                        bg_col = "#ffffff" if c_idx % 2 == 0 else "#f9f9f9"
-                        card.setStyleSheet(f"""
-                            ProductCardRow {{
-                                background-color: {bg_col};
-                                border: 1px solid #e0e0e0;
-                                border-radius: 6px;
-                                margin-bottom: 2px;
-                                margin-left: 20px;
-                            }}
-                            ProductCardRow:hover {{
-                                border: 1px solid #3498db;
-                                background-color: #eaf2f8;
-                            }}
-                        """)
-                        self.container_layout.addWidget(card)
-                
-                self.progress.setValue(i + 1)
-                QApplication.processEvents() # Keep UI responsive
-            
-            self.loading_finished(f"Loaded successfully. Subgroups: {total_groups}")
-            
-        except Exception as e:
-            self.loading_finished(f"Error: {str(e)}")
-            import traceback
-            traceback.print_exc()
+                    card = ProductCardRow(item, page_info)
+                    bg_col = "#ffffff" if c_idx % 2 == 0 else "#f9f9f9"
+                    card.setStyleSheet(f"""
+                        ProductCardRow {{
+                            background-color: {bg_col};
+                            border: 1px solid #e0e0e0;
+                            border-radius: 6px;
+                            margin-bottom: 2px;
+                            margin-left: 20px;
+                        }}
+                        ProductCardRow:hover {{
+                            border: 1px solid #3498db;
+                            background-color: #eaf2f8;
+                        }}
+                    """)
+                    self.container_layout.addWidget(card)
+    
+    def _on_load_finished(self, msg):
+        """Handle load completion."""
+        self.loading_finished(msg)
+        self._load_worker = None
 
     def loading_finished(self, msg):
         self.lbl_status.setText(msg)

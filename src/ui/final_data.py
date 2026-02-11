@@ -10,6 +10,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap, QColor
 # Aapka original processor
 from src.logic.data_processor import DataProcessor
+from src.utils.app_logger import get_logger
+
+logger = get_logger(__name__)
 
 class NumericTableWidgetItem(QTableWidgetItem):
     def __lt__(self, other):
@@ -227,7 +230,7 @@ class FinalDataUI(QWidget):
         row, col = item.row(), item.column()
         col_name = self.headers[col]
         
-        print(f"[SAVE_CELL] col={col} ({col_name}), new_val='{new_val}', old_val='{old_val}', old_type={type(old_val)}")
+        logger.debug(f"[SAVE_CELL] col={col} ({col_name}), new_val='{new_val}', old_val='{old_val}'")
 
         # --- VALIDATION: True/False Column (Index 21) ---
         if col == 21: # True/False Column
@@ -362,7 +365,7 @@ class FinalDataUI(QWidget):
             self.update_summary_stats()
 
         except Exception as e:
-            print(f"Update Error: {e}")
+            logger.error(f"Update Error: {e}", exc_info=True)
 
     def load_and_sync_data(self, company_name, company_path=None):
         try:
@@ -384,7 +387,7 @@ class FinalDataUI(QWidget):
                         self.image_folder = vault[company_name].get('image_path', "")
 
             if not folder_path or not os.path.exists(folder_path):
-                 print(f"Error: Invalid Company Path: {folder_path}")
+                 logger.error(f"Invalid Company Path: {folder_path}")
                  return
 
             # Read company_info.json for Image Path (Decentralized Priority)
@@ -420,7 +423,7 @@ class FinalDataUI(QWidget):
                         for r in s_conn.execute("SELECT Sub_Group, MG_SN, Group_Name, SG_SN FROM super_master"):
                             super_mapping[r[0]] = (r[1], r[2], r[3])
                 except Exception as e:
-                    print(f"Super Master Read Error: {e}")
+                    logger.error(f"Super Master Read Error: {e}", exc_info=True)
             
             # 4. Tally Data Fetch
             with sqlite3.connect(row_db_path) as row_conn:
@@ -533,7 +536,7 @@ class FinalDataUI(QWidget):
             # self.status_lbl.setText("Sync Complete! All Processor logic applied.")
 
         except Exception as e:
-            print(f"Sync Error: {e}")
+            logger.error(f"Sync Error: {e}", exc_info=True)
             import traceback
             traceback.print_exc()
             
@@ -559,7 +562,7 @@ class FinalDataUI(QWidget):
             # After image sync, update True/False values
             self.sync_true_false_values()
         except Exception as e:
-            print(f"Image Sync Error: {e}")
+            logger.error(f"Image Sync Error: {e}", exc_info=True)
     
     def sync_true_false_values(self):
         """
@@ -632,12 +635,12 @@ class FinalDataUI(QWidget):
             print(f"True/False sync completed for {len(rows)} items")
             
         except Exception as e:
-            print(f"True/False Sync Error: {e}")
+            logger.error(f"True/False Sync Error: {e}", exc_info=True)
 
     def refresh_table(self):
-        print("CALLED: refresh_table") # DEBUG TRACE
+        logger.debug("CALLED: refresh_table")
         if not self.db_path: 
-            print("ABORT: No db_path in refresh_table")
+            logger.warning("ABORT: No db_path in refresh_table")
             return
         try:
             self.table.blockSignals(True)
@@ -734,7 +737,7 @@ class FinalDataUI(QWidget):
         except Exception as e: 
             self.table.blockSignals(False)  # Always unblock on error too
             self.table.setSortingEnabled(True)
-            print(f"Refresh Error: {e}")
+            logger.error(f"Refresh Error: {e}", exc_info=True)
 
     def update_summary_stats(self):
         """Calculate and update the summary statistics in the side panel.
@@ -798,7 +801,7 @@ class FinalDataUI(QWidget):
                  self.lbl_mismatch_val.setStyleSheet("font-weight: bold; color: #6f42c1; border: none;")
 
         except Exception as e:
-            print(f"Summary Stats Error: {e}")
+            logger.error(f"Summary Stats Error: {e}", exc_info=True)
             import traceback
             traceback.print_exc()
             import traceback

@@ -22,7 +22,6 @@ class SuperMasterUI(QWidget):
     def get_data_folder_db_path(self):
         try:
             vault_path = os.path.join(self.base_dir, "company_vault.json")
-            print(vault_path)
             if os.path.exists(vault_path):
                 with open(vault_path, 'r', encoding='utf-8') as f:
                     vault = json.load(f)
@@ -41,7 +40,7 @@ class SuperMasterUI(QWidget):
     def setup_db(self):
         # Ensure Data directory exists
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        print(f"Super Master DB Path: {self.db_path}")
+        # DB path logging removed (was debug print)
         
         conn = sqlite3.connect(self.db_path)
         conn.execute("""CREATE TABLE IF NOT EXISTS super_master 

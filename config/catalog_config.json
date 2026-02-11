@@ -1,0 +1,18 @@
+{
+    "_meta": {
+        "description": "Per-company configuration for catalog rendering.",
+        "version": "1.0",
+        "usage": "Loaded by a4_renderer.py for company-specific header text and layout settings."
+    },
+    "default": {
+        "header_text": "NGT",
+        "header_font_size": 14,
+        "footer_show_crm": true
+    },
+    "overrides": {
+        "EXAMPLE_COMPANY": {
+            "header_text": "ACME",
+            "header_font_size": 16
+        }
+    }
+}

@@ -1,0 +1,48 @@
+{
+    "_meta": {
+        "description": "Regex cleaning rules for product name normalization.",
+        "version": "1.0",
+        "usage": "Loaded by src/logic/text_utils.py at import time.",
+        "notes": "Rules are applied in order. Each rule has a pattern (regex) and replacement string."
+    },
+    "name_cleaning_rules": [
+        {
+            "description": "Normalize 'chain saw' variants to 'chainsaw'",
+            "pattern": "chain\\s*saw",
+            "replacement": "chainsaw"
+        },
+        {
+            "description": "Remove content in parentheses",
+            "pattern": "\\(.*?\\)",
+            "replacement": ""
+        },
+        {
+            "description": "Remove content in square brackets",
+            "pattern": "\\[.*?\\]",
+            "replacement": ""
+        },
+        {
+            "description": "Remove digits",
+            "pattern": "\\d+",
+            "replacement": ""
+        },
+        {
+            "description": "Replace punctuation with space",
+            "pattern": "[^\\w\\s]",
+            "replacement": " "
+        }
+    ],
+    "similarity": {
+        "threshold": 0.85,
+        "min_long_word_length": 5,
+        "common_ignore_words": [
+            "black",
+            "white",
+            "heavy",
+            "super",
+            "power",
+            "auto",
+            "manual"
+        ]
+    }
+}

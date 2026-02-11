@@ -235,29 +235,9 @@ class ReportsUI(QWidget):
         products = self.logic.get_items_for_page_dynamic(group_name, sg_sn, page_no)
         renderer.fill_products(products if products else [])
         
-        # Footer Date Logic (Copied from print_export logic for consistency)
-        footer_date = ""
-        if products:
-            from datetime import datetime
-            max_dt_obj = None
-            max_date_str = ""
-            for p in products:
-                # p is a dict from layout_map containing "data" key which is the product dict
-                p_data = p.get("data", {})
-                p_date = p_data.get("max_update_date", "")
-                if p_date:
-                    try:
-                        date_part = p_date.split(" ")[0]
-                        dt = datetime.strptime(date_part, "%d-%m-%Y")
-                        if max_dt_obj is None or dt > max_dt_obj:
-                            max_dt_obj = dt
-                            max_date_str = p_date
-                    except:
-                        pass
-            if max_date_str:
-                try:
-                    footer_date = self.logic.get_nepali_date(max_date_str)
-                except: pass
+        # Footer Date (using centralized date_utils)
+        from src.utils.date_utils import get_footer_date
+        footer_date = get_footer_date(products, self.logic)
         
         renderer.set_footer_data(crm_name, footer_date)
         

@@ -246,13 +246,19 @@ class GodownListUI(QWidget):
     def save_data_to_db(self):
         conn = sqlite3.connect(self.db_path)
         cur = conn.cursor()
-        cur.execute("DELETE FROM stock")
-        for r in range(self.table.rowCount()):
-            row_data = [self.table.item(r, c).text() if self.table.item(r, c) else "" for c in range(7)]
-            if any(row_data):
-                cur.execute("INSERT INTO stock VALUES (?,?,?,?,?,?,?)", row_data)
-        conn.commit()
-        conn.close()
+        try:
+            cur.execute("BEGIN TRANSACTION")
+            cur.execute("DELETE FROM stock")
+            for r in range(self.table.rowCount()):
+                row_data = [self.table.item(r, c).text() if self.table.item(r, c) else "" for c in range(7)]
+                if any(row_data):
+                    cur.execute("INSERT INTO stock VALUES (?,?,?,?,?,?,?)", row_data)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print(f"[ERROR] Failed to save godown stock: {e}")
+        finally:
+            conn.close()
     
     def manual_save_and_sort(self):
         self.table.blockSignals(True)
