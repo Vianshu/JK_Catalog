@@ -333,7 +333,12 @@ class PrintExportDialog(QDialog):
         preview.setWindowTitle(f"Print Preview - Catalog ({len(valid_pages)} pages)")
         preview.resize(900, 700)
         preview.paintRequested.connect(self.handle_paint_request)
+        
+        # Store reference to close it if rendering is cancelled
+        self._active_preview = preview
+        
         preview.exec()
+        self._active_preview = None
     
     def handle_paint_request(self, printer):
         """Handle the paint request from print preview."""
@@ -356,6 +361,9 @@ class PrintExportDialog(QDialog):
             if progress.wasCanceled():
                 painter.end()
                 renderer.deleteLater()
+                # Close the preview window to avoid showing a broken/blank page
+                if self._active_preview:
+                    self._active_preview.close()
                 return
 
             if i > 0:
@@ -493,6 +501,9 @@ class PrintExportDialog(QDialog):
             )
             if reply == QMessageBox.StandardButton.Yes:
                 os.startfile(file_path)
+            
+            # Signal success to parent
+            self.accept()
             
         except Exception as e:
             progress.close()

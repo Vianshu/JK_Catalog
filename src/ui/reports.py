@@ -204,19 +204,20 @@ class ReportsUI(QWidget):
             initial_crm=crm_name
         )
         
-        print_dlg.exec()
+        result = print_dlg.exec()
         
-        # 3. Confirmation
-        reply = QMessageBox.question(
-            self, 
-            "Update Status", 
-            f"Did you successfully print/export the {len(pending_serials)} pages for '{crm_name}'?\n\n"
-            "Click YES to mark them as completed.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            self.update_pages_logic(crm_name)
+        # 3. Confirmation (Only if dialog was Accepted)
+        if result == QDialog.DialogCode.Accepted:
+            reply = QMessageBox.question(
+                self, 
+                "Update Status", 
+                f"Did you successfully print/export the {len(pending_serials)} pages for '{crm_name}'?\n\n"
+                "Click YES to mark them as completed.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                self.update_pages_logic(crm_name)
             
     def render_report_page(self, painter, serial_no, renderer, crm_name):
         """Callback to render a specific page for the PrintExportDialog."""
