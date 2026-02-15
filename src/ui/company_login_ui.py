@@ -46,10 +46,12 @@ class PathDialog(QDialog):
 
 # ================= 2. LOGIN DIALOG =================
 class LoginDialog(QDialog):
-    def __init__(self, company_name, correct_user, correct_pass, parent=None):
+    def __init__(self, company_name, folder_path, security_mgr, parent=None):
         super().__init__(parent)
-        self.correct_user = correct_user
-        self.correct_pass = correct_pass
+        self.company_name = company_name
+        self.folder_path = folder_path
+        self.security = security_mgr
+        
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setFixedSize(450, 300) 
         self.setModal(True)
@@ -111,13 +113,17 @@ class LoginDialog(QDialog):
         layout.addWidget(self.btn_login)
 
     def verify_login(self):
-        # Empty credentials logic if needed? 
-        # Current logic checks exact match. If correct_user is "", then input must be "".
-        if self.user_edit.text() == self.correct_user and self.pass_edit.text() == self.correct_pass: 
+        username = self.user_edit.text()
+        password = self.pass_edit.text()
+        
+        # STRICT SECURITY MODE: Only DB Login allowed
+        db_user = self.security.verify_login(self.folder_path, username, password)
+        if db_user:
             self.accept()
-        else: 
-            self.error_lbl.setText("❌ Invalid Credentials!")
-            self.user_edit.setFocus()
+            return
+
+        self.error_lbl.setText("❌ Invalid Credentials!")
+        self.user_edit.setFocus()
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
@@ -127,9 +133,10 @@ class LoginDialog(QDialog):
 
 # ================= 3. COMPANY CREATE FORM (DECENTRALIZED LOGIC) =================
 class CompanyCreateForm(QWidget):
-    def __init__(self, back_callback):
+    def __init__(self, back_callback, security_mgr):
         super().__init__()
         self.back_callback = back_callback
+        self.security = security_mgr
         self.fields = [] 
         self.edit_mode = False 
         self.base_folder_path = "" # Parent folder where new company folder will be created
@@ -235,9 +242,7 @@ class CompanyCreateForm(QWidget):
                  with open(info_p, 'r') as f:
                      d = json.load(f)
                      self.fields[0].setText(d.get("display_name", ""))
-                     self.fields[1].setText(d.get("user", ""))
-                     self.fields[2].setText(d.get("pass", ""))
-                     self.fields[3].setText(d.get("pass", ""))
+                     # Security Update: We no longer store/load credentials from JSON
                      self.fields[4].setText(self.base_folder_path) # Show parent loc
                      self.fields[5].setText(d.get("image_path", ""))
         except: pass
@@ -284,10 +289,9 @@ class CompanyCreateForm(QWidget):
             target_path = Path(final_folder_path)
             target_path.mkdir(parents=True, exist_ok=True)
             
+            # 1. Update/Create Legacy JSON (for compatibility/backup)
             info = {
                 "display_name": display_name,
-                "user": user,
-                "pass": password, 
                 "image_path": img_path
             }
             
@@ -298,6 +302,13 @@ class CompanyCreateForm(QWidget):
             report_file = target_path / "REPORT_DATA.JSON"
             if not report_file.exists():
                 save_report_json({}, str(report_file))
+
+            # 2. Register in Secure DB
+            cid = self.security.register_company(display_name, str(final_folder_path), img_path, user, password)
+            if cid:
+                print(f"Company registered in Security DB with ID: {cid}")
+            else:
+                print("Company already exists in DB or path conflict.")
 
             QMessageBox.information(self, "Success", f"Company '{display_name}' configured successfully!\nLocation: {final_folder_path}")
             self.back_to_list()
@@ -316,6 +327,11 @@ class CompanyLoginUI(QWidget):
         self.history_file = os.path.join(self.app_path, "company_history.json") 
         self.current_data_path = self.load_saved_path()
         
+        # Initialize Security Manager
+        from src.logic.security_manager import SecurityManager
+        from src.utils.path_utils import get_app_dir
+        self.security = SecurityManager(os.path.join(get_app_dir(), "security.db"))
+        
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -327,7 +343,7 @@ class CompanyLoginUI(QWidget):
         self.init_list_ui()
         self.stack.addWidget(self.list_screen)
 
-        self.form_screen = CompanyCreateForm(self.show_list)
+        self.form_screen = CompanyCreateForm(self.show_list, self.security)
         self.stack.addWidget(self.form_screen)
 
         self.load_main_list()
@@ -480,11 +496,20 @@ class CompanyLoginUI(QWidget):
         path = os.path.normpath(os.path.abspath(path))
         info_file = os.path.join(path, "company_info.json")
         try:
-            with open(info_file, 'r', encoding='utf-8') as f: data = json.load(f)
-            dlg = LoginDialog(data.get("display_name", ""), data.get("user", ""), data.get("pass", ""), self)
+            # We only read JSON for the Display Name now.
+            display_name = os.path.basename(path)
+            
+            if os.path.exists(info_file):
+                with open(info_file, 'r', encoding='utf-8') as f: 
+                    data = json.load(f)
+                    display_name = data.get("display_name", display_name)
+            
+            # Pass only the path and security manager. No legacy credentials!
+            dlg = LoginDialog(display_name, path, self.security, self)
+            
             if dlg.exec():
                 self.save_history(path)
-                self.login_success_signal.emit(data.get("display_name", ""), path)
+                self.login_success_signal.emit(display_name, path)
         except Exception as e:
             QMessageBox.critical(self, "Login Error", str(e))
 

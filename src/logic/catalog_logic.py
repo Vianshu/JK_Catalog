@@ -196,7 +196,21 @@ class CatalogLogic:
             cursor.execute(query)
             data = cursor.fetchall()
             conn.close()
-            return data
+            
+            # Filter out invalid or dummy '00' serials ensuring no extra page creation
+            valid_results = []
+            for row in data:
+                mg_sn, group_name, sg_sn = row
+                m_str = str(mg_sn).strip()
+                s_str = str(sg_sn).strip()
+                
+                # Logic: Skip empty or '00' serials
+                if not m_str or m_str == '00': continue
+                if not s_str or s_str == '00': continue
+                
+                valid_results.append(row)
+                
+            return valid_results
         except: return []
 
     # =========================================================

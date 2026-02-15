@@ -37,7 +37,7 @@ from src.utils.path_utils import get_writable_data_path
 # Settings & Services
 from src.ui.settings import (
     CRMDialog, UserManagerDialog, SecurityDialog,
-    save_users_to_json, load_crm_list, save_crm_to_json, update_crm_in_json
+    load_crm_list, save_crm_to_json, update_crm_in_json
 )
 from src.services.tally_sync import fetch_tally_data
 
@@ -559,7 +559,9 @@ class MainWindow(QWidget):
     def handle_int_cost_sheet(self): IntCostSheetUI(self).exec()
     def handle_pur_import(self): PurImportUI(self).exec()
     def handle_security(self): SecurityDialog(self).exec()
-    def handle_alter_user(self): UserManagerDialog(self.current_company, mode="alter", parent=self).exec()
+    def handle_alter_user(self): 
+        if self.current_company and hasattr(self, 'current_company_path'):
+            UserManagerDialog(self.current_company, self.current_company_path, parent=self).exec()
     
     def handle_cheque_list(self):
         self.main_stack.setCurrentIndex(15)
@@ -568,10 +570,9 @@ class MainWindow(QWidget):
         self.main_stack.setCurrentIndex(16)
     
     def handle_create_user(self):
-        dlg = UserManagerDialog(self.current_company, parent=self)
-        if dlg.exec():
-            new_users = dlg.get_table_data()
-            if new_users: save_users_to_json(self.current_company, new_users)
+        if self.current_company and hasattr(self, 'current_company_path'):
+            # Dialog handles saving internally now via SecurityManager
+            UserManagerDialog(self.current_company, self.current_company_path, parent=self).exec()
 
     def back_to_login_screen(self):
         self.set_active_menu_btn(None) # Clear highlighting

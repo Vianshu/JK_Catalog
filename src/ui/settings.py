@@ -109,19 +109,24 @@ class CRMDialog(QDialog):
         
 # --- User Manager Dialog ---
 class UserManagerDialog(QDialog):
-    def __init__(self, company_name, mode="create", parent=None):
+    def __init__(self, company_name, company_path, parent=None):
         super().__init__(parent)
+        self.company_name = company_name
+        self.company_path = company_path
+        
+        # Initialize Security Manager
+        from src.logic.security_manager import SecurityManager
+        from src.utils.path_utils import get_app_dir
+        self.security = SecurityManager(os.path.join(get_app_dir(), "security.db"))
+        
         self.setObjectName("UserManagerDialog") # Style Tag
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setFixedSize(550, 450)
-        # इनलाइन स्टाइल को कम करके क्लास लेवल पर रखा है
-        # self.setStyleSheet("QDialog#UserManagerDialog { background-color: #f4f4f4; border: 2px solid #333; }")
 
         layout = QVBoxLayout(self)
         title = QLabel("List of User")
         title.setObjectName("UserDialogTitle") # Style Tag
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # title.setStyleSheet("font-size: 22px; font-weight: bold; text-decoration: underline;")
         layout.addWidget(title)
 
         layout.addWidget(QLabel(f"<b>Company:</b> {company_name}"))
@@ -132,6 +137,9 @@ class UserManagerDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self.table)
+        
+        # Load existing users from DB
+        self.load_users()
 
         btn_box = QHBoxLayout()
         save_btn = QPushButton("Save (Yes/No)")
@@ -144,32 +152,49 @@ class UserManagerDialog(QDialog):
         btn_box.addWidget(cancel_btn)
         layout.addLayout(btn_box)
 
+    def load_users(self):
+        try:
+            users = self.security.get_users_for_company(self.company_path)
+            # Users is a list of dicts: [{'username': 'a', 'role': 'r'}, ...]
+            # Note: We CANNOT retrieve passwords because they are hashed.
+            # We will show empty password fields (or placeholder).
+            
+            self.table.setRowCount(max(10, len(users) + 5))
+            
+            for i, u in enumerate(users):
+                self.table.setItem(i, 0, QTableWidgetItem(u['role']))
+                self.table.setItem(i, 1, QTableWidgetItem(u['username']))
+                self.table.setItem(i, 2, QTableWidgetItem("")) # Password empty for security
+        except Exception as e:
+            print(f"Error loading users: {e}")
+
     def confirm_save(self):
-        reply = QMessageBox.question(self, 'Save Data', 'Do you want to save?', 
+        reply = QMessageBox.question(self, 'Save Data', 'Do you want to save users?\n(Only rows with passwords will be updated/added)', 
                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
+            self.save_users()
             self.accept()
 
-    def get_table_data(self):
-        user_list = []
+    def save_users(self):
         rows = self.table.rowCount()
         for row in range(rows):
             role_item = self.table.item(row, 0)
             user_item = self.table.item(row, 1)
             pwd_item = self.table.item(row, 2)
 
-            if role_item is not None and user_item is not None and pwd_item is not None:
+            if role_item and user_item and pwd_item:
                 r = role_item.text().strip()
                 u = user_item.text().strip()
                 p = pwd_item.text().strip()
+                
+                # Only add/update if password is provided (since we can't read old hash back to UI)
                 if r and u and p:
-                    user_list.append({
-                        "role": r,
-                        "username": u,
-                        "password": p
-                    })
-        return user_list
-    
+                    success = self.security.add_user(self.company_path, u, p, r)
+                    if not success:
+                        print(f"Failed to add user {u} (might already exist)")
+        
+        QMessageBox.information(self, "Success", "Users updated in secure database.")
+
 # --- Security Dialog ---
 class SecurityDialog(QDialog):
     def __init__(self, parent=None):
@@ -202,24 +227,6 @@ class SecurityDialog(QDialog):
         layout.addWidget(save_btn)
 
 # --- आपके फंक्शन्स (बिना किसी बदलाव के) ---
-
-def save_users_to_json(company, users):
-    filename = "users_data.json"
-    all_data = {}
-    if os.path.exists(filename):
-        try:
-            with open(filename, "r", encoding='utf-8') as f:
-                all_data = json.load(f)
-        except: all_data = {}
-
-    all_data[company] = users
-    try:
-        with open(filename, "w", encoding='utf-8') as f:
-            json.dump(all_data, f, indent=4)
-            f.flush()
-            os.fsync(f.fileno())
-        return True
-    except: return False
 
 def load_crm_list(file_path="crm_data.json"):
     if os.path.exists(file_path):

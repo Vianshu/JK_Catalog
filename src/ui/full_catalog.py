@@ -580,7 +580,9 @@ class FullCatalogUI(QWidget):
             
             # SN को 01, 02 फॉर्मेट में बदलें
             sn_val = "".join(filter(str.isdigit, str(sn)))
-            sn_str = sn_val.zfill(2) if sn_val else "00"
+            if not sn_val:
+                continue # Skip empty serial numbers (don't show '00')
+            sn_str = sn_val.zfill(2)
             
             item_sn = QTableWidgetItem(sn_str)
             item_name = QTableWidgetItem(g_name)
