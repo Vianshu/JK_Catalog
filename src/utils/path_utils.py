@@ -36,6 +36,29 @@ def get_app_dir():
         return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def get_secure_data_dir():
+    """
+    Get the directory for storing sensitive/secure data (like security.db).
+    
+    Uses %APPDATA%/JK_Catalog/ on Windows so that sensitive files are NOT
+    sitting next to the EXE where anyone can see/copy them.
+    
+    Falls back to get_app_dir() if APPDATA is not available.
+    """
+    if getattr(sys, 'frozen', False):
+        # Running as compiled EXE - use %APPDATA%
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            secure_dir = os.path.join(appdata, "JK_Catalog")
+            os.makedirs(secure_dir, exist_ok=True)
+            return secure_dir
+        # Fallback if APPDATA not set (unlikely on Windows)
+        return os.path.dirname(sys.executable)
+    else:
+        # Running as script in dev mode - use project root (same as get_app_dir)
+        return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
 def get_data_file_path(filename):
     """
     Get path to a core data file (super_master.db, calendar_data.db, etc.)

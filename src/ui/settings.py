@@ -116,8 +116,8 @@ class UserManagerDialog(QDialog):
         
         # Initialize Security Manager
         from src.logic.security_manager import SecurityManager
-        from src.utils.path_utils import get_app_dir
-        self.security = SecurityManager(os.path.join(get_app_dir(), "security.db"))
+        from src.utils.path_utils import get_secure_data_dir
+        self.security = SecurityManager(os.path.join(get_secure_data_dir(), "security.db"))
         
         self.setObjectName("UserManagerDialog") # Style Tag
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
