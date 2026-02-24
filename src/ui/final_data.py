@@ -730,13 +730,13 @@ class FinalDataUI(QWidget):
             
             # Re-enable signals so itemChanged fires on user edits
             self.table.blockSignals(False)
-            self.table.setSortingEnabled(True)
+            # NOTE: Do NOT call setSortingEnabled(True) here.
+            # It causes Qt to re-sort by the last column header click,
+            # which destroys our custom missing-images-first ordering.
             
-            # print("DEBUG: Calling update_stats now...")
             self.update_summary_stats()
         except Exception as e: 
             self.table.blockSignals(False)  # Always unblock on error too
-            self.table.setSortingEnabled(True)
             logger.error(f"Refresh Error: {e}", exc_info=True)
 
     def update_summary_stats(self):

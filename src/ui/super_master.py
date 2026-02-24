@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QHeaderView, QMessageBox, QLabel, QLineEdit, QFrame
 )
 from PyQt6.QtCore import Qt, QEvent
-from src.utils.path_utils import get_data_file_path
+from src.utils.path_utils import get_data_file_path, get_base_path
 
 class SuperMasterUI(QWidget):
     def __init__(self, parent=None):
@@ -19,32 +19,31 @@ class SuperMasterUI(QWidget):
         self.setup_db()
         self.init_ui()
 
-    def get_data_folder_db_path(self):
-        try:
-            vault_path = os.path.join(self.base_dir, "company_vault.json")
-            if os.path.exists(vault_path):
-                with open(vault_path, 'r', encoding='utf-8') as f:
-                    vault = json.load(f)
-            if vault:
-                    # Attempt to use the first company's data path
-                    first_comp_path = list(vault.values())[0]['path']
-                    # Assuming sibling to company folder? or just "Data" folder usage
-                    # Better default: Just use the local Data folder in the project
-                    pass
-            
-            # Default to local Data folder if vault logic is complex/unreliable for Master DB
-            return os.path.join(self.base_dir, "Data", "super_master.db")
-        except:
-            return os.path.join(self.base_dir, "Data", "super_master.db")
-
     def setup_db(self):
-        # Ensure Data directory exists
+        """Create super_master table and seed from bundled default if empty."""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        # DB path logging removed (was debug print)
         
         conn = sqlite3.connect(self.db_path)
         conn.execute("""CREATE TABLE IF NOT EXISTS super_master 
                       (id TEXT, MG_SN TEXT, Group_Name TEXT, SG_SN TEXT, Sub_Group TEXT PRIMARY KEY)""")
+        
+        # Check if DB is empty — if so, seed from bundled default
+        count = conn.execute("SELECT COUNT(*) FROM super_master WHERE MG_SN != '' OR Group_Name != ''").fetchone()[0]
+        if count == 0:
+            # Bundled default DB lives in project's data/ folder (or _MEIPASS for EXE)
+            default_db = os.path.join(get_base_path(), "data", "super_master.db")
+            if os.path.exists(default_db) and os.path.abspath(default_db) != os.path.abspath(self.db_path):
+                try:
+                    src_conn = sqlite3.connect(default_db)
+                    src_data = src_conn.execute("SELECT * FROM super_master").fetchall()
+                    src_conn.close()
+                    if src_data:
+                        conn.executemany("INSERT OR REPLACE INTO super_master VALUES (?, ?, ?, ?, ?)", src_data)
+                        conn.commit()
+                        print(f"[SuperMaster] Seeded {len(src_data)} rows from bundled default")
+                except Exception as e:
+                    print(f"[SuperMaster] Seed error: {e}")
+        
         conn.close()
 
     def init_ui(self):
@@ -193,7 +192,12 @@ class SuperMasterUI(QWidget):
     def load_super_master_data(self, company_path):
         if not company_path or not os.path.exists(company_path): return
         try:
-            # Removed redundant vault lookup; use passed path directly
+            # Re-resolve db_path based on actual company location
+            # super_master.db lives in the PARENT of the company folder (shared across companies)
+            self.db_path = os.path.join(os.path.dirname(company_path), "super_master.db")
+            self.setup_db()  # Ensure table exists at the resolved path
+            print(f"[SuperMaster] DB Path resolved to: {self.db_path}")
+
             row_db = os.path.join(company_path, "row_data.db")
             unique_subs = []
             if os.path.exists(row_db):

@@ -47,6 +47,19 @@ def get_data_file_path(filename):
     Returns:
         Full absolute path to the file
     """
+    if filename == "super_master.db":
+        import json
+        app_path = get_app_dir()
+        config_file = os.path.join(app_path, "config.json")
+        try:
+            if os.path.exists(config_file):
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    data_path = json.load(f).get("default_path", "")
+                    if data_path and os.path.exists(data_path):
+                        return os.path.join(data_path, filename)
+        except Exception:
+            pass
+
     base = get_base_path()
     return os.path.join(base, "data", filename)
 

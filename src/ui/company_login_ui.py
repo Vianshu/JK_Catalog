@@ -435,10 +435,7 @@ class CompanyLoginUI(QWidget):
                         itm.setData(Qt.ItemDataRole.UserRole + 1, path)
                 except:
                     self.add_item(f"⚠️ {folder_name} (Error)", role="error")
-            else:
-                # Unregistered
-                itm = self.add_item(f"📂 {folder_name} (Unconfigured)", role="setup")
-                itm.setData(Qt.ItemDataRole.UserRole + 1, path)
+            # Unconfigured folders are intentionally ignored
 
     def add_item(self, text, role=None, align_right=False, is_bold=False):
         item = QListWidgetItem(text)
@@ -474,13 +471,12 @@ class CompanyLoginUI(QWidget):
             self.stack.setCurrentIndex(1)
 
     def create_new_company(self):
-        # Allow user to select the ROOT data folder (e.g. D:/Data)
-        # The new company folder will be created INSIDE this.
-        folder = QFileDialog.getExistingDirectory(self, "Select Data Directory (Where company folder will be created)")
-        if folder:
-            # No need to check for company_info.json here, as we are creating a SUBFOLDER
-            self.form_screen.load_for_setup(folder)
+        # Automatically use the stored data path that was set using 'Change Data Path'
+        if self.current_data_path and os.path.exists(self.current_data_path):
+            self.form_screen.load_for_setup(self.current_data_path)
             self.stack.setCurrentIndex(1)
+        else:
+            QMessageBox.warning(self, "No Data Path", "Please set a valid Data Path first using 'Change Data Path'.")
             
     def change_path(self):
         dlg = PathDialog(self.current_data_path, self)
