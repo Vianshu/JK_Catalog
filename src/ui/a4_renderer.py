@@ -50,15 +50,15 @@ def mm_to_px(mm: float, dpi: int) -> int:
 
 
 class InteractiveProductFrame(QFrame):
-    """A Frame that handles double-clicks and tooltips."""
+    """A Frame that handles right-clicks and tooltips."""
     def __init__(self, parent=None, double_click_callback=None):
         super().__init__(parent)
         self.double_click_callback = double_click_callback
 
-    def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self.double_click_callback:
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.RightButton and self.double_click_callback:
             self.double_click_callback()
-        super().mouseDoubleClickEvent(event)
+        super().mousePressEvent(event)
 
 
 class ProductSizeDialog(QDialog):
@@ -99,45 +99,51 @@ class ProductSizeDialog(QDialog):
             curr_h = int(parts[1])
 
         # Form
-        form = QGridLayout()
-        form.setVerticalSpacing(15)
+        layout_form = QVBoxLayout()
+        layout_form.setSpacing(15)
         
-        # Image Width
-        form.addWidget(QLabel("Image Width (Cols):"), 0, 0)
+        # Width Row
+        h_widths = QHBoxLayout()
+        h_widths.addWidget(QLabel("Image Width (Cols):"))
         self.spin_img = QSpinBox()
         self.spin_img.setRange(1, 4)
         self.spin_img.setValue(curr_img_w)
-        form.addWidget(self.spin_img, 0, 1)
+        h_widths.addWidget(self.spin_img)
         
-        # Data Width
-        form.addWidget(QLabel("Data Width (Cols):"), 1, 0)
+        h_widths.addSpacing(10)
+        h_widths.addWidget(QLabel("Data Width (Cols):"))
         self.spin_data = QSpinBox()
         self.spin_data.setRange(1, 4)
         self.spin_data.setValue(curr_data_w)
-        form.addWidget(self.spin_data, 1, 1)
+        h_widths.addWidget(self.spin_data)
+        layout_form.addLayout(h_widths)
         
-        # Total Preview
-        self.lbl_total = QLabel("Total Width: -")
-        form.addWidget(self.lbl_total, 2, 1)
-        
-        # Height
-        form.addWidget(QLabel("Vertical Height (Rows):"), 3, 0)
+        # Height Row
+        h_height = QHBoxLayout()
+        h_height.addWidget(QLabel("Vertical Height (Rows):"))
         self.spin_h = QSpinBox()
         self.spin_h.setRange(1, 5) # Minimum 1 visually
         # Set initial value (if curr_h is 0, show auto_h)
         val_to_show = self.auto_h if curr_h == 0 else curr_h
         self.spin_h.setValue(val_to_show)
-        form.addWidget(self.spin_h, 3, 1)
+        h_height.addWidget(self.spin_h)
+        h_height.addStretch()
+        layout_form.addLayout(h_height)
         
+        # Auto Checkbox
         self.check_auto = QCheckBox(f"Automatic Height (Calc: {self.auto_h})")
         self.check_auto.setChecked(curr_h == 0)
         self.check_auto.toggled.connect(self.toggle_auto)
-        form.addWidget(self.check_auto, 4, 1)
+        layout_form.addWidget(self.check_auto)
         
         # Initial state update (disable spin if auto)
         self.toggle_auto(self.check_auto.isChecked())
         
-        layout.addLayout(form)
+        layout.addLayout(layout_form)
+        
+        # Hidden Total Label to keep intact update_total logic
+        self.lbl_total = QLabel() 
+        self.lbl_total.hide()
         
         # Update Total Calc
         self.spin_img.valueChanged.connect(self.update_total)
