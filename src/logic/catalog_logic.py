@@ -218,7 +218,7 @@ class CatalogLogic:
     # =========================================================
 
     def sync_pages_with_content(self):
-        """Checks all subgroups and auto-creates pages if content overflows."""
+        """Checks all subgroups and auto-creates pages if content overflows. Cleans orphans."""
         if not self.catalog_db_path: return
         try:
             # 1. Get all master subgroups
@@ -227,8 +227,10 @@ class CatalogLogic:
             # Phase 1: Compute all layouts FIRST (no open DB connection)
             # This allows simulate_page_layout → _save_display_order to write freely
             page_requirements = []
+            valid_keys = set()
             for mg_sn, group_name, sg_sn in all_subgroups:
-                layout_map = self.simulate_page_layout(group_name, sg_sn)
+                valid_keys.add((group_name, sg_sn))
+                layout_map = self.simulate_page_layout(group_name, sg_sn, save_known=False)
                 max_required_page = max(layout_map.keys()) if layout_map else 1
                 page_requirements.append((mg_sn, group_name, sg_sn, max_required_page))
             
@@ -236,7 +238,16 @@ class CatalogLogic:
             conn = sqlite3.connect(self.catalog_db_path)
             cursor = conn.cursor()
             
+            # CLENUP: Remove any group/sg_sn combo from catalog_pages that no longer exists in super_master at all
+            cursor.execute("SELECT DISTINCT group_name, sg_sn FROM catalog_pages")
+            for (g_name, s_sn) in cursor.fetchall():
+                if (g_name, s_sn) not in valid_keys:
+                    cursor.execute("DELETE FROM catalog_pages WHERE group_name=? AND sg_sn=?", (g_name, s_sn))
+            
             for mg_sn, group_name, sg_sn, max_required_page in page_requirements:
+                # SYNC MG_SN: Update mg_sn for existing pages in case user modified it in super_master
+                cursor.execute("UPDATE catalog_pages SET mg_sn=? WHERE group_name=? AND sg_sn=?", (mg_sn, group_name, sg_sn))
+                
                 cursor.execute("SELECT MAX(page_no) FROM catalog_pages WHERE group_name=? AND sg_sn=?", (group_name, sg_sn))
                 res = cursor.fetchone()
                 current_max = res[0] if res and res[0] else 0
