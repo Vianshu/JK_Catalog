@@ -32,9 +32,6 @@ class CatalogBuildWorker(QThread):
     
     def run(self):
         try:
-            # Step 0: Clear stale memory cache before any computation
-            self.logic.invalidate_cache()
-            
             # Step 1: Sync pages
             self.progress_update.emit(1, "Step 1/5: Syncing pages...")
             self.logic.sync_pages_with_content()
@@ -109,9 +106,6 @@ class FullCatalogUI(QWidget):
         self.catalog_db_path = os.path.join(self.company_path, "catalog.db")
         self.final_db_path = os.path.join(self.company_path, "final_data.db")
         
-        # Ensure Logic gets correct super_master DB path for this company
-        super_db = os.path.join(os.path.dirname(self.company_path), "super_master.db")
-        self.logic.db_path = super_db
         
         # Pass to Logic
         self.logic.set_paths(self.catalog_db_path, self.final_db_path)
@@ -608,9 +602,6 @@ class FullCatalogUI(QWidget):
     
     def refresh_catalog_data(self):
         if not self.catalog_db_path: return
-        
-        # 0. Reload Index (Left Menu) dynamically
-        self.load_index_data()
         
         # 1. Sync Pages (Auto Add)
         self.logic.sync_pages_with_content()
