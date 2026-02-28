@@ -20,30 +20,12 @@ class SuperMasterUI(QWidget):
         self.init_ui()
 
     def setup_db(self):
-        """Create super_master table and seed from bundled default if empty."""
+        """Create super_master table."""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
         conn = sqlite3.connect(self.db_path)
         conn.execute("""CREATE TABLE IF NOT EXISTS super_master 
                       (id TEXT, MG_SN TEXT, Group_Name TEXT, SG_SN TEXT, Sub_Group TEXT PRIMARY KEY)""")
-        
-        # Check if DB is empty — if so, seed from bundled default
-        count = conn.execute("SELECT COUNT(*) FROM super_master WHERE MG_SN != '' OR Group_Name != ''").fetchone()[0]
-        if count == 0:
-            # Bundled default DB lives in project's data/ folder (or _MEIPASS for EXE)
-            default_db = os.path.join(get_base_path(), "data", "super_master.db")
-            if os.path.exists(default_db) and os.path.abspath(default_db) != os.path.abspath(self.db_path):
-                try:
-                    src_conn = sqlite3.connect(default_db)
-                    src_data = src_conn.execute("SELECT * FROM super_master").fetchall()
-                    src_conn.close()
-                    if src_data:
-                        conn.executemany("INSERT OR REPLACE INTO super_master VALUES (?, ?, ?, ?, ?)", src_data)
-                        conn.commit()
-                        print(f"[SuperMaster] Seeded {len(src_data)} rows from bundled default")
-                except Exception as e:
-                    print(f"[SuperMaster] Seed error: {e}")
-        
         conn.close()
 
     def init_ui(self):
