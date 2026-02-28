@@ -16,8 +16,9 @@ from difflib import SequenceMatcher
 
 
 # --- Load config from JSON (with hardcoded fallback) ---
+from src.utils.path_utils import get_base_path
 _CONFIG_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    get_base_path(),
     "config", "cleaning_rules.json"
 )
 

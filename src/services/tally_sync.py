@@ -15,7 +15,8 @@ class TallyService:
     def __init__(self):
         self.connection = None
         # प्रोजेक्ट का बेस पाथ (JSON फाइल ढूँढने के लिए)
-        self.app_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from src.utils.path_utils import get_app_dir
+        self.app_path = get_app_dir()
 
     def connect(self):
         try:

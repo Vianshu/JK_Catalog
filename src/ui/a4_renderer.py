@@ -22,8 +22,9 @@ import json
 
 
 # --- Load catalog rendering config ---
+from src.utils.path_utils import get_base_path
 _CATALOG_CONFIG_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    get_base_path(),
     "config", "catalog_config.json"
 )
 

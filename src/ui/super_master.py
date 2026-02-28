@@ -24,8 +24,7 @@ class SuperMasterUI(QWidget):
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
         conn = sqlite3.connect(self.db_path)
-        conn.execute("""CREATE TABLE IF NOT EXISTS super_master 
-                      (id TEXT, MG_SN TEXT, Group_Name TEXT, SG_SN TEXT, Sub_Group TEXT PRIMARY KEY)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS super_master (id TEXT, MG_SN TEXT, Group_Name TEXT, SG_SN TEXT, Sub_Group TEXT PRIMARY KEY)""")
         conn.close()
 
     def init_ui(self):

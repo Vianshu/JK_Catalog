@@ -322,7 +322,8 @@ class CompanyLoginUI(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.app_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from src.utils.path_utils import get_app_dir
+        self.app_path = get_app_dir()
         self.config_file = os.path.join(self.app_path, "config.json")
         self.history_file = os.path.join(self.app_path, "company_history.json") 
         self.current_data_path = self.load_saved_path()
