@@ -1,0 +1,91 @@
+﻿diff --git a/src/logic/catalog_logic.py b/src/logic/catalog_logic.py
+index 499e859..175e388 100644
+--- a/src/logic/catalog_logic.py
++++ b/src/logic/catalog_logic.py
+@@ -218,7 +218,7 @@ class CatalogLogic:
+     # =========================================================
+ 
+     def sync_pages_with_content(self):
+-        """Checks all subgroups and auto-creates pages if content overflows."""
++        """Checks all subgroups and auto-creates pages if content overflows. Cleans orphans."""
+         if not self.catalog_db_path: return
+         try:
+             # 1. Get all master subgroups
+@@ -227,8 +227,10 @@ class CatalogLogic:
+             # Phase 1: Compute all layouts FIRST (no open DB connection)
+             # This allows simulate_page_layout ΓåÆ _save_display_order to write freely
+             page_requirements = []
++            valid_keys = set()
+             for mg_sn, group_name, sg_sn in all_subgroups:
+-                layout_map = self.simulate_page_layout(group_name, sg_sn)
++                valid_keys.add((group_name, sg_sn))
++                layout_map = self.simulate_page_layout(group_name, sg_sn, save_known=False)
+                 max_required_page = max(layout_map.keys()) if layout_map else 1
+                 page_requirements.append((mg_sn, group_name, sg_sn, max_required_page))
+             
+@@ -236,7 +238,16 @@ class CatalogLogic:
+             conn = sqlite3.connect(self.catalog_db_path)
+             cursor = conn.cursor()
+             
++            # CLENUP: Remove any group/sg_sn combo from catalog_pages that no longer exists in super_master at all
++            cursor.execute("SELECT DISTINCT group_name, sg_sn FROM catalog_pages")
++            for (g_name, s_sn) in cursor.fetchall():
++                if (g_name, s_sn) not in valid_keys:
++                    cursor.execute("DELETE FROM catalog_pages WHERE group_name=? AND sg_sn=?", (g_name, s_sn))
++            
+             for mg_sn, group_name, sg_sn, max_required_page in page_requirements:
++                # SYNC MG_SN: Update mg_sn for existing pages in case user modified it in super_master
++                cursor.execute("UPDATE catalog_pages SET mg_sn=? WHERE group_name=? AND sg_sn=?", (mg_sn, group_name, sg_sn))
++                
+                 cursor.execute("SELECT MAX(page_no) FROM catalog_pages WHERE group_name=? AND sg_sn=?", (group_name, sg_sn))
+                 res = cursor.fetchone()
+                 current_max = res[0] if res and res[0] else 0
+diff --git a/src/ui/final_data.py b/src/ui/final_data.py
+index b55334e..6c47b76 100644
+--- a/src/ui/final_data.py
++++ b/src/ui/final_data.py
+@@ -410,8 +410,8 @@ class FinalDataUI(QWidget):
+             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_guid ON catalog (GUID)")
+ 
+             # 3. Super Master Mapping
+-            from src.utils.path_utils import get_data_file_path
+-            super_db = get_data_file_path("super_master.db")
++            # Read from the actual company's parent folder where it's saved by super_masterUI
++            super_db = os.path.join(os.path.dirname(folder_path), "super_master.db")
+             
+             super_mapping = {}
+             if os.path.exists(super_db):
+diff --git a/src/ui/full_catalog.py b/src/ui/full_catalog.py
+index ec1bd60..9521703 100644
+--- a/src/ui/full_catalog.py
++++ b/src/ui/full_catalog.py
+@@ -32,6 +32,9 @@ class CatalogBuildWorker(QThread):
+     
+     def run(self):
+         try:
++            # Step 0: Clear stale memory cache before any computation
++            self.logic.invalidate_cache()
++            
+             # Step 1: Sync pages
+             self.progress_update.emit(1, "Step 1/5: Syncing pages...")
+             self.logic.sync_pages_with_content()
+@@ -106,6 +109,9 @@ class FullCatalogUI(QWidget):
+         self.catalog_db_path = os.path.join(self.company_path, "catalog.db")
+         self.final_db_path = os.path.join(self.company_path, "final_data.db")
+         
++        # Ensure Logic gets correct super_master DB path for this company
++        super_db = os.path.join(os.path.dirname(self.company_path), "super_master.db")
++        self.logic.db_path = super_db
+         
+         # Pass to Logic
+         self.logic.set_paths(self.catalog_db_path, self.final_db_path)
+@@ -603,6 +609,9 @@ class FullCatalogUI(QWidget):
+     def refresh_catalog_data(self):
+         if not self.catalog_db_path: return
+         
++        # 0. Reload Index (Left Menu) dynamically
++        self.load_index_data()
++        
+         # 1. Sync Pages (Auto Add)
+         self.logic.sync_pages_with_content()
+         

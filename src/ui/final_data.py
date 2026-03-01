@@ -246,6 +246,8 @@ class FinalDataUI(QWidget):
                 final_bool_val = "false"
             elif lower_val in ["1", "true", "t", "yes"]:
                  final_bool_val = "1"
+            elif lower_val == "":
+                 final_bool_val = ""
             else:
                  # "For all other valid cases... print true" -> Default to "1"
                  final_bool_val = "1"

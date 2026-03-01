@@ -926,8 +926,8 @@ class A4PageRenderer(QWidget):
                 
             combined.append((p_val, s, m, q))
             
-        # Sort by Price ASC, then Size ASC
-        combined.sort(key=lambda x: (x[0], x[1]))
+        # Maintain the database query order (which is now sorted by ID)
+        # combined.sort(key=lambda x: (x[0], x[1]))  <-- Removed to fix sorting bug
         
         sizes = [x[1] for x in combined]
         mrps = [x[2] for x in combined]

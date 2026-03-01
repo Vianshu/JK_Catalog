@@ -853,6 +853,11 @@ class CatalogLogic:
             try: return float(str(x[4]).replace(",", "").strip()) if len(x)>4 else 0
             except: return 0
 
+        def get_p_id(x):
+            if isinstance(x, dict): return x.get("min_id", "ZZZZZZ")
+            try: return str(x[11]) if len(x)>11 and x[11] else "ZZZZZZ"
+            except: return "ZZZZZZ"
+
         # --- TWO-MODE SORTING ---
         cache_key = f"{group_name}|{sg_sn}"
         
@@ -873,7 +878,7 @@ class CatalogLogic:
                 if not added:
                     clusters.append([item])
             for cluster in clusters:
-                cluster.sort(key=get_p_price)
+                cluster.sort(key=get_p_id)
             clusters.sort(key=lambda c: get_p_price(c[0]) if c else 0)
             return [item for cluster in clusters for item in cluster]
         
@@ -1253,7 +1258,7 @@ class CatalogLogic:
             # Stock Logic: Must have Stock > 0 OR True/False = 1
             cursor.execute("""
                 SELECT [Product Name], [Item_Name], [Image_Path], [Lenth], [MRP], [Product_Size],
-                       [MOQ], [Category], [M_Packing], [Unit], [Update_date]
+                       [MOQ], [Category], [M_Packing], [Unit], [Update_date], [ID]
                 FROM catalog
                 WHERE REPLACE(TRIM([Group]), '.', '') = REPLACE(TRIM(?), '.', '') COLLATE NOCASE 
                   AND CAST([SG_SN] AS INTEGER) = CAST(? AS INTEGER)
@@ -1267,6 +1272,7 @@ class CatalogLogic:
                       OR 
                       LOWER(TRIM(CAST([True/False] AS TEXT))) IN ('1', 'true', 'yes')
                   )
+                ORDER BY [ID] COLLATE NOCASE ASC
             """, (group_name.strip(), sg_sn))
             
             rows = cursor.fetchall()
@@ -1311,7 +1317,8 @@ class CatalogLogic:
                         "master_packing": "",
                         "_mp_set": set(),
                         "max_update_date": "",
-                        "sort_price": p_val
+                        "sort_price": p_val,
+                        "min_id": str(r[11]) if len(r) > 11 and r[11] else "ZZZZZZ"
                     }
                 
                 g = grouped_map[norm_key]
