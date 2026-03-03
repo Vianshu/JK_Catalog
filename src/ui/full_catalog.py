@@ -116,6 +116,19 @@ class FullCatalogUI(QWidget):
         
         folder_name = os.path.basename(self.company_path)
         prefix = folder_name[:3].upper()
+        
+        info_file = os.path.join(self.company_path, "company_info.json")
+        if os.path.exists(info_file):
+            try:
+                import json
+                with open(info_file, 'r', encoding='utf-8') as f:
+                    info_data = json.load(f)
+                    if info_data and "display_name" in info_data and info_data["display_name"].strip():
+                        prefix = info_data["display_name"].strip()[:3].upper()
+            except:
+                pass
+                
+        self.renderer._company_prefix = prefix
         if hasattr(self, 'lbl_comp_code'): self.lbl_comp_code.setText(prefix)
 
     def init_catalog_db(self):

@@ -507,7 +507,12 @@ class A4PageRenderer(QWidget):
         self.cell_h = base_h
 
     def set_header_data(self, group_name, page_no):
-        self.header_left.setText(_get_header_text(getattr(self, '_company_prefix', None)))
+        company_prefix = getattr(self, '_company_prefix', None)
+        if company_prefix:
+            self.header_left.setText(company_prefix)
+        else:
+            self.header_left.setText(_get_header_text())
+            
         self.header_center.setText(str(group_name).upper())
         self.header_right.setText(f"{page_no}")
 

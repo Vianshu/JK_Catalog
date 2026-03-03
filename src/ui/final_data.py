@@ -431,6 +431,14 @@ class FinalDataUI(QWidget):
             with sqlite3.connect(row_db_path) as row_conn:
                 rows = row_conn.execute("SELECT GUID, Item_Name, FirstAlias, Part_No, Category, Unit, SubGroup, MRP, Closing_Qty FROM stock_items").fetchall()
 
+            # Identify and delete items that have been removed from Tally
+            tally_guids_set = {r[0] for r in rows}
+            cur.execute("SELECT GUID FROM catalog")
+            catalog_guids = [row[0] for row in cur.fetchall()]
+            guids_to_delete = [g for g in catalog_guids if g not in tally_guids_set]
+            for g in guids_to_delete:
+                cur.execute("DELETE FROM catalog WHERE GUID=?", (g,))
+
             now = self.current_datetime()
 
             # Update Sync Label with Row Data DB Modification Time
