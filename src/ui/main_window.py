@@ -274,7 +274,6 @@ class MainWindow(QWidget):
         m_catalog = self.create_menu_widget([
             ("⬅️ &Back", self.go_back_to_main, True),
             ("🔄 S&ync Tally", self.on_sync_tally_clicked),
-            ("📝 &Row Data", self.on_row_data_clicked),
             ("📑 Super &Master", self.handle_super_master),
             ("✅ &Final Data", self.final_data),
             ("📖 Full Catalo&g", lambda: self.main_stack.setCurrentIndex(2)),
@@ -541,7 +540,6 @@ class MainWindow(QWidget):
                     self.full_catalog_page.refresh_catalog_data()
                     
                 QMessageBox.information(self, "Sync Complete", f"Data Synced Successfully!\nLoaded {len(df)} rows.\n\nClick OK to close.")
-                self.main_stack.setCurrentIndex(4)
             else:
                 msg = error if error else "No data received from Tally. Check connection."
                 QMessageBox.warning(self, "Sync Issue", f"{msg}\n\nClick OK to close.")
