@@ -106,7 +106,7 @@ def is_similar(clean_a, clean_b):
     return ratio >= SIMILARITY_THRESHOLD
 
 
-def cluster_products(items, get_name_fn=None, get_price_fn=None):
+def cluster_products(items, get_name_fn=None, get_price_fn=None, get_id_fn=None):
     """
     Cluster a list of product items by name similarity and sort by price.
     
@@ -116,10 +116,12 @@ def cluster_products(items, get_name_fn=None, get_price_fn=None):
                      Defaults to item.get("product_name", "").
         get_price_fn: Function to extract sort price from an item.
                       Defaults to item.get("sort_price", 0).
+        get_id_fn: Function to extract product ID from an item.
+                   Defaults to item.get("min_id", "ZZZZZZ").
     
     Returns:
         List of clusters, where each cluster is a list of items
-        sorted by price (ASC). Clusters are sorted by their minimum price.
+        sorted by ID (ASC). Clusters are sorted by their minimum price.
     """
     if get_name_fn is None:
         def get_name_fn(x):
@@ -135,6 +137,15 @@ def cluster_products(items, get_name_fn=None, get_price_fn=None):
                 return float(str(x[4]).replace(",", "").strip()) if len(x) > 4 else 0
             except:
                 return 0
+
+    if get_id_fn is None:
+        def get_id_fn(x):
+            if isinstance(x, dict):
+                return x.get("min_id", "ZZZZZZ")
+            try:
+                return str(x[11]) if len(x) > 11 and x[11] else "ZZZZZZ"
+            except:
+                return "ZZZZZZ"
 
     clusters = []
     for item in items:
@@ -157,7 +168,7 @@ def cluster_products(items, get_name_fn=None, get_price_fn=None):
     for cluster in clusters:
         cluster.sort(key=get_price_fn)
 
-    # Sort clusters by minimum price
-    clusters.sort(key=lambda c: get_price_fn(c[0]) if c else 0)
+    # Sort clusters by minimum price across all items in the cluster
+    clusters.sort(key=lambda c: min(get_price_fn(x) for x in c) if c else 0)
 
     return clusters

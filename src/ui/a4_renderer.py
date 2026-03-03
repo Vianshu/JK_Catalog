@@ -137,9 +137,17 @@ class ProductSizeDialog(QDialog):
         self.check_auto.toggled.connect(self.toggle_auto)
         layout_form.addWidget(self.check_auto)
         
-        # Initial state update (disable spin if auto)
-        self.toggle_auto(self.check_auto.isChecked())
+        # Give focus handling to spin boxes for auto-selection
+        self._add_focus_select(self.spin_img)
+        self._add_focus_select(self.spin_data)
+        self._add_focus_select(self.spin_h)
         
+        # Initial state update (Auto sets value but keeps field enabled)
+        if self.check_auto.isChecked():
+            self.spin_h.setValue(self.auto_h)
+            
+        self.spin_h.valueChanged.connect(self._on_spin_h_changed)
+            
         layout.addLayout(layout_form)
         
         # Hidden Total Label to keep intact update_total logic
@@ -150,6 +158,14 @@ class ProductSizeDialog(QDialog):
         self.spin_img.valueChanged.connect(self.update_total)
         self.spin_data.valueChanged.connect(self.update_total)
         self.update_total()
+
+        # Keyboard Navigation & Auto-Select
+        self.setTabOrder(self.spin_img, self.spin_data)
+        self.setTabOrder(self.spin_data, self.spin_h)
+        
+        # Use QTimer to ensure the dialog is fully initialized before focusing
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, self._focus_and_select_img)
 
         # Buttons
         btns = QHBoxLayout()
@@ -164,10 +180,35 @@ class ProductSizeDialog(QDialog):
         btns.addWidget(cancel)
         layout.addLayout(btns)
         
+    def _add_focus_select(self, spin_box):
+        """Helper to attach an event filter so content is selected automatically on focus via tab/click"""
+        class FocusFilter(org.QtCore.QObject if 'org' in locals() else type('',(),{})):
+            pass
+        # simpler approach: subclassing or overriding focusInEvent
+        # store reference to original focusInEvent
+        original_focus_in = spin_box.focusInEvent
+        def focus_in_override(event):
+            original_focus_in(event)
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, spin_box.selectAll)
+        spin_box.focusInEvent = focus_in_override
+
+    def _focus_and_select_img(self):
+        self.spin_img.setFocus()
+        self.spin_img.selectAll()
+
     def toggle_auto(self, checked):
-        self.spin_h.setEnabled(not checked)
+        # Do not disable the field anymore. Just reset value if checked.
         if checked: 
+            self.spin_h.blockSignals(True)
             self.spin_h.setValue(self.auto_h)
+            self.spin_h.blockSignals(False)
+
+    def _on_spin_h_changed(self, val):
+        if self.check_auto.isChecked():
+            self.check_auto.blockSignals(True)
+            self.check_auto.setChecked(False)
+            self.check_auto.blockSignals(False)
         
     def update_total(self):
         sender = self.sender()

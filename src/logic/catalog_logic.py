@@ -878,8 +878,8 @@ class CatalogLogic:
                 if not added:
                     clusters.append([item])
             for cluster in clusters:
-                cluster.sort(key=get_p_id)
-            clusters.sort(key=lambda c: get_p_price(c[0]) if c else 0)
+                cluster.sort(key=get_p_price)
+            clusters.sort(key=lambda c: min(get_p_price(x) for x in c) if c else 0)
             return [item for cluster in clusters for item in cluster]
         
         if reshuffle:

@@ -531,6 +531,15 @@ class MainWindow(QWidget):
             
             if not error and not df.empty:
                 self.row_data_page.load_data(self.current_company_path)
+                
+                # Sync Final Data and Refresh Full Catalog automatically
+                if hasattr(self, 'final_data_page'):
+                    self.final_data_page.load_and_sync_data(self.current_company, self.current_company_path)
+                if hasattr(self, 'full_catalog_page'):
+                    if hasattr(self.full_catalog_page, 'logic'):
+                        self.full_catalog_page.logic.invalidate_cache()
+                    self.full_catalog_page.refresh_catalog_data()
+                    
                 QMessageBox.information(self, "Sync Complete", f"Data Synced Successfully!\nLoaded {len(df)} rows.\n\nClick OK to close.")
                 self.main_stack.setCurrentIndex(4)
             else:
