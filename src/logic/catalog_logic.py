@@ -233,12 +233,21 @@ class CatalogLogic:
     # =========================================================
 
     def sync_pages_with_content(self):
-        """Checks all subgroups and auto-creates pages if content overflows."""
+        """Checks all subgroups and auto-creates pages if content overflows.
+        Also removes orphaned catalog_pages entries whose (group_name, sg_sn)
+        no longer exists in super_master (handles group renames in Super Master).
+        """
         if not self.catalog_db_path: return
         try:
-            # 1. Get all master subgroups
-            all_subgroups = self.get_page_data_list() 
-            
+            # 1. Get all master subgroups (authoritative list)
+            all_subgroups = self.get_page_data_list()
+
+            # Build a set of valid (group_name UPPER, sg_sn str) pairs
+            valid_pairs = set(
+                (str(group_name).strip().upper(), str(sg_sn).strip())
+                for _, group_name, sg_sn in all_subgroups
+            )
+
             # Phase 1: Compute all layouts FIRST (no open DB connection)
             # This allows simulate_page_layout → _save_display_order to write freely
             page_requirements = []
@@ -246,27 +255,44 @@ class CatalogLogic:
                 layout_map = self.simulate_page_layout(group_name, sg_sn)
                 max_required_page = max(layout_map.keys()) if layout_map else 1
                 page_requirements.append((mg_sn, group_name, sg_sn, max_required_page))
-            
+
             # Phase 2: Update page counts (single connection, no conflicts)
             conn = sqlite3.connect(self.catalog_db_path)
             cursor = conn.cursor()
-            
+
+            # ── ORPHAN CLEANUP ────────────────────────────────────────────────
+            # Remove catalog_pages rows whose group/subgroup no longer exists
+            # in super_master. This handles cases like renaming "Price List" → "MOP":
+            # the old "Price List" pages become orphans and must be removed so
+            # they don't appear alongside the new "MOP" pages.
+            cursor.execute("SELECT DISTINCT group_name, sg_sn FROM catalog_pages")
+            existing_pairs = cursor.fetchall()
+            for (db_group, db_sg) in existing_pairs:
+                key = (str(db_group).strip().upper(), str(db_sg).strip())
+                if key not in valid_pairs:
+                    cursor.execute(
+                        "DELETE FROM catalog_pages WHERE group_name=? AND sg_sn=?",
+                        (db_group, db_sg)
+                    )
+                    print(f"[SYNC] Removed orphan pages for group='{db_group}', sg_sn='{db_sg}'")
+            # ─────────────────────────────────────────────────────────────────
+
             for mg_sn, group_name, sg_sn, max_required_page in page_requirements:
                 cursor.execute("SELECT MAX(page_no) FROM catalog_pages WHERE group_name=? AND sg_sn=?", (group_name, sg_sn))
                 res = cursor.fetchone()
                 current_max = res[0] if res and res[0] else 0
-                
+
                 if max_required_page > current_max:
                     for p in range(current_max + 1, max_required_page + 1):
                         cursor.execute("""
                             INSERT INTO catalog_pages (mg_sn, group_name, sg_sn, page_no)
                             VALUES (?, ?, ?, ?)
                         """, (mg_sn, group_name, sg_sn, p))
-            
+
             conn.commit()
             conn.close()
         except Exception as e:
-            pass  # Silent error handling
+            print(f"[SYNC] Error in sync_pages_with_content: {e}")  # Surface errors for debugging
     
     # =========================================================
     # CRM CHANGE TRACKING

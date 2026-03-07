@@ -777,6 +777,11 @@ class FullCatalogUI(QWidget):
         self.update_catalog_page()
 
     def showEvent(self, event):
+        # Reload index table every time the page becomes visible so that
+        # changes made in Super Master (group renames, new groups, etc.)
+        # are reflected immediately without needing an app restart.
+        self.expanded_groups = {}  # collapse all expanded groups first
+        self.load_index_data()
         self.refresh_catalog_data()
         super().showEvent(event)
 
