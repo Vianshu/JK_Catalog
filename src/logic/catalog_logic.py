@@ -158,7 +158,17 @@ class CatalogLogic:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            query = f"SELECT DISTINCT [MG_SN], [Group_Name] FROM {table} WHERE [MG_SN] IS NOT NULL AND TRIM([Group_Name]) != 'Price List' COLLATE NOCASE ORDER BY CAST([MG_SN] AS INTEGER)"
+            # Block groups with MG_SN >= 90 from catalog index (hidden/internal groups)
+            # Also exclude blank/zero MG_SN and blank Group_Name entries
+            # Sort: valid numbered groups first (1,2,3...), blanks at bottom
+            query = f"""SELECT DISTINCT [MG_SN], [Group_Name] FROM {table} 
+                WHERE [MG_SN] IS NOT NULL 
+                AND TRIM(CAST([MG_SN] AS TEXT)) != '' 
+                AND TRIM(CAST([MG_SN] AS TEXT)) != '0' 
+                AND TRIM(CAST([MG_SN] AS TEXT)) != '00' 
+                AND CAST([MG_SN] AS INTEGER) < 90
+                AND TRIM(IFNULL([Group_Name], '')) != ''
+                ORDER BY CAST([MG_SN] AS INTEGER)"""
             cursor.execute(query)
             data = cursor.fetchall()
             conn.close()
@@ -173,7 +183,11 @@ class CatalogLogic:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            if group_name.strip().lower() == "price list":
+            # Block groups with MG_SN >= 90 from showing subgroups
+            mg_check = f"SELECT DISTINCT CAST([MG_SN] AS INTEGER) FROM {table} WHERE TRIM([Group_Name])=? COLLATE NOCASE"
+            cursor.execute(mg_check, (group_name.strip(),))
+            mg_row = cursor.fetchone()
+            if mg_row and mg_row[0] is not None and mg_row[0] >= 90:
                 conn.close()
                 return []
             query = f"SELECT DISTINCT [SG_SN], [Sub_Group] FROM {table} WHERE TRIM([Group_Name])=? COLLATE NOCASE AND [Sub_Group] IS NOT NULL AND [Sub_Group]!='' ORDER BY CAST([SG_SN] AS INTEGER)"
@@ -192,7 +206,8 @@ class CatalogLogic:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            query = f"SELECT DISTINCT [MG_SN], [Group_Name], [SG_SN] FROM {table} WHERE [Group_Name] IS NOT NULL AND [SG_SN] IS NOT NULL AND TRIM([Group_Name]) != 'Price List' COLLATE NOCASE ORDER BY CAST([MG_SN] AS INTEGER), CAST([SG_SN] AS INTEGER)"
+            # Block groups with MG_SN >= 90 from page generation
+            query = f"SELECT DISTINCT [MG_SN], [Group_Name], [SG_SN] FROM {table} WHERE [Group_Name] IS NOT NULL AND [SG_SN] IS NOT NULL AND CAST([MG_SN] AS INTEGER) < 90 ORDER BY CAST([MG_SN] AS INTEGER), CAST([SG_SN] AS INTEGER)"
             cursor.execute(query)
             data = cursor.fetchall()
             conn.close()

@@ -584,17 +584,25 @@ class FullCatalogUI(QWidget):
         
         if not data: return
 
-        self.index_table.setRowCount(len(data))
         self.all_groups = [] # बहुत जरूरी: इसे यहाँ खाली करें
 
-        for row_idx, (sn, group) in enumerate(data):
+        # First pass: filter valid entries to set correct row count
+        valid_entries = []
+        for sn, group in data:
+            sn_val = "".join(filter(str.isdigit, str(sn)))
+            if not sn_val:
+                continue  # Skip empty serial numbers
             g_name = str(group).upper().strip()
+            if not g_name:
+                continue  # Skip blank group names
+            valid_entries.append((sn_val, g_name))
+
+        self.index_table.setRowCount(len(valid_entries))
+
+        for row_idx, (sn_val, g_name) in enumerate(valid_entries):
             self.all_groups.append(g_name) # क्लिक पहचानने के लिए लिस्ट भरें
             
             # SN को 01, 02 फॉर्मेट में बदलें
-            sn_val = "".join(filter(str.isdigit, str(sn)))
-            if not sn_val:
-                continue # Skip empty serial numbers (don't show '00')
             sn_str = sn_val.zfill(2)
             
             item_sn = QTableWidgetItem(sn_str)

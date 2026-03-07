@@ -53,7 +53,7 @@ class PrintExportDialog(QDialog):
         """)
         
         # Get company path for CRM list
-        self.company_path = getattr(catalog_ui, 'company_path', '') or ''
+        self.company_path = getattr(catalog_ui, 'company_path', '') or getattr(catalog_ui, 'current_company_path', '') or ''
         
         self.setup_ui()
         self.load_settings()
@@ -63,6 +63,8 @@ class PrintExportDialog(QDialog):
             idx = self.crm_combo.findText(self.initial_crm)
             if idx >= 0:
                 self.crm_combo.setCurrentIndex(idx)
+            if hasattr(self, 'crm_group'):
+                self.crm_group.setVisible(False)
         
         # Apply Mode
         if self.mode == "pdf":
@@ -108,8 +110,8 @@ class PrintExportDialog(QDialog):
         layout.addWidget(range_group)
         
         # CRM Selection Section
-        crm_group = QGroupBox("CRM Name (Footer)")
-        crm_layout = QHBoxLayout(crm_group)
+        self.crm_group = QGroupBox("CRM Name (Footer)")
+        crm_layout = QHBoxLayout(self.crm_group)
         
         crm_layout.addWidget(QLabel("Select CRM:"))
         self.crm_combo = QComboBox()
@@ -126,7 +128,7 @@ class PrintExportDialog(QDialog):
         
         crm_layout.addWidget(self.crm_combo)
         crm_layout.addStretch()
-        layout.addWidget(crm_group)
+        layout.addWidget(self.crm_group)
         
         # Options Section REMOVED (Empty)
         
@@ -235,6 +237,25 @@ class PrintExportDialog(QDialog):
         from src.ui.a4_renderer import A4PageRenderer
         renderer = A4PageRenderer()
         renderer.set_target_dpi(SCREEN_DPI)  # Use screen DPI so fonts match display
+        
+        # Calculate and set the company prefix for the top-left header
+        co_path = getattr(self.catalog_ui, 'company_path', "") or getattr(self.catalog_ui, 'current_company_path', "")
+        if co_path:
+            import json, os
+            folder_name = os.path.basename(co_path)
+            prefix = folder_name[:3].upper() if len(folder_name) >= 3 else folder_name.upper()
+            info_file = os.path.join(co_path, "company_info.json")
+            if os.path.exists(info_file):
+                try:
+                    with open(info_file, 'r', encoding='utf-8') as f:
+                        info_data = json.load(f)
+                        if info_data and "display_name" in info_data and info_data["display_name"].strip():
+                            name = info_data["display_name"].strip()
+                            prefix = name[:3].upper() if len(name) >= 3 else name.upper()
+                except:
+                    pass
+            renderer._company_prefix = prefix
+            
         return renderer
     
     def render_page_to_painter(self, painter, page_item, renderer):
@@ -243,7 +264,7 @@ class PrintExportDialog(QDialog):
         """
         # Set footer - get CRM name from selection
         selected_crm = self.crm_combo.currentText()
-        crm_name = "CRM_NAME" if selected_crm == "CRM_NAME (Default)" else selected_crm
+        crm_name = "" if selected_crm == "CRM_NAME (Default)" else selected_crm
         
         # --- Custom Callback Mode (Reports) ---
         if self.renderer_callback:
@@ -339,6 +360,7 @@ class PrintExportDialog(QDialog):
         
         preview.exec()
         self._active_preview = None
+        self.accept() # Auto close dialog after printing to trigger success prompt
     
     def handle_paint_request(self, printer):
         """Handle the paint request from print preview."""
@@ -398,18 +420,36 @@ class PrintExportDialog(QDialog):
             QMessageBox.warning(self, "No Pages", "No pages available to export.")
             return
         
-        # Get save location
-        default_name = "Catalog_Export.pdf"
-        if hasattr(self.catalog_ui, 'company_path') and self.catalog_ui.company_path:
-            folder_name = os.path.basename(self.catalog_ui.company_path)
-            default_name = f"{folder_name}_Catalog.pdf"
+        # Generate File Name Format
+        import datetime
+        now = datetime.datetime.now()
+        date_str = now.strftime("%d-%m")
+        time_str = now.strftime("%H-%M-%S")
         
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save PDF",
-            default_name,
-            "PDF Files (*.pdf)"
-        )
+        crm = self.crm_combo.currentText()
+        if crm == "CRM_NAME (Default)": crm = "DefaultCRM"
+        
+        # Determine Company Prefix
+        co_path = getattr(self.catalog_ui, 'company_path', "") or getattr(self.catalog_ui, 'current_company_path', "")
+        prefix = "CAT"
+        if co_path:
+            base = os.path.basename(co_path)
+            prefix = base[:3].upper() if len(base) >= 3 else base.upper()
+            
+        default_name = f"{prefix}_{crm}_{date_str}_{time_str}.pdf"
+        file_path = ""
+        
+        # Check download directory bypass
+        download_dir = getattr(self.catalog_ui, 'download_path', "")
+        if download_dir and os.path.exists(download_dir):
+            file_path = os.path.join(download_dir, default_name)
+        else:
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save PDF",
+                default_name,
+                "PDF Files (*.pdf)"
+            )
         
         if not file_path:
             return

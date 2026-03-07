@@ -64,7 +64,7 @@ def get_footer_date(products, logic=None):
                converts AD date to BS (Nepali) date.
 
     Returns:
-        Footer date string (Nepali DD/MM format if logic available, else "").
+        Footer date string (Nepali DD/MM format if available, else AD DD/MM format, otherwise "").
     """
     max_date_str = get_max_update_date(products)
 
@@ -73,8 +73,23 @@ def get_footer_date(products, logic=None):
 
     if logic and hasattr(logic, 'get_nepali_date'):
         try:
-            return logic.get_nepali_date(max_date_str)
+            nepali_date = logic.get_nepali_date(max_date_str)
+            if nepali_date:
+                return nepali_date
         except Exception:
-            return ""
+            pass
+
+    # Fallback to AD Date format (DD/MM)
+    try:
+        if " " in max_date_str:
+            date_part = max_date_str.split(" ")[0]
+        else:
+            date_part = max_date_str
+            
+        parts = date_part.split("-")
+        if len(parts) >= 2:
+            return f"{parts[0]}/{parts[1]}"
+    except Exception:
+        pass
 
     return ""

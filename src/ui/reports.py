@@ -20,12 +20,20 @@ SCREEN_DPI = 96
 SCREEN_DPI = 96
 
 class CRMSelectDialog(QDialog):
-    def __init__(self, parent=None, report_data=None, crm_path="crm_data.json"):
+    def __init__(self, parent=None, report_data=None, crm_path="crm_data.json", mode="Print"):
         super().__init__(parent)
         self.report_data = report_data or {}
         self.crm_path = crm_path
         self.setObjectName("ReportActionDialog") # QSS: #ReportActionDialog
-        self.setWindowTitle("Select CRM & Pages")
+        
+        # Set context-aware title and button text
+        if mode == "Download":
+            self.setWindowTitle("Select CRM & Pages \u2014 PDF")
+            btn_text = "Process to PDF"
+        else:
+            self.setWindowTitle("Select CRM & Pages \u2014 Print")
+            btn_text = "Process to Print"
+        
         self.setFixedSize(400, 500)
         
         layout = QVBoxLayout(self)
@@ -47,7 +55,7 @@ class CRMSelectDialog(QDialog):
 
         # Buttons
         btn_layout = QHBoxLayout()
-        self.ok_btn = QPushButton("Proceed to Print/PDF")
+        self.ok_btn = QPushButton(btn_text)
         self.ok_btn.setObjectName("PrimaryActionButton")
         self.ok_btn.clicked.connect(self.accept)
         
@@ -169,7 +177,7 @@ class ReportsUI(QWidget):
         crm_path = os.path.join(self.current_company_path, "crm_data.json") if self.current_company_path else "crm_data.json"
         
         # 1. Select CRM
-        sel_dlg = CRMSelectDialog(parent=self, report_data=current_report_data, crm_path=crm_path)
+        sel_dlg = CRMSelectDialog(parent=self, report_data=current_report_data, crm_path=crm_path, mode=mode)
         if not sel_dlg.exec():
             return
 

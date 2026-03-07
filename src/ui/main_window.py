@@ -278,7 +278,7 @@ class MainWindow(QWidget):
             ("✅ &Final Data", self.final_data),
             ("📖 Full Catalo&g", lambda: self.main_stack.setCurrentIndex(2)),
             ("📈 Rep&orts", lambda: self.main_stack.setCurrentIndex(7)),
-            ("🏷 &Price List", self.handle_catalog_price_list),
+            ("🏷 Cat / &Price List", self.handle_catalog_price_list),
             ("🧪 Preview &Rows", lambda: self.main_stack.setCurrentIndex(17)),
             ("➕ Create CRM", self.handle_create_crm, False, "F1"),
             ("✏️ Alter CRM", self.handle_alter_crm, False, "F2")

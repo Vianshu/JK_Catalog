@@ -60,8 +60,27 @@ def load_stylesheet(app, file_name):
 def main():
     # Initialize crash logger FIRST, before anything else
     setup_crash_logger()
-    
     app = QApplication(sys.argv)
+
+    # --- Animated Splash Screen ---
+    from PyQt6.QtGui import QPixmap, QColor, QPainter, QFont
+    from PyQt6.QtWidgets import QSplashScreen
+    from PyQt6.QtCore import Qt
+    splash_pix = QPixmap(500, 300)
+    splash_pix.fill(QColor("#1e272e"))
+    painter = QPainter(splash_pix)
+    painter.setPen(QColor("#ecf0f1"))
+    painter.setFont(QFont("Segoe UI", 28, QFont.Weight.Bold))
+    painter.drawText(splash_pix.rect(), Qt.AlignmentFlag.AlignCenter, "JK Catalog Loading...")
+    
+    painter.setPen(QColor("#3498db"))
+    painter.setFont(QFont("Segoe UI", 12))
+    painter.drawText(0, 0, 500, 270, Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, "Please wait while the application starts")
+    painter.end()
+
+    splash = QSplashScreen(splash_pix, Qt.WindowType.WindowStaysOnTopHint)
+    splash.show()
+    app.processEvents()
 
     # --- Enforce Fusion Style (Cross-platform consistency) ---
     from PyQt6.QtWidgets import QStyleFactory
@@ -93,6 +112,9 @@ def main():
 
     window = MainWindow()
     window.showMaximized()
+    
+    # Close splash screen when window is ready
+    splash.finish(window)
     
     sys.exit(app.exec())
 

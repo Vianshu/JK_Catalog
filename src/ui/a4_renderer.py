@@ -457,7 +457,7 @@ class A4PageRenderer(QWidget):
 
         self.footer_left.setStyleSheet("border:none; color:#000; font-size:14pt; font-weight:700;")
         self.footer_center.setStyleSheet("border:none; color:#000; font-size:12pt; font-weight:600;")
-        self.footer_right.setStyleSheet("border:none; color:#000; font-size:12pt; font-weight:600;") # Changed from Green to Black
+        self.footer_right.setStyleSheet("border:none; color:#28a745; font-size:12pt; font-weight:600;")
 
         fl.addWidget(self.footer_left, 1)
         fl.addWidget(self.footer_center, 2)
@@ -925,7 +925,7 @@ class A4PageRenderer(QWidget):
 
         table = QFrame()
         table.setStyleSheet(f"border-bottom:{outer_bottom}; background:transparent;")
-        table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         lay = QGridLayout(table)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -989,13 +989,14 @@ class A4PageRenderer(QWidget):
             def style_cell(lbl: QLabel, col_idx: int, row_num=row, total=total_rows):
                 b_right = inner if col_idx != last_col_idx else "none"
                 b_bottom = inner if row_num != total else "none"
-                lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
                 lbl.setStyleSheet(
                     f"font-size:{self.cell_fs}pt;"
                     f"color:{self.table_cell_text}; background:{self.table_cell_bg};"
                     f"padding:{self.pad_cell_v}px {self.pad_cell_h}px;"
                     f"border:none; border-right:{b_right}; border-bottom:{b_bottom};"
                 )
+                lbl.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
             l_size = QLabel(str(size))
             style_cell(l_size, 0)
@@ -1009,6 +1010,10 @@ class A4PageRenderer(QWidget):
                 l_moq = QLabel(str(moq))
                 style_cell(l_moq, 2)
                 lay.addWidget(l_moq, row, 2)
+
+        # Set equal stretch on all data rows so content is vertically centered
+        for row_idx in range(1, total_rows + 1):
+            lay.setRowStretch(row_idx, 1)
 
         return table
 

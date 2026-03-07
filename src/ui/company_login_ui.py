@@ -89,6 +89,7 @@ class LoginDialog(QDialog):
         
         self.user_edit = QLineEdit()
         self.user_edit.setObjectName("LoginInput")
+        self.user_edit.setStyleSheet("QLineEdit { background-color: #ffffff; color: #000000; padding: 6px; } QLineEdit:focus { border: 2px solid #87CEFA; background-color: #ffffff; color: #000000; }")
         form_grid.addWidget(self.user_edit, 0, 1)
         
         lbl_pass = QLabel("Password :-")
@@ -98,6 +99,7 @@ class LoginDialog(QDialog):
         self.pass_edit = QLineEdit()
         self.pass_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.pass_edit.setObjectName("LoginInput")
+        self.pass_edit.setStyleSheet("QLineEdit { background-color: #ffffff; color: #000000; padding: 6px; } QLineEdit:focus { border: 2px solid #87CEFA; background-color: #ffffff; color: #000000; }")
         form_grid.addWidget(self.pass_edit, 1, 1)
         layout.addWidget(content)
 
@@ -111,6 +113,10 @@ class LoginDialog(QDialog):
         self.btn_login.setObjectName("LoginActionButton") 
         self.btn_login.clicked.connect(self.verify_login)
         layout.addWidget(self.btn_login)
+        
+        # Make the username field automatically focused when form opens
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, self.user_edit.setFocus)
 
     def verify_login(self):
         username = self.user_edit.text()
