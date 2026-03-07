@@ -84,6 +84,11 @@ def get_data_file_path(filename):
             pass
 
     base = get_base_path()
+    
+    # calendar_data.db lives in src/ui/Data/ (single source of truth)
+    if filename == "calendar_data.db":
+        return os.path.join(base, "src", "ui", "Data", filename)
+    
     return os.path.join(base, "data", filename)
 
 
