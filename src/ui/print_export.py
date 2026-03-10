@@ -321,6 +321,7 @@ class PrintExportDialog(QDialog):
             QApplication.processEvents()
             
             if progress.wasCanceled():
+                self.reject()
                 return
             
             valid_pages.append(idx)
@@ -386,6 +387,7 @@ class PrintExportDialog(QDialog):
                 # Close the preview window to avoid showing a broken/blank page
                 if self._active_preview:
                     self._active_preview.close()
+                self.reject()
                 return
 
             if i > 0:
@@ -499,6 +501,7 @@ class PrintExportDialog(QDialog):
                     try:
                          if os.path.exists(file_path): os.remove(file_path)
                     except: pass
+                    self.reject()
                     return
 
                 if i > 0:
