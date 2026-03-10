@@ -780,8 +780,22 @@ class FullCatalogUI(QWidget):
         # Reload index table every time the page becomes visible so that
         # changes made in Super Master (group renames, new groups, etc.)
         # are reflected immediately without needing an app restart.
-        self.expanded_groups = {}  # collapse all expanded groups first
+        
+        # Save currently expanded groups
+        old_expanded = set(getattr(self, 'expanded_groups', {}).keys())
+        self.expanded_groups = {}  # clear state for clean reload
+        
         self.load_index_data()
+        
+        # Re-expand previously expanded groups if they still exist
+        for group in old_expanded:
+            for row in range(self.index_table.rowCount()):
+                item = self.index_table.item(row, 1)
+                # Ensure the item is a main group (doesn't have '->')
+                if item and "->" not in self.index_table.item(row, 0).text() and item.text().strip() == group:
+                    self.expand_group(row, group)
+                    break
+
         self.refresh_catalog_data()
         super().showEvent(event)
 

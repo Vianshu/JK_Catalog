@@ -243,10 +243,14 @@ class CatalogLogic:
             all_subgroups = self.get_page_data_list()
 
             # Build a set of valid (group_name UPPER, sg_sn str) pairs
-            valid_pairs = set(
-                (str(group_name).strip().upper(), str(sg_sn).strip())
-                for _, group_name, sg_sn in all_subgroups
-            )
+            valid_pairs = set()
+            for _, group_name, sg_sn in all_subgroups:
+                g_key = str(group_name).strip().upper()
+                try:
+                    s_key = str(int(str(sg_sn).strip()))
+                except ValueError:
+                    s_key = str(sg_sn).strip()
+                valid_pairs.add((g_key, s_key))
 
             # Phase 1: Compute all layouts FIRST (no open DB connection)
             # This allows simulate_page_layout → _save_display_order to write freely
@@ -268,7 +272,13 @@ class CatalogLogic:
             cursor.execute("SELECT DISTINCT group_name, sg_sn FROM catalog_pages")
             existing_pairs = cursor.fetchall()
             for (db_group, db_sg) in existing_pairs:
-                key = (str(db_group).strip().upper(), str(db_sg).strip())
+                g_key = str(db_group).strip().upper()
+                try:
+                    s_key = str(int(str(db_sg).strip()))
+                except ValueError:
+                    s_key = str(db_sg).strip()
+                
+                key = (g_key, s_key)
                 if key not in valid_pairs:
                     cursor.execute(
                         "DELETE FROM catalog_pages WHERE group_name=? AND sg_sn=?",
