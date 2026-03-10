@@ -484,9 +484,8 @@ class MainWindow(QWidget):
             session.register("Super Master", self.super_master_page,
                 lambda page, path: page.load_super_master_data(path))
             
-            final_df = getattr(self.final_data_page, 'final_df', None)
             session.register("Godown", self.godown_page,
-                lambda page, path: page.change_data_folder(path, final_df))
+                lambda page, path: page.change_data_folder(path, getattr(self.final_data_page, 'final_df', None)))
             
             if hasattr(self, 'calendar_page'):
                 session.register("Calendar", self.calendar_page,

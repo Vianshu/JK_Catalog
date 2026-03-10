@@ -9,15 +9,13 @@ from PyQt6.QtPrintSupport import QPrintPreviewDialog, QPrinter
 class GodownListUI(QWidget):
     def __init__(self, data_folder_path, final_data_df=None):
         super().__init__()
-        self.change_data_folder(data_folder_path, final_data_df, init_ui=True)
+        self.init_ui()
+        self.change_data_folder(data_folder_path, final_data_df)
 
-    def change_data_folder(self, company_path, final_data_df=None, init_ui=False):
+    def change_data_folder(self, company_path, final_data_df=None):
         if not company_path: return
         self.db_path = os.path.join(company_path, "godown_stock.db")
         self.final_data = final_data_df
-
-        if init_ui:
-            self.init_ui()
         
         self.init_db()
         
