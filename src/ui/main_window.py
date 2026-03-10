@@ -338,6 +338,17 @@ class MainWindow(QWidget):
             if hasattr(self, 'full_catalog_page'):
                 # Silent build (only processes changes if any)
                 self.full_catalog_page.build_catalog(silent=True)
+                
+                # If entering Reports tab, check if it's currently building
+                if idx == 7 and hasattr(self, 'reports_page'):
+                    is_running = hasattr(self.full_catalog_page, '_build_worker') and self.full_catalog_page._build_worker is not None and self.full_catalog_page._build_worker.isRunning()
+                    self.reports_page.set_refreshing(is_running)
+
+    def on_catalog_built(self):
+        """Called when Full Catalog finishes building in the background"""
+        if hasattr(self, 'reports_page'):
+            self.reports_page.set_refreshing(False)
+            self.reports_page.refresh_report_data()
 
     def init_main_pages(self):
         """राइट साइड के सभी पेजों को लोड करना"""
@@ -352,6 +363,8 @@ class MainWindow(QWidget):
         self.godown_page = GodownListUI("") # Will be initialized on login
         # Stack Pages
         self.full_catalog_page = FullCatalogUI()
+        self.full_catalog_page.catalog_built.connect(self.on_catalog_built)
+        
         self.main_stack.addWidget(self.company_login)      # 0
         self.main_stack.addWidget(WelcomeUI())             # 1
         self.main_stack.addWidget(self.full_catalog_page)  # 2

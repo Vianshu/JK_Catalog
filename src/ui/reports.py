@@ -100,6 +100,10 @@ class ReportsUI(QWidget):
         title = QLabel("📈 CRM Performance Reports")
         title.setObjectName("SectionTitle")
         
+        self.lbl_refresh = QLabel("⏳ Refreshing Catalog... Please Wait")
+        self.lbl_refresh.setStyleSheet("color: #ff9900; font-weight: bold; font-size: 14px;")
+        self.lbl_refresh.hide()
+        
         button_box = QHBoxLayout()
         button_box.setSpacing(10)
         
@@ -120,6 +124,7 @@ class ReportsUI(QWidget):
         button_box.addWidget(self.btn_download)
         
         header_layout.addWidget(title)
+        header_layout.addWidget(self.lbl_refresh)
         header_layout.addStretch()
         header_layout.addLayout(button_box)
         main_layout.addLayout(header_layout)
@@ -138,6 +143,14 @@ class ReportsUI(QWidget):
         self.table.verticalHeader().setVisible(False)
         main_layout.addWidget(self.table)
         
+    def set_refreshing(self, is_refreshing):
+        if is_refreshing:
+            self.lbl_refresh.show()
+            self.table.setEnabled(False)
+        else:
+            self.lbl_refresh.hide()
+            self.table.setEnabled(True)
+            
     def ensure_logic_init(self):
         if not self.current_company_path: return False
         
