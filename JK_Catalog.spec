@@ -27,7 +27,7 @@ a = Analysis(
     datas=[
         ('src/assets/style.qss', 'src/assets'),       # UI stylesheet
         ('data/super_master.db', 'data'),              # Product group mapping (read-only)
-        ('data/calendar_data.db', 'data'),             # AD-to-BS date conversion table
+        ('src/ui/Data/calendar_data.db', 'src/ui/Data'),             # AD-to-BS date conversion table
         ('config/cleaning_rules.json', 'config'),      # Product name cleaning rules
         ('config/catalog_config.json', 'config'),      # Per-company catalog header config
     ],

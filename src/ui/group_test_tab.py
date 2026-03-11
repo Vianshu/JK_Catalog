@@ -31,7 +31,7 @@ class GroupPreviewWorker(QThread):
             
             conn = sqlite3.connect(catalog_db)
             cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT group_name, sg_sn FROM catalog_pages ORDER BY group_name, CAST(sg_sn AS INTEGER)")
+            cursor.execute("SELECT DISTINCT group_name, sg_sn FROM catalog_pages ORDER BY CAST(mg_sn AS INTEGER), CAST(sg_sn AS INTEGER)")
             subgroups = cursor.fetchall()
             conn.close()
             

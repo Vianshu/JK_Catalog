@@ -660,26 +660,106 @@ class FinalDataUI(QWidget):
             with sqlite3.connect(self.db_path) as conn:
                 data = conn.execute("SELECT * FROM catalog").fetchall()
 
-            # Python-level Sorting (Missing Images on Top) - Aapka Original Logic
-            missing_rows, found_rows = [], []
-            id_idx = self.col_index("ID")
+            # --- UNIFIED SORTING (Same as Preview/Catalog Tab) ---
+            # Order: super_master group sequence (MG_SN, SG_SN) → cluster by name similarity → price within cluster
+            from src.logic.text_utils import clean_cat_name, is_similar
+            
             grp_idx = self.col_index("Group")
             path_idx = self.col_index("Image_Path")
+            mg_sn_idx = self.col_index("MG_SN")
+            sg_sn_idx = self.col_index("SG_SN")
+            product_name_idx = self.col_index("Product Name")
+            mrp_idx = self.col_index("MRP")
 
+            # 1. Build super_master group ordering map
+            group_order = {}  # (MG_SN_int, SG_SN_int) → sort key
+            try:
+                from src.utils.path_utils import get_data_file_path
+                super_db = get_data_file_path("super_master.db")
+                if os.path.exists(super_db):
+                    with sqlite3.connect(super_db) as s_conn:
+                        for row in s_conn.execute(
+                            "SELECT MG_SN, SG_SN FROM super_master ORDER BY CAST(MG_SN AS INTEGER), CAST(SG_SN AS INTEGER)"
+                        ):
+                            mg = row[0] or ""
+                            sg = row[1] or ""
+                            try: mg_int = int(str(mg).strip())
+                            except: mg_int = 9999
+                            try: sg_int = int(str(sg).strip())
+                            except: sg_int = 9999
+                            group_order[(mg_int, sg_int)] = (mg_int, sg_int)
+            except Exception as e:
+                logger.warning(f"Could not load super_master ordering: {e}")
+
+            # 2. Group rows by (MG_SN, SG_SN)
+            grouped_rows = {}  # (mg_int, sg_int) → list of rows
             for r in data:
-                is_missing = False
+                mg_raw = str(r[mg_sn_idx]).strip() if r[mg_sn_idx] else ""
+                sg_raw = str(r[sg_sn_idx]).strip() if r[sg_sn_idx] else ""
+                try: mg_int = int(mg_raw)
+                except: mg_int = 9999
+                try: sg_int = int(sg_raw)
+                except: sg_int = 9999
+                key = (mg_int, sg_int)
+                if key not in grouped_rows:
+                    grouped_rows[key] = []
+                grouped_rows[key].append(r)
+
+            # 3. Sort group keys by super_master order
+            sorted_group_keys = sorted(grouped_rows.keys(), key=lambda k: (k[0], k[1]))
+
+            # 4. Within each group, cluster by name similarity and sort by price
+            sorted_data = []
+            for gkey in sorted_group_keys:
+                rows_in_group = grouped_rows[gkey]
+                
+                # Cluster by product name similarity
+                clusters = []
+                for r in rows_in_group:
+                    p_name = str(r[product_name_idx]) if r[product_name_idx] else ""
+                    clean_n = clean_cat_name(p_name)
+                    
+                    added = False
+                    for cluster in clusters:
+                        rep_name = str(cluster[0][product_name_idx]) if cluster[0][product_name_idx] else ""
+                        rep_clean = clean_cat_name(rep_name)
+                        if is_similar(clean_n, rep_clean):
+                            cluster.append(r)
+                            added = True
+                            break
+                    if not added:
+                        clusters.append([r])
+                
+                # Sort items within each cluster by MRP (price ASC)
+                def get_mrp(row):
+                    try:
+                        return float(str(row[mrp_idx]).replace(",", "").strip())
+                    except:
+                        return 99999999.0
+                
+                for cluster in clusters:
+                    cluster.sort(key=get_mrp)
+                
+                # Sort clusters by their minimum price
+                clusters.sort(key=lambda c: min(get_mrp(x) for x in c) if c else 0)
+                
+                # Flatten clusters into final list
+                for cluster in clusters:
+                    sorted_data.extend(cluster)
+            
+            # 5. Split into missing-image (top) and found-image (bottom)
+            #    Both sections preserve the unified sort order above
+            missing_rows = []
+            found_rows = []
+            for r in sorted_data:
                 grp = str(r[grp_idx]).lower().strip() if r[grp_idx] else ""
                 path = str(r[path_idx]) if r[path_idx] else ""
                 if grp != "price list" and (not path or not os.path.exists(path)):
-                    is_missing = True
-                
-                (missing_rows if is_missing else found_rows).append(r)
-
-            missing_rows.sort(key=lambda x: str(x[id_idx]))
-            found_rows.sort(key=lambda x: str(x[id_idx]))
+                    missing_rows.append(r)
+                else:
+                    found_rows.append(r)
             
             final_display_data = missing_rows + found_rows
-            #self.table.blockSignals(True)
             
             # Columns to right align
             right_align_cols = ["Unit", "MOQ", "M_Packing", "MRP", "Stock", "MG_SN", "SG_SN"]
