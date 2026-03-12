@@ -242,14 +242,16 @@ class FinalDataUI(QWidget):
             
             if "no_need" in str(img_path_val).lower() or "no need" in str(img_path_val).lower():
                 final_bool_val = "false"
-            elif lower_val in ["f", "false", "flase", "0", "no"]:
-                final_bool_val = "false"
-            elif lower_val in ["1", "true", "t", "yes"]:
-                 final_bool_val = "1"
             elif lower_val == "":
-                 final_bool_val = ""
+                final_bool_val = ""
+            elif lower_val in ["0"] or lower_val.startswith("f") or lower_val.startswith("n"):
+                # Any input starting with 'f' (false, flase, fals, fa, etc.)
+                # or 'n' (no, noo, nah, etc.) or '0' → autocorrect to false
+                final_bool_val = "false"
+            elif lower_val in ["1", "true", "t", "yes"] or lower_val.startswith("t") or lower_val.startswith("y"):
+                final_bool_val = "1"
             else:
-                 # "For all other valid cases... print true" -> Default to "1"
+                 # Unknown input → Default to "1"
                  final_bool_val = "1"
             
             if final_bool_val != new_val:
@@ -441,13 +443,26 @@ class FinalDataUI(QWidget):
 
             now = self.current_datetime()
 
-            # Update Sync Label with Row Data DB Modification Time
-            if os.path.exists(row_db_path):
-                mod_time = os.path.getmtime(row_db_path)
-                sync_dt = datetime.datetime.fromtimestamp(mod_time).strftime("%d-%m-%Y %H:%M:%S")
+            # Update Sync Label: show the LATEST modification time across
+            # all relevant data sources (row_data.db, super_master.db, final_data.db)
+            latest_mod = 0
+            for check_path in [row_db_path, self.db_path]:
+                if check_path and os.path.exists(check_path):
+                    t = os.path.getmtime(check_path)
+                    if t > latest_mod:
+                        latest_mod = t
+            # Also check super_master.db (shared across companies)
+            from src.utils.path_utils import get_data_file_path
+            super_db = get_data_file_path("super_master.db")
+            if os.path.exists(super_db):
+                t = os.path.getmtime(super_db)
+                if t > latest_mod:
+                    latest_mod = t
+            if latest_mod > 0:
+                sync_dt = datetime.datetime.fromtimestamp(latest_mod).strftime("%d-%m-%Y %H:%M:%S")
                 self.sync_lbl.setText(f"Last Sync: {sync_dt}")
             else:
-                 self.sync_lbl.setText(f"Last Sync: {now}")
+                self.sync_lbl.setText(f"Last Sync: {now}")
             
             for r in rows:
                 guid = r[0]
@@ -458,7 +473,7 @@ class FinalDataUI(QWidget):
                 
                 cur.execute("""
                     SELECT Item_Name, Alias, Part_No, Category, Unit, 
-                           MRP, Stock, MG_SN, [Group], SG_SN, Sub_Group, [Product_Size]
+                           MRP, Stock, MG_SN, [Group], SG_SN, Sub_Group
                     FROM catalog WHERE GUID=?
                 """, (guid,))
                 old_row_db = cur.fetchone()
