@@ -31,6 +31,7 @@ from src.ui.catalog_price_list import CatalogPriceListUI
 from src.ui.cheque_list import ChequeListUI
 from src.ui.calendar_mapping import CalendarMappingUI
 from src.ui.group_test_tab import GroupTestTab
+from src.ui.ledger_row_data import LedgerRowDataUI
 from src.utils.path_utils import get_writable_data_path
 
 # Settings & Services
@@ -39,7 +40,7 @@ from src.ui.settings import (
     CRMDialog, UserManagerDialog, SecurityDialog,
     load_crm_list, save_crm_to_json, update_crm_in_json
 )
-from src.services.tally_sync import fetch_tally_data
+from src.services.tally_sync import fetch_tally_data, fetch_tally_ledger_data
 
 class AltKeyFilter(QObject):
     def __init__(self, main_window):
@@ -300,6 +301,8 @@ class MainWindow(QWidget):
         # Index 4: Tally Internal
         m_tally = self.create_menu_widget([
             ("⬅️ &Back", self.go_back_to_main, True),
+            ("🔄 Sync &Ledger", self.on_sync_ledger_clicked),
+            ("🧪 Ledger &Rows", self.on_ledger_row_data_clicked),
             ("💰 &On Account", lambda: self.main_stack.setCurrentIndex(9)),
             ("🧾 C&hq. List", self.handle_cheque_list),
             ("🏠 &Godown List", lambda: self.main_stack.setCurrentIndex(10)),
@@ -329,6 +332,36 @@ class MainWindow(QWidget):
             ("📥 N&GT Receive", None)
         ])
         self.nav_stack.addWidget(m_branch)
+
+    def on_sync_ledger_clicked(self):
+        """Sync Ledger data from Tally into the company's ledger DB."""
+        if not self.current_company:
+            return
+
+        progress = QProgressDialog("Syncing Ledger Data...", None, 0, 0, self)
+        progress.setWindowTitle("Please Wait")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.show()
+        QApplication.processEvents()
+
+        try:
+            company_path = getattr(self, 'current_company_path', None)
+            row_count, error = fetch_tally_ledger_data(company_path=company_path)
+            progress.close()
+
+            if not error and row_count > 0:
+                QMessageBox.information(
+                    self, "Sync Complete",
+                    f"Ledger data synced successfully!\nLoaded {row_count} ledger entries."
+                )
+            else:
+                msg = error if error else "No ledger data received from Tally."
+                QMessageBox.warning(self, "Sync Issue", msg)
+
+        except Exception as e:
+            progress.close()
+            QMessageBox.critical(self, "Error", f"Ledger Sync Failed: {str(e)}")
 
     def on_main_stack_change(self, idx):
         """Handle main tab changes -> Auto-save/Build Catalog if needed."""
@@ -389,6 +422,9 @@ class MainWindow(QWidget):
 
         self.group_test_page = GroupTestTab()
         self.main_stack.addWidget(self.group_test_page) # Index 17
+
+        self.ledger_row_data_page = LedgerRowDataUI()
+        self.main_stack.addWidget(self.ledger_row_data_page) # Index 18
     # --- Helper UI Functions ---
     # --- Helper UI Functions ---
     def create_menu_widget(self, buttons_data):
@@ -509,6 +545,9 @@ class MainWindow(QWidget):
 
             session.register("Row Data", self.row_data_page,
                 lambda page, path: page.load_data(path))
+
+            session.register("Ledger Row Data", self.ledger_row_data_page,
+                lambda page, path: page.load_data(path))
             
             # Activate session — all pages get initialized
             result = session.activate(comp_name, company_path)
@@ -563,6 +602,11 @@ class MainWindow(QWidget):
         if self.current_company and hasattr(self, 'current_company_path'):
             self.row_data_page.load_data(self.current_company_path)
             self.main_stack.setCurrentIndex(4)
+
+    def on_ledger_row_data_clicked(self):
+        if self.current_company and hasattr(self, 'current_company_path'):
+            self.ledger_row_data_page.load_data(self.current_company_path)
+            self.main_stack.setCurrentIndex(18)
 
     def final_data(self):
         if self.current_company and hasattr(self, 'current_company_path'):
