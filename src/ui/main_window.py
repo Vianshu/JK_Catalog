@@ -582,17 +582,18 @@ class MainWindow(QWidget):
             if not error and not df.empty:
                 self.row_data_page.load_data(self.current_company_path)
                 
-                # Sync Final Data and Refresh Full Catalog automatically
+                # Sync Final Data
                 if hasattr(self, 'final_data_page'):
                     self.final_data_page.load_and_sync_data(self.current_company, self.current_company_path)
+                
+                # Trigger a silent catalog build — this will:
+                # 1. Detect changed pages
+                # 2. Update REPORT_DATA.JSON with pending pages
+                # 3. Emit catalog_built signal → on_catalog_built() → refresh reports
                 if hasattr(self, 'full_catalog_page'):
                     if hasattr(self.full_catalog_page, 'logic'):
                         self.full_catalog_page.logic.invalidate_cache()
-                    self.full_catalog_page.refresh_catalog_data()
-                
-                # Refresh Reports tab so changes are visible without switching tabs
-                if hasattr(self, 'reports_page'):
-                    self.reports_page.refresh_report_data()
+                    self.full_catalog_page.build_catalog(silent=True)
                     
                 QMessageBox.information(self, "Sync Complete", f"Data Synced Successfully!\nLoaded {len(df)} rows.\n\nClick OK to close.")
             else:
