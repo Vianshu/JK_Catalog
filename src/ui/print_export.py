@@ -19,6 +19,25 @@ A4_HEIGHT_MM = 297.0
 # This ensures fonts look the same as on screen
 SCREEN_DPI = 96
 
+# ── Margin Strategy ──────────────────────────────────────────────
+# The A4PageRenderer is sized to exactly 210×297mm (full A4 bleed).
+# Its internal content margins are 0mm – content fills edge-to-edge.
+#
+# PDF export:
+#   printer margins = 0 → pageRect == full A4.
+#   We add a tiny SAFE_MARGIN (2.5 mm each side) so when the user
+#   later prints the PDF on a physical printer the non-printable
+#   strip (typically 3-5 mm) doesn't clip important content.
+#   Content is translated inward and scaled to fill the remaining
+#   area, giving ~97.6 % page utilisation.
+#
+# Direct print:
+#   We ask Qt for the printer's real non-printable margins and use
+#   those to translate + scale.  This way the content fills the
+#   printable area completely with zero wasted space.
+# ─────────────────────────────────────────────────────────────────
+SAFE_MARGIN_MM = 2.5  # safe zone for PDF (each side)
+
 
 class PrintExportDialog(QDialog):
     """Dialog for print preview and PDF export."""
@@ -293,7 +312,106 @@ class PrintExportDialog(QDialog):
         # Render the widget to painter
         renderer.render(painter)
         return True
-    
+
+    # ─── Scaling helpers ────────────────────────────────────────────
+    @staticmethod
+    def _compute_margins_px(printer, margin_mm):
+        """Convert a uniform margin (mm) to device-pixel offsets for a printer.
+        
+        Returns (offset_x, offset_y, printable_w, printable_h) in device pixels.
+        
+        - offset_x/y   : how far to translate the painter origin
+        - printable_w/h : usable area after subtracting margins on both sides
+        """
+        res = printer.resolution()  # DPI
+        margin_px = margin_mm * res / 25.4
+        
+        full = printer.paperRect(QPrinter.Unit.DevicePixel)
+        printable_w = full.width()  - 2 * margin_px
+        printable_h = full.height() - 2 * margin_px
+        return margin_px, margin_px, printable_w, printable_h
+
+    def _render_pages(self, painter, printer, page_indices, mode="pdf"):
+        """Core rendering loop used by both PDF export and direct print.
+        
+        Coordinate system notes (fullPage is NOT set, so Qt defaults apply):
+        ─────────────────────────────────────────────────────────────────────
+        • PDF  (OutputFormat.PdfFormat, margins=0):
+            (0,0) = paper edge.  pageRect == paperRect == full A4.
+            We manually inset by SAFE_MARGIN_MM so that when the user later
+            prints the PDF on a physical printer, the non-printable strip
+            doesn't clip content.
+        
+        • Direct print / Preview:
+            Qt already places (0,0) at the printable-area origin.
+            pageRect gives the printable dimensions.
+            We just scale to fill – NO translation needed.
+        ─────────────────────────────────────────────────────────────────────
+        """
+        renderer = self.create_print_renderer()
+        
+        from PyQt6.QtWidgets import QProgressDialog, QApplication
+        
+        label = "Exporting PDF..." if mode == "pdf" else "Rendering Preview..."
+        progress = QProgressDialog(label, "Cancel", 0, len(page_indices), self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        
+        # ── Compute the target rectangle once ────────────────────
+        if mode == "pdf":
+            # PDF: (0,0) is at paper edge → offset by safe margin
+            off_x, off_y, target_w, target_h = self._compute_margins_px(
+                printer, SAFE_MARGIN_MM
+            )
+        else:
+            # Direct print: (0,0) is already at the printable area origin.
+            # pageRect gives us the full printable dimensions.
+            page_rect = printer.pageRect(QPrinter.Unit.DevicePixel)
+            off_x = 0
+            off_y = 0
+            target_w = page_rect.width()
+            target_h = page_rect.height()
+        
+        # Scale renderer (full A4 widget) to fill the target area
+        scale_x = target_w / renderer.width()
+        scale_y = target_h / renderer.height()
+        scale = min(scale_x, scale_y)
+        
+        # Centre the content if aspect ratios differ slightly
+        actual_w = renderer.width() * scale
+        actual_h = renderer.height() * scale
+        extra_x = (target_w - actual_w) / 2.0
+        extra_y = (target_h - actual_h) / 2.0
+        
+        for i, page_idx in enumerate(page_indices):
+            if progress.wasCanceled():
+                painter.end()
+                renderer.deleteLater()
+                progress.close()
+                return False  # cancelled
+            
+            if i > 0:
+                printer.newPage()
+            
+            painter.save()
+            # Translate: for PDF this adds the safe margin; for print it's (0,0)
+            painter.translate(off_x + extra_x, off_y + extra_y)
+            # Scale widget to fill the target area
+            painter.scale(scale, scale)
+            
+            self.render_page_to_painter(painter, page_idx, renderer)
+            
+            painter.restore()
+            
+            progress.setValue(i + 1)
+            QApplication.processEvents()
+        
+        renderer.deleteLater()
+        progress.close()
+        return True  # success
+
+    # ─── Print Preview ──────────────────────────────────────────────
     def show_print_preview(self):
         """Show print preview dialog with loading indicator."""
         page_indices = self.get_page_range()
@@ -325,8 +443,6 @@ class PrintExportDialog(QDialog):
                 return
             
             valid_pages.append(idx)
-            # if idx < len(self.catalog_ui.all_pages_data):
-            #    valid_pages.append(idx)
         
         progress.setValue(len(page_indices))
         progress.close()
@@ -338,11 +454,9 @@ class PrintExportDialog(QDialog):
         # Create printer for preview
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
         
-        # Set A4 page size explicitly
+        # Set A4 page size with ZERO margins - we handle margins ourselves
         page_size = QPageSize(QPageSize.PageSizeId.A4)
         printer.setPageSize(page_size)
-        
-        # Set minimal margins
         margins = QMarginsF(0, 0, 0, 0)
         page_layout = QPageLayout(page_size, QPageLayout.Orientation.Portrait, margins)
         printer.setPageLayout(page_layout)
@@ -364,57 +478,29 @@ class PrintExportDialog(QDialog):
         self.accept() # Auto close dialog after printing to trigger success prompt
     
     def handle_paint_request(self, printer):
-        """Handle the paint request from print preview."""
+        """Handle the paint request from print preview.
+        
+        Uses the printer's actual non-printable margins so content fills
+        the printable area completely with no wasted whitespace.
+        """
         painter = QPainter()
         if not painter.begin(printer):
             return
         
         page_indices = self._preview_pages
-        renderer = self.create_print_renderer()
         
-        # Use QProgressDialog for cancellation support
-        from PyQt6.QtWidgets import QProgressDialog, QApplication
+        ok = self._render_pages(painter, printer, page_indices, mode="print")
         
-        progress = QProgressDialog("Rendering Preview...", "Cancel", 0, len(page_indices), self)
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
-        progress.setValue(0)
-            
-        for i, page_idx in enumerate(page_indices):
-            if progress.wasCanceled():
-                painter.end()
-                renderer.deleteLater()
-                # Close the preview window to avoid showing a broken/blank page
-                if self._active_preview:
-                    self._active_preview.close()
-                self.reject()
-                return
-
-            if i > 0:
-                printer.newPage()
-            
-            # Scale to fit printer page
-            page_rect = printer.pageRect(QPrinter.Unit.DevicePixel)
-            
-            # Calculate scaling to fit A4 exactly
-            scale_x = page_rect.width() / renderer.width()
-            scale_y = page_rect.height() / renderer.height()
-            scale = min(scale_x, scale_y)
-            
-            painter.save()
-            painter.scale(scale, scale)
-            
-            self.render_page_to_painter(painter, page_idx, renderer)
-            
-            painter.restore()
-            
-            progress.setValue(i + 1)
-            QApplication.processEvents()
+        if not ok:
+            # Cancelled – close preview
+            if self._active_preview:
+                self._active_preview.close()
+            self.reject()
+            return
         
         painter.end()
-        renderer.deleteLater()
-        progress.close()
     
+    # ─── PDF Export ─────────────────────────────────────────────────
     def export_to_pdf(self):
         """Export catalog to PDF file."""
         page_indices = self.get_page_range()
@@ -466,23 +552,14 @@ class PrintExportDialog(QDialog):
         if not file_path.lower().endswith('.pdf'):
             file_path += '.pdf'
         
-        from PyQt6.QtWidgets import QProgressDialog, QApplication
-        progress = QProgressDialog("Exporting PDF...", "Cancel", 0, len(page_indices), self)
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
-        progress.setValue(0)
-        
         try:
-            # Create PDF printer
+            # Create PDF printer – ZERO printer margins so we get full A4
             printer = QPrinter(QPrinter.PrinterMode.HighResolution)
             printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
             printer.setOutputFileName(file_path)
             
-            # Set A4 page size explicitly
             page_size = QPageSize(QPageSize.PageSizeId.A4)
             printer.setPageSize(page_size)
-            
-            # Set minimal margins for full page usage
             margins = QMarginsF(0, 0, 0, 0)
             page_layout = QPageLayout(page_size, QPageLayout.Orientation.Portrait, margins)
             printer.setPageLayout(page_layout)
@@ -492,42 +569,17 @@ class PrintExportDialog(QDialog):
             if not painter.begin(printer):
                 raise Exception("Failed to initialize PDF writer")
             
-            renderer = self.create_print_renderer()
+            ok = self._render_pages(painter, printer, page_indices, mode="pdf")
             
-            for i, page_idx in enumerate(page_indices):
-                if progress.wasCanceled():
-                    painter.end()
-                    renderer.deleteLater()
-                    try:
-                         if os.path.exists(file_path): os.remove(file_path)
-                    except: pass
-                    self.reject()
-                    return
-
-                if i > 0:
-                    printer.newPage()
-                
-                # Scale to fit printer page
-                page_rect = printer.pageRect(QPrinter.Unit.DevicePixel)
-                
-                # Calculate scaling to fit A4 exactly
-                scale_x = page_rect.width() / renderer.width()
-                scale_y = page_rect.height() / renderer.height()
-                scale = min(scale_x, scale_y)
-                
-                painter.save()
-                painter.scale(scale, scale)
-                
-                self.render_page_to_painter(painter, page_idx, renderer)
-                
-                painter.restore()
-                
-                progress.setValue(i + 1)
-                QApplication.processEvents()
+            if not ok:
+                # Cancelled
+                try:
+                    if os.path.exists(file_path): os.remove(file_path)
+                except: pass
+                self.reject()
+                return
             
             painter.end()
-            renderer.deleteLater()
-            progress.close()
             
             QMessageBox.information(
                 self, 
@@ -549,5 +601,4 @@ class PrintExportDialog(QDialog):
             self.accept()
             
         except Exception as e:
-            progress.close()
             QMessageBox.critical(self, "Export Failed", f"Failed to export PDF:\n{e}")
