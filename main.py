@@ -4,7 +4,6 @@ import traceback
 import logging
 from datetime import datetime
 from PyQt6.QtWidgets import QApplication
-from src.ui.main_window import MainWindow
 from src.utils.path_utils import get_asset_path, get_app_dir
 
 # --- Global Crash Logger ---
@@ -81,6 +80,9 @@ def main():
     splash = QSplashScreen(splash_pix, Qt.WindowType.WindowStaysOnTopHint)
     splash.show()
     app.processEvents()
+
+    # Heavy import AFTER splash is visible — MainWindow pulls in 20+ modules
+    from src.ui.main_window import MainWindow
 
     # --- Enforce Fusion Style (Cross-platform consistency) ---
     from PyQt6.QtWidgets import QStyleFactory

@@ -589,6 +589,10 @@ class MainWindow(QWidget):
                     if hasattr(self.full_catalog_page, 'logic'):
                         self.full_catalog_page.logic.invalidate_cache()
                     self.full_catalog_page.refresh_catalog_data()
+                
+                # Refresh Reports tab so changes are visible without switching tabs
+                if hasattr(self, 'reports_page'):
+                    self.reports_page.refresh_report_data()
                     
                 QMessageBox.information(self, "Sync Complete", f"Data Synced Successfully!\nLoaded {len(df)} rows.\n\nClick OK to close.")
             else:
