@@ -138,6 +138,7 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.setWindowTitle("JK Catalog")
         
         # Global Event Filter for Alt Key
         self.alt_filter = AltKeyFilter(self)
@@ -150,7 +151,18 @@ class MainWindow(QWidget):
         # Shortcuts
         QShortcut(QKeySequence("Ctrl+Q"), self, activated=self.close)
         QShortcut(QKeySequence("Ctrl+M"), self, activated=self.toggle_min_max)
+        
+        # Listen for taskbar toggling or screen size changes dynamically
+        screen = QApplication.primaryScreen()
+        if screen:
+            screen.availableGeometryChanged.connect(self._on_screen_changed)
+            
         self.setup_ui()
+
+    def _on_screen_changed(self, rect):
+        """Update window boundaries if user changes taskbar settings mid-session."""
+        if not self.isMinimized():
+            self.maximize_window()
     
     def toggle_hotkey_hints(self, visible):
         """Show/Hide hotkey highlights on current menu."""
@@ -168,15 +180,13 @@ class MainWindow(QWidget):
             txt = event.text()
             if txt:
                 key = txt.upper()
-                # Find current menu page
                 current_page = self.nav_stack.currentWidget()
                 if current_page:
-                    # Find buttons in this page
                     buttons = current_page.findChildren(MenuButtonWidget)
                     for btn in buttons:
                         if hasattr(btn, 'hotkey_char') and btn.hotkey_char == key:
                             btn.animateClick()
-                            return # Handled
+                            return
         
         super().keyPressEvent(event)
 
@@ -186,12 +196,38 @@ class MainWindow(QWidget):
             self.toggle_hotkey_hints(False)
         super().keyReleaseEvent(event)
 
-    
     def toggle_min_max(self):
         if self.isMinimized():
-            self.showMaximized()
+            self.maximize_window()
         else:
             self.showMinimized()
+
+    def maximize_window(self):
+        """
+        Manually sizes the window to exactly fit the available screen.
+        Using setFixedSize locks the geometry so NO internal dashboard widgets
+        can force the window to expand off the bottom of the screen.
+        """
+        screen = QApplication.primaryScreen()
+        if not screen:
+            self.showMaximized()
+            return
+            
+        avail = screen.availableGeometry()
+        full = screen.geometry()
+        
+        if avail == full:
+            # Auto-hide taskbar is ON (no reserved space)
+            # Leave a 2px gap at bottom so the taskbar can still be triggered
+            self.setFixedSize(full.width(), full.height() - 2)
+            self.move(full.left(), full.top())
+        else:
+            # Taskbar is visible (reserving space)
+            # Snap exactly to the available space (prevents hiding behind taskbar)
+            self.setFixedSize(avail.width(), avail.height())
+            self.move(avail.left(), avail.top())
+            
+        self.showNormal()
     
     def setup_ui(self):
         self.root_layout = QHBoxLayout(self)
@@ -281,8 +317,8 @@ class MainWindow(QWidget):
             ("📈 Rep&orts", lambda: self.main_stack.setCurrentIndex(7)),
             ("🏷 Cat / &Price List", self.handle_catalog_price_list),
             ("🧪 Preview &Rows", lambda: self.main_stack.setCurrentIndex(17)),
-            ("➕ Create CRM", self.handle_create_crm, False, "F1"),
-            ("✏️ Alter CRM", self.handle_alter_crm, False, "F2")
+            ("➕ &Create CRM", self.handle_create_crm),
+            ("✏️ &Alter CRM", self.handle_alter_crm)
         ])
         self.nav_stack.addWidget(m_catalog)
 
@@ -561,6 +597,10 @@ class MainWindow(QWidget):
             # Navigate to welcome
             self.nav_stack.setCurrentIndex(1) 
             self.main_stack.setCurrentIndex(1)
+            
+            # CRITICAL FIX: Lock the window size again so the dashboard
+            # cannot push the bottom out of bounds.
+            self.maximize_window()
             
         except Exception as e:
             QMessageBox.critical(self, "Login Error", f"Failed to load company data:\n{str(e)}")

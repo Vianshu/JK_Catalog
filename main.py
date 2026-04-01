@@ -113,7 +113,7 @@ def main():
     load_stylesheet(app, style_path)
 
     window = MainWindow()
-    window.showMaximized()
+    window.maximize_window()
     
     # Close splash screen when window is ready
     splash.finish(window)
