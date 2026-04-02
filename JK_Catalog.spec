@@ -54,6 +54,7 @@ exe = EXE(
     a.datas,
     [],
     name='JK_Catalog',
+    icon='JK_Icon.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -15,28 +15,24 @@ from src.ui.settings import load_crm_list
 A4_WIDTH_MM = 210.0
 A4_HEIGHT_MM = 297.0
 
-# Use screen DPI for rendering - printer will scale appropriately
-# This ensures fonts look the same as on screen
-SCREEN_DPI = 96
-
-# ── Margin Strategy ──────────────────────────────────────────────
-# The A4PageRenderer is sized to exactly 210×297mm (full A4 bleed).
-# Its internal content margins are 0mm – content fills edge-to-edge.
+# ── Rendering & Margin Strategy ──────────────────────────────────
+# A4PageRenderer is a QWidget.  Qt resolves CSS font sizes (pt) and
+# layout metrics against logical/screen DPI, so the renderer MUST be
+# laid out at screen DPI.  Using printer DPI would distort text.
 #
-# PDF export:
-#   printer margins = 0 → pageRect == full A4.
-#   We add a tiny SAFE_MARGIN (2.5 mm each side) so when the user
-#   later prints the PDF on a physical printer the non-printable
-#   strip (typically 3-5 mm) doesn't clip important content.
-#   Content is translated inward and scaled to fill the remaining
-#   area, giving ~97.6 % page utilisation.
+# For every output mode (preview, direct print, PDF) we:
+#   1. Create the renderer at RENDER_DPI.
+#   2. Get the target area from  printer.pageRect().
+#   3. Uniformly scale the widget to fill that target.
 #
-# Direct print:
-#   We ask Qt for the printer's real non-printable margins and use
-#   those to translate + scale.  This way the content fills the
-#   printable area completely with zero wasted space.
+# Margins are set on the QPrinter BEFORE rendering:
+#   PDF    → PDF_SAFE_MARGIN_MM each side (borders survive reprinting)
+#   Print  → 0 (Qt honours hardware-minimum non-printable zone)
+#
+# ONE path (_render_pages) handles all modes.  No manual offsets.
 # ─────────────────────────────────────────────────────────────────
-SAFE_MARGIN_MM = 2.5  # safe zone for PDF (each side)
+RENDER_DPI = 96                 # widget layout DPI (must match screen)
+PDF_SAFE_MARGIN_MM = 2.0        # each side — protects borders in reprinted PDFs
 
 
 class PrintExportDialog(QDialog):
@@ -255,7 +251,7 @@ class PrintExportDialog(QDialog):
         """Create a renderer configured for print output using screen DPI for consistency."""
         from src.ui.a4_renderer import A4PageRenderer
         renderer = A4PageRenderer()
-        renderer.set_target_dpi(SCREEN_DPI)  # Use screen DPI so fonts match display
+        renderer.set_target_dpi(RENDER_DPI)
         
         # Calculate and set the company prefix for the top-left header
         co_path = getattr(self.catalog_ui, 'company_path', "") or getattr(self.catalog_ui, 'current_company_path', "")
@@ -313,103 +309,64 @@ class PrintExportDialog(QDialog):
         renderer.render(painter)
         return True
 
-    # ─── Scaling helpers ────────────────────────────────────────────
-    @staticmethod
-    def _compute_margins_px(printer, margin_mm):
-        """Convert a uniform margin (mm) to device-pixel offsets for a printer.
-        
-        Returns (offset_x, offset_y, printable_w, printable_h) in device pixels.
-        
-        - offset_x/y   : how far to translate the painter origin
-        - printable_w/h : usable area after subtracting margins on both sides
-        """
-        res = printer.resolution()  # DPI
-        margin_px = margin_mm * res / 25.4
-        
-        full = printer.paperRect(QPrinter.Unit.DevicePixel)
-        printable_w = full.width()  - 2 * margin_px
-        printable_h = full.height() - 2 * margin_px
-        return margin_px, margin_px, printable_w, printable_h
-
     def _render_pages(self, painter, printer, page_indices, mode="pdf"):
-        """Core rendering loop used by both PDF export and direct print.
-        
-        Coordinate system notes (fullPage is NOT set, so Qt defaults apply):
-        ─────────────────────────────────────────────────────────────────────
-        • PDF  (OutputFormat.PdfFormat, margins=0):
-            (0,0) = paper edge.  pageRect == paperRect == full A4.
-            We manually inset by SAFE_MARGIN_MM so that when the user later
-            prints the PDF on a physical printer, the non-printable strip
-            doesn't clip content.
-        
-        • Direct print / Preview:
-            Qt already places (0,0) at the printable-area origin.
-            pageRect gives the printable dimensions.
-            We just scale to fill – NO translation needed.
-        ─────────────────────────────────────────────────────────────────────
+        """Unified rendering loop for PDF, print preview, and direct print.
+
+        Uses printer.pageRect() as the target area for all modes.
+        Margins are configured on the QPrinter before this method is called:
+          PDF   → PDF_SAFE_MARGIN_MM on each side
+          Print → 0 (Qt uses hardware minimum automatically)
         """
         renderer = self.create_print_renderer()
-        
+
         from PyQt6.QtWidgets import QProgressDialog, QApplication
-        
-        label = "Exporting PDF..." if mode == "pdf" else "Rendering Preview..."
+
+        label = "Exporting PDF..." if mode == "pdf" else "Rendering..."
         progress = QProgressDialog(label, "Cancel", 0, len(page_indices), self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)
         progress.setValue(0)
-        
-        # ── Compute the target rectangle once ────────────────────
-        if mode == "pdf":
-            # PDF: (0,0) is at paper edge → offset by safe margin
-            off_x, off_y, target_w, target_h = self._compute_margins_px(
-                printer, SAFE_MARGIN_MM
-            )
-        else:
-            # Direct print: (0,0) is already at the printable area origin.
-            # pageRect gives us the full printable dimensions.
-            page_rect = printer.pageRect(QPrinter.Unit.DevicePixel)
-            off_x = 0
-            off_y = 0
-            target_w = page_rect.width()
-            target_h = page_rect.height()
-        
-        # Scale renderer (full A4 widget) to fill the target area
+
+        # Target area — pageRect already accounts for margins
+        page_rect = printer.pageRect(QPrinter.Unit.DevicePixel)
+        target_w = page_rect.width()
+        target_h = page_rect.height()
+
+        # Uniform scale to fill target
         scale_x = target_w / renderer.width()
         scale_y = target_h / renderer.height()
         scale = min(scale_x, scale_y)
-        
-        # Centre the content if aspect ratios differ slightly
+
+        # Centre if aspect ratios differ slightly
         actual_w = renderer.width() * scale
         actual_h = renderer.height() * scale
-        extra_x = (target_w - actual_w) / 2.0
-        extra_y = (target_h - actual_h) / 2.0
-        
+        center_x = (target_w - actual_w) / 2.0
+        center_y = (target_h - actual_h) / 2.0
+
         for i, page_idx in enumerate(page_indices):
             if progress.wasCanceled():
                 painter.end()
                 renderer.deleteLater()
                 progress.close()
-                return False  # cancelled
-            
+                return False
+
             if i > 0:
                 printer.newPage()
-            
+
             painter.save()
-            # Translate: for PDF this adds the safe margin; for print it's (0,0)
-            painter.translate(off_x + extra_x, off_y + extra_y)
-            # Scale widget to fill the target area
+            painter.translate(center_x, center_y)
             painter.scale(scale, scale)
-            
+
             self.render_page_to_painter(painter, page_idx, renderer)
-            
+
             painter.restore()
-            
+
             progress.setValue(i + 1)
             QApplication.processEvents()
-        
+
         renderer.deleteLater()
         progress.close()
-        return True  # success
+        return True
 
     # ─── Print Preview ──────────────────────────────────────────────
     def show_print_preview(self):
@@ -553,15 +510,16 @@ class PrintExportDialog(QDialog):
             file_path += '.pdf'
         
         try:
-            # Create PDF printer – ZERO printer margins so we get full A4
+            # Create PDF printer with safe margins so borders survive reprinting
             printer = QPrinter(QPrinter.PrinterMode.HighResolution)
             printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
             printer.setOutputFileName(file_path)
-            
+
             page_size = QPageSize(QPageSize.PageSizeId.A4)
-            printer.setPageSize(page_size)
-            margins = QMarginsF(0, 0, 0, 0)
-            page_layout = QPageLayout(page_size, QPageLayout.Orientation.Portrait, margins)
+            margins = QMarginsF(PDF_SAFE_MARGIN_MM, PDF_SAFE_MARGIN_MM,
+                                PDF_SAFE_MARGIN_MM, PDF_SAFE_MARGIN_MM)
+            page_layout = QPageLayout(page_size, QPageLayout.Orientation.Portrait,
+                                      margins, QPageLayout.Unit.Millimeter)
             printer.setPageLayout(page_layout)
             
             # Create painter

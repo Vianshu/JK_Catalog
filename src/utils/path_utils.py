@@ -24,12 +24,19 @@ def get_base_path():
 
 def get_app_dir():
     """
-    Get the directory where the EXE is located (or script's directory in dev mode).
+    Get a WRITABLE directory for the application.
     
-    Use this for WRITABLE data that should persist (like godown_stock.db, logs, etc.)
+    When running as EXE: Returns %APPDATA%/JK_Catalog/ (Standard Windows practice)
+    When running as script: Returns the project root directory
     """
     if getattr(sys, 'frozen', False):
-        # Running as compiled EXE - return the folder containing the EXE
+        # Running as compiled EXE - use %APPDATA% for writable data
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            path = os.path.join(appdata, "JK_Catalog")
+            os.makedirs(path, exist_ok=True)
+            return path
+        # Extremely unlikely fallback
         return os.path.dirname(sys.executable)
     else:
         # Running as script - project root
@@ -40,23 +47,10 @@ def get_secure_data_dir():
     """
     Get the directory for storing sensitive/secure data (like security.db).
     
-    Uses %APPDATA%/JK_Catalog/ on Windows so that sensitive files are NOT
-    sitting next to the EXE where anyone can see/copy them.
-    
-    Falls back to get_app_dir() if APPDATA is not available.
+    Since get_app_dir() now properly returns a user-writable path in frozen mode,
+    we simply reuse it here.
     """
-    if getattr(sys, 'frozen', False):
-        # Running as compiled EXE - use %APPDATA%
-        appdata = os.environ.get("APPDATA")
-        if appdata:
-            secure_dir = os.path.join(appdata, "JK_Catalog")
-            os.makedirs(secure_dir, exist_ok=True)
-            return secure_dir
-        # Fallback if APPDATA not set (unlikely on Windows)
-        return os.path.dirname(sys.executable)
-    else:
-        # Running as script in dev mode - use project root (same as get_app_dir)
-        return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return get_app_dir()
 
 
 def get_data_file_path(filename):
