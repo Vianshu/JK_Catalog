@@ -107,10 +107,10 @@ class FullCatalogUI(QWidget):
         self.company_path = company_path
         self.catalog_db_path = os.path.join(self.company_path, "catalog.db")
         self.final_db_path = os.path.join(self.company_path, "final_data.db")
-        
+        super_db = os.path.join(os.path.dirname(self.company_path), "super_master.db")
         
         # Pass to Logic
-        self.logic.set_paths(self.catalog_db_path, self.final_db_path)
+        self.logic.set_paths(self.catalog_db_path, self.final_db_path, super_db)
         
         # Init DB
         self.init_catalog_db()

@@ -20,9 +20,11 @@ class CatalogLogic:
         # Derive calendar path using utility
         self.calendar_db_path = get_data_file_path("calendar_data.db")
 
-    def set_paths(self, catalog_db, final_db):
+    def set_paths(self, catalog_db, final_db, super_db=None):
         self.catalog_db_path = catalog_db
         self.final_db_path = final_db
+        if super_db:
+            self.db_path = super_db
         # Invalidate cache when paths change
         self._layout_cache = {}
         self._cache_valid = False
@@ -257,7 +259,7 @@ class CatalogLogic:
             page_requirements = []
             for mg_sn, group_name, sg_sn in all_subgroups:
                 layout_map = self.simulate_page_layout(group_name, sg_sn)
-                max_required_page = max(layout_map.keys()) if layout_map else 1
+                max_required_page = max(layout_map.keys()) if layout_map else 0
                 page_requirements.append((mg_sn, group_name, sg_sn, max_required_page))
 
             # Phase 2: Update page counts (single connection, no conflicts)
@@ -298,6 +300,12 @@ class CatalogLogic:
                             INSERT INTO catalog_pages (mg_sn, group_name, sg_sn, page_no)
                             VALUES (?, ?, ?, ?)
                         """, (mg_sn, group_name, sg_sn, p))
+                elif max_required_page < current_max:
+                    # Remove trailing empty pages (or all pages if max_required is 0)
+                    cursor.execute("""
+                        DELETE FROM catalog_pages 
+                        WHERE group_name=? AND sg_sn=? AND page_no > ?
+                    """, (group_name, sg_sn, max_required_page))
 
             conn.commit()
             conn.close()

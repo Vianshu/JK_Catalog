@@ -156,12 +156,13 @@ class ReportsUI(QWidget):
         
         catalog_db = os.path.join(self.current_company_path, "catalog.db")
         final_db = os.path.join(self.current_company_path, "final_data.db")
+        super_db = os.path.join(os.path.dirname(self.current_company_path), "super_master.db")
         
         if not self.logic:
             self.logic = CatalogLogic(catalog_db) # init with catalog db as primary for now
-            self.logic.set_paths(catalog_db, final_db)
+            self.logic.set_paths(catalog_db, final_db, super_db)
         else:
-            self.logic.set_paths(catalog_db, final_db)
+            self.logic.set_paths(catalog_db, final_db, super_db)
         return True
 
     def get_report_path(self):
