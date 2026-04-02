@@ -168,6 +168,7 @@ class CatalogLogic:
                 AND TRIM(CAST([MG_SN] AS TEXT)) != '00' 
                 AND CAST([MG_SN] AS INTEGER) < 90
                 AND TRIM(IFNULL([Group_Name], '')) != ''
+                AND LOWER(TRIM([Group_Name])) != 'price list'
                 ORDER BY CAST([MG_SN] AS INTEGER)"""
             cursor.execute(query)
             data = cursor.fetchall()
@@ -190,7 +191,8 @@ class CatalogLogic:
             if mg_row and mg_row[0] is not None and mg_row[0] >= 90:
                 conn.close()
                 return []
-            query = f"SELECT DISTINCT [SG_SN], [Sub_Group] FROM {table} WHERE TRIM([Group_Name])=? COLLATE NOCASE AND [Sub_Group] IS NOT NULL AND [Sub_Group]!='' ORDER BY CAST([SG_SN] AS INTEGER)"
+            query = f"SELECT DISTINCT [SG_SN], [Sub_Group] FROM {table} WHERE TRIM([Group_Name])=? COLLATE NOCASE AND LOWER(TRIM([Group_Name])) != 'price list' AND [Sub_Group] IS NOT NULL AND [Sub_Group]!='' ORDER BY CAST([SG_SN] AS INTEGER)"
+
             cursor.execute(query, (group_name.strip(),))
             data = cursor.fetchall()
             conn.close()
@@ -207,7 +209,8 @@ class CatalogLogic:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             # Block groups with MG_SN >= 90 from page generation
-            query = f"SELECT DISTINCT [MG_SN], [Group_Name], [SG_SN] FROM {table} WHERE [Group_Name] IS NOT NULL AND [SG_SN] IS NOT NULL AND CAST([MG_SN] AS INTEGER) < 90 ORDER BY CAST([MG_SN] AS INTEGER), CAST([SG_SN] AS INTEGER)"
+            query = f"SELECT DISTINCT [MG_SN], [Group_Name], [SG_SN] FROM {table} WHERE [Group_Name] IS NOT NULL AND [SG_SN] IS NOT NULL AND CAST([MG_SN] AS INTEGER) < 90 AND LOWER(TRIM([Group_Name])) != 'price list' ORDER BY CAST([MG_SN] AS INTEGER), CAST([SG_SN] AS INTEGER)"
+
             cursor.execute(query)
             data = cursor.fetchall()
             conn.close()
