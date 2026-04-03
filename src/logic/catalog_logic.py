@@ -300,12 +300,6 @@ class CatalogLogic:
                             INSERT INTO catalog_pages (mg_sn, group_name, sg_sn, page_no)
                             VALUES (?, ?, ?, ?)
                         """, (mg_sn, group_name, sg_sn, p))
-                elif max_required_page < current_max:
-                    # Remove trailing empty pages (or all pages if max_required is 0)
-                    cursor.execute("""
-                        DELETE FROM catalog_pages 
-                        WHERE group_name=? AND sg_sn=? AND page_no > ?
-                    """, (group_name, sg_sn, max_required_page))
 
             conn.commit()
             conn.close()

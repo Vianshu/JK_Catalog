@@ -18,8 +18,8 @@ Use **Alt + Key** to navigate menus. The hotkey letter will highlight in Blue wh
 - **Alt + G**: Full Catalo<U>g</U>
 - **Alt + O**: Rep<U>o</U>rts
 - **Alt + P**: Price List
-- **F1**: Create CRM
-- **F2**: Alter CRM
+- **Alt + C**: Create CRM
+- **Alt + A**: Alter CRM
 
 ### Settings Menu
 - **Alt + B**: Back
