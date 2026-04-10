@@ -47,7 +47,7 @@ def setup_crash_logger():
         print(f"[CRASH] Full traceback saved to: {log_path}", file=sys.stderr)
     
     sys.excepthook = global_exception_handler
-    print(f"[LOG] Crash logger active → {log_path}")
+    print(f"[LOG] Crash logger active -> {log_path}")
 
 def load_stylesheet(app, file_name):
     if os.path.exists(file_name):
