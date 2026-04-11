@@ -120,11 +120,11 @@ class TallyService:
             export_df.to_sql("stock_items", conn, if_exists="replace", index=False)
 
             conn.close()
-            print(f"✅ SQLite Database created with clean headers: {db_file_path}")
+            print(f"[OK] SQLite Database created with clean headers: {db_file_path}")
             return True
 
         except Exception as e:
-            print(f"❌ SQLite Save Error: {e}")
+            print(f"[ERROR] SQLite Save Error: {e}")
             raise e
 
     def fetch_stock_items(self, company_name=None, company_path=None):
@@ -302,7 +302,7 @@ def fetch_tally_ledger_data(company_path=None):
         )
         conn_db.close()
 
-        print(f"✅ Ledger data saved: {db_path} ({len(ledger_df)} rows)")
+        print(f"[OK] Ledger data saved: {db_path} ({len(ledger_df)} rows)")
         return len(ledger_df), ""
 
     except Exception as e:

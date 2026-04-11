@@ -847,7 +847,16 @@ class FullCatalogUI(QWidget):
         if not self.logic.final_db_path:
             return
 
-        affected = self.logic.update_product_length(product_name, new_length)
+        group_name = None
+        sg_sn = None
+        if getattr(self, "all_pages_data", None) and getattr(self, "current_page_index", None) is not None:
+            if 0 <= self.current_page_index < len(self.all_pages_data):
+                try:
+                    _, group_name, sg_sn, _, _ = self.all_pages_data[self.current_page_index]
+                except Exception as e:
+                    logger.error(f"Could not get current group data for length update: {e}")
+
+        affected = self.logic.update_product_length(product_name, new_length, group_name, sg_sn)
         if affected > 0:
             self.logic.invalidate_cache()
             self.refresh_catalog_data()
