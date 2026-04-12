@@ -6,16 +6,18 @@ Responsibilities:
   - Product fetching & grouping from final_data.db
   - Page layout engine (5×4 grid, clustering, overflow, visual balancing)
   - Page CRUD (add/remove/sync pages in catalog.db)
-  - CRM-driven dirty page sorting with contiguous range resolution
+  - CRM-driven dirty page sorting with grid-simulated placement
   - Serial shift handling (forward on page creation, backward on deletion)
   - Snapshot-based change detection
-  - Display order persistence (stable page layouts between sessions)
+  - Explicit page assignments (product_list on catalog_pages)
 
 Engine Architecture:
+  - Each catalog_pages row has a product_list column (JSON array of product names)
+  - This is the SINGLE SOURCE OF TRUTH for which products are on which page
   - CRM stores dirty page serials (per CRM rep, in REPORT_DATA.JSON)
   - Engine reads union of all CRM dirty pages to determine sort scope
-  - Only dirty pages in contiguous ranges are re-sorted
-  - Clean pages are NEVER touched
+  - Only dirty pages in contiguous ranges are re-sorted via grid simulation
+  - Clean pages are NEVER touched — their assignments remain frozen
   - CRM is NEVER cleared by the engine — only print/export clears it
   - Products added go to last page of subgroup
   - Products removed only dirty the source page (no cascade)
@@ -73,10 +75,8 @@ class CatalogLogic:
         # Layout cache: {cache_key -> layout_map}
         self._layout_cache = {}
 
-        # Active dirty pages: set during engine_run so _build_layout knows
-        # which pages are dirty and should NOT enforce page floor constraints.
-        # Format: {"GROUP|sg_sn": set(relative_page_nos)}
-        self._active_dirty_pages = {}
+        # Product lookup cache: {cache_key -> {name_lower: product_dict}}
+        self._product_lookup_cache = {}
 
         # Persistent DB connections (lazy-initialized)
         self._connections = {}
@@ -91,13 +91,15 @@ class CatalogLogic:
         self._layout_cache = {}
 
     def invalidate_cache(self):
-        """Clear all cached layouts. Call when product data changes."""
+        """Clear all cached layouts and product lookups."""
         self._layout_cache = {}
+        self._product_lookup_cache = {}
 
     def invalidate_subgroup_cache(self, group_name, sg_sn):
         """Clear cache for a single subgroup."""
         cache_key = f"{group_name}|{sg_sn}"
         self._layout_cache.pop(cache_key, None)
+        self._product_lookup_cache.pop(cache_key, None)
 
     def close(self):
         """Clean up all DB connections. Call on application shutdown."""
@@ -176,7 +178,8 @@ class CatalogLogic:
     # ───────────────────────────────────────────────────────────────────────────
 
     def init_catalog_db(self):
-        """Create all required tables in catalog.db if they don't exist."""
+        """Create all required tables in catalog.db if they don't exist.
+        Also runs one-time migration to populate product_list column."""
         conn = self._get_catalog_conn()
         if not conn:
             return
@@ -212,10 +215,68 @@ class CatalogLogic:
                     value TEXT
                 )
             """)
+
+            # ── Schema migration: add product_list column ──
+            cursor.execute("PRAGMA table_info(catalog_pages)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if "product_list" not in columns:
+                cursor.execute("ALTER TABLE catalog_pages ADD COLUMN product_list TEXT")
+                logger.info("Schema migration: added product_list column to catalog_pages")
+
             conn.commit()
+
+            # Run one-time data migration from snapshots
+            self._migrate_to_explicit_assignments()
+
         except Exception as e:
             logger.error(f"init_catalog_db error: {e}")
 
+    def _migrate_to_explicit_assignments(self):
+        """One-time migration: populate catalog_pages.product_list from page_snapshots.
+        Only runs if no page has product_list set yet."""
+        conn = self._get_catalog_conn()
+        if not conn:
+            return
+        try:
+            cursor = conn.cursor()
+            # Check if any page already has product_list
+            cursor.execute(
+                "SELECT COUNT(*) FROM catalog_pages WHERE product_list IS NOT NULL AND TRIM(product_list) != ''"
+            )
+            if cursor.fetchone()[0] > 0:
+                return  # Already migrated
+
+            # Populate from page_snapshots
+            cursor.execute("""
+                SELECT cp.id, ps.product_list
+                FROM catalog_pages cp
+                LEFT JOIN page_snapshots ps
+                    ON CAST(cp.serial_no AS TEXT) = CAST(ps.serial_no AS TEXT)
+                WHERE ps.product_list IS NOT NULL
+            """)
+
+            updates = 0
+            for page_id, product_list_raw in cursor.fetchall():
+                if product_list_raw:
+                    try:
+                        parsed = json.loads(product_list_raw)
+                        if isinstance(parsed, list) and parsed:
+                            normalized = json.dumps(
+                                [str(n).strip().lower() for n in parsed if str(n).strip()]
+                            )
+                            cursor.execute(
+                                "UPDATE catalog_pages SET product_list=? WHERE id=?",
+                                (normalized, page_id)
+                            )
+                            updates += 1
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+            conn.commit()
+            if updates:
+                logger.info(f"Migrated product_list for {updates} pages from snapshots")
+        except Exception as e:
+            logger.warning(f"_migrate_to_explicit_assignments error: {e}")
     # ───────────────────────────────────────────────────────────────────────────
     # SUPER MASTER QUERIES (Index & Subgroups)
     # ───────────────────────────────────────────────────────────────────────────
@@ -378,19 +439,26 @@ class CatalogLogic:
             return []
 
     def rebuild_serial_numbers(self):
-        """Reassign sequential serial numbers based on group/subgroup/page order."""
+        """Reassign sequential serial numbers and renumber page_no consecutively per subgroup."""
         conn = self._get_catalog_conn()
         if not conn:
             return
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT id FROM catalog_pages
+                SELECT id, group_name, sg_sn FROM catalog_pages
                 ORDER BY CAST(mg_sn AS INTEGER), CAST(sg_sn AS INTEGER), CAST(page_no AS INTEGER)
             """)
             rows = cursor.fetchall()
-            for idx, (rid,) in enumerate(rows, 1):
-                cursor.execute("UPDATE catalog_pages SET serial_no=? WHERE id=?", (idx, rid))
+            sg_page_counters = {}
+            for idx, (rid, group_name, sg_sn) in enumerate(rows, 1):
+                key = (group_name, sg_sn)
+                sg_page_counters[key] = sg_page_counters.get(key, 0) + 1
+                new_page_no = sg_page_counters[key]
+                cursor.execute(
+                    "UPDATE catalog_pages SET serial_no=?, page_no=? WHERE id=?", 
+                    (idx, new_page_no, rid)
+                )
             conn.commit()
         except Exception as e:
             logger.error(f"rebuild_serial_numbers error: {e}")
@@ -724,11 +792,13 @@ class CatalogLogic:
     # ───────────────────────────────────────────────────────────────────────────
 
     def sync_pages_with_content(self):
-        """Synchronize catalog_pages with actual product content.
-        
-        - Removes orphaned pages whose group/subgroup no longer exists in super_master
-        - Auto-creates pages when content overflows the existing page count
-        - Uses layout simulation to determine required page counts
+        """Synchronize catalog_pages with super_master subgroups.
+
+        - Removes orphaned pages whose group/subgroup no longer exists
+        - Ensures at least 1 page exists for each subgroup with products
+        - Does NOT compute layouts or adjust page counts.
+          Page creation for overflow is handled by _sort_dirty_pages.
+          Page removal for empties is handled by the Clean button.
         """
         conn = self._get_catalog_conn()
         if not conn:
@@ -747,17 +817,9 @@ class CatalogLogic:
                     s_key = str(sg_sn).strip()
                 valid_pairs.add((g_key, s_key))
 
-            # Phase 1: Compute all required page counts (no DB writes during simulation)
-            page_requirements = []
-            for mg_sn, group_name, sg_sn in all_subgroups:
-                layout_map = self.simulate_page_layout(group_name, sg_sn)
-                max_page = max(layout_map.keys()) if layout_map else 0
-                page_requirements.append((mg_sn, group_name, sg_sn, max_page))
-
-            # Phase 2: Apply changes to catalog.db
             cursor = conn.cursor()
 
-            # Remove orphaned pages
+            # Phase 1: Remove orphaned pages
             cursor.execute("SELECT DISTINCT group_name, sg_sn FROM catalog_pages")
             for db_group, db_sg in cursor.fetchall():
                 g_key = str(db_group).strip().upper()
@@ -772,19 +834,18 @@ class CatalogLogic:
                     )
                     logger.info(f"Removed orphan pages: group='{db_group}', sg_sn='{db_sg}'")
 
-            # Auto-create pages where content overflows
-            for mg_sn, group_name, sg_sn, max_required in page_requirements:
+            # Phase 2: Ensure at least 1 page for subgroups that have products
+            for mg_sn, group_name, sg_sn in all_subgroups:
                 cursor.execute(
-                    "SELECT MAX(page_no) FROM catalog_pages WHERE group_name=? AND sg_sn=?",
+                    "SELECT COUNT(*) FROM catalog_pages WHERE group_name=? AND sg_sn=?",
                     (group_name, sg_sn)
                 )
-                res = cursor.fetchone()
-                current_max = res[0] if res and res[0] else 0
-                if max_required > current_max:
-                    for p in range(current_max + 1, max_required + 1):
+                if cursor.fetchone()[0] == 0:
+                    products = self.get_sorted_products_from_db(group_name, sg_sn)
+                    if products:
                         cursor.execute(
                             "INSERT INTO catalog_pages (mg_sn, group_name, sg_sn, page_no) VALUES (?, ?, ?, ?)",
-                            (mg_sn, group_name, sg_sn, p)
+                            (mg_sn, group_name, sg_sn, 1)
                         )
 
             conn.commit()
@@ -853,7 +914,7 @@ class CatalogLogic:
             cursor.execute("""
                 SELECT ps.product_list
                 FROM catalog_pages cp
-                LEFT JOIN page_snapshots ps ON cp.serial_no = ps.serial_no
+                LEFT JOIN page_snapshots ps ON CAST(cp.serial_no AS TEXT) = CAST(ps.serial_no AS TEXT)
                 WHERE cp.group_name=? AND cp.sg_sn=?
                 ORDER BY cp.page_no, cp.serial_no
             """, (group_name, sg_sn))
@@ -876,6 +937,127 @@ class CatalogLogic:
         except Exception as e:
             logger.warning(f"_get_legacy_product_order error: {e}")
             return []
+
+    # ───────────────────────────────────────────────────────────────────────────
+    # PAGE ASSIGNMENT I/O (Explicit product_list on catalog_pages)
+    # ───────────────────────────────────────────────────────────────────────────
+
+    def _get_page_product_list(self, group_name, sg_sn, page_no):
+        """Read product_list for a specific page from catalog_pages.
+        Returns list of lowercase product names, or empty list."""
+        conn = self._get_catalog_conn()
+        if not conn:
+            return []
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT product_list FROM catalog_pages
+                WHERE TRIM(group_name)=? COLLATE NOCASE
+                  AND CAST(sg_sn AS INTEGER) = CAST(? AS INTEGER)
+                  AND page_no=?
+            """, (group_name.strip(), sg_sn, page_no))
+            row = cursor.fetchone()
+            if row and row[0]:
+                parsed = json.loads(row[0])
+                if isinstance(parsed, list):
+                    return [str(n).strip().lower() for n in parsed if str(n).strip()]
+            return []
+        except Exception as e:
+            logger.warning(f"_get_page_product_list error: {e}")
+            return []
+
+    def _load_all_page_assignments(self, group_name, sg_sn):
+        """Read all page assignments for a subgroup.
+        Returns dict: {page_no: [lowercase_product_names]}."""
+        conn = self._get_catalog_conn()
+        if not conn:
+            return {}
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT page_no, product_list FROM catalog_pages
+                WHERE TRIM(group_name)=? COLLATE NOCASE
+                  AND CAST(sg_sn AS INTEGER) = CAST(? AS INTEGER)
+                ORDER BY page_no
+            """, (group_name.strip(), sg_sn))
+
+            assignments = {}
+            for page_no, p_list in cursor.fetchall():
+                names = []
+                if p_list:
+                    try:
+                        parsed = json.loads(p_list)
+                        if isinstance(parsed, list):
+                            names = [str(n).strip().lower() for n in parsed if str(n).strip()]
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                assignments[page_no] = names
+            return assignments
+        except Exception as e:
+            logger.warning(f"_load_all_page_assignments error: {e}")
+            return {}
+
+    def _save_page_assignments(self, group_name, sg_sn, assignments):
+        """Save page assignments to catalog_pages.product_list.
+        assignments = {page_no: [lowercase_product_names]}.
+        Also updates subgroup_display_order for backward compatibility."""
+        conn = self._get_catalog_conn()
+        if not conn:
+            return
+        try:
+            cursor = conn.cursor()
+            for page_no, names in assignments.items():
+                product_list_json = json.dumps(names)
+                cursor.execute("""
+                    UPDATE catalog_pages SET product_list=?
+                    WHERE TRIM(group_name)=? COLLATE NOCASE
+                      AND CAST(sg_sn AS INTEGER) = CAST(? AS INTEGER)
+                      AND page_no=?
+                """, (product_list_json, group_name.strip(), sg_sn, page_no))
+            conn.commit()
+
+            # Also update display order for backward compatibility
+            cache_key = f"{group_name}|{sg_sn}"
+            all_names = []
+            for page_no in sorted(assignments.keys()):
+                all_names.extend(assignments[page_no])
+            if all_names:
+                self._save_display_order(cache_key, all_names)
+
+        except Exception as e:
+            logger.error(f"_save_page_assignments error: {e}")
+
+    def _ensure_page_exists(self, group_name, sg_sn, page_no):
+        """Ensure a catalog page exists for the given page_no. Creates if missing."""
+        conn = self._get_catalog_conn()
+        if not conn:
+            return
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT COUNT(*) FROM catalog_pages
+                WHERE TRIM(group_name)=? COLLATE NOCASE
+                  AND CAST(sg_sn AS INTEGER) = CAST(? AS INTEGER)
+                  AND page_no=?
+            """, (group_name.strip(), sg_sn, page_no))
+            if cursor.fetchone()[0] == 0:
+                # Get mg_sn from existing pages
+                cursor.execute("""
+                    SELECT mg_sn FROM catalog_pages
+                    WHERE TRIM(group_name)=? COLLATE NOCASE
+                      AND CAST(sg_sn AS INTEGER) = CAST(? AS INTEGER)
+                    LIMIT 1
+                """, (group_name.strip(), sg_sn))
+                mg_row = cursor.fetchone()
+                mg_sn = mg_row[0] if mg_row else 1
+                cursor.execute(
+                    "INSERT INTO catalog_pages (mg_sn, group_name, sg_sn, page_no) VALUES (?, ?, ?, ?)",
+                    (mg_sn, group_name, sg_sn, page_no)
+                )
+                conn.commit()
+                logger.info(f"Created overflow page: {group_name}|{sg_sn} page {page_no}")
+        except Exception as e:
+            logger.error(f"_ensure_page_exists error: {e}")
 
     # ───────────────────────────────────────────────────────────────────────────
     # PRODUCT FETCHING & GROUPING
@@ -1002,21 +1184,64 @@ class CatalogLogic:
     # ───────────────────────────────────────────────────────────────────────────
 
     def get_items_for_page_dynamic(self, group_name, sg_sn, page_no):
-        """Get products for a specific page using cached layout.
-        
-        This is the primary API for rendering a page.
-        
+        """Get products for a specific page using explicit page assignments.
+
+        Primary API for rendering a page. Reads product_list from
+        catalog_pages and computes grid positions for that single page
+        on the fly.
+
+        Falls back to full layout computation if no assignments exist
+        (first run before initial build).
+
         Returns:
             List of placement dicts: {data, row, col, rspan, cspan}
         """
-        cache_key = f"{group_name}|{sg_sn}"
+        # Try explicit assignments first
+        product_names = self._get_page_product_list(group_name, sg_sn, page_no)
 
+        if product_names:
+            # Load product data (cached per subgroup for performance)
+            cache_key = f"{group_name}|{sg_sn}"
+            if cache_key not in self._product_lookup_cache:
+                all_products = self.get_sorted_products_from_db(group_name, sg_sn)
+                self._product_lookup_cache[cache_key] = {
+                    (p.get("product_name", "") or p.get("name", "")).strip().lower(): p
+                    for p in all_products
+                }
+            product_lookup = self._product_lookup_cache[cache_key]
+
+            # Compute grid positions for this page
+            grid = self._empty_grid()
+            result = []
+
+            for name in product_names:
+                p_data = product_lookup.get(name)
+                if not p_data:
+                    continue
+
+                rspan, cspan = self._get_product_dims(p_data)
+                r, c = self._find_slot(grid, rspan, cspan)
+
+                if r != -1:
+                    self._mark_slot(grid, r, c, rspan, cspan)
+                    result.append({
+                        "data": p_data, "row": r, "col": c,
+                        "rspan": rspan, "cspan": cspan
+                    })
+
+            # Visual balancing for single page
+            if result:
+                balanced = self._distribute_products_evenly({1: result})
+                result = balanced.get(1, result)
+
+            return result
+
+        # Fallback: no assignments yet — use full layout (first run before build)
+        cache_key = f"{group_name}|{sg_sn}"
         if cache_key not in self._layout_cache:
-            self._layout_cache[cache_key] = self._compute_layout(group_name, sg_sn)
+            self._layout_cache[cache_key] = self._build_layout(group_name, sg_sn)
 
         layout_map = self._layout_cache[cache_key]
-
-        # Convert absolute page_no to relative (layout uses 1-based relative pages)
         min_page = self._get_min_page_no(group_name, sg_sn)
         relative_page = page_no - min_page + 1
 
@@ -1026,14 +1251,10 @@ class CatalogLogic:
                              printable_pages=None, use_cache=True, reshuffle=False,
                              save_known=True):
         """Simulate product layout across pages.
-        
-        Args:
-            group_name: Group name
-            sg_sn: Subgroup serial number
-            use_cache: Use cached layout if available
-            reshuffle: Force full re-clustering/sorting
-            save_known: Persist display order after computation
-            
+
+        Uses explicit page assignments when available.
+        Falls back to _build_layout for first run or reshuffle.
+
         Returns:
             Dict mapping page_number -> list of placement dicts.
         """
@@ -1042,13 +1263,60 @@ class CatalogLogic:
         if use_cache and not reshuffle and cache_key in self._layout_cache:
             return self._layout_cache[cache_key]
 
-        layout_map = self._build_layout(group_name, sg_sn, reshuffle=reshuffle)
-        self._layout_cache[cache_key] = layout_map
+        if reshuffle:
+            layout_map = self._build_layout(group_name, sg_sn, reshuffle=True)
+            self._layout_cache[cache_key] = layout_map
+            if save_known:
+                self._save_layout_order(cache_key, layout_map)
+            return layout_map
 
-        # Persist the final product order
+        # Try to build from explicit page assignments
+        assignments = self._load_all_page_assignments(group_name, sg_sn)
+        has_assignments = any(names for names in assignments.values())
+
+        if has_assignments:
+            # Build layout map from assignments
+            all_products = self.get_sorted_products_from_db(group_name, sg_sn)
+            product_lookup = {
+                (p.get("product_name", "") or p.get("name", "")).strip().lower(): p
+                for p in all_products
+            }
+
+            min_page = min(assignments.keys()) if assignments else 1
+            layout_map = {}
+
+            for page_no in sorted(assignments.keys()):
+                relative_page = page_no - min_page + 1
+                grid = self._empty_grid()
+                placements = []
+
+                for name in assignments[page_no]:
+                    p_data = product_lookup.get(name)
+                    if not p_data:
+                        continue
+
+                    rspan, cspan = self._get_product_dims(p_data)
+                    r, c = self._find_slot(grid, rspan, cspan)
+
+                    if r != -1:
+                        self._mark_slot(grid, r, c, rspan, cspan)
+                        placements.append({
+                            "data": p_data, "row": r, "col": c,
+                            "rspan": rspan, "cspan": cspan
+                        })
+
+                layout_map[relative_page] = placements
+
+            # Visual balancing
+            layout_map = self._distribute_products_evenly(layout_map)
+            self._layout_cache[cache_key] = layout_map
+            return layout_map
+
+        # Fallback: no assignments — full layout
+        layout_map = self._build_layout(group_name, sg_sn, reshuffle=False)
+        self._layout_cache[cache_key] = layout_map
         if save_known:
             self._save_layout_order(cache_key, layout_map)
-
         return layout_map
 
     def _save_layout_order(self, cache_key, layout_map):
@@ -1085,65 +1353,15 @@ class CatalogLogic:
 
     # ─── Layout Builder ───────────────────────────────────────────────────────
 
-    def _load_page_assignments(self, group_name, sg_sn):
-        """Load previous product-to-page assignments from page snapshots.
-
-        Uses the product_list column in page_snapshots to determine which
-        products were on which page during the last engine run.
-
-        Returns:
-            Dict mapping lowercase product name -> relative page number (1-based).
-            Returns empty dict if no snapshots exist (first run).
-        """
-        conn = self._get_catalog_conn()
-        if not conn:
-            return {}
-
-        try:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT cp.page_no, ps.product_list
-                FROM catalog_pages cp
-                LEFT JOIN page_snapshots ps ON cp.serial_no = ps.serial_no
-                WHERE TRIM(cp.group_name)=? COLLATE NOCASE
-                  AND CAST(cp.sg_sn AS INTEGER) = CAST(? AS INTEGER)
-                ORDER BY cp.page_no
-            """, (group_name.strip(), sg_sn))
-
-            rows = cursor.fetchall()
-            if not rows:
-                return {}
-
-            # Convert absolute page_no to relative (1-based)
-            page_nos = [r[0] for r in rows if r[0] is not None]
-            min_page = min(page_nos) if page_nos else 1
-
-            assignments = {}
-            for page_no, p_list in rows:
-                relative_page = page_no - min_page + 1
-                if p_list:
-                    try:
-                        parsed = json.loads(p_list)
-                        if isinstance(parsed, list):
-                            for name in parsed:
-                                clean_name = str(name).strip().lower()
-                                if clean_name:
-                                    assignments[clean_name] = relative_page
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-            return assignments
-        except Exception as e:
-            logger.warning(f"_load_page_assignments error: {e}")
-            return {}
-
     def _build_layout(self, group_name, sg_sn, reshuffle=False):
         """Core layout algorithm. Places products on a 5×4 grid across pages.
-        
-        Two modes:
-          - Default: Preserves saved display order, appends new products at end
-          - Reshuffle: Full re-clustering by name similarity + sort by price
-          
-        Products that don't fit on a page overflow to the next.
+
+        Used ONLY for:
+          - First-time layout (no assignments exist yet)
+          - Full reshuffle requested by user
+
+        Simple sequential placement: products fill pages top-left first,
+        overflow to the next page when full. No floor/anti-backshift logic.
         Final layout is visually balanced via _distribute_products_evenly.
         """
         products = self.get_sorted_products_from_db(group_name, sg_sn)
@@ -1161,102 +1379,35 @@ class CatalogLogic:
             if saved_order:
                 products = self._apply_saved_order(products, saved_order)
             else:
-                # First time — full clustering
                 products = self._cluster_and_sort(products)
                 logger.info(f"FIRST-TIME: {len(products)} products clustered for {group_name}|{sg_sn}")
 
-        # Assign sort indices for stable ordering during overflow
-        for i, p in enumerate(products):
-            if isinstance(p, dict):
-                p["_sort_idx"] = i
-
-        # ── LOAD PREVIOUS PAGE ASSIGNMENTS (anti-backward-shift) ────
-        # Products must not shift to an EARLIER page than their last known
-        # assignment — UNLESS their page is currently dirty.
-        #
-        # Rule 1: Dirty pages → products flow freely (no page floor)
-        # Rule 2: Clean pages → products locked (page floor enforced)
-        prev_assignments = {}  # name_lower -> relative_page
-        dirty_pages_for_sg = set()  # relative page numbers that are dirty
-        if not reshuffle:
-            prev_assignments = self._load_page_assignments(group_name, sg_sn)
-            cache_key_dirty = f"{group_name}|{sg_sn}"
-            dirty_pages_for_sg = self._active_dirty_pages.get(cache_key_dirty, set())
-
-        # ── PLACEMENT ────────────────────────────────────────────────
+        # ── PLACEMENT (simple sequential, no floor logic) ────────────
         layout_map = {}
-        page_grids = {}  # page_num -> 2D grid
-        page_items = {}  # page_num -> [product_data]
-        current_page = 1
+        page_num = 1
+        grid = self._empty_grid()
+        layout_map[page_num] = []
 
         for p_data in products:
             rspan, cspan = self._get_product_dims(p_data)
-            placed = False
+            r, c = self._find_slot(grid, rspan, cspan)
 
-            # Determine page floor for this product
-            p_name = (p_data.get("product_name", "") or p_data.get("name", "")).strip().lower()
-            prev_page = prev_assignments.get(p_name, 0)
+            if r == -1:
+                # Page full — start next page
+                page_num += 1
+                grid = self._empty_grid()
+                layout_map[page_num] = []
+                r, c = self._find_slot(grid, rspan, cspan)
 
-            if prev_page and prev_page not in dirty_pages_for_sg:
-                # CLEAN page product: enforce floor (Rule 2 — stay locked)
-                min_page = prev_page
-            else:
-                # DIRTY page product OR new product: no floor (Rule 1 — free flow)
-                min_page = 1
-
-            try_page = max(current_page, min_page)
-
-            while not placed:
-                if try_page not in page_grids:
-                    page_grids[try_page] = self._empty_grid()
-                    page_items[try_page] = []
-
-                r, c = self._find_slot(page_grids[try_page], rspan, cspan)
-                if r != -1:
-                    self._mark_slot(page_grids[try_page], r, c, rspan, cspan)
-                    page_items[try_page].append(p_data)
-                    placed = True
-                else:
-                    try_page += 1
-            # Only advance — never go backward
-            current_page = try_page
-
-        # ── FINAL LAYOUT (with linear placement for visual consistency) ──
-        for page_num in sorted(page_items.keys()):
-            items = sorted(page_items[page_num], key=lambda x: x.get("_sort_idx", 999999))
-            grid = self._empty_grid()
-            layout_map[page_num] = []
-            overflow = []
-
-            cursor_r, cursor_c = 0, 0
-            for p_data in items:
-                rspan, cspan = self._get_product_dims(p_data)
-                r, c = self._find_slot_linear(grid, rspan, cspan, cursor_r, cursor_c)
-
-                if r != -1:
-                    self._mark_slot(grid, r, c, rspan, cspan)
-                    layout_map[page_num].append({
-                        "data": p_data, "row": r, "col": c,
-                        "rspan": rspan, "cspan": cspan
-                    })
-                    cursor_r, cursor_c = r, c
-                else:
-                    overflow.append(p_data)
-
-            # Handle overflow → push to next page
-            if overflow:
-                target = page_num + 1
-                if target not in page_items:
-                    page_items[target] = []
-                page_items[target] = overflow + page_items.get(target, [])
+            if r != -1:
+                self._mark_slot(grid, r, c, rspan, cspan)
+                layout_map[page_num].append({
+                    "data": p_data, "row": r, "col": c,
+                    "rspan": rspan, "cspan": cspan
+                })
 
         # ── POST-PROCESSING: Visual balancing ────────────────────────
         layout_map = self._distribute_products_evenly(layout_map)
-
-        # Clean up temporary sort indices
-        for page_placements in layout_map.values():
-            for pl in page_placements:
-                pl.get("data", {}).pop("_sort_idx", None)
 
         return layout_map
 
@@ -1478,16 +1629,15 @@ class CatalogLogic:
     # ═══════════════════════════════════════════════════════════════════════════
 
     def engine_run(self, company_path=None):
-        """Main engine cycle. Called on tab switch or Build button.
+        """Main engine cycle. Called on Build button or tab switch.
 
         Flow:
-          1. Sync pages with content (ensure page counts match)
-          2. Detect changed pages via snapshot comparison
-          3. For each affected subgroup, sort dirty contiguous ranges
-          4. Handle overflow (create new pages if needed)
-          5. Rebuild serial numbers
-          6. Update CRM with dirty pages + handle serial shifts
-          7. Save updated snapshots
+          1. Sync pages (orphan cleanup, ensure minimum pages)
+          2. Rebuild serial numbers
+          3. Detect dirty pages (snapshot hashing + CRM merge)
+          3.5 Detect unassigned products (new/renamed/moved) → force dirty
+          4. Sort dirty pages (grid-simulated placement → explicit assignments)
+          5. Rebuild serials, update CRM, save snapshots
 
         Returns:
             Dict with: dirty_count, dirty_serials, pages_created
@@ -1495,71 +1645,80 @@ class CatalogLogic:
         if not self.catalog_db_path or not self.final_db_path:
             return {"dirty_count": 0, "dirty_serials": [], "pages_created": 0}
 
-        # Step 1: Sync pages (orphan cleanup + auto-create for overflow)
+        # Step 1: Sync pages (minimal — no layout computation)
         old_serial_map = self._get_serial_map()
         self.sync_pages_with_content()
         self.rebuild_serial_numbers()
 
-        # Step 1.5: Invalidate layout cache BEFORE change detection
-        # This forces _compute_page_hash() to read fresh data from final_data.db
-        # instead of returning stale cached layout from a previous run.
+        # Clear caches to ensure fresh data
         self.invalidate_cache()
 
-        # Step 2: Detect changes via snapshot hashing
+        # Step 2: Detect dirty pages via snapshot hashing
         changed_serials = self.detect_changed_pages()
 
-        # Step 3: Map changed serials to (group, sg_sn, page_no) and sort dirty ranges
+        # Step 3: Merge CRM pending pages into dirty set
+        if company_path:
+            crm_serials = self._get_all_dirty_serials(company_path)
+            if crm_serials:
+                valid_crm = set()
+                for s in crm_serials:
+                    if self.get_page_info_by_serial(s):
+                        valid_crm.add(s)
+                if valid_crm:
+                    newly_detected = len(changed_serials - valid_crm)
+                    from_crm_only = len(valid_crm - changed_serials)
+                    changed_serials = changed_serials | valid_crm
+                    logger.info(
+                        f"Dirty scope: {newly_detected} new from snapshots, "
+                        f"{from_crm_only} from CRM pending, "
+                        f"{len(changed_serials)} total"
+                    )
+
+        # Step 3.5: Detect unassigned products (new, renamed, moved, toggled True)
+        # Products in final_data.db but not in any page's product_list
+        # → force the last page of their subgroup dirty so _sort_dirty_pages
+        #   picks them up via its "new products" handler.
+        unassigned_serials = self._detect_unassigned_products()
+        if unassigned_serials:
+            before = len(changed_serials)
+            changed_serials = changed_serials | unassigned_serials
+            logger.info(
+                f"Unassigned products: {len(unassigned_serials)} subgroups need re-sort "
+                f"(dirty set: {before} → {len(changed_serials)})"
+            )
+
+        # Step 4: Sort dirty pages (grid-simulated placement)
         if changed_serials:
-            # Group dirty pages by subgroup
-            dirty_by_sg = {}  # (group_name, sg_sn) -> [page_no]
+            dirty_by_sg = {}
             for serial in changed_serials:
                 page_info = self.get_page_info_by_serial(serial)
                 if page_info:
                     key = (page_info["group_name"], str(page_info["sg_sn"]))
                     dirty_by_sg.setdefault(key, []).append(page_info["page_no"])
 
-            # Register dirty pages so _build_layout knows which pages
-            # are free to have products flow (Rule 1) vs locked (Rule 2).
-            # Convert absolute page_no to relative for each subgroup.
-            self._active_dirty_pages = {}
             for (group_name, sg_sn), dirty_pages in dirty_by_sg.items():
-                cache_key = f"{group_name}|{sg_sn}"
-                min_page = self._get_min_page_no(group_name, sg_sn)
-                relative_dirty = set(p - min_page + 1 for p in dirty_pages)
-                self._active_dirty_pages[cache_key] = relative_dirty
+                self._sort_dirty_pages(group_name, sg_sn, sorted(set(dirty_pages)))
 
-            # Sort dirty ranges per subgroup
-            for (group_name, sg_sn), dirty_pages in dirty_by_sg.items():
-                ranges = self._group_into_contiguous_ranges(sorted(set(dirty_pages)))
-                for page_range in ranges:
-                    self._sort_dirty_range(group_name, sg_sn, page_range)
-                self.invalidate_subgroup_cache(group_name, sg_sn)
-
-        # Step 4: Rebuild serial numbers (pages may have been added)
+        # Step 5: Rebuild serial numbers (pages may have been added)
         self.rebuild_serial_numbers()
         new_serial_map = self._get_serial_map()
 
-        # Step 5: Determine which serials to add to CRM
+        # Step 6: Determine CRM dirty set
         all_dirty = set()
-        # Add changed pages (by new serial)
         for key, new_serial in new_serial_map.items():
             old_serial = old_serial_map.get(key)
             if old_serial and str(old_serial) in changed_serials:
                 all_dirty.add(new_serial)
             elif not old_serial:
-                # New page (created during sync)
                 all_dirty.add(new_serial)
-
-        # Detect serial shifts and add shifted pages
         for key in new_serial_map:
             old_s = old_serial_map.get(key)
             new_s = new_serial_map[key]
             if old_s and str(old_s) != str(new_s):
-                all_dirty.add(new_s)  # Serial changed, needs reprinting
+                all_dirty.add(new_s)
 
-        # Step 6: Update CRM
+        # Step 7: Update CRM
         if company_path and all_dirty:
-            # Remap any existing CRM entries whose serials shifted
             remap = {}
             for key in old_serial_map:
                 old_s = str(old_serial_map[key])
@@ -1570,12 +1729,9 @@ class CatalogLogic:
                 self._remap_crm_serials(company_path, remap)
             self._add_serials_to_all_crms(company_path, list(all_dirty))
 
-        # Step 7: Save snapshots for ALL pages (reflects new state)
+        # Step 8: Save snapshots
         self.invalidate_cache()
         self.save_all_page_snapshots()
-
-        # Clear dirty page tracking — engine cycle is complete
-        self._active_dirty_pages = {}
 
         result = {
             "dirty_count": len(all_dirty),
@@ -1584,6 +1740,69 @@ class CatalogLogic:
         }
         logger.info(f"Engine run complete: {result}")
         return result
+
+    def _detect_unassigned_products(self):
+        """Find subgroups that have products in final_data.db but not in any
+        page's product_list. Returns a set of serial_no values (the last page
+        of each affected subgroup) to inject into the dirty set.
+
+        Covers: new products, renamed products, subgroup moves, True→False toggles.
+        """
+        conn = self._get_catalog_conn()
+        if not conn:
+            return set()
+
+        force_dirty_serials = set()
+
+        try:
+            cursor = conn.cursor()
+            # Get all subgroups that have pages
+            cursor.execute("""
+                SELECT DISTINCT TRIM(group_name), CAST(sg_sn AS INTEGER)
+                FROM catalog_pages
+            """)
+            subgroups = cursor.fetchall()
+
+            for group_name, sg_sn in subgroups:
+                # Load all DB products for this subgroup
+                all_products = self.get_sorted_products_from_db(group_name, str(sg_sn))
+                if not all_products:
+                    continue
+
+                db_names = set()
+                for p in all_products:
+                    name = (p.get("product_name", "") or p.get("name", "")).strip().lower()
+                    if name:
+                        db_names.add(name)
+
+                # Load all assigned product names across all pages
+                assignments = self._load_all_page_assignments(group_name, str(sg_sn))
+                assigned_names = set()
+                for names in assignments.values():
+                    assigned_names.update(names)
+
+                # Find unassigned products
+                unassigned = db_names - assigned_names
+                if unassigned:
+                    # Get the last page's serial for this subgroup
+                    cursor.execute("""
+                        SELECT serial_no FROM catalog_pages
+                        WHERE TRIM(group_name)=? COLLATE NOCASE
+                          AND CAST(sg_sn AS INTEGER) = CAST(? AS INTEGER)
+                        ORDER BY page_no DESC LIMIT 1
+                    """, (group_name.strip(), sg_sn))
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        force_dirty_serials.add(str(row[0]))
+                        logger.info(
+                            f"Unassigned products in {group_name}|{sg_sn}: "
+                            f"{len(unassigned)} (e.g. {list(unassigned)[:3]})"
+                        )
+
+        except Exception as e:
+            logger.error(f"_detect_unassigned_products error: {e}")
+
+        return force_dirty_serials
 
     @staticmethod
     def _group_into_contiguous_ranges(sorted_pages):
@@ -1604,130 +1823,217 @@ class CatalogLogic:
         ranges.append(current)
         return ranges
 
-    def _sort_dirty_range(self, group_name, sg_sn, page_range):
-        """Re-sort products within a contiguous range of dirty pages.
+    def _sort_dirty_pages(self, group_name, sg_sn, dirty_page_list):
+        """Re-sort products across dirty pages using grid-simulated placement.
 
-        Products on clean pages keep their positions (frozen).
-        Products on dirty pages are cluster+sorted and placed back.
-        The display order is updated to reflect the new arrangement.
+        Algorithm:
+          1. Load current page assignments from catalog_pages.product_list
+          2. Group dirty pages into contiguous ranges
+          3. For each range:
+             a. Pool products from those pages
+             b. Cluster+sort the pool
+             c. Simulate 5×4 grid placement to fill pages densely
+             d. Update assignments for those pages
+          4. Handle new products (not assigned to any page)
+          5. Save updated assignments to catalog_pages.product_list
 
-        CRITICAL: Uses saved page_snapshots (product_list) to determine
-        which products were on which page BEFORE the change. This prevents
-        products from being pulled backward from clean pages into dirty
-        pages when space becomes available (e.g. product size reduced).
+        ONLY dirty pages are modified. Clean pages are NEVER touched.
         """
-        cache_key = f"{group_name}|{sg_sn}"
+        # Load current page assignments
+        assignments = self._load_all_page_assignments(group_name, sg_sn)
 
-        # Get all current products from the database
+        # If no assignments exist yet, compute initial layout
+        if not assignments or not any(names for names in assignments.values()):
+            layout_map = self._build_layout(group_name, sg_sn, reshuffle=False)
+            if not layout_map:
+                return
+
+            # Get database page numbers to map layout pages
+            conn = self._get_catalog_conn()
+            if not conn:
+                return
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT page_no FROM catalog_pages
+                WHERE TRIM(group_name)=? COLLATE NOCASE
+                  AND CAST(sg_sn AS INTEGER) = CAST(? AS INTEGER)
+                ORDER BY page_no
+            """, (group_name.strip(), sg_sn))
+            db_pages = [r[0] for r in cursor.fetchall()]
+            if not db_pages:
+                return
+
+            # Map relative layout pages to database page numbers
+            for rel_page, placements in layout_map.items():
+                if rel_page <= len(db_pages):
+                    abs_page = db_pages[rel_page - 1]
+                    assignments[abs_page] = [
+                        (p.get("data", {}).get("product_name", "") or "").strip().lower()
+                        for p in placements
+                    ]
+
+            self._save_page_assignments(group_name, sg_sn, assignments)
+
+        # Get all products for this subgroup
         all_products = self.get_sorted_products_from_db(group_name, sg_sn)
         if not all_products:
             return
 
-        # Build a lookup: lowercase name -> product data
         product_lookup = {}
         for p in all_products:
             name = (p.get("product_name", "") or p.get("name", "")).strip().lower()
             if name:
                 product_lookup[name] = p
 
-        # --- Load PREVIOUS page assignments from snapshots ---
-        # This tells us which products were on which page BEFORE the change.
-        conn = self._get_catalog_conn()
-        if not conn:
-            return
+        dirty_set = set(dirty_page_list)
+        ranges = self._group_into_contiguous_ranges(sorted(dirty_set))
 
-        prev_page_products = {}  # page_no -> [lowercase product names]
-        try:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT cp.page_no, ps.product_list
-                FROM catalog_pages cp
-                LEFT JOIN page_snapshots ps ON cp.serial_no = ps.serial_no
-                WHERE TRIM(cp.group_name)=? COLLATE NOCASE
-                  AND CAST(cp.sg_sn AS INTEGER) = CAST(? AS INTEGER)
-                ORDER BY cp.page_no
-            """, (group_name.strip(), sg_sn))
-
-            for page_no, p_list in cursor.fetchall():
-                names = []
-                if p_list:
-                    try:
-                        parsed = json.loads(p_list)
-                        if isinstance(parsed, list):
-                            names = [str(n).strip().lower() for n in parsed if n]
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                prev_page_products[page_no] = names
-        except Exception as e:
-            logger.warning(f"_sort_dirty_range: could not load snapshots: {e}")
-            # Fallback: use _build_layout if snapshots aren't available
-            layout_map = self._build_layout(group_name, sg_sn, reshuffle=False)
-            prev_page_products = {}
-            for page_no in sorted(layout_map.keys()):
-                prev_page_products[page_no] = [
-                    (pl.get("data", {}).get("product_name", "") or "").strip().lower()
-                    for pl in layout_map[page_no]
-                ]
-
-        if not prev_page_products:
-            return
-
-        # --- Collect products from dirty pages only ---
-        dirty_products = []
-        for pno in page_range:
-            for name in prev_page_products.get(pno, []):
-                if name in product_lookup:
-                    dirty_products.append(product_lookup[name])
-
-        # Also include any NEW products (not in any snapshot) — they go to dirty pages
-        snapshot_all_names = set()
-        for names in prev_page_products.values():
-            snapshot_all_names.update(names)
-        for name, p in product_lookup.items():
-            if name not in snapshot_all_names:
-                dirty_products.append(p)
-
-        if not dirty_products:
-            return
-
-        # Cluster + sort the dirty products
-        sorted_dirty = self._cluster_and_sort(dirty_products)
-
-        # --- Rebuild display order: frozen clean pages + sorted dirty pages ---
-        new_order = []
-        dirty_iter = iter(sorted_dirty)
-
-        for page_no in sorted(prev_page_products.keys()):
-            if page_no in page_range:
-                # Replace with sorted products (same count as before)
-                count = len(prev_page_products[page_no])
-                for _ in range(count):
-                    try:
-                        p = next(dirty_iter)
-                        new_order.append(
-                            (p.get("product_name", "") or p.get("name", "")).strip().lower()
-                        )
-                    except StopIteration:
-                        break
-            else:
-                # FROZEN: keep clean page products in their original order
-                for name in prev_page_products[page_no]:
+        # Process each contiguous range
+        for page_range in ranges:
+            # Pool products from dirty pages in this range
+            pool = []
+            for pno in page_range:
+                for name in assignments.get(pno, []):
                     if name in product_lookup:
-                        new_order.append(name)
+                        pool.append(product_lookup[name])
 
-        # Append any remaining dirty products (overflow from resizing)
-        for p in dirty_iter:
-            new_order.append(
-                (p.get("product_name", "") or p.get("name", "")).strip().lower()
-            )
+            if not pool:
+                continue
 
-        # Save updated order and invalidate cache
-        self._save_display_order(cache_key, new_order)
+            # Sort the pool
+            sorted_pool = self._cluster_and_sort(pool)
+
+            # Simulate grid placement — fill pages densely
+            pool_idx = 0
+            for pno in page_range:
+                grid = self._empty_grid()
+                page_products = []
+
+                while pool_idx < len(sorted_pool):
+                    p = sorted_pool[pool_idx]
+                    rspan, cspan = self._get_product_dims(p)
+                    r, c = self._find_slot(grid, rspan, cspan)
+
+                    if r == -1:
+                        break  # Page full, move to next
+
+                    self._mark_slot(grid, r, c, rspan, cspan)
+                    p_name = (p.get("product_name", "") or p.get("name", "")).strip().lower()
+                    page_products.append(p_name)
+                    pool_idx += 1
+
+                assignments[pno] = page_products
+
+            # Handle overflow with CASCADE validation
+            # If products overflow into the next page, we must validate that
+            # the next page can actually hold all its products. If not, cascade.
+            if pool_idx < len(sorted_pool):
+                overflow_products = sorted_pool[pool_idx:]
+                last_dirty = page_range[-1]
+                next_page = last_dirty + 1
+
+                # Cascade loop: keep pushing overflow until everything fits
+                while overflow_products:
+                    overflow_names = [
+                        (p.get("product_name", "") or p.get("name", "")).strip().lower()
+                        for p in overflow_products
+                    ]
+
+                    if next_page not in assignments:
+                        # Brand new page — just place overflow
+                        self._ensure_page_exists(group_name, sg_sn, next_page)
+                        assignments[next_page] = []
+
+                    # Merge: overflow + existing products on next_page
+                    existing_on_next = assignments.get(next_page, [])
+                    merged_names = overflow_names + existing_on_next
+
+                    # Build lookup for merged products
+                    merged_products = []
+                    for name in merged_names:
+                        if name in product_lookup:
+                            merged_products.append(product_lookup[name])
+
+                    # Simulate grid for next_page
+                    grid = self._empty_grid()
+                    fits = []
+                    new_overflow = []
+                    for p in merged_products:
+                        rspan, cspan = self._get_product_dims(p)
+                        r, c = self._find_slot(grid, rspan, cspan)
+                        if r != -1:
+                            self._mark_slot(grid, r, c, rspan, cspan)
+                            p_name = (p.get("product_name", "") or p.get("name", "")).strip().lower()
+                            fits.append(p_name)
+                        else:
+                            new_overflow.append(p)
+
+                    assignments[next_page] = fits
+
+                    if new_overflow:
+                        logger.info(
+                            f"Overflow cascade: {len(new_overflow)} products from "
+                            f"page {next_page} → page {next_page + 1}"
+                        )
+                        overflow_products = new_overflow
+                        next_page += 1
+                    else:
+                        overflow_products = []  # Everything fits — stop
+
+                logger.info(
+                    f"Overflow: products from range "
+                    f"{page_range[0]}-{page_range[-1]} cascaded to page {next_page}"
+                )
+
+        # Handle NEW products (not assigned to any page)
+        all_assigned = set()
+        for names in assignments.values():
+            all_assigned.update(names)
+
+        new_products = []
+        for name, p in product_lookup.items():
+            if name not in all_assigned:
+                new_products.append(p)
+
+        if new_products:
+            sorted_new = self._cluster_and_sort(new_products)
+            all_pages = sorted(assignments.keys())
+            last_page = all_pages[-1] if all_pages else 1
+
+            # Build grid for last page to check remaining capacity
+            grid = self._empty_grid()
+            for name in assignments.get(last_page, []):
+                p = product_lookup.get(name)
+                if p:
+                    rspan, cspan = self._get_product_dims(p)
+                    r, c = self._find_slot(grid, rspan, cspan)
+                    if r != -1:
+                        self._mark_slot(grid, r, c, rspan, cspan)
+
+            for p in sorted_new:
+                rspan, cspan = self._get_product_dims(p)
+                r, c = self._find_slot(grid, rspan, cspan)
+
+                if r == -1:
+                    # Page full, create next page
+                    last_page += 1
+                    self._ensure_page_exists(group_name, sg_sn, last_page)
+                    assignments[last_page] = []
+                    grid = self._empty_grid()
+                    r, c = self._find_slot(grid, rspan, cspan)
+
+                if r != -1:
+                    self._mark_slot(grid, r, c, rspan, cspan)
+                    p_name = (p.get("product_name", "") or p.get("name", "")).strip().lower()
+                    assignments.setdefault(last_page, []).append(p_name)
+
+        # Save all updated assignments
+        self._save_page_assignments(group_name, sg_sn, assignments)
         self.invalidate_subgroup_cache(group_name, sg_sn)
 
         logger.info(
-            f"Sorted dirty range {page_range} in {group_name}|{sg_sn}: "
-            f"{len(dirty_products)} products re-sorted"
+            f"Sorted {len(ranges)} dirty range(s) in {group_name}|{sg_sn}: "
+            f"{len(dirty_page_list)} dirty pages, {len(new_products)} new products"
         )
 
     # ───────────────────────────────────────────────────────────────────────────
@@ -1865,7 +2171,10 @@ class CatalogLogic:
 
     def find_empty_pages(self):
         """Find pages that have no products assigned.
-        
+
+        Uses explicit page assignments (product_list column) when available.
+        Falls back to get_items_for_page_dynamic for pages without assignments.
+
         Returns:
             List of (group_name, sg_sn, page_no) tuples for empty pages.
         """
@@ -1876,21 +2185,26 @@ class CatalogLogic:
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT group_name, sg_sn, page_no FROM catalog_pages "
+                "SELECT group_name, sg_sn, page_no, product_list FROM catalog_pages "
                 "ORDER BY group_name, sg_sn, page_no"
             )
             rows = cursor.fetchall()
 
-            # Group pages by subgroup to minimize layout simulations
-            pages_by_sg = {}
-            for g, s, p in rows:
-                pages_by_sg.setdefault((g, s), []).append(p)
-
             empty = []
-            for (g, s), pages in pages_by_sg.items():
-                layout_map = self.simulate_page_layout(g, s)
-                for p in pages:
-                    if p not in layout_map or not layout_map[p]:
+            for g, s, p, p_list in rows:
+                has_products = False
+                if p_list:
+                    try:
+                        parsed = json.loads(p_list)
+                        if isinstance(parsed, list) and len(parsed) > 0:
+                            has_products = True
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                if not has_products:
+                    # Double-check with actual rendering
+                    items = self.get_items_for_page_dynamic(g, s, p)
+                    if not items:
                         empty.append((g, s, p))
 
             return empty
