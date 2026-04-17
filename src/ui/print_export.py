@@ -368,47 +368,24 @@ class PrintExportDialog(QDialog):
         progress.close()
         return True
 
-    # ─── Print Preview ──────────────────────────────────────────────
     def show_print_preview(self):
-        """Show print preview dialog with loading indicator."""
+        """Show print preview dialog."""
         page_indices = self.get_page_range()
         if not page_indices:
             QMessageBox.warning(self, "No Pages", "No pages available to print.")
             return
         
-        # Show loading dialog
         from PyQt6.QtWidgets import QProgressDialog, QApplication
-        from PyQt6.QtCore import QTimer
         
-        progress = QProgressDialog("Preparing catalog preview...", None, 0, len(page_indices), self)
+        # Immediately display loading UI because QPrinter initialization takes a second on Windows
+        progress = QProgressDialog("Initializing print services...\nPlease wait.", None, 0, 0, self)
         progress.setWindowTitle("Loading Preview")
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)
-        progress.setValue(0)
         progress.show()
         QApplication.processEvents()
         
-        # Pre-calculate page data to check for issues
-        valid_pages = []
-        for i, idx in enumerate(page_indices):
-            progress.setValue(i)
-            progress.setLabelText(f"Preparing page {i+1} of {len(page_indices)}...")
-            QApplication.processEvents()
-            
-            if progress.wasCanceled():
-                self.reject()
-                return
-            
-            valid_pages.append(idx)
-        
-        progress.setValue(len(page_indices))
-        progress.close()
-        
-        if not valid_pages:
-            QMessageBox.warning(self, "No Valid Pages", "No valid pages to preview.")
-            return
-        
-        # Create printer for preview
+        # Create printer for preview (this causes the hang)
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
         
         # Set A4 page size with ZERO margins - we handle margins ourselves
@@ -419,16 +396,22 @@ class PrintExportDialog(QDialog):
         printer.setPageLayout(page_layout)
         
         # Store page indices for the preview handler
-        self._preview_pages = valid_pages
+        self._preview_pages = page_indices
+        
+        progress.setLabelText("Generating preview interface...")
+        QApplication.processEvents()
         
         # Create and show preview dialog
         preview = QPrintPreviewDialog(printer, self)
-        preview.setWindowTitle(f"Print Preview - Catalog ({len(valid_pages)} pages)")
+        preview.setWindowTitle(f"Print Preview - Catalog ({len(page_indices)} pages)")
         preview.resize(900, 700)
         preview.paintRequested.connect(self.handle_paint_request)
         
         # Store reference to close it if rendering is cancelled
         self._active_preview = preview
+        
+        # Operations complete, dismiss loading UI
+        progress.close()
         
         preview.exec()
         self._active_preview = None

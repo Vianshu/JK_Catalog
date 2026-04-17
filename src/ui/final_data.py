@@ -26,6 +26,7 @@ class FinalDataUI(QWidget):
         super().__init__()
         self.db_path = ""
         self.image_folder = ""
+        self.super_master_path = ""
         self.headers = [
             "GUID", "ID", "Item_Name", "Alias", "Part_No", "Product Name", 
             "Product_Size", "Category", "Unit", "MOQ", "M_Packing", "MRP", 
@@ -414,8 +415,10 @@ class FinalDataUI(QWidget):
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_guid ON catalog (GUID)")
 
             # 3. Super Master Mapping
-            from src.utils.path_utils import get_data_file_path
-            super_db = get_data_file_path("super_master.db")
+            # Resolve super_master.db from PARENT of company folder (shared across companies)
+            # Same strategy as super_master.py and full_catalog.py
+            super_db = os.path.join(os.path.dirname(folder_path), "super_master.db")
+            self.super_master_path = super_db
             
             super_mapping = {}
             if os.path.exists(super_db):
@@ -452,8 +455,7 @@ class FinalDataUI(QWidget):
                     if t > latest_mod:
                         latest_mod = t
             # Also check super_master.db (shared across companies)
-            from src.utils.path_utils import get_data_file_path
-            super_db = get_data_file_path("super_master.db")
+            super_db = os.path.join(os.path.dirname(folder_path), "super_master.db")
             if os.path.exists(super_db):
                 t = os.path.getmtime(super_db)
                 if t > latest_mod:
@@ -689,9 +691,8 @@ class FinalDataUI(QWidget):
             # 1. Build super_master group ordering map
             group_order = {}  # (MG_SN_int, SG_SN_int) → sort key
             try:
-                from src.utils.path_utils import get_data_file_path
-                super_db = get_data_file_path("super_master.db")
-                if os.path.exists(super_db):
+                super_db = self.super_master_path
+                if super_db and os.path.exists(super_db):
                     with sqlite3.connect(super_db) as s_conn:
                         for row in s_conn.execute(
                             "SELECT MG_SN, SG_SN FROM super_master ORDER BY CAST(MG_SN AS INTEGER), CAST(SG_SN AS INTEGER)"
