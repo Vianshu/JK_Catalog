@@ -116,7 +116,26 @@ class TallyService:
                 "$StandardPrice": "MRP",
             }
 
-            export_df.rename(columns=column_mapping, inplace=True)
+            # Case-insensitive rename: different Tally ODBC versions may
+            # return column names in different cases (e.g. $Guid vs $GUID)
+            raw_cols = list(export_df.columns)
+            print(f"[DEBUG] Raw Tally columns: {raw_cols}")
+            
+            current_cols = {c.lower(): c for c in export_df.columns}
+            resolved_mapping = {}
+            for old_name, new_name in column_mapping.items():
+                actual_col = current_cols.get(old_name.lower())
+                if actual_col:
+                    resolved_mapping[actual_col] = new_name
+            export_df.rename(columns=resolved_mapping, inplace=True)
+            
+            final_cols = list(export_df.columns)
+            print(f"[DEBUG] Final columns after rename: {final_cols}")
+            
+            # Verify critical column exists
+            if "GUID" not in export_df.columns:
+                print(f"[WARNING] GUID column missing after rename! Columns: {final_cols}")
+            
             export_df.to_sql("stock_items", conn, if_exists="replace", index=False)
 
             conn.close()
@@ -278,7 +297,14 @@ def fetch_tally_ledger_data(company_path=None):
             "$IsBillWiseOn": "BillwiseOn",
         }
 
-        ledger_df.rename(columns=ledger_mapping, inplace=True)
+        # Case-insensitive rename (same fix as stock_items)
+        current_cols = {c.lower(): c for c in ledger_df.columns}
+        resolved_mapping = {}
+        for old_name, new_name in ledger_mapping.items():
+            actual_col = current_cols.get(old_name.lower())
+            if actual_col:
+                resolved_mapping[actual_col] = new_name
+        ledger_df.rename(columns=resolved_mapping, inplace=True)
 
         numeric_cols = [
             "Credit_Limit", "Opening_Balance", "Closing_Balance",

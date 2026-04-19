@@ -4,15 +4,42 @@ import sqlite3
 import datetime
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QGroupBox,
-    QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox
+    QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
+    QProgressDialog, QApplication
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap, QColor
 # Aapka original processor
 from src.logic.data_processor import DataProcessor
 from src.utils.app_logger import get_logger
 
 logger = get_logger(__name__)
+
+
+class FinalDataSyncWorker(QThread):
+    """Background worker for Final Data sync operations.
+    Runs DB sync, processor, and image sync off the main thread."""
+    progress = pyqtSignal(str)
+    finished = pyqtSignal(str)  # sync_label text
+    error = pyqtSignal(str)
+
+    def __init__(self, ui_ref, folder_path, company_name):
+        super().__init__()
+        self.ui = ui_ref
+        self.folder_path = folder_path
+        self.company_name = company_name
+
+    def run(self):
+        try:
+            sync_label = self.ui._run_sync_pipeline(
+                self.folder_path, self.company_name, self.progress
+            )
+            self.finished.emit(sync_label)
+        except Exception as e:
+            logger.error(f"Sync Worker Error: {e}", exc_info=True)
+            import traceback
+            traceback.print_exc()
+            self.error.emit(str(e))
 
 class NumericTableWidgetItem(QTableWidgetItem):
     def __lt__(self, other):
@@ -22,10 +49,13 @@ class NumericTableWidgetItem(QTableWidgetItem):
             return super().__lt__(other)
         
 class FinalDataUI(QWidget):
+    sync_complete = pyqtSignal()  # Emitted when background sync finishes
+
     def __init__(self):
         super().__init__()
         self.db_path = ""
         self.image_folder = ""
+        self._sync_worker = None
         self.super_master_path = ""
         self.headers = [
             "GUID", "ID", "Item_Name", "Alias", "Part_No", "Product Name", 
@@ -373,11 +403,11 @@ class FinalDataUI(QWidget):
             logger.error(f"Update Error: {e}", exc_info=True)
 
     def load_and_sync_data(self, company_name, company_path=None):
+        """Entry point: resolves paths, then starts background sync worker."""
         try:
-            # 1. Path Setup
+            # 1. Path Setup (fast — stays on main thread)
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             
-            # Determine Folder Path
             folder_path = company_path
             self.image_folder = ""
             
@@ -395,7 +425,7 @@ class FinalDataUI(QWidget):
                  logger.error(f"Invalid Company Path: {folder_path}")
                  return
 
-            # Read company_info.json for Image Path (Decentralized Priority)
+            # Read company_info.json for Image Path
             info_file = os.path.join(folder_path, "company_info.json")
             if os.path.exists(info_file):
                  try:
@@ -405,167 +435,217 @@ class FinalDataUI(QWidget):
                  except: pass
 
             self.db_path = os.path.join(folder_path, "final_data.db")
-            row_db_path = os.path.join(folder_path, "row_data.db")
-            
-            final_conn = sqlite3.connect(self.db_path)
-            cur = final_conn.cursor()
-            
-            # Ensure Table Exists
-            cur.execute(f"CREATE TABLE IF NOT EXISTS catalog ({', '.join([f'[{h}] TEXT' for h in self.headers])})")
-            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_guid ON catalog (GUID)")
+            self.super_master_path = os.path.join(os.path.dirname(folder_path), "super_master.db")
 
-            # 3. Super Master Mapping
-            # Resolve super_master.db from PARENT of company folder (shared across companies)
-            # Same strategy as super_master.py and full_catalog.py
-            super_db = os.path.join(os.path.dirname(folder_path), "super_master.db")
-            self.super_master_path = super_db
-            
-            super_mapping = {}
-            if os.path.exists(super_db):
-                try:
-                    with sqlite3.connect(super_db) as s_conn:
-                        # Check table exists first
-                        s_conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='super_master'").fetchone() 
-                        # Assuming it exists if code reached here
-                        for r in s_conn.execute("SELECT Sub_Group, MG_SN, Group_Name, SG_SN FROM super_master"):
-                            super_mapping[r[0]] = (r[1], r[2], r[3])
-                except Exception as e:
-                    logger.error(f"Super Master Read Error: {e}", exc_info=True)
-            
-            # 4. Tally Data Fetch
-            with sqlite3.connect(row_db_path) as row_conn:
-                rows = row_conn.execute("SELECT GUID, Item_Name, FirstAlias, Part_No, Category, Unit, SubGroup, MRP, Closing_Qty FROM stock_items").fetchall()
+            # 2. Show progress dialog and start background worker
+            self._sync_progress = QProgressDialog("Syncing Final Data...", None, 0, 0, self)
+            self._sync_progress.setWindowTitle("Processing")
+            self._sync_progress.setWindowModality(Qt.WindowModality.WindowModal)
+            self._sync_progress.setMinimumDuration(0)
+            self._sync_progress.setMinimumWidth(320)
+            self._sync_progress.setCancelButton(None)
+            self._sync_progress.show()
+            QApplication.processEvents()
 
-            # Identify and delete items that have been removed from Tally
-            tally_guids_set = {r[0] for r in rows}
-            cur.execute("SELECT GUID FROM catalog")
-            catalog_guids = [row[0] for row in cur.fetchall()]
-            guids_to_delete = [g for g in catalog_guids if g not in tally_guids_set]
-            for g in guids_to_delete:
-                cur.execute("DELETE FROM catalog WHERE GUID=?", (g,))
+            # Prevent concurrent syncs
+            if self._sync_worker and self._sync_worker.isRunning():
+                self._sync_progress.close()
+                return
 
-            now = self.current_datetime()
-
-            # Update Sync Label: show the LATEST modification time across
-            # all relevant data sources (row_data.db, super_master.db, final_data.db)
-            latest_mod = 0
-            for check_path in [row_db_path, self.db_path]:
-                if check_path and os.path.exists(check_path):
-                    t = os.path.getmtime(check_path)
-                    if t > latest_mod:
-                        latest_mod = t
-            # Also check super_master.db (shared across companies)
-            super_db = os.path.join(os.path.dirname(folder_path), "super_master.db")
-            if os.path.exists(super_db):
-                t = os.path.getmtime(super_db)
-                if t > latest_mod:
-                    latest_mod = t
-            if latest_mod > 0:
-                sync_dt = datetime.datetime.fromtimestamp(latest_mod).strftime("%d-%m-%Y %H:%M:%S")
-                self.sync_lbl.setText(f"Last Sync: {sync_dt}")
-            else:
-                self.sync_lbl.setText(f"Last Sync: {now}")
-            
-            for r in rows:
-                guid = r[0]
-                sub_group_name = r[6]
-                
-                # Sahi jagah s_data nikalne ki
-                s_data = super_mapping.get(sub_group_name, ("", "", ""))
-                
-                cur.execute("""
-                    SELECT Item_Name, Alias, Part_No, Category, Unit, 
-                           MRP, Stock, MG_SN, [Group], SG_SN, Sub_Group
-                    FROM catalog WHERE GUID=?
-                """, (guid,))
-                old_row_db = cur.fetchone()
-                
-                new_row = tuple("" if v is None else str(v) for v in (
-                    r[1],          # Item_Name
-                    r[2],          # Alias
-                    r[3],          # Part_No
-                    r[4],          # Category
-                    r[5],          # Unit
-                    r[7],          # MRP
-                    r[8],          # Stock
-                    s_data[0],     # MG_SN
-                    s_data[1],     # Group
-                    s_data[2],     # SG_SN
-                    r[6],          # Sub_Group
-                ))
-
-                # DB se aayi purani row ko bhi normalize karo
-                old_row_norm = tuple("" if v is None else str(v) for v in old_row_db) if old_row_db else None
-
-                data_changed = old_row_norm != new_row
-                
-                new_mrp = str(r[7])
-                new_stock = str(r[8])
-
-                if old_row_db:
-                    if data_changed:
-                        query = """UPDATE catalog SET 
-                            Item_Name=?, Alias=?, Part_No=?, Category=?, Unit=?, 
-                            MRP=?, Stock=?, MG_SN=?, [Group]=?, SG_SN=?, Sub_Group=?, 
-                            Update_date=? 
-                            WHERE GUID=?"""
-                        cur.execute(query, (*new_row, now, guid))
-                    else:
-                        # Data unchanged. Do NOT touch Lenth.
-                        # This preserves manual edits (e.g. 1|0, 2|2) in the catalog.
-                        pass
-                else:
-                    # Bilkul naya item (Insert)
-                    f_row = [None] * len(self.headers)
-                    f_row[self.col_index("GUID")] = guid
-                    f_row[self.col_index("Item_Name")] = r[1]
-                    f_row[self.col_index("Alias")] = r[2]
-                    f_row[self.col_index("Part_No")] = r[3]
-                    f_row[self.col_index("Category")] = r[4]
-                    f_row[self.col_index("Unit")] = r[5]
-                    f_row[self.col_index("MRP")] = r[7]
-                    f_row[self.col_index("Stock")] = r[8]
-                    f_row[self.col_index("MG_SN")] = s_data[0]
-                    f_row[self.col_index("Group")] = s_data[1]
-                    f_row[self.col_index("SG_SN")] = s_data[2]
-                    f_row[self.col_index("Sub_Group")] = r[6]
-                    f_row[self.col_index("Lenth")] = "1"
-                    f_row[self.col_index("Update_date")] = now
-                    
-                    # Insert Query
-                    placeholders = ', '.join(['?'] * len(self.headers))
-                    cols = ', '.join([f"[{h}]" for h in self.headers])
-                    query = f"INSERT INTO catalog ({cols}) VALUES ({placeholders})"
-                    cur.execute(query, f_row)
-
-            final_conn.commit()
-            final_conn.close()
-
-            # --- STEP B: AAPKA PROCESSOR TRIGGER KARNA (Yahan se Product Name banega) ---
-            processor = DataProcessor(self.db_path)
-            # 1. Product Name, Size, MOQ, Image Name generate karein
-            processor.process_and_save_final_data() 
-            # 2. Sahi format mein Complex IDs generate karein
-            processor.generate_complex_ids()
-
-            # 4. Image Sync (Files check karna)
-            self.sync_images_after_processing()
-            
-            print("Attempting to refresh table...")
-            try:
-                self.refresh_table()
-                print("Table refresh returned successfully.")
-            except Exception as e:
-                print(f"CRITICAL: Refresh Table Failed: {e}")
-                import traceback
-                traceback.print_exc()
-
-            # self.status_lbl.setText("Sync Complete! All Processor logic applied.")
+            self._sync_worker = FinalDataSyncWorker(self, folder_path, company_name)
+            self._sync_worker.progress.connect(self._on_sync_progress)
+            self._sync_worker.finished.connect(self._on_sync_finished)
+            self._sync_worker.error.connect(self._on_sync_error)
+            self._sync_worker.start()
 
         except Exception as e:
-            logger.error(f"Sync Error: {e}", exc_info=True)
+            logger.error(f"Sync Setup Error: {e}", exc_info=True)
             import traceback
             traceback.print_exc()
+
+    def _run_sync_pipeline(self, folder_path, company_name, progress_signal):
+        """Heavy sync work — runs in background thread. No widget access allowed.
+        Returns the sync label text string."""
+        def emit(msg):
+            if progress_signal:
+                progress_signal.emit(msg)
+
+        row_db_path = os.path.join(folder_path, "row_data.db")
+
+        emit("Creating database tables...")
+        final_conn = sqlite3.connect(self.db_path)
+        cur = final_conn.cursor()
+        cur.execute(f"CREATE TABLE IF NOT EXISTS catalog ({', '.join([f'[{h}] TEXT' for h in self.headers])})")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_guid ON catalog (GUID)")
+
+        # Super Master Mapping
+        emit("Reading Super Master data...")
+        super_db = self.super_master_path
+        super_mapping = {}
+        if os.path.exists(super_db):
+            try:
+                with sqlite3.connect(super_db) as s_conn:
+                    s_conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='super_master'").fetchone()
+                    for r in s_conn.execute("SELECT Sub_Group, MG_SN, Group_Name, SG_SN FROM super_master"):
+                        super_mapping[r[0]] = (r[1], r[2], r[3])
+            except Exception as e:
+                logger.error(f"Super Master Read Error: {e}", exc_info=True)
+
+        # Tally Data Fetch
+        emit("Reading Tally data...")
+        with sqlite3.connect(row_db_path) as row_conn:
+            # Detect actual column names (handles rename failures: $GUID vs GUID)
+            col_info = row_conn.execute("PRAGMA table_info(stock_items)").fetchall()
+            col_names = {c[1] for c in col_info}  # set of column names
+            
+            # Build column mapping for query: use actual column name, alias to expected
+            def col_or_fallback(expected, fallback):
+                if expected in col_names:
+                    return expected
+                if fallback in col_names:
+                    return f'[{fallback}] AS [{expected}]'
+                return f"NULL AS [{expected}]"
+            
+            select_cols = ", ".join([
+                col_or_fallback("GUID", "$GUID"),
+                col_or_fallback("Item_Name", "$Name"),
+                col_or_fallback("FirstAlias", "$_FirstAlias"),
+                col_or_fallback("Part_No", "$MailingName"),
+                col_or_fallback("Category", "$Category"),
+                col_or_fallback("Unit", "$BaseUnits"),
+                col_or_fallback("SubGroup", "$Parent"),
+                col_or_fallback("MRP", "$StandardPrice"),
+                col_or_fallback("Closing_Qty", "$_ClosingBalance"),
+            ])
+            rows = row_conn.execute(f"SELECT {select_cols} FROM stock_items").fetchall()
+
+        # Delete items removed from Tally
+        emit("Cleaning removed items...")
+        tally_guids_set = {r[0] for r in rows}
+        cur.execute("SELECT GUID FROM catalog")
+        catalog_guids = [row[0] for row in cur.fetchall()]
+        guids_to_delete = [g for g in catalog_guids if g not in tally_guids_set]
+        for g in guids_to_delete:
+            cur.execute("DELETE FROM catalog WHERE GUID=?", (g,))
+
+        now = self.current_datetime()
+
+        # Calculate sync label
+        latest_mod = 0
+        for check_path in [row_db_path, self.db_path]:
+            if check_path and os.path.exists(check_path):
+                t = os.path.getmtime(check_path)
+                if t > latest_mod:
+                    latest_mod = t
+        if os.path.exists(super_db):
+            t = os.path.getmtime(super_db)
+            if t > latest_mod:
+                latest_mod = t
+        if latest_mod > 0:
+            sync_label = f"Last Sync: {datetime.datetime.fromtimestamp(latest_mod).strftime('%d-%m-%Y %H:%M:%S')}"
+        else:
+            sync_label = f"Last Sync: {now}"
+
+        # Main sync loop
+        emit(f"Syncing {len(rows)} items...")
+        for r in rows:
+            guid = r[0]
+            sub_group_name = r[6]
+            s_data = super_mapping.get(sub_group_name, ("", "", ""))
+
+            cur.execute("""
+                SELECT Item_Name, Alias, Part_No, Category, Unit,
+                       MRP, Stock, MG_SN, [Group], SG_SN, Sub_Group
+                FROM catalog WHERE GUID=?
+            """, (guid,))
+            old_row_db = cur.fetchone()
+
+            new_row = tuple("" if v is None else str(v) for v in (
+                r[1], r[2], r[3], r[4], r[5],
+                r[7], r[8],
+                s_data[0], s_data[1], s_data[2],
+                r[6],
+            ))
+            old_row_norm = tuple("" if v is None else str(v) for v in old_row_db) if old_row_db else None
+            data_changed = old_row_norm != new_row
+
+            if old_row_db:
+                if data_changed:
+                    query = """UPDATE catalog SET
+                        Item_Name=?, Alias=?, Part_No=?, Category=?, Unit=?,
+                        MRP=?, Stock=?, MG_SN=?, [Group]=?, SG_SN=?, Sub_Group=?,
+                        Update_date=?
+                        WHERE GUID=?"""
+                    cur.execute(query, (*new_row, now, guid))
+            else:
+                # New item — Insert
+                f_row = [None] * len(self.headers)
+                f_row[self.col_index("GUID")] = guid
+                f_row[self.col_index("Item_Name")] = r[1]
+                f_row[self.col_index("Alias")] = r[2]
+                f_row[self.col_index("Part_No")] = r[3]
+                f_row[self.col_index("Category")] = r[4]
+                f_row[self.col_index("Unit")] = r[5]
+                f_row[self.col_index("MRP")] = r[7]
+                f_row[self.col_index("Stock")] = r[8]
+                f_row[self.col_index("MG_SN")] = s_data[0]
+                f_row[self.col_index("Group")] = s_data[1]
+                f_row[self.col_index("SG_SN")] = s_data[2]
+                f_row[self.col_index("Sub_Group")] = r[6]
+                f_row[self.col_index("Lenth")] = "1"
+                f_row[self.col_index("Update_date")] = now
+                placeholders = ', '.join(['?'] * len(self.headers))
+                cols = ', '.join([f"[{h}]" for h in self.headers])
+                query = f"INSERT INTO catalog ({cols}) VALUES ({placeholders})"
+                cur.execute(query, f_row)
+
+        final_conn.commit()
+        final_conn.close()
+
+        # Processor
+        emit("Processing product names...")
+        processor = DataProcessor(self.db_path)
+        processor.process_and_save_final_data()
+        emit("Generating complex IDs...")
+        processor.generate_complex_ids()
+
+        # Image Sync
+        emit("Syncing images...")
+        self.sync_images_after_processing()
+
+        return sync_label
+
+    def _on_sync_progress(self, msg):
+        """Update progress dialog label from worker signal."""
+        if hasattr(self, '_sync_progress') and self._sync_progress:
+            self._sync_progress.setLabelText(msg)
+
+    def _on_sync_finished(self, sync_label):
+        """Called on main thread when background sync completes."""
+        if hasattr(self, '_sync_progress') and self._sync_progress:
+            self._sync_progress.close()
+
+        self.sync_lbl.setText(sync_label)
+
+        print("Attempting to refresh table...")
+        try:
+            self.refresh_table()
+            print("Table refresh returned successfully.")
+        except Exception as e:
+            print(f"CRITICAL: Refresh Table Failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+        self._sync_worker = None
+        self.sync_complete.emit()
+
+    def _on_sync_error(self, error_msg):
+        """Called on main thread when background sync fails."""
+        if hasattr(self, '_sync_progress') and self._sync_progress:
+            self._sync_progress.close()
+        logger.error(f"Sync Error: {error_msg}")
+        self._sync_worker = None
+        self.sync_complete.emit()
             
     def sync_images_after_processing(self):
         # Processor ke kaam ke baad image paths update karne ke liye

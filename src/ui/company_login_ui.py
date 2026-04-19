@@ -416,14 +416,6 @@ class CompanyLoginUI(QWidget):
                             found_folders.append(full)
                             seen_paths.add(full.lower())
             except: pass
-            
-        # Add History
-        history = self.load_history()
-        for h_path in history:
-            norm_h = os.path.normpath(os.path.abspath(h_path))
-            if os.path.exists(norm_h) and norm_h.lower() not in seen_paths:
-                found_folders.append(norm_h)
-                seen_paths.add(norm_h.lower())
         
         if not found_folders:
              self.add_item("(No folders found)", role=None)

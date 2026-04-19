@@ -622,20 +622,22 @@ class MainWindow(QWidget):
             if not error and not df.empty:
                 self.row_data_page.load_data(self.current_company_path)
                 
-                # Sync Final Data
-                if hasattr(self, 'final_data_page'):
-                    self.final_data_page.load_and_sync_data(self.current_company, self.current_company_path)
+                # Chain: Final Data sync (async) → catalog build → success message
+                row_count = len(df)
+                def _after_sync():
+                    self.final_data_page.sync_complete.disconnect(_after_sync)
+                    # Trigger a silent catalog build
+                    if hasattr(self, 'full_catalog_page'):
+                        if hasattr(self.full_catalog_page, 'logic'):
+                            self.full_catalog_page.logic.invalidate_cache()
+                        self.full_catalog_page.build_catalog(silent=True)
+                    QMessageBox.information(self, "Sync Complete", f"Data Synced Successfully!\nLoaded {row_count} rows.\n\nClick OK to close.")
                 
-                # Trigger a silent catalog build — this will:
-                # 1. Detect changed pages
-                # 2. Update REPORT_DATA.JSON with pending pages
-                # 3. Emit catalog_built signal → on_catalog_built() → refresh reports
-                if hasattr(self, 'full_catalog_page'):
-                    if hasattr(self.full_catalog_page, 'logic'):
-                        self.full_catalog_page.logic.invalidate_cache()
-                    self.full_catalog_page.build_catalog(silent=True)
-                    
-                QMessageBox.information(self, "Sync Complete", f"Data Synced Successfully!\nLoaded {len(df)} rows.\n\nClick OK to close.")
+                if hasattr(self, 'final_data_page'):
+                    self.final_data_page.sync_complete.connect(_after_sync)
+                    self.final_data_page.load_and_sync_data(self.current_company, self.current_company_path)
+                else:
+                    QMessageBox.information(self, "Sync Complete", f"Data Synced Successfully!\nLoaded {row_count} rows.")
             else:
                 msg = error if error else "No data received from Tally. Check connection."
                 QMessageBox.warning(self, "Sync Issue", f"{msg}\n\nClick OK to close.")
@@ -655,8 +657,8 @@ class MainWindow(QWidget):
 
     def final_data(self):
         if self.current_company and hasattr(self, 'current_company_path'):
-            self.final_data_page.load_and_sync_data(self.current_company, self.current_company_path)
             self.main_stack.setCurrentIndex(5)
+            self.final_data_page.load_and_sync_data(self.current_company, self.current_company_path)
 
     def handle_super_master(self):
         if self.current_company and hasattr(self, 'current_company_path'):
