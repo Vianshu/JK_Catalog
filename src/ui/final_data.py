@@ -759,7 +759,7 @@ class FinalDataUI(QWidget):
 
             # --- UNIFIED SORTING (Same as Preview/Catalog Tab) ---
             # Order: super_master group sequence (MG_SN, SG_SN) → cluster by name similarity → price within cluster
-            from src.logic.text_utils import clean_cat_name, is_similar
+            from src.logic.text_utils import cluster_and_sort
             
             grp_idx = self.col_index("Group")
             path_idx = self.col_index("Image_Path")
@@ -804,44 +804,22 @@ class FinalDataUI(QWidget):
             # 3. Sort group keys by super_master order
             sorted_group_keys = sorted(grouped_rows.keys(), key=lambda k: (k[0], k[1]))
 
-            # 4. Within each group, cluster by name similarity and sort by price
+            # 4. Within each group, cluster by similarity and sort by (name, price)
             sorted_data = []
             for gkey in sorted_group_keys:
                 rows_in_group = grouped_rows[gkey]
                 
-                # Cluster by product name similarity
-                clusters = []
-                for r in rows_in_group:
-                    p_name = str(r[product_name_idx]) if r[product_name_idx] else ""
-                    clean_n = clean_cat_name(p_name)
-                    
-                    added = False
-                    for cluster in clusters:
-                        rep_name = str(cluster[0][product_name_idx]) if cluster[0][product_name_idx] else ""
-                        rep_clean = clean_cat_name(rep_name)
-                        if is_similar(clean_n, rep_clean):
-                            cluster.append(r)
-                            added = True
-                            break
-                    if not added:
-                        clusters.append([r])
-                
-                # Sort items within each cluster by MRP (price ASC)
-                def get_mrp(row):
+                def get_name(row):
+                    return str(row[product_name_idx]) if row[product_name_idx] else ""
+                def get_price(row):
                     try:
                         return float(str(row[mrp_idx]).replace(",", "").strip())
                     except:
                         return 99999999.0
                 
-                for cluster in clusters:
-                    cluster.sort(key=get_mrp)
-                
-                # Sort clusters by their minimum price
-                clusters.sort(key=lambda c: min(get_mrp(x) for x in c) if c else 0)
-                
-                # Flatten clusters into final list
-                for cluster in clusters:
-                    sorted_data.extend(cluster)
+                sorted_data.extend(cluster_and_sort(
+                    rows_in_group, get_name_fn=get_name, get_price_fn=get_price
+                ))
             
             # 5. Split into missing-image (top) and found-image (bottom)
             #    Both sections preserve the unified sort order above

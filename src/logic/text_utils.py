@@ -172,3 +172,46 @@ def cluster_products(items, get_name_fn=None, get_price_fn=None, get_id_fn=None)
     clusters.sort(key=lambda c: min(get_price_fn(x) for x in c) if c else 0)
 
     return clusters
+
+
+def normalize_name(name):
+    """Normalize a product name for grouping/sorting.
+    
+    Lowercases, replaces dashes/underscores with spaces, collapses whitespace.
+    Used by generate_complex_ids, refresh_table, and _cluster_and_sort
+    to ensure consistent name normalization across the codebase.
+    """
+    return " ".join(str(name).lower().replace("-", " ").replace("_", " ").strip().split())
+
+
+def cluster_and_sort(items, get_name_fn=None, get_price_fn=None):
+    """Cluster items by name similarity, then sort by (name, price) within each cluster.
+    
+    This is the unified sorting logic used by:
+      - data_processor.generate_complex_ids()
+      - final_data.refresh_table()
+      - catalog_logic._cluster_and_sort()
+    
+    Returns a flat list of items sorted by: cluster order → name → price.
+    """
+    clusters = cluster_products(items, get_name_fn=get_name_fn, get_price_fn=get_price_fn)
+    
+    if get_name_fn is None:
+        def get_name_fn(x):
+            if isinstance(x, dict):
+                return x.get("product_name", "") or x.get("name", "")
+            return x[0] if x else ""
+    if get_price_fn is None:
+        def get_price_fn(x):
+            if isinstance(x, dict):
+                return x.get("sort_price", 0)
+            try:
+                return float(str(x[4]).replace(",", "").strip()) if len(x) > 4 else 0
+            except:
+                return 0
+
+    result = []
+    for cluster in clusters:
+        cluster.sort(key=lambda x: (normalize_name(get_name_fn(x)), get_price_fn(x)))
+        result.extend(cluster)
+    return result
