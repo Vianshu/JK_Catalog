@@ -320,7 +320,7 @@ Output: `dist/JK_Catalog/JK_Catalog.exe` (single-directory mode, not one-file).
 | Column | Index | Type | Nullable | Default | Auto-Populated | Purpose |
 |---|---|---|---|---|---|---|
 | `GUID` | 0 | TEXT | No | — | From Tally | Unique identifier. Hidden in UI (`setColumnHidden(0, True)`). |
-| `ID` | 1 | TEXT | Yes | — | By `DataProcessor.generate_complex_ids()` | Deterministic sort key. Format: `{MG_SN}{SG_SN}-{name_idx}{variant_idx}` (e.g., `0315-0301`). Used by the catalog engine's `ORDER BY [ID]` to fetch products grouped by subgroup, then by name, then by price/size. |
+| `ID` | 1 | TEXT | Yes | — | By `DataProcessor.generate_complex_ids()` | Hierarchical sort key encoding the full product hierarchy. Format: `{MG}_{SG}_{cluster}_{item}_{variant}` (e.g., `03_15_01_02_03`). Built using the same fuzzy clustering logic (`cluster_products`) as the catalog engine and Final Data tab. |
 | `Item_Name` | 2 | TEXT | Yes | — | From Tally | Raw item name from Tally. |
 | `Alias` | 3 | TEXT | Yes | — | From Tally | First alias. |
 | `Part_No` | 4 | TEXT | Yes | — | From Tally | Mailing name (part number). |
@@ -1238,18 +1238,22 @@ The stripping is this aggressive because image names need to match across size v
 ### 19.5 `generate_complex_ids()`
 
 ```python
-final_id = f"{mg_sn}{sg_sn}-{part3}{part4}"
+final_id = f"{mg_sn}_{sg_sn}_{ci:02d}_{ii:02d}_{vi:02d}"
 ```
 
-Generates a deterministic sort key for each product variant:
-- `mg_sn`: Main Group Serial Number (e.g., `03`)
-- `sg_sn`: Sub Group Serial Number (e.g., `15`)
-- `part3`: Two-digit sequential index per unique `Product Name` within the subgroup (e.g., `03`)
-- `part4`: Two-digit variant index within that product name, sorted by MRP then size (e.g., `01`)
+Generates a hierarchical ID encoding the full product taxonomy using **fuzzy clustering**:
 
-Example: `0315-0301`. The catalog engine fetches products with `ORDER BY [ID] COLLATE NOCASE ASC`, which guarantees a consistent grouping order (subgroup → name → price/size) every build.
+| Segment | Meaning | Example |
+|---|---|---|
+| `mg_sn` | Master Group Serial Number | `03` |
+| `sg_sn` | Sub Group Serial Number | `15` |
+| `ci` | Fuzzy cluster index (via `cluster_products`) | `01` |
+| `ii` | Item index — unique product name within cluster | `02` |
+| `vi` | Variant index — size/price variant within item | `03` |
 
-The Final Data tab uses the same clustering logic (`cluster_products()` from `text_utils.py`) but additionally re-sorts within each cluster by `(normalized name, price)` so that individual rows with the same product name stay together instead of being interleaved by price across different product names.
+Example: `03_15_01_02_03` = MG 03, SG 15, fuzzy cluster 01, item 02 (Jk), variant 03.
+
+The clustering uses the same shared `cluster_products()` and `normalize_name()` from `text_utils.py` that the catalog engine and Final Data tab use, so `ORDER BY [ID]` naturally produces the same grouping as the Python-level sorting.
 
 ---
 
@@ -1586,14 +1590,16 @@ Used for:
 
 ### 23.5 Clustering Algorithm
 
-`_cluster_and_sort(products)` → `text_utils.cluster_products()`:
+`_cluster_and_sort(products)` → `text_utils.cluster_and_sort()`:
 
 1. For each product, compute a "clean" name via `clean_cat_name()`.
 2. Compare all pairs using `is_similar()` (Levenshtein ratio or token overlap).
 3. Group products with similarity > threshold (default 0.75).
-4. Sort products within each cluster by `sort_price` ascending.
+4. Sort products within each cluster by `(normalize_name(name), price)` — name first, then price.
 5. Sort clusters by minimum price in the cluster.
 6. Flatten clusters back into a single list.
+
+This is the **unified sorting function** shared across three call sites: `generate_complex_ids()`, `refresh_table()`, and `_cluster_and_sort()`. The getter functions differ per caller (different data shapes), but the algorithm is identical.
 
 ### 23.6 Visual Balancing
 

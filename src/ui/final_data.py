@@ -759,7 +759,7 @@ class FinalDataUI(QWidget):
 
             # --- UNIFIED SORTING (Same as Preview/Catalog Tab) ---
             # Order: super_master group sequence (MG_SN, SG_SN) → cluster by name similarity → price within cluster
-            from src.logic.text_utils import cluster_products
+            from src.logic.text_utils import cluster_and_sort
             
             grp_idx = self.col_index("Group")
             path_idx = self.col_index("Image_Path")
@@ -804,18 +804,11 @@ class FinalDataUI(QWidget):
             # 3. Sort group keys by super_master order
             sorted_group_keys = sorted(grouped_rows.keys(), key=lambda k: (k[0], k[1]))
 
-            # 4. Within each group, pre-sort by normalized name, then cluster by similarity and sort by price
+            # 4. Within each group, cluster by similarity and sort by (name, price)
             sorted_data = []
             for gkey in sorted_group_keys:
                 rows_in_group = grouped_rows[gkey]
                 
-                # Pre-sort by normalized product name so identical names are adjacent before clustering
-                def norm_name(row):
-                    raw = str(row[product_name_idx]) if row[product_name_idx] else ""
-                    return " ".join(raw.lower().replace("-", " ").replace("_", " ").strip().split())
-                rows_in_group.sort(key=norm_name)
-                
-                # Reuse shared clustering logic (same as catalog engine)
                 def get_name(row):
                     return str(row[product_name_idx]) if row[product_name_idx] else ""
                 def get_price(row):
@@ -824,12 +817,9 @@ class FinalDataUI(QWidget):
                     except:
                         return 99999999.0
                 
-                clusters = cluster_products(rows_in_group, get_name_fn=get_name, get_price_fn=get_price)
-                # Within each cluster, group by exact name first, then price within each name
-                # (cluster_products sorts by price only, which interleaves different product names)
-                for cluster in clusters:
-                    cluster.sort(key=lambda row: (norm_name(row), get_price(row)))
-                    sorted_data.extend(cluster)
+                sorted_data.extend(cluster_and_sort(
+                    rows_in_group, get_name_fn=get_name, get_price_fn=get_price
+                ))
             
             # 5. Split into missing-image (top) and found-image (bottom)
             #    Both sections preserve the unified sort order above

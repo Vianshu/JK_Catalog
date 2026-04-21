@@ -446,22 +446,18 @@ class DataProcessor:
         conn.close()
     
     def generate_complex_ids(self):
-        # Sabse pehle helper functions define karein
-        def get_virtual_size(size_str):
-            if not size_str: return 999999
-            s = str(size_str).upper()
-            nums = re.findall(r'\d+', s)
-            if nums: return int(nums[0])
-            return 999999
-
-        def complex_sort(x):
-            m_val = str(x["MRP"]).replace(',', '').strip() if x["MRP"] else ""
-            try:
-                mrp_num = float(m_val) if m_val else 999999.0
-            except:
-                mrp_num = 999999.0
-            v_size = get_virtual_size(x["Product_Size"])
-            return (mrp_num, v_size)
+        """Generate deterministic IDs encoding the full product hierarchy.
+        
+        Format: {MG}_{SG}_{cluster}_{item}_{variant}
+        Example: 03_15_01_02_03 = MG 03, SG 15, fuzzy cluster 01, item 02, variant 03
+        
+        Hierarchy:
+          - MG/SG: Master Group / Sub Group from super_master
+          - cluster: Fuzzy similarity cluster (via cluster_products)
+          - item: Unique product name within the cluster
+          - variant: Size/price variant within that product name
+        """
+        from src.logic.text_utils import cluster_products, normalize_name
         
         try:
             conn = sqlite3.connect(self.db_path)
@@ -469,50 +465,65 @@ class DataProcessor:
             cursor = conn.cursor()
             
             cursor.execute('UPDATE catalog SET ID = NULL')
-            cursor.execute('SELECT rowid, "Product Name", MG_SN, SG_SN, MRP, Product_Size FROM catalog ORDER BY MG_SN, SG_SN, rowid ASC')
+            cursor.execute(
+                'SELECT rowid, "Product Name", MG_SN, SG_SN, MRP, Product_Size '
+                'FROM catalog ORDER BY MG_SN, SG_SN, rowid ASC'
+            )
             rows = cursor.fetchall()
             
-            # Grouping by BOTH MG_SN and SG_SN
+            # Group by (MG_SN, SG_SN)
             combined_groups = {}
             for r in rows:
                 mg = str(r["MG_SN"]).strip() if r["MG_SN"] else "00"
                 sg = str(r["SG_SN"]).strip() if r["SG_SN"] else "00"
-                key = f"{mg}-{sg}" # Combined Key
-                if key not in combined_groups: combined_groups[key] = []
+                key = f"{mg}-{sg}"
+                if key not in combined_groups:
+                    combined_groups[key] = []
                 combined_groups[key].append(dict(r))
-
+            
             for key, items in combined_groups.items():
                 mg_sn, sg_sn = key.split('-')
-                name_to_number_map = {}
-                next_number = 1
                 
-                # Group by Product Name
-                pname_sub_groups = {}
-                for it in items:
-                    name = str(it["Product Name"]).strip()
-                    if name not in name_to_number_map:
-                        name_to_number_map[name] = f"{next_number:02d}"
-                        next_number += 1
-                    
-                    if name not in pname_sub_groups: pname_sub_groups[name] = []
-                    pname_sub_groups[name].append(it)
+                def get_name(x):
+                    return str(x.get("Product Name", "")).strip()
+                def get_price(x):
+                    try:
+                        return float(str(x.get("MRP", "0")).replace(",", "").strip())
+                    except:
+                        return 999999.0
                 
-                # Sort and Update
-                for name, sub_list in pname_sub_groups.items():
-                    sub_list.sort(key=complex_sort) # Define complex_sort inside or above
+                # Fuzzy cluster
+                clusters = cluster_products(items, get_name_fn=get_name, get_price_fn=get_price)
+                
+                for ci, cluster in enumerate(clusters, start=1):
+                    # Sort cluster by (name, price)
+                    cluster.sort(key=lambda x: (normalize_name(get_name(x)), get_price(x)))
                     
-                    for idx, item in enumerate(sub_list):
-                        r_id = item["rowid"]
-                        part3 = name_to_number_map[name]
-                        part4 = f"{(idx+1):02d}"
-                        final_id = f"{mg_sn}{sg_sn}-{part3}{part4}"
-                        cursor.execute("UPDATE catalog SET ID = ? WHERE rowid = ?", (final_id, r_id))
+                    # Sub-group by exact normalized product name
+                    item_groups = {}
+                    item_order = []
+                    for row in cluster:
+                        nname = normalize_name(get_name(row))
+                        if nname not in item_groups:
+                            item_groups[nname] = []
+                            item_order.append(nname)
+                        item_groups[nname].append(row)
+                    
+                    for ii, nname in enumerate(item_order, start=1):
+                        variants = item_groups[nname]
+                        # Variants are already sorted by price from the cluster sort
+                        for vi, item in enumerate(variants, start=1):
+                            final_id = f"{mg_sn}_{sg_sn}_{ci:02d}_{ii:02d}_{vi:02d}"
+                            cursor.execute(
+                                "UPDATE catalog SET ID = ? WHERE rowid = ?",
+                                (final_id, item["rowid"])
+                            )
             
             conn.commit()
             conn.close()
             return True
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Error generating IDs: {e}")
             return False
         
     def get_display_data(self):

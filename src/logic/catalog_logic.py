@@ -41,7 +41,7 @@ import sqlite3
 from datetime import datetime
 
 from src.utils.path_utils import get_data_file_path
-from src.logic.text_utils import cluster_products, clean_cat_name, is_similar
+from src.logic.text_utils import cluster_products, cluster_and_sort, clean_cat_name, is_similar
 from src.utils.app_logger import get_logger
 
 logger = get_logger(__name__)
@@ -1412,8 +1412,8 @@ class CatalogLogic:
         return layout_map
 
     def _cluster_and_sort(self, products):
-        """Cluster products by name similarity, sort by price within clusters,
-        sort clusters by minimum price. Uses text_utils.cluster_products()."""
+        """Cluster products by name similarity, sort by (name, price) within clusters,
+        sort clusters by minimum price. Uses text_utils.cluster_and_sort()."""
 
         def get_name(x):
             if isinstance(x, dict):
@@ -1428,8 +1428,7 @@ class CatalogLogic:
             except (ValueError, IndexError):
                 return 0
 
-        clusters = cluster_products(products, get_name_fn=get_name, get_price_fn=get_price)
-        return [item for cluster in clusters for item in cluster]
+        return cluster_and_sort(products, get_name_fn=get_name, get_price_fn=get_price)
 
     def _apply_saved_order(self, products, saved_order):
         """Re-order products according to saved display order.
