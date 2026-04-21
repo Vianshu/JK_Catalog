@@ -978,7 +978,6 @@ Built by `_build_info_container()`:
 └─────────────────────────────┘
 ```
 
-The internal table explicitly does NOT sort rows by price (the `combined.sort(...)` line is commented out). Rows stay in the order from the database query, which matches the original Tally insertion order. This was a deliberate fix after a sorting bug was causing confusing row reordering.
 
 ### 15.7 Color Theme
 
