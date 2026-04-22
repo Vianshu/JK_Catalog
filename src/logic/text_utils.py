@@ -106,9 +106,9 @@ def is_similar(clean_a, clean_b):
     return ratio >= SIMILARITY_THRESHOLD
 
 
-def cluster_products(items, get_name_fn=None, get_price_fn=None, get_id_fn=None):
+def cluster_products(items, get_name_fn=None, get_price_fn=None, get_size_fn=None, get_id_fn=None):
     """
-    Cluster a list of product items by name similarity and sort by price.
+    Cluster a list of product items by name similarity and sort by price, then size.
     
     Args:
         items: List of product dicts or tuples.
@@ -116,6 +116,8 @@ def cluster_products(items, get_name_fn=None, get_price_fn=None, get_id_fn=None)
                      Defaults to item.get("product_name", "").
         get_price_fn: Function to extract sort price from an item.
                       Defaults to item.get("sort_price", 0).
+        get_size_fn: Function to extract numeric size from an item.
+                     Defaults to parsing the first number from the size field.
         get_id_fn: Function to extract product ID from an item.
                    Defaults to item.get("min_id", "ZZZZZZ").
     
@@ -137,6 +139,22 @@ def cluster_products(items, get_name_fn=None, get_price_fn=None, get_id_fn=None)
                 return float(str(x[4]).replace(",", "").strip()) if len(x) > 4 else 0
             except:
                 return 0
+
+    if get_size_fn is None:
+        def get_size_fn(x):
+            sz = ""
+            if isinstance(x, dict):
+                sz = x.get("Product_Size", x.get("product_size", ""))
+                if not sz and "sizes" in x and x["sizes"]:
+                    sz = x["sizes"][0]
+            else:
+                try:
+                    sz = str(x[5]) if len(x) > 5 else ""
+                except:
+                    pass
+            import re
+            m = re.search(r'\d+(\.\d+)?', str(sz))
+            return float(m.group()) if m else 0.0
 
     if get_id_fn is None:
         def get_id_fn(x):
@@ -164,9 +182,9 @@ def cluster_products(items, get_name_fn=None, get_price_fn=None, get_id_fn=None)
         if not added:
             clusters.append([item])
 
-    # Sort items within clusters by price (ASC)
+    # Sort items within clusters by price (ASC), then by size
     for cluster in clusters:
-        cluster.sort(key=get_price_fn)
+        cluster.sort(key=lambda x: (get_price_fn(x), get_size_fn(x)))
 
     # Sort clusters by minimum price across all items in the cluster
     clusters.sort(key=lambda c: min(get_price_fn(x) for x in c) if c else 0)
@@ -184,17 +202,17 @@ def normalize_name(name):
     return " ".join(str(name).lower().replace("-", " ").replace("_", " ").strip().split())
 
 
-def cluster_and_sort(items, get_name_fn=None, get_price_fn=None):
-    """Cluster items by name similarity, then sort by (name, price) within each cluster.
+def cluster_and_sort(items, get_name_fn=None, get_price_fn=None, get_size_fn=None):
+    """Cluster items by name similarity, then sort by (name, price, size) within each cluster.
     
     This is the unified sorting logic used by:
       - data_processor.generate_complex_ids()
       - final_data.refresh_table()
       - catalog_logic._cluster_and_sort()
     
-    Returns a flat list of items sorted by: cluster order → name → price.
+    Returns a flat list of items sorted by: cluster order → name → price → size.
     """
-    clusters = cluster_products(items, get_name_fn=get_name_fn, get_price_fn=get_price_fn)
+    clusters = cluster_products(items, get_name_fn=get_name_fn, get_price_fn=get_price_fn, get_size_fn=get_size_fn)
     
     if get_name_fn is None:
         def get_name_fn(x):
@@ -210,8 +228,24 @@ def cluster_and_sort(items, get_name_fn=None, get_price_fn=None):
             except:
                 return 0
 
+    if get_size_fn is None:
+        def get_size_fn(x):
+            sz = ""
+            if isinstance(x, dict):
+                sz = x.get("Product_Size", x.get("product_size", ""))
+                if not sz and "sizes" in x and x["sizes"]:
+                    sz = x["sizes"][0]
+            else:
+                try:
+                    sz = str(x[5]) if len(x) > 5 else ""
+                except:
+                    pass
+            import re
+            m = re.search(r'\d+(\.\d+)?', str(sz))
+            return float(m.group()) if m else 0.0
+
     result = []
     for cluster in clusters:
-        cluster.sort(key=lambda x: (normalize_name(get_name_fn(x)), get_price_fn(x)))
+        cluster.sort(key=lambda x: (normalize_name(get_name_fn(x)), get_price_fn(x), get_size_fn(x)))
         result.extend(cluster)
     return result

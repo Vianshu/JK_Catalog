@@ -1762,7 +1762,7 @@ Serial numbers are what get printed on the actual catalog pages. If you delete p
 | Multiple CRM reps | Each CRM rep has independent pending/recent lists. The engine adds dirty pages to ALL reps. Each rep's list is cleared independently after their print confirmation. |
 | Image file missing | `Image_Path` is set to `""`. Product still appears in catalog but without an image. `True/False` is NOT auto-set to `"false"` (changed per user request). |
 | `Image_Path` set to "no_need" | `True/False` is auto-set to `"false"`. Product is excluded from catalog rendering. |
-| Overflow cascade | If dirty page sorting causes products to overflow past the dirty range, the engine cascades: merges overflow with the next page's products, simulates grid placement, and repeats until everything fits. New pages are created as needed. |
+| Overflow cascade | If dirty page is one causes products to overflow past the dirty range, the engine cascades: merges overflow with the next page's products, simulates grid placement, and repeats until everything fits. New pages are created as needed. |
 | Concurrent access | WAL mode allows multiple readers. The UI reads while the build worker writes. However, only one build worker can run at a time (`if self._build_worker and self._build_worker.isRunning(): return`). |
 | Company folder moved | Login fails because `security.db` stores `folder_path` as absolute. The user must re-register the company at the new path. |
 
