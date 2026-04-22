@@ -203,14 +203,17 @@ def normalize_name(name):
 
 
 def cluster_and_sort(items, get_name_fn=None, get_price_fn=None, get_size_fn=None):
-    """Cluster items by name similarity, then sort by (name, price, size) within each cluster.
+    """Cluster items by name similarity, then apply two-level sorting.
     
     This is the unified sorting logic used by:
-      - data_processor.generate_complex_ids()
       - final_data.refresh_table()
       - catalog_logic._cluster_and_sort()
     
-    Returns a flat list of items sorted by: cluster order → name → price → size.
+    Sorting:
+      1. Clusters are sorted alphabetically by their representative name.
+      2. Within each cluster, items are sorted by (price, size, name).
+    
+    Returns a flat list: alphabetical cluster order → price → size → name.
     """
     clusters = cluster_products(items, get_name_fn=get_name_fn, get_price_fn=get_price_fn, get_size_fn=get_size_fn)
     
@@ -244,8 +247,11 @@ def cluster_and_sort(items, get_name_fn=None, get_price_fn=None, get_size_fn=Non
             m = re.search(r'\d+(\.\d+)?', str(sz))
             return float(m.group()) if m else 0.0
 
+    # Re-sort clusters alphabetically by representative name
+    clusters.sort(key=lambda c: normalize_name(get_name_fn(c[0])) if c else "")
+
     result = []
     for cluster in clusters:
-        cluster.sort(key=lambda x: (normalize_name(get_name_fn(x)), get_price_fn(x), get_size_fn(x)))
+        cluster.sort(key=lambda x: (get_price_fn(x), get_size_fn(x), normalize_name(get_name_fn(x))))
         result.extend(cluster)
     return result
