@@ -1460,28 +1460,56 @@ class CatalogLogic:
         if new_products:
             sorted_new = self._cluster_and_sort(new_products)
             all_pages = sorted(assignments.keys())
-            last_page = all_pages[-1] if all_pages else 1
-            grid = self._empty_grid()
-            for name in assignments.get(last_page, []):
-                p = product_lookup.get(name)
-                if p:
-                    rspan, cspan = self._get_product_dims(p)
-                    r, c = self._find_slot(grid, rspan, cspan)
-                    if r != -1:
-                        self._mark_slot(grid, r, c, rspan, cspan)
+            if not all_pages:
+                all_pages = [1]
+                self._ensure_page_exists(group_name, sg_sn, 1)
+                assignments[1] = []
+
+            # Build grids for all existing pages to find available space
+            page_grids = {}
+            for pg in all_pages:
+                grid = self._empty_grid()
+                cursor_r, cursor_c = 0, 0
+                for name in assignments.get(pg, []):
+                    p = product_lookup.get(name)
+                    if p:
+                        rspan, cspan = self._get_product_dims(p)
+                        r, c = self._find_slot_linear(grid, rspan, cspan, cursor_r, cursor_c)
+                        if r != -1:
+                            self._mark_slot(grid, r, c, rspan, cspan)
+                            cursor_r = r
+                            cursor_c = c + cspan
+                            if cursor_c >= GRID_COLS:
+                                cursor_r += 1
+                                cursor_c = 0
+                page_grids[pg] = grid
+
+            # Place each new product on the first page with space
             for p in sorted_new:
                 rspan, cspan = self._get_product_dims(p)
-                r, c = self._find_slot(grid, rspan, cspan)
-                if r == -1:
-                    last_page += 1
-                    self._ensure_page_exists(group_name, sg_sn, last_page)
-                    assignments[last_page] = []
-                    grid = self._empty_grid()
-                    r, c = self._find_slot(grid, rspan, cspan)
-                if r != -1:
-                    self._mark_slot(grid, r, c, rspan, cspan)
-                    p_name = (p.get("product_name", "") or p.get("name", "")).strip().lower()
-                    assignments.setdefault(last_page, []).append(p_name)
+                placed = False
+                for pg in all_pages:
+                    r, c = self._find_slot(page_grids[pg], rspan, cspan)
+                    if r != -1:
+                        self._mark_slot(page_grids[pg], r, c, rspan, cspan)
+                        p_name = (p.get("product_name", "") or p.get("name", "")).strip().lower()
+                        assignments.setdefault(pg, []).append(p_name)
+                        modified_pages.add(pg)
+                        placed = True
+                        break
+                if not placed:
+                    # No space on any existing page — create a new one
+                    new_pg = all_pages[-1] + 1
+                    self._ensure_page_exists(group_name, sg_sn, new_pg)
+                    assignments[new_pg] = []
+                    page_grids[new_pg] = self._empty_grid()
+                    all_pages.append(new_pg)
+                    r, c = self._find_slot(page_grids[new_pg], rspan, cspan)
+                    if r != -1:
+                        self._mark_slot(page_grids[new_pg], r, c, rspan, cspan)
+                        p_name = (p.get("product_name", "") or p.get("name", "")).strip().lower()
+                        assignments[new_pg].append(p_name)
+                        modified_pages.add(new_pg)
 
         self._save_page_assignments(group_name, sg_sn, assignments)
         self.invalidate_subgroup_cache(group_name, sg_sn)

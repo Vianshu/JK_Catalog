@@ -210,10 +210,10 @@ def cluster_and_sort(items, get_name_fn=None, get_price_fn=None, get_size_fn=Non
       - catalog_logic._cluster_and_sort()
     
     Sorting:
-      1. Clusters are sorted alphabetically by their representative name.
+      1. Clusters are sorted by minimum price (matches preview tab).
       2. Within each cluster, items are sorted by (price, size, name).
     
-    Returns a flat list: alphabetical cluster order → price → size → name.
+    Returns a flat list: price-sorted cluster order → price → size → name.
     """
     clusters = cluster_products(items, get_name_fn=get_name_fn, get_price_fn=get_price_fn, get_size_fn=get_size_fn)
     
@@ -247,8 +247,8 @@ def cluster_and_sort(items, get_name_fn=None, get_price_fn=None, get_size_fn=Non
             m = re.search(r'\d+(\.\d+)?', str(sz))
             return float(m.group()) if m else 0.0
 
-    # Re-sort clusters alphabetically by representative name
-    clusters.sort(key=lambda c: normalize_name(get_name_fn(c[0])) if c else "")
+    # Sort clusters by minimum price (matches preview tab / cluster_products)
+    clusters.sort(key=lambda c: min(get_price_fn(x) for x in c) if c else 0)
 
     result = []
     for cluster in clusters:
