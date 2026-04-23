@@ -843,22 +843,63 @@ class FullCatalogUI(QWidget):
     # ───────────────────────────────────────────────────────────────────────────
 
     def _handle_length_change(self, product_name, new_length):
-        """Handle product size change from renderer context menu."""
+        """Handle product size change from renderer context menu.
+        
+        After updating the DB, runs a targeted re-layout on the affected page
+        and adds all modified pages (including overflow targets) to CRM.
+        """
         if not self.logic.final_db_path:
             return
 
         group_name = None
         sg_sn = None
+        page_no = None
         if getattr(self, "all_pages_data", None) and getattr(self, "current_page_index", None) is not None:
             if 0 <= self.current_page_index < len(self.all_pages_data):
                 try:
-                    _, group_name, sg_sn, _, _ = self.all_pages_data[self.current_page_index]
+                    _, group_name, sg_sn, page_no, _ = self.all_pages_data[self.current_page_index]
                 except Exception as e:
                     logger.error(f"Could not get current group data for length update: {e}")
 
         affected = self.logic.update_product_length(product_name, new_length, group_name, sg_sn)
         if affected > 0:
             self.logic.invalidate_cache()
+
+            # Run targeted re-layout on the affected page
+            if group_name and sg_sn and page_no is not None:
+                modified_pages = self.logic._sort_dirty_pages(
+                    group_name, str(sg_sn), [page_no]
+                )
+                if not modified_pages:
+                    modified_pages = set()
+
+                # Always include current page — dimension changed = needs reprint
+                modified_pages.add(page_no)
+
+                # Rebuild serial numbers (pages may have been created by overflow)
+                self.logic.rebuild_serial_numbers()
+
+                # Add ONLY this subgroup's modified pages to CRM (not all subgroups!)
+                if self.company_path:
+                    serial_map = self.logic._get_serial_map()
+                    dirty_serials = []
+                    sg_str = str(sg_sn)
+                    for key, serial in serial_map.items():
+                        g, s, p = key
+                        if g.strip().upper() == group_name.strip().upper() and str(s) == sg_str and p in modified_pages:
+                            dirty_serials.append(serial)
+                    if dirty_serials:
+                        self.logic._add_serials_to_all_crms(
+                            self.company_path, dirty_serials
+                        )
+                        logger.info(
+                            f"Length change: added serials {dirty_serials} to CRM "
+                            f"(page {page_no} + {len(modified_pages)-1} overflow)"
+                        )
+
+                # Do NOT save snapshots here — let engine_run detect the
+                # change via hash comparison and handle it properly.
+
             self.refresh_catalog_data()
 
     def showEvent(self, event):
