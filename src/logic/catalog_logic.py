@@ -922,7 +922,7 @@ class CatalogLogic:
                     "sizes": [], "mrps": [], "moqs": [],
                     "base_units": r[9] if r[9] else "",
                     "category": cat_display, "master_packing": "",
-                    "_mp_set": set(), "max_update_date": "",
+                    "_mp_list": [], "max_update_date": "",
                     "sort_price": sort_price,
                     "min_id": str(r[11]) if len(r) > 11 and r[11] else "ZZZZZZ"
                 }
@@ -936,15 +936,20 @@ class CatalogLogic:
             if r[8]:
                 match = mp_regex.search(str(r[8]))
                 if match:
-                    g["_mp_set"].add(int(match.group(0)))
+                    g["_mp_list"].append(int(match.group(0)))
+                else:
+                    g["_mp_list"].append(0)
+            else:
+                g["_mp_list"].append(0)
             if not g["image_path"] and r[2]:
                 g["image_path"] = r[2]
 
         final_list = []
         for g in grouped.values():
             base = str(g.get("base_units", "")).strip()
-            mp_list = sorted(g.pop("_mp_set", []))
-            if mp_list:
+            mp_list = g.pop("_mp_list", [])
+            # Only show packing if at least one variant has a non-zero value
+            if mp_list and any(v != 0 for v in mp_list):
                 g["master_packing"] = f'{",".join(map(str, mp_list))} {base}'.strip()
             final_list.append(g)
         return final_list
