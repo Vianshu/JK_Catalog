@@ -3,6 +3,7 @@ import hashlib
 import os
 from datetime import datetime
 import hmac
+import ctypes
 
 APP_SECRET = b"JK_Catalog_v2_secure_key"  # compiled into the EXE
     
@@ -22,6 +23,13 @@ class SecurityManager:
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
         with sqlite3.connect(self.db_path) as conn:
+            # Hide the DB file from Windows File Explorer
+            try:
+                # FILE_ATTRIBUTE_HIDDEN = 0x02
+                ctypes.windll.kernel32.SetFileAttributesW(self.db_path, 0x02)
+            except Exception:
+                pass
+            
             cursor = conn.cursor()
             
             # 1. Companies Table

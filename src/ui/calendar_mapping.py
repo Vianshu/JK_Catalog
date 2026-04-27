@@ -56,30 +56,60 @@ class CalendarMappingUI(QWidget):
         self.load_data()
 
     def generate_calendar_data(self):
-        reply = QMessageBox.question(self, "Generate", "01-07-2025 se 5 saal ka data generate karein?")
-        if reply == QMessageBox.StandardButton.Yes:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM calendar")
-            
-            curr_ad = datetime.date(2025, 7, 1)
-            y, m, d = 2082, 3, 17 
-            
-            for _ in range(1826): 
-                ad_str = curr_ad.strftime("%d-%m-%Y")
-                bs_str = f"{y:04d}-{m:02d}-{d:02d}"
-                cursor.execute("INSERT INTO calendar VALUES (?, ?, ?, ?, ?)", 
-                               (ad_str, bs_str, str(y), str(m), str(d)))
+        try:
+            import nepali_datetime
+        except ImportError:
+            QMessageBox.critical(self, "Error", "nepali-datetime package is missing. Please run: pip install nepali-datetime")
+            return
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # 1. Find the last existing date in the DB
+        cursor.execute("SELECT ad_date FROM calendar")
+        rows = cursor.fetchall()
+        
+        max_date = None
+        for row in rows:
+            try:
+                dt = datetime.datetime.strptime(row[0], "%d-%m-%Y").date()
+                if max_date is None or dt > max_date:
+                    max_date = dt
+            except Exception:
+                pass
                 
-                curr_ad += datetime.timedelta(days=1)
-                d += 1
-                if d > 31: d = 1; m += 1
-                if m > 12: m = 1; y += 1
-            
-            conn.commit()
+        # 2. Determine Start Date (Next day after max, or original default if empty)
+        if max_date:
+            curr_ad = max_date + datetime.timedelta(days=1)
+            msg = f"Database has data up to {max_date.strftime('%d-%m-%Y')}.\nAppend 5 more years starting from {curr_ad.strftime('%d-%m-%Y')}?"
+        else:
+            curr_ad = datetime.date(2025, 7, 1)
+            msg = f"Database is empty.\nGenerate 5 years of data starting from {curr_ad.strftime('%d-%m-%Y')}?"
+
+        reply = QMessageBox.question(self, "Extend Calendar", msg)
+        if reply != QMessageBox.StandardButton.Yes:
             conn.close()
-            self.load_data()
-            QMessageBox.information(self, "Success", "Data saved in Data folder!")
+            return
+            
+        # 3. Generate and Append 5 years (1826 days)
+        for _ in range(1826): 
+            ad_str = curr_ad.strftime("%d-%m-%Y")
+            
+            # Get accurate astrological date from the package
+            bs_date = nepali_datetime.date.from_datetime_date(curr_ad)
+            y, m, d = bs_date.year, bs_date.month, bs_date.day
+            bs_str = f"{y:04d}-{m:02d}-{d:02d}"
+            
+            # Use INSERT OR IGNORE so we don't crash if there's overlap
+            cursor.execute("INSERT OR IGNORE INTO calendar VALUES (?, ?, ?, ?, ?)", 
+                           (ad_str, bs_str, str(y), str(m), str(d)))
+            
+            curr_ad += datetime.timedelta(days=1)
+        
+        conn.commit()
+        conn.close()
+        self.load_data()
+        QMessageBox.information(self, "Success", "Calendar successfully extended by 5 years!")
 
     def load_data(self):
         if not os.path.exists(self.db_path): return

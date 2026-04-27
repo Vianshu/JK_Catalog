@@ -64,7 +64,7 @@ def get_data_file_path(filename):
     Returns:
         Full absolute path to the file
     """
-    if filename == "super_master.db":
+    if filename in ["super_master.db", "calendar_data.db"]:
         import json
         app_path = get_app_dir()
         config_file = os.path.join(app_path, "config.json")
@@ -79,7 +79,7 @@ def get_data_file_path(filename):
 
     base = get_base_path()
     
-    # calendar_data.db lives in src/ui/Data/ (single source of truth)
+    # Fallback if config is missing
     if filename == "calendar_data.db":
         return os.path.join(base, "src", "ui", "Data", filename)
     
