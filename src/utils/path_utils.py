@@ -77,12 +77,11 @@ def get_data_file_path(filename):
         except Exception:
             pass
 
+    # Fallback if config is missing (store in AppData)
+    if filename in ["super_master.db", "calendar_data.db"]:
+        return os.path.join(get_app_dir(), filename)
+        
     base = get_base_path()
-    
-    # Fallback if config is missing
-    if filename == "calendar_data.db":
-        return os.path.join(base, "src", "ui", "Data", filename)
-    
     return os.path.join(base, "data", filename)
 
 

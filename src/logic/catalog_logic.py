@@ -876,7 +876,7 @@ class CatalogLogic:
             cursor.execute("""
                 SELECT [Product Name], [Item_Name], [Image_Path], [Lenth], [MRP],
                        [Product_Size], [MOQ], [Category], [M_Packing], [Unit],
-                       [Update_date], [ID]
+                       [Update_date], [ID], [Image_Date]
                 FROM catalog
                 WHERE REPLACE(TRIM([Group]), '.', '') = REPLACE(TRIM(?), '.', '') COLLATE NOCASE
                   AND CAST([SG_SN] AS INTEGER) = CAST(? AS INTEGER)
@@ -924,7 +924,8 @@ class CatalogLogic:
                     "category": cat_display, "master_packing": "",
                     "_mp_list": [], "max_update_date": "",
                     "sort_price": sort_price,
-                    "min_id": str(r[11]) if len(r) > 11 and r[11] else "ZZZZZZ"
+                    "min_id": str(r[11]) if len(r) > 11 and r[11] else "ZZZZZZ",
+                    "img_date": str(r[12]) if len(r) > 12 and r[12] else ""
                 }
             g = grouped[norm_key]
             g["sizes"].append(r[5] if r[5] else "")
@@ -1571,6 +1572,7 @@ class CatalogLogic:
                     "moqs": p.get("moqs", []),
                     "sort_price": str(p.get("sort_price", "")),
                     "img": p.get("image_path", ""),
+                    "img_date": p.get("img_date", ""),
                     "category": p.get("category", ""),
                     "base_units": p.get("base_units", ""),
                     "master_packing": p.get("master_packing", ""),

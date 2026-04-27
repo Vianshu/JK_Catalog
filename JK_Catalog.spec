@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_data_files
 # ============================================================
 # JK_Catalog PyInstaller Spec File
 # ============================================================
@@ -26,10 +27,10 @@ a = Analysis(
     # Access via: get_asset_path("style.qss") or get_data_file_path("super_master.db")
     datas=[
         ('src/assets/style.qss', 'src/assets'),       # UI stylesheet
-        ('src/ui/Data/calendar_data.db', 'src/ui/Data'),             # AD-to-BS date conversion table
         ('config/cleaning_rules.json', 'config'),      # Product name cleaning rules
         ('config/catalog_config.json', 'config'),      # Per-company catalog header config
-    ],
+    ] + collect_data_files('nepali_datetime'),
+
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

@@ -52,7 +52,8 @@ class CalendarMappingUI(QWidget):
         self.load_data()
 
     def set_company_path(self, path):
-        """MainWindow isko call karta hai, hum sirf data reload kar dete hain"""
+        """Update DB path when company changes and reload data"""
+        self.db_path = get_data_file_path("calendar_data.db")
         self.load_data()
 
     def generate_calendar_data(self):
