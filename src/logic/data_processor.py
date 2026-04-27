@@ -310,6 +310,7 @@ class DataProcessor:
                     if matches:
                         last_val = matches[-1].strip()
                         clean_val = last_val.lower().replace(' ', '')
+                        # exception
                         if '1/2doz' in clean_val:
                             moq = f"1/2 {info['unit']}".strip()
                         else:
