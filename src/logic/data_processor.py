@@ -309,20 +309,24 @@ class DataProcessor:
                     matches = re.findall(r'\(([^)]+)\)', info['alias'])
                     if matches:
                         last_val = matches[-1].strip()
-                        if '/' in last_val or '\\' in last_val:
-                            parts = re.split(r'[/\\]', last_val)
-                            raw_moq = parts[0].strip()
-                            raw_packing = parts[1].strip() if len(parts) > 1 else ""
+                        clean_val = last_val.lower().replace(' ', '')
+                        if '1/2doz' in clean_val:
+                            moq = f"1/2 {info['unit']}".strip()
                         else:
-                            raw_moq = last_val
-                            raw_packing = ""
+                            if '/' in last_val or '\\' in last_val:
+                                parts = re.split(r'[/\\]', last_val)
+                                raw_moq = parts[0].strip()
+                                raw_packing = parts[1].strip() if len(parts) > 1 else ""
+                            else:
+                                raw_moq = last_val
+                                raw_packing = ""
 
-                        moq_digits = re.sub(r'\D', '', raw_moq)
-                        if moq_digits:
-                            moq = f"{moq_digits} {info['unit']}".strip()
-                        packing_digits = re.sub(r'\D', '', raw_packing)
-                        if packing_digits:
-                            m_packing = f"{packing_digits} {info['unit']}".strip()
+                            moq_digits = re.sub(r'\D', '', raw_moq)
+                            if moq_digits:
+                                moq = f"{moq_digits} {info['unit']}".strip()
+                            packing_digits = re.sub(r'\D', '', raw_packing)
+                            if packing_digits:
+                                m_packing = f"{packing_digits} {info['unit']}".strip()
 
                 # B. Image Name Logic (Light/Hevi कंडीशन)
                 alias_clean = info['alias'].lower().strip()
