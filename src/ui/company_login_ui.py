@@ -337,8 +337,10 @@ class CompanyLoginUI(QWidget):
         # Initialize Security Manager
         from src.logic.security_manager import SecurityManager
         from src.utils.path_utils import get_secure_data_dir
-        self.security = SecurityManager(os.path.join(get_secure_data_dir(), "security.db"))
-        
+        # self.security = SecurityManager(os.path.join(get_secure_data_dir(), "security.db"))
+        self.security = SecurityManager(os.path.join(self.current_data_path, "security.db"))
+
+
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -485,6 +487,10 @@ class CompanyLoginUI(QWidget):
                 with open(self.config_file, 'w') as f: 
                     json.dump({"default_path": new_p}, f)
                 self.current_data_path = new_p
+                # Re-init SecurityManager for new data path
+                from src.logic.security_manager import SecurityManager
+                self.security = SecurityManager(os.path.join(new_p, "security.db"))
+                self.form_screen.security = self.security
                 self.load_main_list()
 
     def handle_login(self, path):

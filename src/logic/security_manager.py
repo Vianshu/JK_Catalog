@@ -2,7 +2,10 @@ import sqlite3
 import hashlib
 import os
 from datetime import datetime
+import hmac
 
+APP_SECRET = b"JK_Catalog_v2_secure_key"  # compiled into the EXE
+    
 class SecurityManager:
     def __init__(self, db_path):
         """
@@ -49,10 +52,8 @@ class SecurityManager:
             conn.commit()
 
     def _hash_password(self, password):
-        """Hash a password using SHA-256."""
-        # In a production app, we would add a salt here.
-        # For this local app, SHA-256 is a massive improvement over plain text.
-        return hashlib.sha256(password.encode()).hexdigest()
+        return hmac.new(APP_SECRET, password.encode(), hashlib.sha256).hexdigest()
+
 
     def register_company(self, display_name, folder_path, image_path, admin_user, admin_pass):
         """

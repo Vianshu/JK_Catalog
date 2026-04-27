@@ -114,10 +114,10 @@ class UserManagerDialog(QDialog):
         self.company_name = company_name
         self.company_path = company_path
         
-        # Initialize Security Manager
+        # Initialize Security Manager (security.db lives in the data path, alongside company folders)
         from src.logic.security_manager import SecurityManager
-        from src.utils.path_utils import get_secure_data_dir
-        self.security = SecurityManager(os.path.join(get_secure_data_dir(), "security.db"))
+        data_path = os.path.dirname(company_path) if company_path else ""
+        self.security = SecurityManager(os.path.join(data_path, "security.db"))
         
         self.setObjectName("UserManagerDialog") # Style Tag
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
