@@ -994,7 +994,7 @@ class A4PageRenderer(QWidget):
             h.setAlignment(Qt.AlignmentFlag.AlignCenter)
             b_right = inner if col < len(headers) - 1 else "none"
             h.setStyleSheet(
-                f"font-size:{self.header_fs}pt; font-weight:bold;"
+                f"font-size:{self.header_fs}pt;"
                 f"color:{self.table_header_text}; background:{self.table_header_bg};"
                 f"padding:{self.pad_hdr_v}px {self.pad_hdr_h}px;"
                 f"border:none; border-right:{b_right}; border-bottom:{inner};"
