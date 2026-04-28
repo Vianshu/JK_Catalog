@@ -242,12 +242,20 @@ class PrintExportDialog(QDialog):
         
         return page_indices
     
-    def create_print_renderer(self):
+    def create_print_renderer(self, mode="pdf"):
         """Create a renderer configured for print output using screen DPI for consistency."""
         from src.ui.a4_renderer import A4PageRenderer
         renderer = A4PageRenderer()
         renderer.set_target_dpi(RENDER_DPI)
         
+        # Strip the 3mm margin for physical print (printer hardware already adds margins)
+        if mode == "print":
+            renderer.margin_l_mm = 0.0
+            renderer.margin_r_mm = 0.0
+            renderer.margin_t_mm = 0.0
+            renderer.margin_b_mm = 0.0
+            renderer._recompute_geometry()
+            
         # Calculate and set the company prefix for the top-left header
         co_path = getattr(self.catalog_ui, 'company_path', "") or getattr(self.catalog_ui, 'current_company_path', "")
         if co_path:
@@ -337,7 +345,7 @@ class PrintExportDialog(QDialog):
           - PDF mode uses ScreenResolution (text is vector, same quality)
           - processEvents batched every 5 pages
         """
-        renderer = self.create_print_renderer()
+        renderer = self.create_print_renderer(mode=mode)
 
         from PyQt6.QtWidgets import QProgressDialog, QApplication
         from PyQt6.QtCore import QRectF
