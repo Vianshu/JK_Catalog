@@ -996,7 +996,7 @@ class A4PageRenderer(QWidget):
             h.setAlignment(Qt.AlignmentFlag.AlignCenter)
             b_right = inner if col < len(headers) - 1 else "none"
             h.setStyleSheet(
-                f"font-size:{self.header_fs}pt;"
+                f"font-size:{self.header_fs}pt; font-weight:bold;"
                 f"color:{self.table_header_text}; background:{self.table_header_bg};"
                 f"padding:{self.pad_hdr_v}px {self.pad_hdr_h}px;"
                 f"border:none; border-right:{b_right}; border-bottom:{inner};"
@@ -1043,7 +1043,7 @@ class A4PageRenderer(QWidget):
                 b_bottom = inner if row_num != total else "none"
                 lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
                 lbl.setStyleSheet(
-                    f"font-size:{self.cell_fs}pt;"
+                    f"font-size:{self.cell_fs}pt; font-weight:bold;"
                     f"color:{self.table_cell_text}; background:{self.table_cell_bg};"
                     f"padding:{self.pad_cell_v}px {self.pad_cell_h}px;"
                     f"border:none; border-right:{b_right}; border-bottom:{b_bottom};"
