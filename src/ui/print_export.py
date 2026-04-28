@@ -16,23 +16,18 @@ A4_WIDTH_MM = 210.0
 A4_HEIGHT_MM = 297.0
 
 # ── Rendering & Margin Strategy ──────────────────────────────────
-# A4PageRenderer is a QWidget.  Qt resolves CSS font sizes (pt) and
-# layout metrics against logical/screen DPI, so the renderer MUST be
-# laid out at screen DPI.  Using printer DPI would distort text.
+# A4PageRenderer handles margins internally (3mm on each side).
+# The content area is 204×291mm within the 210×297mm A4 page.
 #
-# For every output mode (preview, direct print, PDF) we:
-#   1. Create the renderer at RENDER_DPI.
-#   2. Get the target area from  printer.pageRect().
-#   3. Uniformly scale the widget to fill that target.
-#
-# Margins are set on the QPrinter BEFORE rendering:
-#   PDF    → PDF_SAFE_MARGIN_MM each side (borders survive reprinting)
-#   Print  → 0 (Qt honours hardware-minimum non-printable zone)
+# QPrinter margins are set to 0 for all modes — the renderer's own
+# margins provide the safety zone for printer non-printable areas.
+# This ensures no double-margin and consistent output across
+# PDF export, print preview, and direct print.
 #
 # ONE path (_render_pages) handles all modes.  No manual offsets.
 # ─────────────────────────────────────────────────────────────────
 RENDER_DPI = 96                 # widget layout DPI (must match screen)
-PDF_SAFE_MARGIN_MM = 2.0        # each side — protects borders in reprinted PDFs
+PDF_MARGIN_MM = 0.0             # zero — renderer has 3mm internal margins
 
 
 class PrintExportDialog(QDialog):
@@ -156,7 +151,7 @@ class PrintExportDialog(QDialog):
         self.lbl_info.setObjectName("PrintInfoLabel")
         info_layout.addWidget(self.lbl_info)
         
-        self.lbl_size = QLabel("Output Size: A4 (210mm × 297mm)")
+        self.lbl_size = QLabel("Output Size: A4 (210mm x 297mm) | Margins: 3mm")
         info_layout.addWidget(self.lbl_size)
         
         layout.addWidget(info_frame)
@@ -273,9 +268,11 @@ class PrintExportDialog(QDialog):
             
         return renderer
     
-    def render_page_to_painter(self, painter, page_item, renderer):
+    def render_page_to_painter(self, painter, page_item, renderer, skip_render=False):
         """Render a single page to the given painter.
            page_item: Index (int) for Catalog, or Serial (str) for Reports.
+           skip_render: If True, populate renderer data but don't paint
+                        (caller will handle rendering, e.g. via QPixmap).
         """
         # Set footer - get CRM name from selection
         selected_crm = self.crm_combo.currentText()
@@ -305,21 +302,49 @@ class PrintExportDialog(QDialog):
         
         renderer.set_footer_data(crm_name, footer_date)
         
-        # Render the widget to painter
-        renderer.render(painter)
+        # Render the widget to painter (unless caller handles it)
+        if not skip_render and painter is not None:
+            renderer.render(painter)
         return True
+
+    def _prewarm_image_cache(self, page_indices):
+        """Pre-load all product images into PixmapCache before rendering.
+        This avoids per-page disk I/O during the rendering loop."""
+        from src.ui.a4_renderer import PixmapCache
+        try:
+            for page_idx in page_indices:
+                if page_idx >= len(self.catalog_ui.all_pages_data):
+                    continue
+                mg_sn, group_name, sg_sn, page_no, serial_no = self.catalog_ui.all_pages_data[page_idx]
+                products = self.catalog_ui.logic.get_items_for_page_dynamic(group_name, sg_sn, page_no)
+                if not products:
+                    continue
+                for it in products:
+                    prod = it.get("data") or it
+                    img_path = prod.get("image_path", "")
+                    if img_path and os.path.exists(img_path):
+                        # Trigger cache load at a reasonable size
+                        PixmapCache.get(img_path, 200, 200)
+        except Exception:
+            pass  # Non-critical — images will load on demand anyway
 
     def _render_pages(self, painter, printer, page_indices, mode="pdf"):
         """Unified rendering loop for PDF, print preview, and direct print.
 
-        Uses printer.pageRect() as the target area for all modes.
-        Margins are configured on the QPrinter before this method is called:
-          PDF   → PDF_SAFE_MARGIN_MM on each side
-          Print → 0 (Qt uses hardware minimum automatically)
+        Performance optimizations:
+          - Image cache is pre-warmed before the loop
+          - Print mode uses a reusable 3x QPixmap buffer (288 DPI)
+          - PDF mode uses ScreenResolution (text is vector, same quality)
+          - processEvents batched every 5 pages
         """
         renderer = self.create_print_renderer()
 
         from PyQt6.QtWidgets import QProgressDialog, QApplication
+        from PyQt6.QtCore import QRectF
+        from PyQt6.QtGui import QPixmap
+
+        # Pre-warm image cache (loads all product images before rendering)
+        self._prewarm_image_cache(page_indices)
 
         label = "Exporting PDF..." if mode == "pdf" else "Rendering..."
         progress = QProgressDialog(label, "Cancel", 0, len(page_indices), self)
@@ -343,6 +368,19 @@ class PrintExportDialog(QDialog):
         center_x = (target_w - actual_w) / 2.0
         center_y = (target_h - actual_h) / 2.0
 
+        # Pre-render strategy: for print mode, render widget to a 3x pixmap
+        # (288 DPI equivalent) then blit. Reuse the same pixmap buffer.
+        use_pixmap = (mode == "print")
+        PIXMAP_SCALE = 3  # 96 x 3 = 288 DPI
+
+        # Pre-allocate pixmap buffer (reused across pages)
+        pxm_buffer = None
+        if use_pixmap:
+            pxm_w = renderer.width() * PIXMAP_SCALE
+            pxm_h = renderer.height() * PIXMAP_SCALE
+            pxm_buffer = QPixmap(pxm_w, pxm_h)
+
+        total = len(page_indices)
         for i, page_idx in enumerate(page_indices):
             if progress.wasCanceled():
                 painter.end()
@@ -353,16 +391,37 @@ class PrintExportDialog(QDialog):
             if i > 0:
                 printer.newPage()
 
-            painter.save()
-            painter.translate(center_x, center_y)
-            painter.scale(scale, scale)
+            # Populate the renderer with this page's data
+            self.render_page_to_painter(None if use_pixmap else painter,
+                                         page_idx, renderer,
+                                         skip_render=use_pixmap)
 
-            self.render_page_to_painter(painter, page_idx, renderer)
+            if use_pixmap:
+                # Reuse buffer — fill white then render
+                pxm_buffer.fill(Qt.GlobalColor.white)
 
-            painter.restore()
+                pxm_painter = QPainter()
+                pxm_painter.begin(pxm_buffer)
+                pxm_painter.scale(PIXMAP_SCALE, PIXMAP_SCALE)
+                renderer.render(pxm_painter)
+                pxm_painter.end()
+
+                # Blit to printer
+                dest = QRectF(center_x, center_y, actual_w, actual_h)
+                src = QRectF(0, 0, pxm_w, pxm_h)
+                painter.drawPixmap(dest, pxm_buffer, src)
+            else:
+                # Direct render (PDF — vector text, sharp at any zoom)
+                painter.save()
+                painter.translate(center_x, center_y)
+                painter.scale(scale, scale)
+                renderer.render(painter)
+                painter.restore()
 
             progress.setValue(i + 1)
-            QApplication.processEvents()
+            # Batch processEvents every 5 pages for speed
+            if i % 5 == 0 or i == total - 1:
+                QApplication.processEvents()
 
         renderer.deleteLater()
         progress.close()
@@ -493,14 +552,16 @@ class PrintExportDialog(QDialog):
             file_path += '.pdf'
         
         try:
-            # Create PDF printer with safe margins so borders survive reprinting
-            printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+            # ScreenResolution — text in PDF is vector regardless of DPI mode,
+            # so quality is identical. But the painter transform is ~1x instead
+            # of ~12.5x (HighRes), making rendering significantly faster.
+            printer = QPrinter(QPrinter.PrinterMode.ScreenResolution)
             printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
             printer.setOutputFileName(file_path)
 
             page_size = QPageSize(QPageSize.PageSizeId.A4)
-            margins = QMarginsF(PDF_SAFE_MARGIN_MM, PDF_SAFE_MARGIN_MM,
-                                PDF_SAFE_MARGIN_MM, PDF_SAFE_MARGIN_MM)
+            margins = QMarginsF(PDF_MARGIN_MM, PDF_MARGIN_MM,
+                                PDF_MARGIN_MM, PDF_MARGIN_MM)
             page_layout = QPageLayout(page_size, QPageLayout.Orientation.Portrait,
                                       margins, QPageLayout.Unit.Millimeter)
             printer.setPageLayout(page_layout)

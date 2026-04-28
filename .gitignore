@@ -11,3 +11,6 @@ build/
 company_vault.json
 crm_data.json
 config.json
+test_*.pdf
+test_*.py
+simulate_*.py

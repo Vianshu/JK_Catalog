@@ -19,6 +19,78 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QAction
 import os
 import json
+import time
+
+
+# ── Image Cache with mtime-based invalidation ─────────────────────
+# Caches scaled QPixmaps by (path, target_w, target_h).
+# Automatically re-reads from disk if the source file's mtime changes.
+
+class PixmapCache:
+    """Process-wide pixmap cache with automatic file-change detection."""
+    _cache = {}      # (path, w, h) → QPixmap
+    _mtimes = {}     # path → last known mtime
+
+    @classmethod
+    def get(cls, path: str, w: int, h: int):
+        """Return a cached QPixmap scaled to (w, h), or None.
+        Re-loads from disk if the file's mtime has changed."""
+        if not path or not os.path.exists(path):
+            return None
+
+        try:
+            current_mtime = os.path.getmtime(path)
+        except OSError:
+            return None
+
+        # Invalidate ALL sizes of this path if file changed
+        cached_mtime = cls._mtimes.get(path)
+        if cached_mtime is None or current_mtime != cached_mtime:
+            cls._invalidate_path(path)
+            cls._mtimes[path] = current_mtime
+
+        key = (path, w, h)
+        if key in cls._cache:
+            return cls._cache[key]
+
+        # Load, scale, cache
+        from PyQt6.QtGui import QImageReader, QPixmap
+        from PyQt6.QtCore import Qt
+        reader = QImageReader(path)
+        reader.setAutoTransform(True)
+
+        # Pre-scale extremely large images during decode
+        if w > 0 and h > 0:
+            orig_size = reader.size()
+            if orig_size.isValid() and (orig_size.width() > w * 3 or orig_size.height() > h * 3):
+                new_size = orig_size.scaled(w * 3, h * 3, Qt.AspectRatioMode.KeepAspectRatio)
+                reader.setScaledSize(new_size)
+
+        img = reader.read()
+        if img.isNull():
+            return None
+
+        pixmap = QPixmap.fromImage(img)
+        scaled = pixmap.scaled(
+            w, h,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        cls._cache[key] = scaled
+        return scaled
+
+    @classmethod
+    def _invalidate_path(cls, path: str):
+        """Remove all cached sizes for a given file path."""
+        keys_to_remove = [k for k in cls._cache if k[0] == path]
+        for k in keys_to_remove:
+            del cls._cache[k]
+
+    @classmethod
+    def clear(cls):
+        """Clear entire cache (e.g. on company switch)."""
+        cls._cache.clear()
+        cls._mtimes.clear()
 
 
 # --- Load catalog rendering config ---
@@ -297,14 +369,14 @@ class A4PageRenderer(QWidget):
         self.page_cols = 4
         self.page_rows = 5
 
-        # Physical page definition (mm)
-        self.page_w_mm = 210.0
-        self.page_h_mm = 297.0
+        # Physical page definition (mm) — exact ISO A4
+        self.page_w_mm = 210.0   # A4 width  → 794 px at 96 DPI
+        self.page_h_mm = 297.0   # A4 height → 1123 px at 96 DPI
 
-        self.margin_l_mm = 0.0
-        self.margin_r_mm = 0.0
-        self.margin_t_mm = 0.0
-        self.margin_b_mm = 0.0
+        self.margin_l_mm = 3.0  # Safe margins for printer non-printable zones
+        self.margin_r_mm = 3.0
+        self.margin_t_mm = 3.0
+        self.margin_b_mm = 3.0
         self.header_h_mm = 9.0
         self.footer_h_mm = 9.0
 
@@ -745,29 +817,9 @@ class A4PageRenderer(QWidget):
         lbl.setStyleSheet("border:none;")
 
         image_path = prod.get("image_path", "")
-        if image_path and os.path.exists(image_path):
-            from PyQt6.QtGui import QImageReader
-            reader = QImageReader(image_path)
-            reader.setAutoTransform(True)
-            
-            # Optimization: Scale extremely large images during read
-            # This prevents loading 4K/8K images for small thumbnails
-            if w > 0 and h > 0:
-                orig_size = reader.size()
-                if orig_size.isValid() and (orig_size.width() > w * 3 or orig_size.height() > h * 3):
-                    # Scale to 3x target size (preserves good quality while reducing memory I/O)
-                    new_size = orig_size.scaled(w * 3, h * 3, Qt.AspectRatioMode.KeepAspectRatio)
-                    reader.setScaledSize(new_size)
-
-            img = reader.read()
-
-            if not img.isNull():
-                pixmap = QPixmap.fromImage(img)
-                scaled = pixmap.scaled(
-                    w, h,
-                    Qt.AspectRatioMode.IgnoreAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
+        if image_path:
+            scaled = PixmapCache.get(image_path, w, h)
+            if scaled:
                 lbl.setPixmap(scaled)
 
         lbl.setToolTip(f.toolTip()) # Ensure hover works on image too
