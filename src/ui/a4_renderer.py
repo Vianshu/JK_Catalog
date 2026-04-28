@@ -254,8 +254,6 @@ class ProductSizeDialog(QDialog):
         
     def _add_focus_select(self, spin_box):
         """Helper to attach an event filter so content is selected automatically on focus via tab/click"""
-        class FocusFilter(org.QtCore.QObject if 'org' in locals() else type('',(),{})):
-            pass
         # simpler approach: subclassing or overriding focusInEvent
         # store reference to original focusInEvent
         original_focus_in = spin_box.focusInEvent
