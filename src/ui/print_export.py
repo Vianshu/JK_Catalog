@@ -1,14 +1,18 @@
 # print_export.py - Print and PDF Export functionality for Catalog
 
 import os
+import tempfile
+import fitz
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QSpinBox, QCheckBox, QProgressBar, QFileDialog, QMessageBox,
-    QScrollArea, QWidget, QFrame, QComboBox, QGroupBox
+    QScrollArea, QWidget, QFrame, QComboBox, QGroupBox, QProgressDialog
 )
-from PyQt6.QtCore import Qt, QSize, QMarginsF, QThread, pyqtSignal, QSettings
-from PyQt6.QtGui import QPainter, QPageSize, QPageLayout
-from PyQt6.QtPrintSupport import QPrinter, QPrintPreviewDialog
+from PyQt6.QtCore import Qt, QSize, QMarginsF, QThread, pyqtSignal, QSettings, QEvent
+from PyQt6.QtGui import QPainter, QPageSize, QPageLayout, QImage
+from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
+from PyQt6.QtPdfWidgets import QPdfView
+from PyQt6.QtPdf import QPdfDocument
 from src.ui.settings import load_crm_list
 
 # Fixed A4 dimensions in mm (ISO standard)
@@ -28,6 +32,203 @@ A4_HEIGHT_MM = 297.0
 # ─────────────────────────────────────────────────────────────────
 RENDER_DPI = 96                 # widget layout DPI (must match screen)
 PDF_MARGIN_MM = 0.0             # zero — renderer has 3mm internal margins
+
+
+class PrintWorker(QThread):
+    progress = pyqtSignal(int, int) # current, total
+    finished = pyqtSignal(bool, str) # success, error_message
+    
+    def __init__(self, pdf_path, printer, parent=None):
+        super().__init__(parent)
+        self.pdf_path = pdf_path
+        self.printer = printer
+        
+    def run(self):
+        try:
+            # Enforce full page mapping so hardware margins symmetrically trim the image
+            self.printer.setFullPage(True)
+            
+            doc = fitz.open(self.pdf_path)
+            total = len(doc)
+            
+            painter = QPainter()
+            if not painter.begin(self.printer):
+                self.finished.emit(False, "Could not initialize QPainter on QPrinter.")
+                doc.close()
+                return
+            
+            # 300 DPI for high-quality text rasterization
+            zoom_matrix = fitz.Matrix(300 / 72, 300 / 72)
+            
+            for i in range(total):
+                self.progress.emit(i + 1, total)
+                page = doc[i]
+                pix = page.get_pixmap(matrix=zoom_matrix, alpha=False)
+                
+                # Convert raw fitz bytes directly to QImage
+                img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
+                
+                # Draw the image perfectly onto the physical paper bounds
+                painter.drawImage(self.printer.paperRect(QPrinter.Unit.DevicePixel), img)
+                
+                if i < total - 1:
+                    self.printer.newPage()
+                    
+            painter.end()
+            doc.close()
+            
+            self.finished.emit(True, "")
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
+
+class ZoomablePdfView(QPdfView):
+    """Custom PDF view that supports smooth scrolling/pinch zoom."""
+    def wheelEvent(self, event):
+        # Windows Trackpad Pinch usually sends Ctrl + WheelEvent
+        if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            delta = event.angleDelta().y()
+            if delta != 0:
+                self.setZoomMode(QPdfView.ZoomMode.Custom)
+                # 1.05 gives a very smooth, fine-grained zoom for trackpads/wheels
+                factor = 1.05 if delta > 0 else (1 / 1.05)
+                self.setZoomFactor(self.zoomFactor() * factor)
+            event.accept()
+        else:
+            super().wheelEvent(event)
+            
+    def viewportEvent(self, event):
+        # Native macOS/Windows precision touchpad pinch gesture
+        if event.type() == QEvent.Type.NativeGesture:
+            if event.gestureType() == Qt.NativeGestureType.ZoomNativeGesture:
+                self.setZoomMode(QPdfView.ZoomMode.Custom)
+                # event.value() is the scale delta
+                factor = 1.0 + event.value()
+                if factor > 0:
+                    self.setZoomFactor(self.zoomFactor() * factor)
+                return True
+        return super().viewportEvent(event)
+
+
+class PDFPreviewDialog(QDialog):
+    def __init__(self, pdf_path, parent=None):
+        super().__init__(parent)
+        self.pdf_path = pdf_path
+        self.setWindowTitle("Print Preview")
+        self.resize(1000, 800)
+        
+        # Main Layout is Horizontal
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
+        
+        # 1. Left side: PDF Viewer (Multi-page scrollable)
+        self.pdf_view = ZoomablePdfView(self)
+        self.pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
+        self.pdf_document = QPdfDocument(self)
+        self.pdf_view.setDocument(self.pdf_document)
+        
+        self.layout.addWidget(self.pdf_view, stretch=1)
+        
+        # 2. Right side: Vertical Toolbar
+        self.sidebar_frame = QFrame()
+        self.sidebar_frame.setStyleSheet("background-color: #2b2b2b; border-left: 1px solid #444;")
+        self.sidebar_frame.setFixedWidth(160)
+        self.sidebar = QVBoxLayout(self.sidebar_frame)
+        self.sidebar.setContentsMargins(10, 15, 10, 15)
+        self.sidebar.setSpacing(10)
+        
+        # Primary Action Buttons
+        self.btn_print = QPushButton("🖨️ Print")
+        self.btn_print.setStyleSheet("background-color: #28a745; color: white; padding: 10px; font-weight: bold; border-radius: 4px; font-size: 14px;")
+        self.btn_print.clicked.connect(self.print_document)
+        self.sidebar.addWidget(self.btn_print)
+        
+        self.btn_close = QPushButton("Close")
+        self.btn_close.setStyleSheet("background-color: #dc3545; color: white; padding: 8px; font-weight: bold; border-radius: 4px;")
+        self.btn_close.clicked.connect(self.reject)
+        self.sidebar.addWidget(self.btn_close)
+        
+        # Spacer between actions and zoom controls
+        self.sidebar.addSpacing(20)
+        
+        # Zoom Controls Label
+        zoom_lbl = QLabel("VIEW CONTROLS")
+        zoom_lbl.setStyleSheet("color: #888; font-size: 11px; font-weight: bold; margin-bottom: 5px;")
+        self.sidebar.addWidget(zoom_lbl)
+        
+        # Zoom Buttons
+        btn_style = "background-color: #444; color: white; padding: 6px; border-radius: 4px; text-align: left; padding-left: 10px;"
+        
+        self.btn_zoom_in = QPushButton("🔍 Zoom In")
+        self.btn_zoom_in.setStyleSheet(btn_style)
+        self.btn_zoom_in.clicked.connect(self.zoom_in)
+        self.sidebar.addWidget(self.btn_zoom_in)
+        
+        self.btn_zoom_out = QPushButton("🔎 Zoom Out")
+        self.btn_zoom_out.setStyleSheet(btn_style)
+        self.btn_zoom_out.clicked.connect(self.zoom_out)
+        self.sidebar.addWidget(self.btn_zoom_out)
+        
+        self.btn_fit_width = QPushButton("↔️ Fit Width")
+        self.btn_fit_width.setStyleSheet(btn_style)
+        self.btn_fit_width.clicked.connect(self.fit_width)
+        self.sidebar.addWidget(self.btn_fit_width)
+        
+        # Push everything to the top
+        self.sidebar.addStretch()
+        
+        self.layout.addWidget(self.sidebar_frame)
+        
+        self._load_document()
+        
+    def zoom_in(self):
+        self.pdf_view.setZoomMode(QPdfView.ZoomMode.Custom)
+        self.pdf_view.setZoomFactor(self.pdf_view.zoomFactor() * 1.1)
+        
+    def zoom_out(self):
+        self.pdf_view.setZoomMode(QPdfView.ZoomMode.Custom)
+        self.pdf_view.setZoomFactor(self.pdf_view.zoomFactor() / 1.1)
+        
+    def fit_width(self):
+        self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
+        
+    def _load_document(self):
+        self.pdf_document.load(self.pdf_path)
+        
+    def print_document(self):
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        dialog = QPrintDialog(printer, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+            
+        # Crucial on Windows: release file lock so PyMuPDF can open it
+        self.pdf_document.close()
+        
+        self.progress_dialog = QProgressDialog("Starting print job...", "Cancel", 0, 100, self)
+        self.progress_dialog.setWindowTitle("Printing")
+        self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self.progress_dialog.show()
+        
+        self.worker = PrintWorker(self.pdf_path, printer)
+        self.worker.progress.connect(self._update_progress)
+        self.worker.finished.connect(self._on_print_finished)
+        self.worker.start()
+        
+    def _update_progress(self, current, total):
+        self.progress_dialog.setMaximum(total)
+        self.progress_dialog.setValue(current)
+        self.progress_dialog.setLabelText(f"Printing page {current} of {total}...")
+        
+    def _on_print_finished(self, success, error_msg):
+        self.progress_dialog.close()
+        if not success:
+            QMessageBox.critical(self, "Print Error", f"Failed to print document:\n{error_msg}")
+        else:
+            QMessageBox.information(self, "Success", "Document sent to printer successfully.")
+            
+        # Re-lock and load document for viewing
+        self._load_document()
 
 
 class PrintExportDialog(QDialog):
@@ -242,19 +443,11 @@ class PrintExportDialog(QDialog):
         
         return page_indices
     
-    def create_print_renderer(self, mode="pdf"):
+    def create_print_renderer(self):
         """Create a renderer configured for print output using screen DPI for consistency."""
         from src.ui.a4_renderer import A4PageRenderer
         renderer = A4PageRenderer()
         renderer.set_target_dpi(RENDER_DPI)
-        
-        # Strip the 3mm margin for physical print (printer hardware already adds margins)
-        if mode == "print":
-            renderer.margin_l_mm = 0.0
-            renderer.margin_r_mm = 0.0
-            renderer.margin_t_mm = 0.0
-            renderer.margin_b_mm = 0.0
-            renderer._recompute_geometry()
             
         # Calculate and set the company prefix for the top-left header
         co_path = getattr(self.catalog_ui, 'company_path', "") or getattr(self.catalog_ui, 'current_company_path', "")
@@ -336,57 +529,41 @@ class PrintExportDialog(QDialog):
         except Exception:
             pass  # Non-critical — images will load on demand anyway
 
-    def _render_pages(self, painter, printer, page_indices, mode="pdf"):
+    def _render_pages(self, painter, printer, page_indices):
         """Unified rendering loop for PDF, print preview, and direct print.
 
         Performance optimizations:
           - Image cache is pre-warmed before the loop
-          - Print mode uses a reusable 3x QPixmap buffer (288 DPI)
-          - PDF mode uses ScreenResolution (text is vector, same quality)
+          - Vector text rendering (sharp at any zoom)
           - processEvents batched every 5 pages
         """
-        renderer = self.create_print_renderer(mode=mode)
+        renderer = self.create_print_renderer()
 
         from PyQt6.QtWidgets import QProgressDialog, QApplication
-        from PyQt6.QtCore import QRectF
-        from PyQt6.QtGui import QPixmap
 
         # Pre-warm image cache (loads all product images before rendering)
         self._prewarm_image_cache(page_indices)
 
-        label = "Exporting PDF..." if mode == "pdf" else "Rendering..."
-        progress = QProgressDialog(label, "Cancel", 0, len(page_indices), self)
+        progress = QProgressDialog("Exporting PDF...", "Cancel", 0, len(page_indices), self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)
         progress.setValue(0)
 
-        # Target area — pageRect already accounts for margins
         page_rect = printer.pageRect(QPrinter.Unit.DevicePixel)
+        
+        # PDF mode: no hardware margins, pageRect is perfect.
         target_w = page_rect.width()
         target_h = page_rect.height()
 
-        # Uniform scale to fill target
         scale_x = target_w / renderer.width()
         scale_y = target_h / renderer.height()
         scale = min(scale_x, scale_y)
 
-        # Centre if aspect ratios differ slightly
         actual_w = renderer.width() * scale
         actual_h = renderer.height() * scale
+        
         center_x = (target_w - actual_w) / 2.0
         center_y = (target_h - actual_h) / 2.0
-
-        # Pre-render strategy: for print mode, render widget to a 3x pixmap
-        # (288 DPI equivalent) then blit. Reuse the same pixmap buffer.
-        use_pixmap = (mode == "print")
-        PIXMAP_SCALE = 3  # 96 x 3 = 288 DPI
-
-        # Pre-allocate pixmap buffer (reused across pages)
-        pxm_buffer = None
-        if use_pixmap:
-            pxm_w = renderer.width() * PIXMAP_SCALE
-            pxm_h = renderer.height() * PIXMAP_SCALE
-            pxm_buffer = QPixmap(pxm_w, pxm_h)
 
         total = len(page_indices)
         for i, page_idx in enumerate(page_indices):
@@ -400,31 +577,14 @@ class PrintExportDialog(QDialog):
                 printer.newPage()
 
             # Populate the renderer with this page's data
-            self.render_page_to_painter(None if use_pixmap else painter,
-                                         page_idx, renderer,
-                                         skip_render=use_pixmap)
+            self.render_page_to_painter(painter, page_idx, renderer, skip_render=True)
 
-            if use_pixmap:
-                # Reuse buffer — fill white then render
-                pxm_buffer.fill(Qt.GlobalColor.white)
-
-                pxm_painter = QPainter()
-                pxm_painter.begin(pxm_buffer)
-                pxm_painter.scale(PIXMAP_SCALE, PIXMAP_SCALE)
-                renderer.render(pxm_painter)
-                pxm_painter.end()
-
-                # Blit to printer
-                dest = QRectF(center_x, center_y, actual_w, actual_h)
-                src = QRectF(0, 0, pxm_w, pxm_h)
-                painter.drawPixmap(dest, pxm_buffer, src)
-            else:
-                # Direct render (PDF — vector text, sharp at any zoom)
-                painter.save()
-                painter.translate(center_x, center_y)
-                painter.scale(scale, scale)
-                renderer.render(painter)
-                painter.restore()
+            # Direct render (PDF — vector text, sharp at any zoom)
+            painter.save()
+            painter.translate(center_x, center_y)
+            painter.scale(scale, scale)
+            renderer.render(painter)
+            painter.restore()
 
             progress.setValue(i + 1)
             # Batch processEvents every 5 pages for speed
@@ -435,77 +595,57 @@ class PrintExportDialog(QDialog):
         progress.close()
         return True
 
+    def _render_to_printer(self, printer: QPrinter, page_indices: list):
+        """Shared logic to strictly render standard vector PDF to a given QPrinter."""
+        page_size = QPageSize(QPageSize.PageSizeId.A4)
+        margins = QMarginsF(PDF_MARGIN_MM, PDF_MARGIN_MM, PDF_MARGIN_MM, PDF_MARGIN_MM)
+        page_layout = QPageLayout(page_size, QPageLayout.Orientation.Portrait, margins, QPageLayout.Unit.Millimeter)
+        printer.setPageLayout(page_layout)
+        
+        painter = QPainter()
+        if not painter.begin(printer):
+            raise Exception("Failed to initialize PDF painter.")
+            
+        ok = self._render_pages(painter, printer, page_indices)
+        painter.end()
+        return ok
+
     def show_print_preview(self):
-        """Show print preview dialog."""
+        """Triggered by the Preview/Print button. Shows internal PDF viewer."""
         page_indices = self.get_page_range()
         if not page_indices:
             QMessageBox.warning(self, "No Pages", "No pages available to print.")
             return
+            
+        temp_dir = tempfile.gettempdir()
+        temp_pdf = os.path.join(temp_dir, "jk_catalog_temp_print.pdf")
         
-        from PyQt6.QtWidgets import QProgressDialog, QApplication
-        
-        # Immediately display loading UI because QPrinter initialization takes a second on Windows
-        progress = QProgressDialog("Initializing print services...\nPlease wait.", None, 0, 0, self)
-        progress.setWindowTitle("Loading Preview")
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
-        progress.show()
-        QApplication.processEvents()
-        
-        # Create printer for preview (this causes the hang)
-        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-        
-        # Set A4 page size with ZERO margins - we handle margins ourselves
-        page_size = QPageSize(QPageSize.PageSizeId.A4)
-        printer.setPageSize(page_size)
-        margins = QMarginsF(0, 0, 0, 0)
-        page_layout = QPageLayout(page_size, QPageLayout.Orientation.Portrait, margins)
-        printer.setPageLayout(page_layout)
-        
-        # Store page indices for the preview handler
-        self._preview_pages = page_indices
-        
-        progress.setLabelText("Generating preview interface...")
-        QApplication.processEvents()
-        
-        # Create and show preview dialog
-        preview = QPrintPreviewDialog(printer, self)
-        preview.setWindowTitle(f"Print Preview - Catalog ({len(page_indices)} pages)")
-        preview.resize(900, 700)
-        preview.paintRequested.connect(self.handle_paint_request)
-        
-        # Store reference to close it if rendering is cancelled
-        self._active_preview = preview
-        
-        # Operations complete, dismiss loading UI
-        progress.close()
-        
-        preview.exec()
-        self._active_preview = None
-        self.accept() # Auto close dialog after printing to trigger success prompt
-    
-    def handle_paint_request(self, printer):
-        """Handle the paint request from print preview.
-        
-        Uses the printer's actual non-printable margins so content fills
-        the printable area completely with no wasted whitespace.
-        """
-        painter = QPainter()
-        if not painter.begin(printer):
-            return
-        
-        page_indices = self._preview_pages
-        
-        ok = self._render_pages(painter, printer, page_indices, mode="print")
-        
-        if not ok:
-            # Cancelled – close preview
-            if self._active_preview:
-                self._active_preview.close()
-            self.reject()
-            return
-        
-        painter.end()
+        try:
+            printer = QPrinter(QPrinter.PrinterMode.ScreenResolution)
+            printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+            printer.setOutputFileName(temp_pdf)
+            
+            ok = self._render_to_printer(printer, page_indices)
+            if not ok:
+                try:
+                    if os.path.exists(temp_pdf): os.remove(temp_pdf)
+                except: pass
+                self.reject()
+                return
+                
+            # Open the custom preview dialog
+            dialog = PDFPreviewDialog(temp_pdf, self)
+            dialog.exec()
+            
+            # Clean up when closed
+            try:
+                if os.path.exists(temp_pdf): os.remove(temp_pdf)
+            except: pass
+            
+            self.accept()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Print Error", f"Failed to generate print document:\n{str(e)}")
     
     # ─── PDF Export ─────────────────────────────────────────────────
     def export_to_pdf(self):
@@ -560,26 +700,11 @@ class PrintExportDialog(QDialog):
             file_path += '.pdf'
         
         try:
-            # ScreenResolution — text in PDF is vector regardless of DPI mode,
-            # so quality is identical. But the painter transform is ~1x instead
-            # of ~12.5x (HighRes), making rendering significantly faster.
             printer = QPrinter(QPrinter.PrinterMode.ScreenResolution)
             printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
             printer.setOutputFileName(file_path)
 
-            page_size = QPageSize(QPageSize.PageSizeId.A4)
-            margins = QMarginsF(PDF_MARGIN_MM, PDF_MARGIN_MM,
-                                PDF_MARGIN_MM, PDF_MARGIN_MM)
-            page_layout = QPageLayout(page_size, QPageLayout.Orientation.Portrait,
-                                      margins, QPageLayout.Unit.Millimeter)
-            printer.setPageLayout(page_layout)
-            
-            # Create painter
-            painter = QPainter()
-            if not painter.begin(printer):
-                raise Exception("Failed to initialize PDF writer")
-            
-            ok = self._render_pages(painter, printer, page_indices, mode="pdf")
+            ok = self._render_to_printer(printer, page_indices)
             
             if not ok:
                 # Cancelled
@@ -588,8 +713,6 @@ class PrintExportDialog(QDialog):
                 except: pass
                 self.reject()
                 return
-            
-            painter.end()
             
             QMessageBox.information(
                 self, 
