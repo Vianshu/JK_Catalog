@@ -415,7 +415,7 @@ class A4PageRenderer(QWidget):
         self.header_fs = 14
         self.cell_fs = 14
         self.fs_base_units = 12
-        self.fs_category = 14
+        self.fs_category = 16
         self.fs_master_packing = 14
 
         # Padding
