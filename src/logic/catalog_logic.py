@@ -41,10 +41,8 @@ class CatalogLogic:
         self.calendar_db_path = get_data_file_path("calendar_data.db")
         self._layout_cache = {}
         self._product_lookup_cache = {}
-        self._connections = {}
 
     def set_paths(self, catalog_db, final_db, super_db=None):
-        self._close_all_connections()
         self.catalog_db_path = catalog_db
         self.final_db_path = final_db
         if super_db:
@@ -61,11 +59,17 @@ class CatalogLogic:
         self._product_lookup_cache.pop(cache_key, None)
 
     def close(self):
-        self._close_all_connections()
+        pass  # connections are now per-call; nothing to close globally
 
     # ─── CONNECTION MANAGER ───────────────────────────────────────────────────
 
     def _get_conn(self, db_key):
+        """Return a fresh SQLite connection for every call.
+
+        Each caller gets its own connection object so that the UI thread
+        and the background Engine thread never share a connection,
+        which eliminates SQLITE_MISUSE errors.
+        """
         path_map = {
             _DB_SUPER: self.db_path,
             _DB_CATALOG: self.catalog_db_path,
@@ -76,22 +80,10 @@ class CatalogLogic:
         if not path or not os.path.exists(path):
             return None
 
-        if db_key in self._connections:
-            conn = self._connections[db_key]
-            try:
-                conn.execute("SELECT 1")
-                return conn
-            except Exception:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-                del self._connections[db_key]
-
         try:
             conn = sqlite3.connect(path, check_same_thread=False)
             conn.execute("PRAGMA journal_mode=WAL")
-            self._connections[db_key] = conn
+            conn.execute("PRAGMA busy_timeout=3000")
             return conn
         except Exception as e:
             logger.error(f"Failed to connect to {db_key} ({path}): {e}")
@@ -109,12 +101,7 @@ class CatalogLogic:
         return self._get_conn(_DB_CATALOG)
 
     def _close_all_connections(self):
-        for key, conn in list(self._connections.items()):
-            try:
-                conn.close()
-            except Exception:
-                pass
-        self._connections.clear()
+        pass  # connections are now per-call; nothing to close globally
 
     # ─── SCHEMA INITIALIZATION ────────────────────────────────────────────────
 
@@ -780,7 +767,7 @@ class CatalogLogic:
                     return [str(n).strip().lower() for n in parsed if str(n).strip()]
             return []
         except Exception as e:
-            logger.warning(f"_get_page_product_list error: {e}")
+            logger.warning(f"_get_page_product_list failed: group='{group_name}', sg={sg_sn}, page={page_no}, error={e}")
             return []
 
     def _load_all_page_assignments(self, group_name, sg_sn):
@@ -893,7 +880,7 @@ class CatalogLogic:
             """, (group_name.strip(), sg_sn))
             rows = cursor.fetchall()
         except Exception as e:
-            logger.error(f"get_sorted_products_from_db error: {e}")
+            logger.error(f"get_sorted_products_from_db failed: group='{group_name}', sg={sg_sn}, error={e}")
             return []
 
         grouped = {}

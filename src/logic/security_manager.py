@@ -4,6 +4,9 @@ import os
 from datetime import datetime
 import hmac
 import ctypes
+from src.utils.app_logger import get_logger
+
+logger = get_logger(__name__)
 
 APP_SECRET = b"JK_Catalog_v2_secure_key"  # compiled into the EXE
     
@@ -118,6 +121,7 @@ class SecurityManager:
                 """, (company_id, admin_user, pass_hash))
             
             conn.commit()
+            logger.info(f"Company registered: id={company_id}, name='{display_name}', admin='{admin_user}'")
             return company_id
 
     def verify_login(self, folder_path, username, password):
@@ -187,6 +191,8 @@ class SecurityManager:
                     VALUES (?, ?, ?, ?)
                 """, (company_id, username, pass_hash, role))
                 conn.commit()
+                logger.info(f"User created: username='{username}', role='{role}', company_id={company_id}")
                 return True
             except sqlite3.IntegrityError:
+                logger.warning(f"User creation failed (duplicate): username='{username}', company_id={company_id}")
                 return False # User likely exists

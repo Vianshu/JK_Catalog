@@ -3,6 +3,9 @@ import re
 import pandas as pd # Pandas ka use comparison ke liye
 import datetime
 from collections import Counter
+from src.utils.app_logger import get_logger
+
+logger = get_logger(__name__)
 
 class DataProcessor:
     def __init__(self, db_path):
@@ -393,7 +396,7 @@ class DataProcessor:
             conn.close()
             return True
         except Exception as e:
-            print(f"Processor Error: {e}")
+            logger.error(f"Processor Error: {e}", exc_info=True)
             return False
     
     def smart_db_sync(self, new_data_list):
@@ -528,7 +531,7 @@ class DataProcessor:
             conn.close()
             return True
         except Exception as e:
-            print(f"Error generating IDs: {e}")
+            logger.error(f"Error generating IDs: {e}", exc_info=True)
             return False
         
     def get_display_data(self):

@@ -22,6 +22,9 @@ Usage in MainWindow:
 import os
 import re
 from typing import Callable, Optional, Any
+from src.utils.app_logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class PageRegistration:
@@ -106,7 +109,7 @@ class SessionManager:
                 errors.append((reg.name, str(e)))
                 if self._on_error:
                     self._on_error(reg.name, e)
-                print(f"[SESSION] Error initializing {error_msg}")
+                logger.error(f"Session init failed: {error_msg}", exc_info=True)
         
         return {
             "success": len(errors) == 0,

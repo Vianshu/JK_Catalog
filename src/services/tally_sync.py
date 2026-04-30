@@ -6,6 +6,9 @@ from pathlib import Path
 
 import pandas as pd
 import pyodbc
+from src.utils.app_logger import get_logger
+
+logger = get_logger(__name__)
 
 
 warnings.filterwarnings(
@@ -119,7 +122,7 @@ class TallyService:
             # Case-insensitive rename: different Tally ODBC versions may
             # return column names in different cases (e.g. $Guid vs $GUID)
             raw_cols = list(export_df.columns)
-            print(f"[DEBUG] Raw Tally columns: {raw_cols}")
+            logger.debug(f"Raw Tally columns: {raw_cols}")
             
             current_cols = {c.lower(): c for c in export_df.columns}
             resolved_mapping = {}
@@ -130,20 +133,20 @@ class TallyService:
             export_df.rename(columns=resolved_mapping, inplace=True)
             
             final_cols = list(export_df.columns)
-            print(f"[DEBUG] Final columns after rename: {final_cols}")
+            logger.debug(f"Final columns after rename: {final_cols}")
             
             # Verify critical column exists
             if "GUID" not in export_df.columns:
-                print(f"[WARNING] GUID column missing after rename! Columns: {final_cols}")
+                logger.warning(f"GUID column missing after rename! Columns: {final_cols}")
             
             export_df.to_sql("stock_items", conn, if_exists="replace", index=False)
 
             conn.close()
-            print(f"[OK] SQLite Database created with clean headers: {db_file_path}")
+            logger.info(f"Row data saved: path='{db_file_path}', rows={len(export_df)}")
             return True
 
         except Exception as e:
-            print(f"[ERROR] SQLite Save Error: {e}")
+            logger.error(f"SQLite save error: {e}", exc_info=True)
             raise e
 
     def fetch_stock_items(self, company_name=None, company_path=None):
@@ -192,7 +195,7 @@ class TallyService:
                 FROM StockItem
             """
 
-            print("Fetching data from Tally...")
+            logger.info(f"Fetching stock items from Tally...")
             df = pd.read_sql(sql, self.connection)
 
             if df.empty:
@@ -267,7 +270,7 @@ def fetch_tally_ledger_data(company_path=None):
             FROM Ledger
         """
 
-        print("Fetching ledger data from Tally...")
+        logger.info("Fetching ledger data from Tally...")
         ledger_df = pd.read_sql(ledger_sql, service.connection)
 
         if ledger_df.empty:
@@ -328,7 +331,7 @@ def fetch_tally_ledger_data(company_path=None):
         )
         conn_db.close()
 
-        print(f"[OK] Ledger data saved: {db_path} ({len(ledger_df)} rows)")
+        logger.info(f"Ledger data saved: path='{db_path}', rows={len(ledger_df)}")
         return len(ledger_df), ""
 
     except Exception as e:

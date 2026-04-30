@@ -12,6 +12,9 @@ from src.ui.settings import load_crm_list, load_report_json, save_report_json
 from src.logic.catalog_logic import CatalogLogic
 from src.ui.a4_renderer import A4PageRenderer
 from src.ui.print_export import PrintExportDialog # Import the shared dialog
+from src.utils.app_logger import get_logger
+
+logger = get_logger(__name__)
 
 # Use screen DPI for consistency with full catalog
 SCREEN_DPI = 96
@@ -174,6 +177,7 @@ class ReportsUI(QWidget):
         path = QFileDialog.getExistingDirectory(self, "Select Download Folder")
         if path:
             self.download_path = path
+            logger.info(f"Report download location set: '{path}'")
             QMessageBox.information(self, "Success", f"Download location set to:\n{path}")
 
     def open_dialog(self, mode):
@@ -199,6 +203,7 @@ class ReportsUI(QWidget):
         
         # Get pending pages
         pending_serials = current_report_data.get(crm_name, {}).get("pending", [])
+        logger.info(f"Report opened: crm='{crm_name}', mode='{mode}', pending={len(pending_serials)} pages")
         if not pending_serials:
             QMessageBox.information(self, "Info", "No pending pages to process for this CRM.")
             # We allow them to proceed? Maybe they want to reprint old ones? 
@@ -239,6 +244,7 @@ class ReportsUI(QWidget):
             )
             
             if reply == QMessageBox.StandardButton.Yes:
+                logger.info(f"Report completed: crm='{crm_name}', pages={len(pending_serials)} marked done")
                 self.update_pages_logic(crm_name)
             
     def render_report_page(self, painter, serial_no, renderer, crm_name):

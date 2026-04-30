@@ -9,6 +9,9 @@ from PyQt6.QtCore import Qt, QSize, pyqtSignal
 from PyQt6.QtGui import QFont, QKeySequence, QShortcut, QColor
 from pathlib import Path
 from src.ui.settings import save_report_json
+from src.utils.app_logger import get_logger
+
+logger = get_logger(__name__)
 
 # ================= 1. SET DATA PATH DIALOG =================
 class PathDialog(QDialog):
@@ -125,9 +128,11 @@ class LoginDialog(QDialog):
         # STRICT SECURITY MODE: Only DB Login allowed
         db_user = self.security.verify_login(self.folder_path, username, password)
         if db_user:
+            logger.info(f"Login successful: company='{self.company_name}', user='{username}'")
             self.accept()
             return
 
+        logger.warning(f"Login failed: company='{self.company_name}', user='{username}'")
         self.error_lbl.setText("❌ Invalid Credentials!")
         self.user_edit.setFocus()
 
@@ -312,9 +317,9 @@ class CompanyCreateForm(QWidget):
             # 2. Register in Secure DB
             cid = self.security.register_company(display_name, str(final_folder_path), img_path, user, password)
             if cid:
-                print(f"Company registered in Security DB with ID: {cid}")
+                logger.info(f"Company registered: name='{display_name}', path='{final_folder_path}', id={cid}")
             else:
-                print("Company already exists in DB or path conflict.")
+                logger.info(f"Company already exists: name='{display_name}', path='{final_folder_path}'")
 
             QMessageBox.information(self, "Success", f"Company '{display_name}' configured successfully!\nLocation: {final_folder_path}")
             self.back_to_list()
@@ -487,6 +492,7 @@ class CompanyLoginUI(QWidget):
                 with open(self.config_file, 'w') as f: 
                     json.dump({"default_path": new_p}, f)
                 self.current_data_path = new_p
+                logger.info(f"Data path changed: new='{new_p}'")
                 # Re-init SecurityManager for new data path
                 from src.logic.security_manager import SecurityManager
                 self.security = SecurityManager(os.path.join(new_p, "security.db"))

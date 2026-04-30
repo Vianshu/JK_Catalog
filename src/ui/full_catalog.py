@@ -130,6 +130,7 @@ class FullCatalogUI(QWidget):
         if hasattr(self, 'lbl_comp_code'):
             self.lbl_comp_code.setText(prefix)
 
+        logger.info(f"Catalog loaded: company='{prefix}', path='{company_path}'")
         self.refresh_catalog_data()
 
     def _get_company_prefix(self, company_path):
@@ -640,6 +641,7 @@ class FullCatalogUI(QWidget):
         if new_page is None:
             return
 
+        logger.info(f"Page added: group='{group_name}', sg_sn='{sg_sn}', new_page={new_page}")
         self.refresh_catalog_data()
 
         # Navigate to the new page
@@ -678,6 +680,8 @@ class FullCatalogUI(QWidget):
 
         self.logic.remove_page(group_name, sg_sn, page_no)
         self.logic.rebuild_serial_numbers()
+
+        logger.info(f"Page removed: group='{group_name}', sg_sn='{sg_sn}', page={page_no}, serial={serial_no}")
 
         # Handle backward serial shift — remap CRM and add shifted pages
         if self.company_path:
@@ -726,6 +730,8 @@ class FullCatalogUI(QWidget):
         if self._build_worker and self._build_worker.isRunning():
             return
 
+        logger.info(f"Catalog build started: silent={silent}")
+
         from PyQt6.QtWidgets import QProgressDialog, QApplication
 
         self._build_silent = silent
@@ -763,6 +769,10 @@ class FullCatalogUI(QWidget):
 
         if result["success"]:
             self.catalog_built.emit()
+            logger.info(
+                f"Catalog build completed: changed={result['affected_count']}, "
+                f"created={result.get('pages_created', 0)}"
+            )
             if not self._build_silent:
                 msg = f"Catalog built successfully!\n\n"
                 msg += f"• Changed Pages: {result['affected_count']}\n"
@@ -836,6 +846,7 @@ class FullCatalogUI(QWidget):
             self.refresh_catalog_data()
 
             QApplication.restoreOverrideCursor()
+            logger.info(f"Reshuffle completed: group='{group_name}', sg_sn='{sg_sn}'")
             QMessageBox.information(
                 self, "Reshuffle Complete",
                 f"Subgroup '{group_name} > {sg_sn}' reshuffled!\n\n"

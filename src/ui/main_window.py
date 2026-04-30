@@ -33,6 +33,9 @@ from src.ui.calendar_mapping import CalendarMappingUI
 from src.ui.group_test_tab import GroupTestTab
 from src.ui.ledger_row_data import LedgerRowDataUI
 from src.utils.path_utils import get_writable_data_path
+from src.utils.app_logger import get_logger, set_company_context
+
+logger = get_logger(__name__)
 
 # Settings & Services
 # Settings & Services
@@ -535,6 +538,7 @@ class MainWindow(QWidget):
         try:
             self.current_company = comp_name
             self.current_company_path = company_path
+            set_company_context(comp_name)
             
             # Update UI with company name
             clean_name = re.sub(r'\s*\(\d{4}[-/].*?\)', '', comp_name)
@@ -590,10 +594,12 @@ class MainWindow(QWidget):
             
             if result["errors"]:
                 error_names = [e[0] for e in result["errors"]]
-                print(f"[SESSION] Partial errors in: {', '.join(error_names)}")
+                logger.warning(f"Session partial errors: {', '.join(error_names)}")
             
             self.session = session  # Store for later use
             
+            logger.info(f"Session started: company='{comp_name}', path='{company_path}'")
+
             # Navigate to welcome
             self.nav_stack.setCurrentIndex(1) 
             self.main_stack.setCurrentIndex(1)
@@ -603,11 +609,12 @@ class MainWindow(QWidget):
             self.maximize_window()
             
         except Exception as e:
+            logger.error(f"Login failed: company='{comp_name}', error={e}", exc_info=True)
             QMessageBox.critical(self, "Login Error", f"Failed to load company data:\n{str(e)}")
-            print(f"Login Crash: {e}")
 
     def on_sync_tally_clicked(self):
         if not self.current_company: return
+        logger.info(f"Tally sync started")
         progress = QProgressDialog("Syncing Tally Data...", None, 0, 0, self)
         progress.setWindowTitle("Please Wait")
         progress.setWindowModality(Qt.WindowModality.WindowModal)
@@ -624,6 +631,7 @@ class MainWindow(QWidget):
                 
                 # Chain: Final Data sync (async) → catalog build → success message
                 row_count = len(df)
+                logger.info(f"Tally sync received: {row_count} rows")
                 def _after_sync():
                     self.final_data_page.sync_complete.disconnect(_after_sync)
                     # Trigger a silent catalog build
@@ -640,9 +648,11 @@ class MainWindow(QWidget):
                     QMessageBox.information(self, "Sync Complete", f"Data Synced Successfully!\nLoaded {row_count} rows.")
             else:
                 msg = error if error else "No data received from Tally. Check connection."
+                logger.warning(f"Tally sync issue: {msg}")
                 QMessageBox.warning(self, "Sync Issue", f"{msg}\n\nClick OK to close.")
         except Exception as e:
             progress.close()
+            logger.error(f"Tally sync failed: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Sync Failed: {str(e)}")
 
     def on_row_data_clicked(self):
@@ -685,6 +695,8 @@ class MainWindow(QWidget):
             UserManagerDialog(self.current_company, self.current_company_path, parent=self).exec()
 
     def back_to_login_screen(self):
+        logger.info(f"User logged out")
+        set_company_context("")
         self.set_active_menu_btn(None) # Clear highlighting
         self.company_btn.hide()
         self.nav_stack.setCurrentIndex(0)
@@ -722,6 +734,7 @@ class MainWindow(QWidget):
                     return
                 
                 if save_crm_to_json(name, crm_file_path):
+                    logger.info(f"CRM created: name='{name}'")
                     QMessageBox.information(self, "Success", f"CRM '{name}' created successfully!")
                     # Refresh reports page if available
                     if hasattr(self, 'reports_page'):
@@ -744,6 +757,7 @@ class MainWindow(QWidget):
             old_name, new_name = dlg.get_data()
             if old_name and new_name:
                 if update_crm_in_json(old_name, new_name, crm_file_path):
+                    logger.info(f"CRM renamed: '{old_name}' -> '{new_name}'")
                     QMessageBox.information(self, "Success", f"CRM updated from '{old_name}' to '{new_name}'")
                     # Refresh reports page if available
                     if hasattr(self, 'reports_page'):

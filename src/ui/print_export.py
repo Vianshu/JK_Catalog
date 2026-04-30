@@ -14,6 +14,9 @@ from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 from PyQt6.QtPdfWidgets import QPdfView
 from PyQt6.QtPdf import QPdfDocument
 from src.ui.settings import load_crm_list
+from src.utils.app_logger import get_logger
+
+logger = get_logger(__name__)
 
 # Fixed A4 dimensions in mm (ISO standard)
 A4_WIDTH_MM = 210.0
@@ -79,6 +82,7 @@ class PrintWorker(QThread):
             
             self.finished.emit(True, "")
         except Exception as e:
+            logger.error(f"Print job failed: {e}", exc_info=True)
             self.finished.emit(False, str(e))
 
 
@@ -223,8 +227,10 @@ class PDFPreviewDialog(QDialog):
     def _on_print_finished(self, success, error_msg):
         self.progress_dialog.close()
         if not success:
+            logger.error(f"Print job error: {error_msg}")
             QMessageBox.critical(self, "Print Error", f"Failed to print document:\n{error_msg}")
         else:
+            logger.info(f"Print job completed successfully")
             QMessageBox.information(self, "Success", "Document sent to printer successfully.")
             
         # Re-lock and load document for viewing
@@ -616,6 +622,9 @@ class PrintExportDialog(QDialog):
         if not page_indices:
             QMessageBox.warning(self, "No Pages", "No pages available to print.")
             return
+
+        selected_crm = self.crm_combo.currentText()
+        logger.info(f"Print preview started: pages={len(page_indices)}, crm='{selected_crm}'")
             
         temp_dir = tempfile.gettempdir()
         temp_pdf = os.path.join(temp_dir, "jk_catalog_temp_print.pdf")
@@ -654,6 +663,8 @@ class PrintExportDialog(QDialog):
         if not page_indices:
             QMessageBox.warning(self, "No Pages", "No pages available to export.")
             return
+
+        logger.info(f"PDF export initiated: pages={len(page_indices)}")
         
         # Generate File Name Format
         import datetime
@@ -719,6 +730,7 @@ class PrintExportDialog(QDialog):
                 "Export Complete", 
                 f"PDF saved successfully!\n\nLocation: {file_path}\nPages: {len(page_indices)}"
             )
+            logger.info(f"PDF export completed: path='{file_path}', pages={len(page_indices)}, crm='{crm}'")
             
             # Offer to open the file
             reply = QMessageBox.question(
@@ -734,4 +746,5 @@ class PrintExportDialog(QDialog):
             self.accept()
             
         except Exception as e:
+            logger.error(f"PDF export failed: path='{file_path}', error={e}", exc_info=True)
             QMessageBox.critical(self, "Export Failed", f"Failed to export PDF:\n{e}")

@@ -308,7 +308,7 @@ class FinalDataUI(QWidget):
                                 )
                                 _conn.commit()
                 except Exception as e:
-                    print(f"Known products cleanup error: {e}")
+                    logger.warning(f"Known products cleanup error: {e}")
 
             self.update_summary_stats() # Update counts on change
 
@@ -325,9 +325,9 @@ class FinalDataUI(QWidget):
 
         # Check if actual change happened (after normalization)
         if str(new_val) == str(old_val):
-            return 
+            return
 
-            # --- UPDATE DATE TRIGGER ---
+        # --- UPDATE DATE TRIGGER ---
         # List of columns that trigger update_date
         trigger_cols = [
             "Product Name", "Product_Size", "Category", "Unit", "MOQ", 
@@ -380,8 +380,7 @@ class FinalDataUI(QWidget):
             # --- Post-Update Logic: Update Length if Size Changed ---
             if col_name == "Product_Size":
                  new_len = self.calc_length_from_size(new_val)
-                 cur = conn.cursor()
-                 conn = sqlite3.connect(self.db_path) # Reconnect/Reuse? Conn closed above.
+                 conn = sqlite3.connect(self.db_path)
                  cursor = conn.cursor()
                  cursor.execute("UPDATE catalog SET Lenth=? WHERE GUID=?", (new_len, guid))
                  conn.commit()
@@ -404,6 +403,7 @@ class FinalDataUI(QWidget):
 
     def load_and_sync_data(self, company_name, company_path=None):
         """Entry point: resolves paths, then starts background sync worker."""
+        logger.info(f"Data sync started: company='{company_name}'")
         try:
             # 1. Path Setup (fast — stays on main thread)
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -627,14 +627,12 @@ class FinalDataUI(QWidget):
 
         self.sync_lbl.setText(sync_label)
 
-        print("Attempting to refresh table...")
+        logger.debug("Attempting to refresh table...")
         try:
             self.refresh_table()
-            print("Table refresh returned successfully.")
+            logger.debug("Table refresh completed successfully")
         except Exception as e:
-            print(f"CRITICAL: Refresh Table Failed: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Refresh table failed: {e}", exc_info=True)
 
         self._sync_worker = None
         self.sync_complete.emit()
