@@ -1,12 +1,16 @@
 import os
-import sqlite3
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QLabel
 from PyQt6.QtCore import Qt
+from src.logic.db_manager import get_db_manager, build_logical_name
+from src.utils.app_logger import get_logger
+
+logger = get_logger(__name__)
 
 class LedgerRowDataUI(QWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName("LedgerRowDataContainer") # QSS: #LedgerRowDataContainer
+        self.db = get_db_manager()
         
         # Main layout
         self.main_layout = QVBoxLayout(self)
@@ -41,27 +45,35 @@ class LedgerRowDataUI(QWidget):
                 self.show_error("Invalid Company Path.")
                 return
 
-            db_path = os.path.join(company_path, "ledger_internal_data.db")
+            company_name = os.path.basename(company_path)
+            db_name = build_logical_name(company_name, "ledger_data")
 
-            if not os.path.exists(db_path):
-                self.show_error(f"No database found at: {db_path}\nPlease Sync Ledger from Tally.")
+            if not self.db.database_exists(db_name):
+                self.show_error(f"No database found: {db_name}\nPlease Sync Ledger from Tally.")
                 self.table.hide()
                 return
 
-            # SQLite data fetching
-            self.fetch_from_sqlite(db_path)
+            # SQL Server data fetching
+            self.fetch_from_sql_server(db_name)
 
         except Exception as e:
             self.show_error(f"System Error: {str(e)}")
 
-    def fetch_from_sqlite(self, db_path):
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
+    def fetch_from_sql_server(self, db_name):
+        conn = self.db.get_connection(db_name)
+        if not conn:
+            self.show_error("Could not connect to database.")
+            return
         
         try:
+            cursor = conn.cursor()
+            
             # Check if table exists
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='row_leger_data';")
-            if not cursor.fetchone():
+            cursor.execute("""
+                SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES 
+                WHERE TABLE_NAME = 'row_leger_data'
+            """)
+            if cursor.fetchone()[0] == 0:
                 self.show_error("Table 'row_leger_data' is missing in the database.")
                 return
 
@@ -87,8 +99,8 @@ class LedgerRowDataUI(QWidget):
 
             self.table.resizeColumnsToContents()
             
-        finally:
-            conn.close()
+        except Exception as e:
+            self.show_error(f"Database Error: {str(e)}")
 
     def show_error(self, message):
         self.info_lbl.setText(message)

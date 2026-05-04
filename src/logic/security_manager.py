@@ -1,9 +1,9 @@
-import sqlite3
 import hashlib
 import os
 from datetime import datetime
 import hmac
-import ctypes
+import pyodbc
+from src.logic.db_manager import get_db_manager, DB_SECURITY
 from src.utils.app_logger import get_logger
 
 logger = get_logger(__name__)
@@ -11,56 +11,56 @@ logger = get_logger(__name__)
 APP_SECRET = b"JK_Catalog_v2_secure_key"  # compiled into the EXE
     
 class SecurityManager:
-    def __init__(self, db_path):
+    def __init__(self, data_path=""):
         """
-        Initialize SecurityManager with the path to the security database.
+        Initialize SecurityManager using SQL Server.
         
         Args:
-            db_path (str): Absolute path to security.db
+            data_path (str): The shared data root folder where security MDF/LDF
+                             files will be stored (e.g., 'D:\\SharedData\\').
+                             Only needed for first-time database creation.
         """
-        self.db_path = db_path
+        self.data_path = data_path
+        self.db = get_db_manager()
         self.init_db()
 
     def init_db(self):
-        """Initialize the database tables if they don't exist."""
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        """Initialize the Security database and tables if they don't exist.
         
-        with sqlite3.connect(self.db_path) as conn:
-            # Hide the DB file from Windows File Explorer
-            try:
-                # FILE_ATTRIBUTE_HIDDEN = 0x02
-                ctypes.windll.kernel32.SetFileAttributesW(self.db_path, 0x02)
-            except Exception:
-                pass
-            
-            cursor = conn.cursor()
-            
-            # 1. Companies Table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS companies (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    display_name TEXT NOT NULL,
-                    folder_path TEXT UNIQUE NOT NULL,
-                    image_path TEXT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # 2. Users Table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    company_id INTEGER,
-                    username TEXT NOT NULL,
-                    password_hash TEXT NOT NULL,
-                    role TEXT DEFAULT 'user',
-                    is_active BOOLEAN DEFAULT 1,
-                    FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE,
-                    UNIQUE(company_id, username)
-                )
-            """)
-            
-            conn.commit()
+        If the database already exists on the SQL Server, this is a no-op
+        (no write permissions needed for read-only users).
+        """
+        # Ensure the database exists on SQL Server
+        mdf_folder = self.data_path if self.data_path else os.getcwd()
+        try:
+            self.db.ensure_database_exists(DB_SECURITY, mdf_folder)
+        except Exception as e:
+            logger.warning(f"Could not ensure security DB (read-only user?): {e}")
+            return
+
+        # Create tables if they don't exist
+        self.db.ensure_table(DB_SECURITY, "companies", """
+            CREATE TABLE companies (
+                id INT IDENTITY(1,1) PRIMARY KEY,
+                display_name NVARCHAR(255) NOT NULL,
+                folder_path NVARCHAR(500) UNIQUE NOT NULL,
+                image_path NVARCHAR(500),
+                created_at DATETIME DEFAULT GETDATE()
+            )
+        """)
+
+        self.db.ensure_table(DB_SECURITY, "users", """
+            CREATE TABLE users (
+                id INT IDENTITY(1,1) PRIMARY KEY,
+                company_id INT,
+                username NVARCHAR(255) NOT NULL,
+                password_hash NVARCHAR(255) NOT NULL,
+                role NVARCHAR(50) DEFAULT 'user',
+                is_active BIT DEFAULT 1,
+                FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE,
+                UNIQUE(company_id, username)
+            )
+        """)
 
     def _hash_password(self, password):
         return hmac.new(APP_SECRET, password.encode(), hashlib.sha256).hexdigest()
@@ -77,32 +77,36 @@ class SecurityManager:
         folder_path = os.path.normpath(os.path.abspath(folder_path))
         pass_hash = self._hash_password(admin_pass)
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            try:
-                # 1. Try Insert Company
-                cursor.execute("""
-                    INSERT INTO companies (display_name, folder_path, image_path)
-                    VALUES (?, ?, ?)
-                """, (display_name, folder_path, image_path))
-                company_id = cursor.lastrowid
-                
-            except sqlite3.IntegrityError:
-                # Company already exists -> Get ID and Update details
-                cursor.execute("SELECT id FROM companies WHERE folder_path = ?", (folder_path,))
-                row = cursor.fetchone()
-                if not row: return None # Should not happen
+        conn = self.db.get_connection(DB_SECURITY)
+        if not conn:
+            logger.error("Cannot connect to Security DB for register_company")
+            return None
+
+        cursor = conn.cursor()
+        try:
+            # Check if company already exists
+            cursor.execute("SELECT id FROM companies WHERE folder_path = ?", (folder_path,))
+            row = cursor.fetchone()
+
+            if row:
+                # Company exists → Update details
                 company_id = row[0]
-                
-                # Update Company Details
                 cursor.execute("""
                     UPDATE companies 
                     SET display_name = ?, image_path = ?
                     WHERE id = ?
                 """, (display_name, image_path, company_id))
+            else:
+                # New company → Insert
+                cursor.execute("""
+                    INSERT INTO companies (display_name, folder_path, image_path)
+                    VALUES (?, ?, ?)
+                """, (display_name, folder_path, image_path))
+                # Get the newly inserted ID
+                cursor.execute("SELECT SCOPE_IDENTITY()")
+                company_id = int(cursor.fetchone()[0])
 
             # 2. Upsert Admin User (Ensure Admin exists and has new password)
-            # Check if admin exists for this company
             cursor.execute("SELECT id FROM users WHERE company_id = ? AND role = 'admin'", (company_id,))
             admin_row = cursor.fetchone()
             
@@ -124,6 +128,15 @@ class SecurityManager:
             logger.info(f"Company registered: id={company_id}, name='{display_name}', admin='{admin_user}'")
             return company_id
 
+        except pyodbc.IntegrityError as e:
+            logger.warning(f"IntegrityError in register_company: {e}")
+            conn.rollback()
+            return None
+        except Exception as e:
+            logger.error(f"register_company error: {e}")
+            conn.rollback()
+            return None
+
     def verify_login(self, folder_path, username, password):
         """
         Verify credentials for a specific company (identified by folder path).
@@ -134,7 +147,11 @@ class SecurityManager:
         folder_path = os.path.normpath(os.path.abspath(folder_path))
         pass_hash = self._hash_password(password)
         
-        with sqlite3.connect(self.db_path) as conn:
+        conn = self.db.get_connection(DB_SECURITY)
+        if not conn:
+            return None
+
+        try:
             cursor = conn.cursor()
             
             # Join query to find user by Company Path + Username + Password
@@ -155,12 +172,19 @@ class SecurityManager:
                     "company_name": row[3]
                 }
             return None
+        except Exception as e:
+            logger.error(f"verify_login error: {e}")
+            return None
 
     def get_users_for_company(self, folder_path):
         """List all users for a company."""
         folder_path = os.path.normpath(os.path.abspath(folder_path))
         
-        with sqlite3.connect(self.db_path) as conn:
+        conn = self.db.get_connection(DB_SECURITY)
+        if not conn:
+            return []
+
+        try:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT u.username, u.role 
@@ -169,13 +193,19 @@ class SecurityManager:
                 WHERE c.folder_path = ?
             """, (folder_path,))
             return [{"username": r[0], "role": r[1]} for r in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"get_users_for_company error: {e}")
+            return []
 
     def add_user(self, folder_path, username, password, role="user"):
         """Add a secondary user to an existing company."""
         folder_path = os.path.normpath(os.path.abspath(folder_path))
         
-        # First, find the company ID
-        with sqlite3.connect(self.db_path) as conn:
+        conn = self.db.get_connection(DB_SECURITY)
+        if not conn:
+            return False
+
+        try:
             cursor = conn.cursor()
             cursor.execute("SELECT id FROM companies WHERE folder_path = ?", (folder_path,))
             row = cursor.fetchone()
@@ -185,14 +215,18 @@ class SecurityManager:
             company_id = row[0]
             pass_hash = self._hash_password(password)
             
-            try:
-                cursor.execute("""
-                    INSERT INTO users (company_id, username, password_hash, role)
-                    VALUES (?, ?, ?, ?)
-                """, (company_id, username, pass_hash, role))
-                conn.commit()
-                logger.info(f"User created: username='{username}', role='{role}', company_id={company_id}")
-                return True
-            except sqlite3.IntegrityError:
-                logger.warning(f"User creation failed (duplicate): username='{username}', company_id={company_id}")
-                return False # User likely exists
+            cursor.execute("""
+                INSERT INTO users (company_id, username, password_hash, role)
+                VALUES (?, ?, ?, ?)
+            """, (company_id, username, pass_hash, role))
+            conn.commit()
+            logger.info(f"User created: username='{username}', role='{role}', company_id={company_id}")
+            return True
+        except pyodbc.IntegrityError:
+            logger.warning(f"User creation failed (duplicate): username='{username}'")
+            conn.rollback()
+            return False # User likely exists
+        except Exception as e:
+            logger.error(f"add_user error: {e}")
+            conn.rollback()
+            return False

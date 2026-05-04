@@ -339,12 +339,10 @@ class CompanyLoginUI(QWidget):
         self.history_file = os.path.join(self.app_path, "company_history.json") 
         self.current_data_path = self.load_saved_path()
         
-        # Initialize Security Manager
-        from src.logic.security_manager import SecurityManager
-        from src.utils.path_utils import get_secure_data_dir
-        # self.security = SecurityManager(os.path.join(get_secure_data_dir(), "security.db"))
-        self.security = SecurityManager(os.path.join(self.current_data_path, "security.db"))
-
+        # Initialize Security Manager (deferred if no valid path yet)
+        self.security = None
+        if self.current_data_path and os.path.isdir(self.current_data_path):
+            self._init_security(self.current_data_path)
 
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
@@ -362,10 +360,55 @@ class CompanyLoginUI(QWidget):
 
         self.load_main_list()
 
+    def _init_security(self, data_path):
+        """Initialize SecurityManager for the given data path.
+        Handles errors gracefully so the app never crashes on startup."""
+        try:
+            from src.logic.security_manager import SecurityManager
+            self.security = SecurityManager(data_path)
+            if hasattr(self, 'form_screen'):
+                self.form_screen.security = self.security
+        except Exception as e:
+            logger.error(f"SecurityManager init failed for '{data_path}': {e}")
+            self.security = None
+
     def load_saved_path(self):
+        """Load the saved data path with fallback chain:
+        1. User config: %APPDATA%/JK_Catalog/config.json
+        2. Global config: next to the EXE
+        3. No path found: return '' (never default to C:\\)
+        """
+        # 1. Check user-specific config
         if os.path.exists(self.config_file):
-            with open(self.config_file, 'r') as f: return json.load(f).get("default_path", "C:\\")
-        return "C:\\"
+            try:
+                with open(self.config_file, 'r') as f:
+                    path = json.load(f).get("default_path", "")
+                    if path and os.path.isdir(path):
+                        return path
+            except Exception:
+                pass
+        
+        # 2. Check global config next to the EXE
+        try:
+            from src.utils.path_utils import get_exe_dir
+            global_config = os.path.join(get_exe_dir(), "config.json")
+            if global_config != self.config_file and os.path.exists(global_config):
+                with open(global_config, 'r') as f:
+                    path = json.load(f).get("default_path", "")
+                    if path and os.path.isdir(path):
+                        # Auto-save to user's local config
+                        try:
+                            os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
+                            with open(self.config_file, 'w') as uf:
+                                json.dump({"default_path": path}, uf)
+                            logger.info(f"Inherited global data path: '{path}'")
+                        except Exception:
+                            pass
+                        return path
+        except Exception:
+            pass
+        
+        return ""
 
     def init_list_ui(self):
         layout = QVBoxLayout(self.list_screen)
@@ -489,18 +532,49 @@ class CompanyLoginUI(QWidget):
         if dlg.exec():
             new_p = dlg.get_path()
             if os.path.exists(new_p):
-                with open(self.config_file, 'w') as f: 
-                    json.dump({"default_path": new_p}, f)
+                # Save to user-specific config (preserve sql_server_name if set)
+                try:
+                    config_data = {"default_path": new_p}
+                    if os.path.exists(self.config_file):
+                        with open(self.config_file, 'r') as f:
+                            old = json.load(f)
+                            if "sql_server_name" in old:
+                                config_data["sql_server_name"] = old["sql_server_name"]
+                    os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
+                    with open(self.config_file, 'w') as f: 
+                        json.dump(config_data, f)
+                except Exception as e:
+                    logger.warning(f"Could not save user config: {e}")
+                
+                # Also save global config next to EXE (for other server users)
+                try:
+                    from src.utils.path_utils import get_exe_dir
+                    global_config = os.path.join(get_exe_dir(), "config.json")
+                    if global_config != self.config_file:
+                        with open(global_config, 'w') as f:
+                            json.dump(config_data, f)
+                        logger.info(f"Global config updated: '{global_config}'")
+                except Exception:
+                    pass
+                
                 self.current_data_path = new_p
                 logger.info(f"Data path changed: new='{new_p}'")
                 # Re-init SecurityManager for new data path
-                from src.logic.security_manager import SecurityManager
-                self.security = SecurityManager(os.path.join(new_p, "security.db"))
-                self.form_screen.security = self.security
+                self._init_security(new_p)
                 self.load_main_list()
 
     def handle_login(self, path):
         path = os.path.normpath(os.path.abspath(path))
+        
+        # Ensure SecurityManager is ready
+        if not self.security:
+            self._init_security(self.current_data_path)
+        if not self.security:
+            QMessageBox.critical(self, "Security Error",
+                "Could not connect to Security database.\n"
+                "Please ensure SQL Server is running and the Data Path is set correctly.")
+            return
+        
         info_file = os.path.join(path, "company_info.json")
         try:
             # We only read JSON for the Display Name now.

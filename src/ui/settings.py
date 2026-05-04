@@ -114,10 +114,15 @@ class UserManagerDialog(QDialog):
         self.company_name = company_name
         self.company_path = company_path
         
-        # Initialize Security Manager (security.db lives in the data path, alongside company folders)
+        # Initialize Security Manager (SQL Server — takes data_path, not .db file)
         from src.logic.security_manager import SecurityManager
         data_path = os.path.dirname(company_path) if company_path else ""
-        self.security = SecurityManager(os.path.join(data_path, "security.db"))
+        try:
+            self.security = SecurityManager(data_path)
+        except Exception as e:
+            self.security = None
+            QMessageBox.warning(self, "Security Error",
+                f"Could not connect to Security database.\n{e}")
         
         self.setObjectName("UserManagerDialog") # Style Tag
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)

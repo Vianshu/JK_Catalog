@@ -1,11 +1,11 @@
 import json
 import os
-import sqlite3
 import warnings
 from pathlib import Path
 
 import pandas as pd
 import pyodbc
+from src.logic.db_manager import get_db_manager, build_logical_name
 from src.utils.app_logger import get_logger
 
 logger = get_logger(__name__)
@@ -26,6 +26,7 @@ class TallyService:
         from src.utils.path_utils import get_app_dir
 
         self.app_path = get_app_dir()
+        self.db = get_db_manager()
 
     def connect(self):
         try:
@@ -54,6 +55,13 @@ class TallyService:
 
         except:
             return False
+
+    def _ensure_row_data_db(self, company_path):
+        """Ensure the RowData database exists on SQL Server, returning the logical name."""
+        company_name = os.path.basename(company_path)
+        db_name = build_logical_name(company_name, "row_data")
+        self.db.ensure_database_exists(db_name, company_path)
+        return db_name
 
     def save_to_sql_file(self, df, company_name, company_path=None):
         try:
@@ -88,9 +96,8 @@ class TallyService:
             if not folder_path or not os.path.exists(folder_path):
                 raise Exception(f"Invalid Data Folder: {folder_path}")
 
-            db_file_path = os.path.join(folder_path, "row_data.db")
-
-            conn = sqlite3.connect(db_file_path)
+            # Ensure the RowData DB exists on SQL Server
+            db_name = self._ensure_row_data_db(folder_path)
 
             export_df = df.copy()
 
@@ -139,14 +146,38 @@ class TallyService:
             if "GUID" not in export_df.columns:
                 logger.warning(f"GUID column missing after rename! Columns: {final_cols}")
             
-            export_df.to_sql("stock_items", conn, if_exists="replace", index=False)
+            # Write to SQL Server using pandas to_sql via pyodbc connection
+            conn = self.db.get_connection(db_name)
+            if not conn:
+                raise Exception(f"Could not connect to SQL Server DB: {db_name}")
 
-            conn.close()
-            logger.info(f"Row data saved: path='{db_file_path}', rows={len(export_df)}")
+            cursor = conn.cursor()
+            
+            # Drop and recreate the table (equivalent to if_exists="replace")
+            try:
+                cursor.execute("IF OBJECT_ID('stock_items', 'U') IS NOT NULL DROP TABLE stock_items")
+                conn.commit()
+            except Exception:
+                pass
+
+            # Build CREATE TABLE from DataFrame columns
+            col_defs = ", ".join([f"[{col}] NVARCHAR(MAX)" for col in export_df.columns])
+            cursor.execute(f"CREATE TABLE stock_items ({col_defs})")
+            conn.commit()
+
+            # Bulk insert rows
+            placeholders = ", ".join(["?" for _ in export_df.columns])
+            insert_sql = f"INSERT INTO stock_items VALUES ({placeholders})"
+            for _, row in export_df.iterrows():
+                values = [str(v) if pd.notna(v) else None for v in row]
+                cursor.execute(insert_sql, values)
+            conn.commit()
+
+            logger.info(f"Row data saved to SQL Server: db='{db_name}', rows={len(export_df)}")
             return True
 
         except Exception as e:
-            logger.error(f"SQLite save error: {e}", exc_info=True)
+            logger.error(f"SQL Server save error: {e}", exc_info=True)
             raise e
 
     def fetch_stock_items(self, company_name=None, company_path=None):
@@ -233,9 +264,8 @@ warnings.filterwarnings("ignore")
 
 
 def fetch_tally_ledger_data(company_path=None):
-    """Fetch Ledger data from Tally and save to company's ledger_internal_data.db.
+    """Fetch Ledger data from Tally and save to company's LedgerData DB on SQL Server.
     
-    Uses TallyService for consistent connection handling.
     Returns: (row_count: int, error: str) — error is empty string on success.
     """
     service = TallyService()
@@ -318,20 +348,36 @@ def fetch_tally_ledger_data(company_path=None):
             if col in ledger_df.columns:
                 ledger_df[col] = ledger_df[col].fillna(0).astype(float) * -1
 
-        # Save to company folder if provided, otherwise fallback to app dir
-        if company_path and os.path.exists(company_path):
-            db_path = os.path.join(company_path, "ledger_internal_data.db")
-        else:
-            db_path = os.path.join(service.app_path, "ledger_internal_data.db")
+        # Save to SQL Server LedgerData DB
+        company_name = os.path.basename(company_path) if company_path else "default"
+        db_name = build_logical_name(company_name, "ledger_data")
+        service.db.ensure_database_exists(db_name, company_path or service.app_path)
 
-        conn_db = sqlite3.connect(db_path)
-        ledger_df.to_sql(
-            "row_leger_data", conn_db,
-            if_exists="replace", index=False,
-        )
-        conn_db.close()
+        conn = service.db.get_connection(db_name)
+        if not conn:
+            return 0, f"Could not connect to SQL Server DB: {db_name}"
 
-        logger.info(f"Ledger data saved: path='{db_path}', rows={len(ledger_df)}")
+        cursor = conn.cursor()
+
+        # Drop and recreate (equivalent to if_exists="replace")
+        try:
+            cursor.execute("IF OBJECT_ID('row_leger_data', 'U') IS NOT NULL DROP TABLE row_leger_data")
+            conn.commit()
+        except Exception:
+            pass
+
+        col_defs = ", ".join([f"[{col}] NVARCHAR(MAX)" for col in ledger_df.columns])
+        cursor.execute(f"CREATE TABLE row_leger_data ({col_defs})")
+        conn.commit()
+
+        placeholders = ", ".join(["?" for _ in ledger_df.columns])
+        insert_sql = f"INSERT INTO row_leger_data VALUES ({placeholders})"
+        for _, row in ledger_df.iterrows():
+            values = [str(v) if pd.notna(v) else None for v in row]
+            cursor.execute(insert_sql, values)
+        conn.commit()
+
+        logger.info(f"Ledger data saved to SQL Server: db='{db_name}', rows={len(ledger_df)}")
         return len(ledger_df), ""
 
     except Exception as e:

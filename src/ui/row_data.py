@@ -1,13 +1,17 @@
 import os
 import json
-import sqlite3
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QLabel
 from PyQt6.QtCore import Qt
+from src.logic.db_manager import get_db_manager, build_logical_name
+from src.utils.app_logger import get_logger
+
+logger = get_logger(__name__)
 
 class RowDataUI(QWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName("RowDataContainer") # QSS: #RowDataContainer
+        self.db = get_db_manager()
         
         # मुख्य लेआउट
         self.main_layout = QVBoxLayout(self)
@@ -42,27 +46,35 @@ class RowDataUI(QWidget):
                 self.show_error("Invalid Company Path.")
                 return
 
-            db_path = os.path.join(company_path, "row_data.db")
+            company_name = os.path.basename(company_path)
+            db_name = build_logical_name(company_name, "row_data")
 
-            if not os.path.exists(db_path):
-                self.show_error(f"No database found at: {db_path}\nPlease Sync Data from Tally.")
+            if not self.db.database_exists(db_name):
+                self.show_error(f"No database found: {db_name}\nPlease Sync Data from Tally.")
                 self.table.hide()
                 return
 
-            # 3. SQLite डेटा फेचिंग
-            self.fetch_from_sqlite(db_path)
+            # Fetch data from SQL Server
+            self.fetch_from_sql_server(db_name)
 
         except Exception as e:
             self.show_error(f"System Error: {str(e)}")
 
-    def fetch_from_sqlite(self, db_path):
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
+    def fetch_from_sql_server(self, db_name):
+        conn = self.db.get_connection(db_name)
+        if not conn:
+            self.show_error("Could not connect to database.")
+            return
         
         try:
-            # चेक करें कि टेबल मौजूद है
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='stock_items';")
-            if not cursor.fetchone():
+            cursor = conn.cursor()
+            
+            # Check if table exists
+            cursor.execute("""
+                SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES 
+                WHERE TABLE_NAME = 'stock_items'
+            """)
+            if cursor.fetchone()[0] == 0:
                 self.show_error("Table 'stock_items' is missing in the database.")
                 return
 
@@ -88,8 +100,8 @@ class RowDataUI(QWidget):
 
             self.table.resizeColumnsToContents()
             
-        finally:
-            conn.close()
+        except Exception as e:
+            self.show_error(f"Database Error: {str(e)}")
 
     def show_error(self, message):
         self.info_lbl.setText(message)

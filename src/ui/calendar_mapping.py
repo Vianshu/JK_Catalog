@@ -1,23 +1,21 @@
-import sqlite3
 import os
 import datetime
+import pyodbc
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, 
                              QPushButton, QLabel, QHeaderView, QMessageBox, QHBoxLayout)
 from PyQt6.QtCore import Qt
 
-from src.utils.path_utils import get_data_file_path
+from src.logic.db_manager import get_db_manager, DB_CALENDAR
+from src.utils.app_logger import get_logger
+
+logger = get_logger(__name__)
 
 class CalendarMappingUI(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Use centralized utility for data path
-        self.db_path = get_data_file_path("calendar_data.db")
-        
-        # Ensure directory exists
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        
+        self.db = get_db_manager()
+        self.data_path = ""  # Set when company loads
         self.setup_ui()
-        self.init_db()
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -45,16 +43,23 @@ class CalendarMappingUI(QWidget):
         layout.addLayout(btn_layout)
 
     def init_db(self):
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("""CREATE TABLE IF NOT EXISTS calendar 
-                     (ad_date TEXT PRIMARY KEY, bs_date TEXT, year TEXT, month TEXT, day TEXT)""")
-        conn.close()
+        """Create calendar table in SQL Server."""
+        self.db.ensure_database_exists(DB_CALENDAR, self.data_path)
+        self.db.ensure_table(DB_CALENDAR, "calendar", """
+            CREATE TABLE calendar (
+                ad_date NVARCHAR(20) PRIMARY KEY,
+                bs_date NVARCHAR(20),
+                year NVARCHAR(10),
+                month NVARCHAR(10),
+                day NVARCHAR(10)
+            )
+        """)
         self.load_data()
 
     def set_company_path(self, path):
-        """Update DB path when company changes and reload data"""
-        self.db_path = get_data_file_path("calendar_data.db")
-        self.load_data()
+        """Update data_path when company changes and reload data"""
+        self.data_path = os.path.dirname(path) if path else ""
+        self.init_db()
 
     def generate_calendar_data(self):
         try:
@@ -63,7 +68,10 @@ class CalendarMappingUI(QWidget):
             QMessageBox.critical(self, "Error", "nepali-datetime package is missing. Please run: pip install nepali-datetime")
             return
 
-        conn = sqlite3.connect(self.db_path)
+        conn = self.db.get_connection(DB_CALENDAR)
+        if not conn:
+            QMessageBox.critical(self, "Error", "Could not connect to Calendar database.")
+            return
         cursor = conn.cursor()
         
         # 1. Find the last existing date in the DB
@@ -89,7 +97,6 @@ class CalendarMappingUI(QWidget):
 
         reply = QMessageBox.question(self, "Extend Calendar", msg)
         if reply != QMessageBox.StandardButton.Yes:
-            conn.close()
             return
             
         # 3. Generate and Append 5 years (1826 days)
@@ -101,35 +108,43 @@ class CalendarMappingUI(QWidget):
             y, m, d = bs_date.year, bs_date.month, bs_date.day
             bs_str = f"{y:04d}-{m:02d}-{d:02d}"
             
-            # Use INSERT OR IGNORE so we don't crash if there's overlap
-            cursor.execute("INSERT OR IGNORE INTO calendar VALUES (?, ?, ?, ?, ?)", 
-                           (ad_str, bs_str, str(y), str(m), str(d)))
+            # Use MERGE for INSERT OR IGNORE behavior
+            cursor.execute("""
+                MERGE calendar AS target
+                USING (SELECT ? AS ad_date) AS source
+                ON target.ad_date = source.ad_date
+                WHEN NOT MATCHED THEN
+                    INSERT (ad_date, bs_date, year, month, day)
+                    VALUES (?, ?, ?, ?, ?);
+            """, (ad_str, ad_str, bs_str, str(y), str(m), str(d)))
             
             curr_ad += datetime.timedelta(days=1)
         
         conn.commit()
-        conn.close()
         self.load_data()
         QMessageBox.information(self, "Success", "Calendar successfully extended by 5 years!")
 
     def load_data(self):
-        if not os.path.exists(self.db_path): return
-        conn = sqlite3.connect(self.db_path)
-        data = conn.execute("SELECT * FROM calendar").fetchall()
-        conn.close()
+        rows = self.db.execute_query(DB_CALENDAR, "SELECT * FROM calendar")
+        if not rows:
+            self.table.setRowCount(0)
+            return
         
-        self.table.setRowCount(len(data))
-        for r, row in enumerate(data):
+        self.table.setRowCount(len(rows))
+        for r, row in enumerate(rows):
             for c, val in enumerate(row):
-                self.table.setItem(r, c, QTableWidgetItem(str(val)))
+                self.table.setItem(r, c, QTableWidgetItem(str(val) if val else ""))
 
     def save_manual_edits(self):
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("DELETE FROM calendar")
+        conn = self.db.get_connection(DB_CALENDAR)
+        if not conn:
+            QMessageBox.critical(self, "Error", "Could not connect to Calendar database.")
+            return
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM calendar")
         for r in range(self.table.rowCount()):
             row_vals = [self.table.item(r, c).text() if self.table.item(r, c) else "" for c in range(5)]
             if row_vals[0]:
-                conn.execute("INSERT INTO calendar VALUES (?,?,?,?,?)", row_vals)
+                cursor.execute("INSERT INTO calendar (ad_date, bs_date, year, month, day) VALUES (?,?,?,?,?)", row_vals)
         conn.commit()
-        conn.close()
         QMessageBox.information(self, "Saved", "Manual changes save ho gaye!")

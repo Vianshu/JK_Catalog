@@ -1,31 +1,37 @@
 import os
-import sqlite3
 import json
+import pyodbc
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, 
     QHeaderView, QMessageBox, QLabel, QLineEdit, QFrame
 )
 from PyQt6.QtCore import Qt, QEvent
-from src.utils.path_utils import get_data_file_path, get_base_path
+from src.logic.db_manager import get_db_manager, DB_SUPER, build_logical_name
+from src.utils.app_logger import get_logger
+
+logger = get_logger(__name__)
 
 class SuperMasterUI(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("SuperMasterMain") # QSS: #SuperMasterMain
-        self.base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self.project_root = self.base_dir 
-        # Use path utility for EXE compatibility
-        self.db_path = get_data_file_path("super_master.db")
-        self.setup_db()
+        self.db = get_db_manager()
+        self.data_path = ""  # Set when company is loaded
+        self.company_path = ""
         self.init_ui()
 
     def setup_db(self):
-        """Create super_master table."""
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("""CREATE TABLE IF NOT EXISTS super_master (id TEXT, MG_SN TEXT, Group_Name TEXT, SG_SN TEXT, Sub_Group TEXT PRIMARY KEY)""")
-        conn.close()
+        """Create super_master table in SQL Server."""
+        self.db.ensure_database_exists(DB_SUPER, self.data_path)
+        self.db.ensure_table(DB_SUPER, "super_master", """
+            CREATE TABLE super_master (
+                id NVARCHAR(50),
+                MG_SN NVARCHAR(50),
+                Group_Name NVARCHAR(255),
+                SG_SN NVARCHAR(50),
+                Sub_Group NVARCHAR(255) PRIMARY KEY
+            )
+        """)
 
     def init_ui(self):
         main_layout = QHBoxLayout(self)
@@ -123,26 +129,61 @@ class SuperMasterUI(QWidget):
         super().hideEvent(event)
 
     def sync_all_to_db(self):
+        """Sync all table rows to SQL Server using MERGE (upsert)."""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self.db.get_connection(DB_SUPER)
+            if not conn:
+                return
+            cursor = conn.cursor()
             for r in range(self.table.rowCount()):
                 row_data = [self.table.item(r, i).text().strip() if self.table.item(r, i) else "" for i in range(5)]
                 new_id = row_data[1] + row_data[3]
-                conn.execute("""INSERT OR REPLACE INTO super_master VALUES (?, ?, ?, ?, ?)""",
-                             (new_id if new_id else None, row_data[1], row_data[2], row_data[3], row_data[4]))
+                sub_group = row_data[4]
+                if not sub_group:
+                    continue
+                # MERGE = SQL Server's upsert (replaces INSERT OR REPLACE)
+                cursor.execute("""
+                    MERGE super_master AS target
+                    USING (SELECT ? AS Sub_Group) AS source
+                    ON target.Sub_Group = source.Sub_Group
+                    WHEN MATCHED THEN
+                        UPDATE SET id = ?, MG_SN = ?, Group_Name = ?, SG_SN = ?
+                    WHEN NOT MATCHED THEN
+                        INSERT (id, MG_SN, Group_Name, SG_SN, Sub_Group)
+                        VALUES (?, ?, ?, ?, ?);
+                """, (sub_group,
+                      new_id if new_id else None, row_data[1], row_data[2], row_data[3],
+                      new_id if new_id else None, row_data[1], row_data[2], row_data[3], sub_group))
             conn.commit()
-            conn.close()
-        except Exception as e: print(f"Sync Error: {e}")
+        except Exception as e:
+            logger.error(f"SuperMaster sync_all_to_db error: {e}")
 
     def save_single_row_to_db(self, row):
+        """Save a single row to SQL Server using MERGE (upsert)."""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self.db.get_connection(DB_SUPER)
+            if not conn:
+                return
+            cursor = conn.cursor()
             data = [self.table.item(row, i).text().strip() if self.table.item(row, i) else "" for i in range(5)]
-            conn.execute("""INSERT OR REPLACE INTO super_master VALUES (?, ?, ?, ?, ?)""",
-                         (data[0] if data[0] else None, data[1], data[2], data[3], data[4]))
+            sub_group = data[4]
+            if not sub_group:
+                return
+            cursor.execute("""
+                MERGE super_master AS target
+                USING (SELECT ? AS Sub_Group) AS source
+                ON target.Sub_Group = source.Sub_Group
+                WHEN MATCHED THEN
+                    UPDATE SET id = ?, MG_SN = ?, Group_Name = ?, SG_SN = ?
+                WHEN NOT MATCHED THEN
+                    INSERT (id, MG_SN, Group_Name, SG_SN, Sub_Group)
+                    VALUES (?, ?, ?, ?, ?);
+            """, (sub_group,
+                  data[0] if data[0] else None, data[1], data[2], data[3],
+                  data[0] if data[0] else None, data[1], data[2], data[3], sub_group))
             conn.commit()
-            conn.close()
-        except Exception as e: print(f"DB Save Error: {e}")
+        except Exception as e:
+            logger.error(f"SuperMaster save_single_row error: {e}")
 
     def on_item_changed(self, item):
         if item.column() == 0: return
@@ -173,20 +214,28 @@ class SuperMasterUI(QWidget):
     def load_super_master_data(self, company_path):
         if not company_path or not os.path.exists(company_path): return
         try:
-            # Re-resolve db_path based on actual company location
-            # super_master.db lives in the PARENT of the company folder (shared across companies)
-            self.db_path = os.path.join(os.path.dirname(company_path), "super_master.db")
-            self.setup_db()  # Ensure table exists at the resolved path
-            print(f"[SuperMaster] DB Path resolved to: {self.db_path}")
+            # Resolve data_path (parent of company folder — shared across companies)
+            self.data_path = os.path.dirname(company_path)
+            self.company_path = company_path
+            self.setup_db()  # Ensure DB and table exist on SQL Server
+            logger.info(f"[SuperMaster] Using SQL Server DB: {DB_SUPER}")
 
-            row_db = os.path.join(company_path, "row_data.db")
+            # Read unique subgroups from row_data (per-company DB)
+            company_name = os.path.basename(company_path)
+            row_data_db = build_logical_name(company_name, "row_data")
             unique_subs = []
-            if os.path.exists(row_db):
-                conn = sqlite3.connect(row_db)
-                unique_subs = [r[0] for r in conn.execute("SELECT DISTINCT SubGroup FROM stock_items WHERE SubGroup != ''").fetchall()]
-                conn.close()
-            conn_s = sqlite3.connect(self.db_path)
-            saved = {r[4]: r for r in conn_s.execute("SELECT * FROM super_master").fetchall()}
+            
+            if self.db.database_exists(row_data_db):
+                rows = self.db.execute_query(
+                    row_data_db,
+                    "SELECT DISTINCT SubGroup FROM stock_items WHERE SubGroup != ''"
+                )
+                unique_subs = [r[0] for r in rows] if rows else []
+
+            # Read saved super_master data
+            saved_rows = self.db.execute_query(DB_SUPER, "SELECT * FROM super_master")
+            saved = {r[4]: r for r in saved_rows} if saved_rows else {}
+
             self.table.blockSignals(True)
             self.table.setSortingEnabled(False)
             self.table.setRowCount(0)
@@ -204,12 +253,12 @@ class SuperMasterUI(QWidget):
                         it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
                         it.setBackground(Qt.GlobalColor.lightGray)
                     self.table.setItem(row, c, it)
-            conn_s.close()
             self.table.setSortingEnabled(True)
             self.table.sortItems(0, Qt.SortOrder.AscendingOrder)
             self.table.blockSignals(False)
             self.update_summary()
-        except Exception as e: print(f"Load Error: {e}")
+        except Exception as e:
+            logger.error(f"SuperMaster load error: {e}")
 
     def update_summary(self):
         stats = {}

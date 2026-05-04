@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QThread
 from PyQt6.QtGui import QPixmap, QFont, QColor
 import os
-import sqlite3
+from src.logic.db_manager import get_db_manager, build_logical_name
 from src.logic.text_utils import clean_cat_name, is_similar, cluster_products
 
 
@@ -24,17 +24,20 @@ class GroupPreviewWorker(QThread):
     
     def run(self):
         try:
-            catalog_db = os.path.join(self.company_path, "catalog.db")
-            if not os.path.exists(catalog_db):
+            db = get_db_manager()
+            company_name = os.path.basename(self.company_path)
+            catalog_db = build_logical_name(company_name, "catalog")
+            
+            if not db.database_exists(catalog_db):
                 self.finished_signal.emit("Catalog DB not found.")
                 return
             
-            conn = sqlite3.connect(catalog_db)
-            cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT group_name, sg_sn FROM catalog_pages ORDER BY CAST(mg_sn AS INTEGER), CAST(sg_sn AS INTEGER)")
-            subgroups = cursor.fetchall()
-            conn.close()
+            rows = db.execute_query(
+                catalog_db,
+                "SELECT DISTINCT group_name, sg_sn FROM catalog_pages ORDER BY CAST(mg_sn AS INT), CAST(sg_sn AS INT)"
+            )
             
+            subgroups = [(r[0], r[1]) for r in rows] if rows else []
             total_groups = len(subgroups)
             if total_groups == 0:
                 self.finished_signal.emit("No subgroups found.")

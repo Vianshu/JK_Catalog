@@ -1,15 +1,18 @@
-import sqlite3
+import pyodbc
 import re
 import pandas as pd # Pandas ka use comparison ke liye
 import datetime
 from collections import Counter
+from src.logic.db_manager import get_db_manager
 from src.utils.app_logger import get_logger
 
 logger = get_logger(__name__)
 
 class DataProcessor:
-    def __init__(self, db_path):
-        self.db_path = db_path
+    def __init__(self, db_name):
+        """Initialize with a SQL Server logical database name (not a file path)."""
+        self.db_name = db_name
+        self.db = get_db_manager()
 
 # ============================================================================
 # CHAPTER 1: CLEANING & IMAGE NAME LOGIC (No Changes Here)
@@ -250,7 +253,10 @@ class DataProcessor:
     def process_and_save_final_data(self):
         try:
             now_time = datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')
-            conn = sqlite3.connect(self.db_path)
+            conn = self.db.get_connection(self.db_name)
+            if not conn:
+                logger.error(f"Cannot connect to DB: {self.db_name}")
+                return False
             cursor = conn.cursor()
             
             # Sabse pehle processing ke liye data uthayein
@@ -393,7 +399,6 @@ class DataProcessor:
                     """, (info['product_name'], info['product_size'], image_name_val, moq, m_packing, info['row_id']))
 
             conn.commit()
-            conn.close()
             return True
         except Exception as e:
             logger.error(f"Processor Error: {e}", exc_info=True)
@@ -403,11 +408,17 @@ class DataProcessor:
         """
         new_data_list: Wo data jo Tally ya syncing se naya aaya hai (List of Dictionaries)
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = self.db.get_connection(self.db_name)
+        if not conn:
+            return
         
         # 1. DB se purana data read karein
         try:
-            df_old = pd.read_sql_query("SELECT * FROM catalog", conn)
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM catalog")
+            cols = [desc[0] for desc in cursor.description]
+            rows = cursor.fetchall()
+            df_old = pd.DataFrame.from_records(rows, columns=cols) if rows else pd.DataFrame()
         except:
             df_old = pd.DataFrame() # Agar table khali hai
 
@@ -417,7 +428,21 @@ class DataProcessor:
         if df_old.empty:
             # Agar DB khali hai toh pura data insert karein aur aaj ki date daalein
             df_new['Update_date'] = datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')
-            df_new.to_sql('catalog', conn, if_exists='replace', index=False)
+            # Drop and recreate table
+            cursor = conn.cursor()
+            try:
+                cursor.execute("IF OBJECT_ID('catalog', 'U') IS NOT NULL DROP TABLE catalog")
+                conn.commit()
+            except:
+                pass
+            col_defs = ", ".join([f"[{c}] NVARCHAR(MAX)" for c in df_new.columns])
+            cursor.execute(f"CREATE TABLE catalog ({col_defs})")
+            conn.commit()
+            placeholders = ", ".join(["?" for _ in df_new.columns])
+            for _, row in df_new.iterrows():
+                vals = [str(v) if pd.notna(v) else None for v in row]
+                cursor.execute(f"INSERT INTO catalog VALUES ({placeholders})", vals)
+            conn.commit()
         else:
             # 3. Dono ko GUID par merge karein (Comparison ke liye)
             # Hum check karenge ki kya koi bhi column badla hai
@@ -450,8 +475,6 @@ class DataProcessor:
                     else:
                         # Kuch nahi badla -> Do nothing (Date purani hi rahegi)
                         pass
-        
-        conn.close()
     
     def generate_complex_ids(self):
         """Generate deterministic IDs encoding the full product hierarchy.
@@ -468,16 +491,19 @@ class DataProcessor:
         from src.logic.text_utils import cluster_products, normalize_name
         
         try:
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
+            conn = self.db.get_connection(self.db_name)
+            if not conn:
+                return False
             cursor = conn.cursor()
             
             cursor.execute('UPDATE catalog SET ID = NULL')
             cursor.execute(
-                'SELECT rowid, "Product Name", MG_SN, SG_SN, MRP, Product_Size '
+                'SELECT rowid, [Product Name], MG_SN, SG_SN, MRP, Product_Size '
                 'FROM catalog ORDER BY MG_SN, SG_SN, rowid ASC'
             )
-            rows = cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
+            raw_rows = cursor.fetchall()
+            rows = [dict(zip(columns, r)) for r in raw_rows]
             
             # Group by (MG_SN, SG_SN)
             combined_groups = {}
@@ -487,7 +513,7 @@ class DataProcessor:
                 key = f"{mg}-{sg}"
                 if key not in combined_groups:
                     combined_groups[key] = []
-                combined_groups[key].append(dict(r))
+                combined_groups[key].append(r)
             
             for key, items in combined_groups.items():
                 mg_sn, sg_sn = key.split('-')
@@ -528,7 +554,6 @@ class DataProcessor:
                             )
             
             conn.commit()
-            conn.close()
             return True
         except Exception as e:
             logger.error(f"Error generating IDs: {e}", exc_info=True)
@@ -536,11 +561,12 @@ class DataProcessor:
         
     def get_display_data(self):
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self.db.get_connection(self.db_name)
+            if not conn:
+                return []
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM catalog")
             data = cursor.fetchall()
-            conn.close()
             return data
         except:
             return []
