@@ -874,6 +874,9 @@ class FullCatalogUI(QWidget):
                                 "No catalog pages available. Please build the catalog first.")
             return
 
+        # Purge stale product data so renderer reads fresh MOQ/MRP/sizes from DB
+        self.logic.invalidate_cache()
+
         dialog = PrintExportDialog(self, self, mode="pdf")
         dialog.exec()
 
@@ -881,6 +884,10 @@ class FullCatalogUI(QWidget):
         """Open print/export dialog in print mode."""
         if not self.logic.catalog_db_path:
             return
+
+        # Purge stale product data so renderer reads fresh MOQ/MRP/sizes from DB
+        self.logic.invalidate_cache()
+
         dialog = PrintExportDialog(self, self, mode="print")
         dialog.exec()
 

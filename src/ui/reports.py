@@ -222,6 +222,9 @@ class ReportsUI(QWidget):
         # We pass the mode (Print or PDF) to pre-configure the dialog, but let the user switch if they want.
         dialog_mode = "print" if mode == "Print" else "pdf"
         
+        # Purge stale product data so renderer reads fresh MOQ/MRP/sizes from DB
+        self.logic.invalidate_cache()
+
         print_dlg = PrintExportDialog(
             catalog_ui=self, # Pass self as context
             parent=self,

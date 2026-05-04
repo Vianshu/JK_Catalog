@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QSpinBox, QCheckBox, QProgressBar, QFileDialog, QMessageBox,
     QScrollArea, QWidget, QFrame, QComboBox, QGroupBox, QProgressDialog
 )
-from PyQt6.QtCore import Qt, QSize, QMarginsF, QThread, pyqtSignal, QSettings, QEvent
+from PyQt6.QtCore import Qt, QSize, QMarginsF, QSettings, QEvent
 from PyQt6.QtGui import QPainter, QPageSize, QPageLayout, QImage
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 from PyQt6.QtPdfWidgets import QPdfView
@@ -35,55 +35,6 @@ A4_HEIGHT_MM = 297.0
 # ─────────────────────────────────────────────────────────────────
 RENDER_DPI = 96                 # widget layout DPI (must match screen)
 PDF_MARGIN_MM = 0.0             # zero — renderer has 3mm internal margins
-
-
-class PrintWorker(QThread):
-    progress = pyqtSignal(int, int) # current, total
-    finished = pyqtSignal(bool, str) # success, error_message
-    
-    def __init__(self, pdf_path, printer, parent=None):
-        super().__init__(parent)
-        self.pdf_path = pdf_path
-        self.printer = printer
-        
-    def run(self):
-        try:
-            # Enforce full page mapping so hardware margins symmetrically trim the image
-            self.printer.setFullPage(True)
-            
-            doc = fitz.open(self.pdf_path)
-            total = len(doc)
-            
-            painter = QPainter()
-            if not painter.begin(self.printer):
-                self.finished.emit(False, "Could not initialize QPainter on QPrinter.")
-                doc.close()
-                return
-            
-            # 300 DPI for high-quality text rasterization
-            zoom_matrix = fitz.Matrix(300 / 72, 300 / 72)
-            
-            for i in range(total):
-                self.progress.emit(i + 1, total)
-                page = doc[i]
-                pix = page.get_pixmap(matrix=zoom_matrix, alpha=False)
-                
-                # Convert raw fitz bytes directly to QImage
-                img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
-                
-                # Draw the image perfectly onto the physical paper bounds
-                painter.drawImage(self.printer.paperRect(QPrinter.Unit.DevicePixel), img)
-                
-                if i < total - 1:
-                    self.printer.newPage()
-                    
-            painter.end()
-            doc.close()
-            
-            self.finished.emit(True, "")
-        except Exception as e:
-            logger.error(f"Print job failed: {e}", exc_info=True)
-            self.finished.emit(False, str(e))
 
 
 class ZoomablePdfView(QPdfView):
@@ -201,6 +152,16 @@ class PDFPreviewDialog(QDialog):
         self.pdf_document.load(self.pdf_path)
         
     def print_document(self):
+        """Print the PDF document on the MAIN thread.
+
+        QPainter + QPrinter are NOT thread-safe in Qt.  Using them from a
+        QThread causes the Windows print spooler to deadlock (the "Not
+        Responding" freeze).  We run the entire paint loop on the GUI
+        thread, calling processEvents() after each page to keep the
+        progress dialog responsive.
+        """
+        from PyQt6.QtWidgets import QApplication
+
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
         dialog = QPrintDialog(printer, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -208,31 +169,78 @@ class PDFPreviewDialog(QDialog):
             
         # Crucial on Windows: release file lock so PyMuPDF can open it
         self.pdf_document.close()
-        
-        self.progress_dialog = QProgressDialog("Starting print job...", "Cancel", 0, 100, self)
-        self.progress_dialog.setWindowTitle("Printing")
-        self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
-        self.progress_dialog.show()
-        
-        self.worker = PrintWorker(self.pdf_path, printer)
-        self.worker.progress.connect(self._update_progress)
-        self.worker.finished.connect(self._on_print_finished)
-        self.worker.start()
-        
-    def _update_progress(self, current, total):
-        self.progress_dialog.setMaximum(total)
-        self.progress_dialog.setValue(current)
-        self.progress_dialog.setLabelText(f"Printing page {current} of {total}...")
-        
-    def _on_print_finished(self, success, error_msg):
-        self.progress_dialog.close()
-        if not success:
-            logger.error(f"Print job error: {error_msg}")
-            QMessageBox.critical(self, "Print Error", f"Failed to print document:\n{error_msg}")
-        else:
-            logger.info(f"Print job completed successfully")
-            QMessageBox.information(self, "Success", "Document sent to printer successfully.")
-            
+
+        doc = None
+        try:
+            # Enforce full page mapping so hardware margins symmetrically trim the image
+            printer.setFullPage(True)
+
+            doc = fitz.open(self.pdf_path)
+            total = len(doc)
+
+            progress = QProgressDialog("Starting print job...", "Cancel", 0, total, self)
+            progress.setWindowTitle("Printing")
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            progress.setMinimumDuration(0)
+            progress.setValue(0)
+            progress.show()
+            QApplication.processEvents()
+
+            painter = QPainter()
+            if not painter.begin(printer):
+                progress.close()
+                doc.close()
+                QMessageBox.critical(self, "Print Error",
+                                     "Could not initialize QPainter on QPrinter.")
+                self._load_document()
+                return
+
+            # 300 DPI for high-quality text rasterization
+            zoom_matrix = fitz.Matrix(300 / 72, 300 / 72)
+            cancelled = False
+
+            for i in range(total):
+                if progress.wasCanceled():
+                    cancelled = True
+                    break
+
+                page = doc[i]
+                pix = page.get_pixmap(matrix=zoom_matrix, alpha=False)
+
+                # Convert raw fitz bytes directly to QImage
+                img = QImage(pix.samples, pix.width, pix.height,
+                             pix.stride, QImage.Format.Format_RGB888)
+
+                # Draw the image perfectly onto the physical paper bounds
+                painter.drawImage(
+                    printer.paperRect(QPrinter.Unit.DevicePixel), img)
+
+                if i < total - 1:
+                    printer.newPage()
+
+                progress.setValue(i + 1)
+                progress.setLabelText(f"Printing page {i + 1} of {total}...")
+                QApplication.processEvents()
+
+            painter.end()
+            doc.close()
+            doc = None
+            progress.close()
+
+            if not cancelled:
+                logger.info("Print job completed successfully")
+                QMessageBox.information(self, "Success",
+                                        "Document sent to printer successfully.")
+            else:
+                logger.info("Print job cancelled by user")
+
+        except Exception as e:
+            logger.error(f"Print job failed: {e}", exc_info=True)
+            if doc:
+                doc.close()
+            QMessageBox.critical(self, "Print Error",
+                                 f"Failed to print document:\n{e}")
+
         # Re-lock and load document for viewing
         self._load_document()
 

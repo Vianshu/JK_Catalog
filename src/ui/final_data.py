@@ -141,6 +141,18 @@ class FinalDataUI(QWidget):
         )
         img_container_layout.addWidget(self.img_preview, 1)
         
+        # Duplicate image warning label (hidden by default)
+        self._dup_warning_lbl = QLabel()
+        self._dup_warning_lbl.setWordWrap(True)
+        self._dup_warning_lbl.setStyleSheet(
+            "color: #dc3545; font-weight: bold; font-size: 10px; "
+            "background-color: #fff3cd; border: 1px solid #dc3545; "
+            "border-radius: 4px; padding: 4px;"
+        )
+        self._dup_warning_lbl.setVisible(False)
+        img_container_layout.addWidget(self._dup_warning_lbl)
+        self._duplicate_images = {}  # populated by sync_images_after_processing
+        
         side_layout.addWidget(img_container, 1) # Takes available space
 
         # 4. Summary Statistics Panel (BELOW IMAGE)
@@ -649,7 +661,8 @@ class FinalDataUI(QWidget):
         # Processor ke kaam ke baad image paths update karne ke liye
         try:
             conn = sqlite3.connect(self.db_path)
-            img_map = self.get_image_mapping()
+            img_map, dup_map = self.get_image_mapping()
+            self._duplicate_images = dup_map  # Store for UI warnings
             for rid, img_name in conn.execute("SELECT rowid, Image_Name FROM catalog"):
                 clean = img_name.lower().strip() if img_name else ""
                 
@@ -870,12 +883,21 @@ class FinalDataUI(QWidget):
                     # Image Status Display (Column 18)
                     if c_idx == path_idx:
                         item.setData(Qt.ItemDataRole.UserRole, path_val)
+                        # Get Image_Name for duplicate check
+                        img_name_idx = self.col_index("Image_Name")
+                        img_name_key = str(r_val[img_name_idx]).lower().strip() if r_val[img_name_idx] else ""
+                        dup_map = getattr(self, '_duplicate_images', {})
+                        has_duplicate = img_name_key and img_name_key in dup_map
+
                         if grp_name == "price list":
                              # User Requirement: Price List items display "NO NEED" (Green).
                              # This is strictly visual. Underlying UserRole keeps original path.
                             item.setText("NO NEED"); item.setForeground(QColor("green"))
                         elif is_row_missing:
                             item.setText("❌ NOT FOUND"); item.setForeground(QColor("red"))
+                        elif has_duplicate:
+                            item.setText("⚠️ DUPLICATE"); item.setForeground(QColor("#e67e00"))
+                            item.setBackground(QColor("#fff3cd"))
                         else:
                             item.setText("✅ FOUND"); item.setForeground(QColor("green"))
 
@@ -972,13 +994,27 @@ class FinalDataUI(QWidget):
     # Aapke baaki functions (get_image_mapping, show_preview, show_path_popup, filter_table) 
     # backup code ke jaise hi kaam karenge...
     def get_image_mapping(self):
+        """Scan image folder and return (image_map, duplicate_map).
+        
+        image_map: {name_lower: path} — last-seen path wins (legacy behaviour).
+        duplicate_map: {name_lower: [path1, path2, ...]} — only names that appear ≥ 2 times.
+        """
         image_map = {}
-        if not self.image_folder or not os.path.exists(self.image_folder): return image_map
+        all_hits = {}   # name_lower → list of full paths
+        if not self.image_folder or not os.path.exists(self.image_folder):
+            return image_map, {}
         for root, _, files in os.walk(self.image_folder):
             for file in files:
                 if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
-                    image_map[os.path.splitext(file)[0].lower().strip()] = os.path.join(root, file)
-        return image_map
+                    key = os.path.splitext(file)[0].lower().strip()
+                    full_path = os.path.join(root, file)
+                    image_map[key] = full_path
+                    all_hits.setdefault(key, []).append(full_path)
+        # Build duplicate map (only entries with 2+ files)
+        dup_map = {k: v for k, v in all_hits.items() if len(v) >= 2}
+        if dup_map:
+            logger.warning(f"Duplicate image names detected: {len(dup_map)} names have multiple files")
+        return image_map, dup_map
 
     def filter_table(self):
         txt = self.search_input.text().lower()
@@ -1011,6 +1047,11 @@ class FinalDataUI(QWidget):
             self.table.setRowHidden(i, not match)
             
     def show_preview(self, row, col):
+        # --- Duplicate image warning ---
+        dup_map = getattr(self, '_duplicate_images', {})
+        img_name_item = self.table.item(row, self.col_index("Image_Name"))
+        img_name_key = img_name_item.text().lower().strip() if img_name_item else ""
+
         it = self.table.item(row, self.col_index("Image_Path"))
         if it:
             p = it.data(Qt.ItemDataRole.UserRole)
@@ -1022,9 +1063,20 @@ class FinalDataUI(QWidget):
                 max_h = min(preview_size.height() - 10, 260)
                 scaled = pix.scaled(max_w, max_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                 self.img_preview.setPixmap(scaled)
+
+                # Show duplicate warning if applicable
+                if img_name_key and img_name_key in dup_map:
+                    paths = dup_map[img_name_key]
+                    short_paths = [os.path.relpath(pp, self.image_folder) if self.image_folder else pp for pp in paths]
+                    warn_text = f"⚠️ DUPLICATE ({len(paths)} files):\n" + "\n".join(short_paths)
+                    self._dup_warning_lbl.setText(warn_text)
+                    self._dup_warning_lbl.setVisible(True)
+                else:
+                    self._dup_warning_lbl.setVisible(False)
                 return
         self.img_preview.setText("NO IMAGE")
         self.img_preview.setPixmap(QPixmap())
+        self._dup_warning_lbl.setVisible(False)
 
     def show_path_popup(self, row, col):
         if col == self.col_index("Image_Path"):
