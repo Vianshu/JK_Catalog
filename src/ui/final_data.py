@@ -577,21 +577,8 @@ class FinalDataUI(QWidget):
 
         now = self.current_datetime()
 
-        # Calculate sync label
-        latest_mod = 0
-        for check_path in [row_db_path, self.db_path]:
-            if check_path and os.path.exists(check_path):
-                t = os.path.getmtime(check_path)
-                if t > latest_mod:
-                    latest_mod = t
-        if os.path.exists(super_db):
-            t = os.path.getmtime(super_db)
-            if t > latest_mod:
-                latest_mod = t
-        if latest_mod > 0:
-            sync_label = f"Last Sync: {datetime.datetime.fromtimestamp(latest_mod).strftime('%d-%m-%Y %H:%M:%S')}"
-        else:
-            sync_label = f"Last Sync: {now}"
+        # Calculate sync label (using current time since DB is on SQL Server now)
+        sync_label = f"Last Sync: {now}"
 
         # Main sync loop
         emit(f"Syncing {len(rows)} items...")
