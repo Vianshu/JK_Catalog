@@ -310,9 +310,8 @@ class CompanyCreateForm(QWidget):
             with open(info_file, 'w', encoding='utf-8') as f:
                 json.dump(info, f, indent=4)
                 
-            report_file = target_path / "REPORT_DATA.JSON"
-            if not report_file.exists():
-                save_report_json({}, str(report_file))
+            # Initialize empty report data in SQL (ensures table exists)
+            save_report_json({}, str(target_path))
 
             # 2. Register in Secure DB
             cid = self.security.register_company(display_name, str(final_folder_path), img_path, user, password)

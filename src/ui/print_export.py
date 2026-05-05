@@ -346,8 +346,7 @@ class PrintExportDialog(QDialog):
         self.crm_combo.addItem("CRM_NAME (Default)")
         
         # Load CRM list from company path
-        crm_path = os.path.join(self.company_path, "crm_data.json") if self.company_path else "crm_data.json"
-        crm_list = load_crm_list(crm_path)
+        crm_list = load_crm_list(self.company_path or "")
         for crm in crm_list:
             self.crm_combo.addItem(crm)
         

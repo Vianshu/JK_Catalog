@@ -482,35 +482,19 @@ class CatalogLogic:
     # ─── CRM MANAGER ──────────────────────────────────────────────────────────
 
     @staticmethod
-    def _get_report_path(company_path):
-        if company_path:
-            return os.path.join(company_path, "REPORT_DATA.JSON")
-        return "REPORT_DATA.JSON"
+    def _read_report_data(company_path):
+        """Read report data from SQL Server via settings module."""
+        from src.ui.settings import load_report_json
+        return load_report_json(company_path)
 
     @staticmethod
-    def _read_report_data(report_path):
-        if os.path.exists(report_path):
-            try:
-                with open(report_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
-
-    @staticmethod
-    def _write_report_data(report_path, data):
-        try:
-            folder = os.path.dirname(report_path)
-            if folder and not os.path.exists(folder):
-                os.makedirs(folder, exist_ok=True)
-            with open(report_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=4)
-        except Exception as e:
-            logger.error(f"_write_report_data error: {e}")
+    def _write_report_data(company_path, data):
+        """Write report data to SQL Server via settings module."""
+        from src.ui.settings import save_report_json
+        save_report_json(data, company_path)
 
     def _get_all_dirty_serials(self, company_path):
-        report_path = self._get_report_path(company_path)
-        report_data = self._read_report_data(report_path)
+        report_data = self._read_report_data(company_path)
         dirty = set()
         for crm_name, crm_data in report_data.items():
             pending = crm_data.get("pending", [])
@@ -524,14 +508,12 @@ class CatalogLogic:
         Only considers CRMs that exist in crm_data.json (active CRMs).
         Falls back to empty set if no active CRMs exist.
         """
-        report_path = self._get_report_path(company_path)
-        report_data = self._read_report_data(report_path)
+        report_data = self._read_report_data(company_path)
         if not report_data:
             return set()
 
         from src.ui.settings import load_crm_list
-        crm_path = os.path.join(company_path, "crm_data.json") if company_path else ""
-        active_crms = load_crm_list(crm_path) if crm_path else []
+        active_crms = load_crm_list(company_path) if company_path else []
         if not active_crms:
             return set()
 
@@ -551,12 +533,10 @@ class CatalogLogic:
             return 0
         from src.ui.settings import load_crm_list
         pages_to_add = [str(s) for s in serial_numbers]
-        crm_path = os.path.join(company_path, "crm_data.json")
-        crm_list = load_crm_list(crm_path)
+        crm_list = load_crm_list(company_path)
         if not crm_list:
             return 0
-        report_path = self._get_report_path(company_path)
-        report_data = self._read_report_data(report_path)
+        report_data = self._read_report_data(company_path)
         updated = 0
         for crm_name in crm_list:
             if crm_name not in report_data:
@@ -572,21 +552,20 @@ class CatalogLogic:
             if added:
                 report_data[crm_name]["pending"] = current
                 updated += 1
-        self._write_report_data(report_path, report_data)
+        self._write_report_data(company_path, report_data)
         return updated
 
     def _remap_crm_serials(self, company_path, old_to_new):
         if not old_to_new or not company_path:
             return
-        report_path = self._get_report_path(company_path)
-        report_data = self._read_report_data(report_path)
+        report_data = self._read_report_data(company_path)
         for crm_name, crm_data in report_data.items():
             pending = crm_data.get("pending", [])
             if not isinstance(pending, list):
                 continue
             new_pending = [old_to_new.get(str(s), str(s)) for s in pending]
             report_data[crm_name]["pending"] = list(dict.fromkeys(new_pending))
-        self._write_report_data(report_path, report_data)
+        self._write_report_data(company_path, report_data)
 
     # ─── SERIAL SHIFT HANDLER ─────────────────────────────────────────────────
 
@@ -640,12 +619,11 @@ class CatalogLogic:
 
         if company_path:
             self._remap_crm_serials(company_path, old_to_new)
-            report_path = self._get_report_path(company_path)
-            report_data = self._read_report_data(report_path)
+            report_data = self._read_report_data(company_path)
             for crm_name in report_data:
                 pending = report_data[crm_name].get("pending", [])
                 report_data[crm_name]["pending"] = [s for s in pending if s != "__DELETED__"]
-            self._write_report_data(report_path, report_data)
+            self._write_report_data(company_path, report_data)
             if shifted_serials:
                 self._add_serials_to_all_crms(company_path, shifted_serials)
         logger.info(f"Serial shift backward from {deleted}: {len(shifted_serials)} pages affected")

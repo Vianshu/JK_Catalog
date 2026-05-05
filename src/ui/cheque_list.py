@@ -564,18 +564,8 @@ class ChequeListUI(QWidget):
         self.ledger_db_name = build_logical_name(company_name, "ledger_data")
         
         # 1. Load CRM Data
-        crm_file = os.path.join(path, "crm_data.json")
-        try:
-            if os.path.exists(crm_file):
-                import json
-                with open(crm_file, "r") as f:
-                    data = json.load(f)
-                    if isinstance(data, dict): self.crm_list_data = data.get("crms", [])
-                    elif isinstance(data, list): self.crm_list_data = data
-            else:
-                self.crm_list_data = []
-        except:
-            self.crm_list_data = []
+        from src.ui.settings import load_crm_list
+        self.crm_list_data = load_crm_list(path)
 
         # 2. Load Party Mapping
         self.party_mapping = {}

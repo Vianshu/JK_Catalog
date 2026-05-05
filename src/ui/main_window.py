@@ -719,20 +719,19 @@ class MainWindow(QWidget):
     def handle_create_crm(self):
         # Get company path from full_catalog_page
         company_path = getattr(self.full_catalog_page, 'company_path', '') if hasattr(self, 'full_catalog_page') else ''
-        crm_file_path = os.path.join(company_path, "crm_data.json") if company_path else "crm_data.json"
         
         dlg = CRMDialog(mode="create", parent=self)
         if dlg.exec():
             name = dlg.get_data().strip()
             if name:
                 # Check if CRM already exists
-                existing_crms = load_crm_list(crm_file_path)
+                existing_crms = load_crm_list(company_path)
                 if name.lower() in [crm.lower() for crm in existing_crms]:
                     QMessageBox.warning(self, "Duplicate CRM", 
                         f"A CRM with the name '{name}' already exists.\n\nPlease choose a different name.")
                     return
                 
-                if save_crm_to_json(name, crm_file_path):
+                if save_crm_to_json(name, company_path):
                     logger.info(f"CRM created: name='{name}'")
                     QMessageBox.information(self, "Success", f"CRM '{name}' created successfully!")
                     # Refresh reports page if available
@@ -744,9 +743,8 @@ class MainWindow(QWidget):
     def handle_alter_crm(self):
         # Get company path from full_catalog_page
         company_path = getattr(self.full_catalog_page, 'company_path', '') if hasattr(self, 'full_catalog_page') else ''
-        crm_file_path = os.path.join(company_path, "crm_data.json") if company_path else "crm_data.json"
         
-        crms = load_crm_list(crm_file_path)
+        crms = load_crm_list(company_path)
         if not crms:
             QMessageBox.warning(self, "Warning", "No CRMs found to alter.")
             return
@@ -755,7 +753,7 @@ class MainWindow(QWidget):
         if dlg.exec():
             old_name, new_name = dlg.get_data()
             if old_name and new_name:
-                if update_crm_in_json(old_name, new_name, crm_file_path):
+                if update_crm_in_json(old_name, new_name, company_path):
                     logger.info(f"CRM renamed: '{old_name}' -> '{new_name}'")
                     QMessageBox.information(self, "Success", f"CRM updated from '{old_name}' to '{new_name}'")
                     # Refresh reports page if available

@@ -231,61 +231,188 @@ class SecurityDialog(QDialog):
         save_btn.clicked.connect(self.accept)
         layout.addWidget(save_btn)
 
-# --- आपके फंक्शन्स (बिना किसी बदलाव के) ---
+# --- CRM & Report Data Functions (SQL Server via db_manager) ---
 
-def load_crm_list(file_path="crm_data.json"):
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, "r", encoding='utf-8') as f:
-                return json.load(f)
-        except: return []
-    return []
+from src.logic.db_manager import get_db_manager, build_logical_name
 
-def save_crm_to_json(name, file_path="crm_data.json"):
-    try:
-        data = load_crm_list(file_path)
-        if name not in data:
-            data.append(name)
-            folder = os.path.dirname(file_path)
-            if folder and not os.path.exists(folder):
-                os.makedirs(folder, exist_ok=True)
-                
-            with open(file_path, "w", encoding='utf-8') as f: 
-                json.dump(data, f, indent=4)
-        return True
-    except: return False
-
-def update_crm_in_json(old_name, new_name, file_path="crm_data.json"):
-    try:
-        data = load_crm_list(file_path)
-        if old_name in data:
-            data[data.index(old_name)] = new_name
-            with open(file_path, "w", encoding='utf-8') as f: 
-                json.dump(data, f, indent=4)
-        return True
-    except: return False
+def _get_catalog_db(company_path):
+    """Resolve the Catalog DB logical name from a company_path.
     
-def load_report_json(file_path="REPORT_DATA.JSON"):
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except: return {}
-    return {}
+    Accepts either:
+      - A company folder path (e.g., 'D:\\Data\\HW Divison 082083')
+      - A legacy file_path (e.g., 'D:\\Data\\HW Divison 082083\\crm_data.json') — extracts dirname
+    """
+    if not company_path:
+        return ""
+    # If caller passed a file path, extract the directory
+    if os.path.splitext(company_path)[1]:  # has file extension
+        company_path = os.path.dirname(company_path)
+    company_name = os.path.basename(company_path)
+    return build_logical_name(company_name, "catalog")
 
-def save_report_json(data, file_path="REPORT_DATA.JSON"):
-    folder = os.path.dirname(file_path)
-    if folder and not os.path.exists(folder):
-        os.makedirs(folder, exist_ok=True)
-    with open(file_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=4)
+def _ensure_crm_table(db, db_name):
+    """Ensure the crm_names table exists."""
+    db.ensure_table(db_name, "crm_names", """
+        CREATE TABLE crm_names (
+            id INT IDENTITY(1,1) PRIMARY KEY,
+            crm_name NVARCHAR(255) NOT NULL UNIQUE
+        )
+    """)
+
+def _ensure_report_table(db, db_name):
+    """Ensure the report_data table exists."""
+    db.ensure_table(db_name, "report_data", """
+        CREATE TABLE report_data (
+            id INT IDENTITY(1,1) PRIMARY KEY,
+            crm_name NVARCHAR(255) NOT NULL,
+            serial_no NVARCHAR(50) NOT NULL,
+            status NVARCHAR(20) DEFAULT 'pending'
+        )
+    """)
+
+
+def load_crm_list(company_path=""):
+    """Load all CRM names from the Catalog DB's crm_names table.
+    
+    Args:
+        company_path: Company folder path, or legacy file path (e.g., crm_data.json)
+    
+    Returns:
+        List of CRM name strings.
+    """
+    db_name = _get_catalog_db(company_path)
+    if not db_name:
+        return []
+    db = get_db_manager()
+    _ensure_crm_table(db, db_name)
+    rows = db.execute_query(db_name, "SELECT crm_name FROM crm_names ORDER BY id")
+    return [r[0] for r in rows] if rows else []
+
+
+def save_crm_to_json(name, company_path=""):
+    """Add a new CRM name to the Catalog DB's crm_names table.
+    
+    Args:
+        name: CRM name to add
+        company_path: Company folder path, or legacy file path
+    
+    Returns:
+        True on success, False on failure.
+    """
+    db_name = _get_catalog_db(company_path)
+    if not db_name:
+        return False
+    db = get_db_manager()
+    _ensure_crm_table(db, db_name)
+    try:
+        conn = db.get_connection(db_name)
+        if not conn:
+            return False
+        cursor = conn.cursor()
+        # Check if already exists (case-insensitive)
+        cursor.execute("SELECT COUNT(*) FROM crm_names WHERE crm_name = ?", name)
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("INSERT INTO crm_names (crm_name) VALUES (?)", name)
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
+
+def update_crm_in_json(old_name, new_name, company_path=""):
+    """Rename a CRM in the Catalog DB's crm_names table.
+    
+    Args:
+        old_name: Current CRM name
+        new_name: New CRM name
+        company_path: Company folder path, or legacy file path
+    
+    Returns:
+        True on success, False on failure.
+    """
+    db_name = _get_catalog_db(company_path)
+    if not db_name:
+        return False
+    db = get_db_manager()
+    try:
+        conn = db.get_connection(db_name)
+        if not conn:
+            return False
+        cursor = conn.cursor()
+        cursor.execute("UPDATE crm_names SET crm_name = ? WHERE crm_name = ?", (new_name, old_name))
+        # Also update report_data references
+        cursor.execute("UPDATE report_data SET crm_name = ? WHERE crm_name = ?", (new_name, old_name))
+        conn.commit()
+        return True
+    except Exception:
+        return False
+
+    
+def load_report_json(company_path=""):
+    """Load report data from the Catalog DB's report_data table.
+    
+    Returns a dict matching the legacy JSON structure:
+        { "CRM_Name": { "pending": [...], "recent": [...] }, ... }
+    """
+    db_name = _get_catalog_db(company_path)
+    if not db_name:
+        return {}
+    db = get_db_manager()
+    _ensure_report_table(db, db_name)
+    rows = db.execute_query(db_name,
+        "SELECT crm_name, serial_no, status FROM report_data ORDER BY crm_name, id")
+    if not rows:
+        return {}
+    result = {}
+    for crm_name, serial_no, status in rows:
+        if crm_name not in result:
+            result[crm_name] = {"pending": [], "recent": []}
+        bucket = "pending" if status == "pending" else "recent"
+        result[crm_name][bucket].append(serial_no)
+    return result
+
+
+def save_report_json(data, company_path=""):
+    """Save report data to the Catalog DB's report_data table.
+    
+    Args:
+        data: Dict matching legacy structure { "CRM_Name": {"pending": [...], "recent": [...]} }
+        company_path: Company folder path, or legacy file path
+    """
+    db_name = _get_catalog_db(company_path)
+    if not db_name:
+        return
+    db = get_db_manager()
+    _ensure_report_table(db, db_name)
+    conn = db.get_connection(db_name)
+    if not conn:
+        return
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM report_data")
+        for crm_name, buckets in data.items():
+            if not isinstance(buckets, dict):
+                continue
+            for serial_no in buckets.get("pending", []):
+                cursor.execute(
+                    "INSERT INTO report_data (crm_name, serial_no, status) VALUES (?, ?, 'pending')",
+                    (crm_name, str(serial_no)))
+            for serial_no in buckets.get("recent", []):
+                cursor.execute(
+                    "INSERT INTO report_data (crm_name, serial_no, status) VALUES (?, ?, 'completed')",
+                    (crm_name, str(serial_no)))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[ERROR] save_report_json failed: {e}")
+
 
 def add_pages_to_all_crms(page_serial_numbers, company_path):
     """Add page serial numbers to all CRMs' pending lists.
     
     Args:
         page_serial_numbers: List of page serial numbers (from catalog_pages.serial_no)
-        company_path: Path to company folder for finding crm_data.json and REPORT_DATA.JSON
+        company_path: Path to company folder
     
     Returns:
         Number of CRMs updated
@@ -293,19 +420,13 @@ def add_pages_to_all_crms(page_serial_numbers, company_path):
     if not page_serial_numbers:
         return 0
     
-    # Convert to strings for JSON storage
     pages_to_add = [str(p) for p in page_serial_numbers]
-    
-    # Load CRM list
-    crm_path = os.path.join(company_path, "crm_data.json") if company_path else "crm_data.json"
-    crm_list = load_crm_list(crm_path)
+    crm_list = load_crm_list(company_path)
     
     if not crm_list:
         return 0
     
-    # Load report data
-    report_path = os.path.join(company_path, "REPORT_DATA.JSON") if company_path else "REPORT_DATA.JSON"
-    report_data = load_report_json(report_path)
+    report_data = load_report_json(company_path)
     
     updated_count = 0
     
@@ -313,12 +434,10 @@ def add_pages_to_all_crms(page_serial_numbers, company_path):
         if crm_name not in report_data:
             report_data[crm_name] = {"pending": [], "recent": []}
         
-        # Get current pending (ensure it's a list)
         current_pending = report_data[crm_name].get("pending", [])
         if not isinstance(current_pending, list):
             current_pending = []
         
-        # Add new pages (unique only)
         added_any = False
         for page in pages_to_add:
             if page not in current_pending:
@@ -329,7 +448,6 @@ def add_pages_to_all_crms(page_serial_numbers, company_path):
             report_data[crm_name]["pending"] = current_pending
             updated_count += 1
     
-    # Save updated report data
-    save_report_json(report_data, report_path)
+    save_report_json(report_data, company_path)
     
     return updated_count

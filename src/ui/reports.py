@@ -169,9 +169,8 @@ class ReportsUI(QWidget):
         return True
 
     def get_report_path(self):
-        if self.current_company_path:
-            return os.path.join(self.current_company_path, "REPORT_DATA.JSON")
-        return "REPORT_DATA.JSON"
+        """Return company_path for SQL-backed report functions."""
+        return self.current_company_path or ""
 
     def set_location(self):
         path = QFileDialog.getExistingDirectory(self, "Select Download Folder")
@@ -192,10 +191,9 @@ class ReportsUI(QWidget):
             return
 
         current_report_data = load_report_json(self.get_report_path())
-        crm_path = os.path.join(self.current_company_path, "crm_data.json") if self.current_company_path else "crm_data.json"
         
         # 1. Select CRM
-        sel_dlg = CRMSelectDialog(parent=self, report_data=current_report_data, crm_path=crm_path, mode=mode)
+        sel_dlg = CRMSelectDialog(parent=self, report_data=current_report_data, crm_path=self.current_company_path or "", mode=mode)
         if not sel_dlg.exec():
             return
 
@@ -295,8 +293,7 @@ class ReportsUI(QWidget):
             self.table.setRowCount(0)
             return
 
-        crm_path = os.path.join(self.current_company_path, "crm_data.json")
-        crm_names = load_crm_list(crm_path) 
+        crm_names = load_crm_list(self.current_company_path) 
         
         if not crm_names:
             self.table.setRowCount(0)
