@@ -1,6 +1,5 @@
 import os
 import json
-import sqlite3
 import datetime
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QGroupBox,
@@ -11,6 +10,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap, QColor
 # Aapka original processor
 from src.logic.data_processor import DataProcessor
+from src.logic.db_manager import get_db_manager, build_logical_name, DB_SUPER
 from src.utils.app_logger import get_logger
 
 logger = get_logger(__name__)
@@ -53,7 +53,10 @@ class FinalDataUI(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.db_path = ""
+        self.db_path = ""  # Company folder path (kept for image sync etc.)
+        self.db = get_db_manager()
+        self.final_db_name = ""  # Logical DB name for final_data
+        self.row_data_db_name = ""  # Logical DB name for row_data
         self.image_folder = ""
         self._sync_worker = None
         self.super_master_path = ""
@@ -66,7 +69,10 @@ class FinalDataUI(QWidget):
         self.setup_ui()
 
     def set_company_path(self, path):
-        self.db_path = os.path.join(path, "final_data.db")
+        self.db_path = os.path.join(path, "final_data.db")  # Legacy path for image sync
+        company_name = os.path.basename(path)
+        self.final_db_name = build_logical_name(company_name, "final_data")
+        self.row_data_db_name = build_logical_name(company_name, "row_data")
 
     def setup_ui(self):
         main_layout = QHBoxLayout(self)
@@ -307,18 +313,17 @@ class FinalDataUI(QWidget):
             # so if re-added later, it appears at the end of the subgroup
             if final_bool_val == "false":
                 try:
-                    catalog_db = os.path.join(os.path.dirname(self.db_path), "catalog.db")
-                    if os.path.exists(catalog_db):
-                        pname_item = self.table.item(row, self.col_index("Product Name"))
-                        product_name = pname_item.text().strip().lower() if pname_item else ""
-                        if product_name:
-                            import sqlite3 as _sql
-                            with _sql.connect(catalog_db) as _conn:
-                                _conn.execute(
-                                    "DELETE FROM known_layout_products WHERE product_name=?",
-                                    (product_name,)
-                                )
-                                _conn.commit()
+                    catalog_db_name = build_logical_name(
+                        os.path.basename(os.path.dirname(self.db_path)), "catalog"
+                    )
+                    pname_item = self.table.item(row, self.col_index("Product Name"))
+                    product_name = pname_item.text().strip().lower() if pname_item else ""
+                    if product_name:
+                        self.db.execute_query(
+                            catalog_db_name,
+                            "DELETE FROM known_layout_products WHERE product_name=?",
+                            (product_name,), fetch=False
+                        )
                 except Exception as e:
                     logger.warning(f"Known products cleanup error: {e}")
 
@@ -356,7 +361,9 @@ class FinalDataUI(QWidget):
 
             now = self.current_datetime()
 
-            conn = sqlite3.connect(self.db_path)
+            conn = self.db.get_connection(self.final_db_name)
+            if not conn:
+                return
             cur = conn.cursor()
             
             if should_update_date:
@@ -377,7 +384,6 @@ class FinalDataUI(QWidget):
                     self.table.blockSignals(False)
                 
             conn.commit()
-            conn.close()
 
             item.setData(Qt.ItemDataRole.UserRole, new_val) # Update memory
 
@@ -392,11 +398,11 @@ class FinalDataUI(QWidget):
             # --- Post-Update Logic: Update Length if Size Changed ---
             if col_name == "Product_Size":
                  new_len = self.calc_length_from_size(new_val)
-                 conn = sqlite3.connect(self.db_path)
-                 cursor = conn.cursor()
-                 cursor.execute("UPDATE catalog SET Lenth=? WHERE GUID=?", (new_len, guid))
-                 conn.commit()
-                 conn.close()
+                 conn2 = self.db.get_connection(self.final_db_name)
+                 if conn2:
+                     cursor2 = conn2.cursor()
+                     cursor2.execute("UPDATE catalog SET Lenth=? WHERE GUID=?", (new_len, guid))
+                     conn2.commit()
                  
                  # UI Update
                  len_col = self.col_index("Lenth")
@@ -485,51 +491,80 @@ class FinalDataUI(QWidget):
         row_db_path = os.path.join(folder_path, "row_data.db")
 
         emit("Creating database tables...")
-        final_conn = sqlite3.connect(self.db_path)
+        # Ensure final_data DB exists
+        company_name_from_path = os.path.basename(folder_path)
+        final_db = build_logical_name(company_name_from_path, "final_data")
+        row_db = build_logical_name(company_name_from_path, "row_data")
+        db = get_db_manager()
+        db.ensure_database_exists(final_db, folder_path)
+        
+        # Ensure catalog table
+        col_defs = ', '.join([f'[{h}] NVARCHAR(MAX)' for h in self.headers])
+        db.ensure_table(final_db, "catalog", f"CREATE TABLE catalog ({col_defs})")
+        # Ensure unique index on GUID
+        try:
+            conn_check = db.get_connection(final_db)
+            if conn_check:
+                cursor_check = conn_check.cursor()
+                try:
+                    cursor_check.execute("CREATE UNIQUE INDEX idx_guid ON catalog (GUID)")
+                    conn_check.commit()
+                except Exception:
+                    pass  # Index already exists
+        except Exception:
+            pass
+        
+        final_conn = db.get_connection(final_db)
+        if not final_conn:
+            return "Last Sync: Error - Cannot connect to DB"
         cur = final_conn.cursor()
-        cur.execute(f"CREATE TABLE IF NOT EXISTS catalog ({', '.join([f'[{h}] TEXT' for h in self.headers])})")
-        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_guid ON catalog (GUID)")
 
         # Super Master Mapping
         emit("Reading Super Master data...")
-        super_db = self.super_master_path
         super_mapping = {}
-        if os.path.exists(super_db):
-            try:
-                with sqlite3.connect(super_db) as s_conn:
-                    s_conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='super_master'").fetchone()
-                    for r in s_conn.execute("SELECT Sub_Group, MG_SN, Group_Name, SG_SN FROM super_master"):
-                        super_mapping[r[0]] = (r[1], r[2], r[3])
-            except Exception as e:
-                logger.error(f"Super Master Read Error: {e}", exc_info=True)
+        try:
+            s_conn = db.get_connection(DB_SUPER)
+            if s_conn:
+                s_cursor = s_conn.cursor()
+                s_cursor.execute("SELECT Sub_Group, MG_SN, Group_Name, SG_SN FROM super_master")
+                for r in s_cursor.fetchall():
+                    super_mapping[r[0]] = (r[1], r[2], r[3])
+        except Exception as e:
+            logger.error(f"Super Master Read Error: {e}", exc_info=True)
 
         # Tally Data Fetch
         emit("Reading Tally data...")
-        with sqlite3.connect(row_db_path) as row_conn:
-            # Detect actual column names (handles rename failures: $GUID vs GUID)
-            col_info = row_conn.execute("PRAGMA table_info(stock_items)").fetchall()
-            col_names = {c[1] for c in col_info}  # set of column names
-            
-            # Build column mapping for query: use actual column name, alias to expected
-            def col_or_fallback(expected, fallback):
-                if expected in col_names:
-                    return expected
-                if fallback in col_names:
-                    return f'[{fallback}] AS [{expected}]'
-                return f"NULL AS [{expected}]"
-            
-            select_cols = ", ".join([
-                col_or_fallback("GUID", "$GUID"),
-                col_or_fallback("Item_Name", "$Name"),
-                col_or_fallback("FirstAlias", "$_FirstAlias"),
-                col_or_fallback("Part_No", "$MailingName"),
-                col_or_fallback("Category", "$Category"),
-                col_or_fallback("Unit", "$BaseUnits"),
-                col_or_fallback("SubGroup", "$Parent"),
-                col_or_fallback("MRP", "$StandardPrice"),
-                col_or_fallback("Closing_Qty", "$_ClosingBalance"),
-            ])
-            rows = row_conn.execute(f"SELECT {select_cols} FROM stock_items").fetchall()
+        row_conn = db.get_connection(row_db)
+        if not row_conn:
+            return "Last Sync: Error - Cannot connect to RowData DB"
+        row_cursor = row_conn.cursor()
+        # Detect actual column names using INFORMATION_SCHEMA
+        row_cursor.execute("""
+            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = 'stock_items'
+        """)
+        col_names = {r[0] for r in row_cursor.fetchall()}
+        
+        # Build column mapping for query: use actual column name, alias to expected
+        def col_or_fallback(expected, fallback):
+            if expected in col_names:
+                return expected
+            if fallback in col_names:
+                return f'[{fallback}] AS [{expected}]'
+            return f"NULL AS [{expected}]"
+        
+        select_cols = ", ".join([
+            col_or_fallback("GUID", "$GUID"),
+            col_or_fallback("Item_Name", "$Name"),
+            col_or_fallback("FirstAlias", "$_FirstAlias"),
+            col_or_fallback("Part_No", "$MailingName"),
+            col_or_fallback("Category", "$Category"),
+            col_or_fallback("Unit", "$BaseUnits"),
+            col_or_fallback("SubGroup", "$Parent"),
+            col_or_fallback("MRP", "$StandardPrice"),
+            col_or_fallback("Closing_Qty", "$_ClosingBalance"),
+        ])
+        rows = row_cursor.execute(f"SELECT {select_cols} FROM stock_items").fetchall()
 
         # Delete items removed from Tally
         emit("Cleaning removed items...")
@@ -612,11 +647,10 @@ class FinalDataUI(QWidget):
                 cur.execute(query, f_row)
 
         final_conn.commit()
-        final_conn.close()
 
         # Processor
         emit("Processing product names...")
-        processor = DataProcessor(self.db_path)
+        processor = DataProcessor(final_db)
         processor.process_and_save_final_data()
         emit("Generating complex IDs...")
         processor.generate_complex_ids()
@@ -660,10 +694,14 @@ class FinalDataUI(QWidget):
     def sync_images_after_processing(self):
         # Processor ke kaam ke baad image paths update karne ke liye
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self.db.get_connection(self.final_db_name)
+            if not conn:
+                return
             img_map, dup_map = self.get_image_mapping()
             self._duplicate_images = dup_map  # Store for UI warnings
-            for rid, img_name in conn.execute("SELECT rowid, Image_Name FROM catalog"):
+            cursor = conn.cursor()
+            cursor.execute("SELECT rowid, Image_Name FROM catalog")
+            for rid, img_name in cursor.fetchall():
                 clean = img_name.lower().strip() if img_name else ""
                 
                 # Check for "no need" in Image Name
@@ -671,11 +709,10 @@ class FinalDataUI(QWidget):
                 if clean in img_map:
                     path = img_map[clean]
                     date = self.get_file_modify_date(path)
-                    conn.execute("UPDATE catalog SET Image_Path=?, Image_Date=? WHERE rowid=?", (path, date, rid))
+                    cursor.execute("UPDATE catalog SET Image_Path=?, Image_Date=? WHERE rowid=?", (path, date, rid))
                 else:
-                    conn.execute("UPDATE catalog SET Image_Path='', Image_Date='' WHERE rowid=?", (rid,))
+                    cursor.execute("UPDATE catalog SET Image_Path='', Image_Date='' WHERE rowid=?", (rid,))
             conn.commit()
-            conn.close()
             
             # After image sync, update True/False values
             self.sync_true_false_values()
@@ -693,10 +730,12 @@ class FinalDataUI(QWidget):
         - Otherwise -> Keep existing value (1, false, or empty)
         """
         try:
-            if not self.db_path or not os.path.exists(self.db_path):
+            if not self.final_db_name:
                 return
                 
-            conn = sqlite3.connect(self.db_path)
+            conn = self.db.get_connection(self.final_db_name)
+            if not conn:
+                return
             cursor = conn.cursor()
             
             # Get all rows with relevant columns
@@ -740,16 +779,15 @@ class FinalDataUI(QWidget):
                     cursor.execute("UPDATE catalog SET [True/False]=? WHERE rowid=?", (new_tf, rid))
             
             # --- FORCE DEFAULT LENGTH 1|0 ---
-            cursor.execute("UPDATE catalog SET Lenth='1|0' WHERE Lenth IS NULL OR TRIM(Lenth)=''")
+            cursor.execute("UPDATE catalog SET Lenth='1|0' WHERE Lenth IS NULL OR LTRIM(RTRIM(Lenth))=''")
             # Also fix existing '1' entries to auto-height '1|0'
-            cursor.execute("UPDATE catalog SET Lenth='1|0' WHERE TRIM(Lenth)='1'")
+            cursor.execute("UPDATE catalog SET Lenth='1|0' WHERE LTRIM(RTRIM(Lenth))='1'")
             
             # RESCUE LOGIC REMOVED: Previously this overwrote user-set 'false' 
             # values back to empty when stock > 0. This prevented manual exclusions
             # from sticking. Manual 'false' edits are now preserved.
             
             conn.commit()
-            conn.close()
             print(f"True/False sync completed for {len(rows)} items")
             
         except Exception as e:
@@ -757,16 +795,20 @@ class FinalDataUI(QWidget):
 
     def refresh_table(self):
         logger.debug("CALLED: refresh_table")
-        if not self.db_path: 
-            logger.warning("ABORT: No db_path in refresh_table")
+        if not self.final_db_name: 
+            logger.warning("ABORT: No final_db_name in refresh_table")
             return
         try:
             self.table.blockSignals(True)
             self.table.setSortingEnabled(False)
             self.table.setRowCount(0)
             
-            with sqlite3.connect(self.db_path) as conn:
-                data = conn.execute("SELECT * FROM catalog").fetchall()
+            conn = self.db.get_connection(self.final_db_name)
+            if not conn:
+                return
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM catalog")
+            data = cursor.fetchall()
 
             # --- UNIFIED SORTING (Same as Preview/Catalog Tab) ---
             # Order: super_master group sequence (MG_SN, SG_SN) → cluster by name similarity → price within cluster
@@ -782,12 +824,13 @@ class FinalDataUI(QWidget):
             # 1. Build super_master group ordering map
             group_order = {}  # (MG_SN_int, SG_SN_int) → sort key
             try:
-                super_db = self.super_master_path
-                if super_db and os.path.exists(super_db):
-                    with sqlite3.connect(super_db) as s_conn:
-                        for row in s_conn.execute(
-                            "SELECT MG_SN, SG_SN FROM super_master ORDER BY CAST(MG_SN AS INTEGER), CAST(SG_SN AS INTEGER)"
-                        ):
+                super_db_name = DB_SUPER
+                s_conn = self.db.get_connection(super_db_name)
+                if s_conn:
+                    s_cursor = s_conn.cursor()
+                    for row in s_cursor.execute(
+                        "SELECT MG_SN, SG_SN FROM super_master ORDER BY CAST(MG_SN AS INTEGER), CAST(SG_SN AS INTEGER)"
+                    ).fetchall():
                             mg = row[0] or ""
                             sg = row[1] or ""
                             try: mg_int = int(str(mg).strip())
@@ -929,48 +972,51 @@ class FinalDataUI(QWidget):
         """
         # print("CALLED: update_summary_stats") # DEBUG TRACE
         try:
-            if not self.db_path or not os.path.exists(self.db_path):
-                print(f"ABORT: db_path invalid: {self.db_path}")
+            if not self.final_db_name:
+                print(f"ABORT: final_db_name invalid")
                 return
             
-            print(f"\n--- DEBUG: Updating Summary Stats [DB: {self.db_path}] ---")
-            with sqlite3.connect(self.db_path) as conn:
-                # 1. Final Data Total (Simple Count)
-                final_data_total = conn.execute("SELECT COUNT(*) FROM catalog").fetchone()[0] or 0
-                print(f"Debug: Final Total = {final_data_total}")
-
-                # 2. Catalog Total (Passed Inclusion Logic)
-                # TF is '1' OR (TF is Empty AND Stock > 0)
-                catalog_total = conn.execute("""
-                    SELECT COUNT(*) FROM catalog 
-                    WHERE (LOWER(TRIM(CAST([True/False] AS TEXT))) IN ('1', 'true', 'yes'))
-                    OR (
-                        (IFNULL(TRIM([True/False]), '') = '') 
-                        AND (IFNULL(CAST(REPLACE(REPLACE(Stock, ',', ''), ' ', '') AS REAL), 0) > 0)
-                    )
-                """).fetchone()[0] or 0
-                print(f"Debug: Catalog Total = {catalog_total}")
-                
-                # 3. Excluded by Stock (Stock <= 0 AND TF is Empty)
-                out_of_stock = conn.execute("""
-                    SELECT COUNT(*) FROM catalog 
-                    WHERE (IFNULL(CAST(REPLACE(REPLACE(Stock, ',', ''), ' ', '') AS REAL), 0) <= 0)
-                    AND (IFNULL(TRIM([True/False]), '') = '')
-                """).fetchone()[0] or 0
-                print(f"Debug: Excluded (Stock) = {out_of_stock}")
-                
-                # 4. Manual False (Explicitly marked 'false', '0', 'no')
-                false_items = conn.execute("""
-                    SELECT COUNT(*) FROM catalog 
-                    WHERE LOWER(TRIM(CAST([True/False] AS TEXT))) IN ('false', '0', 'no')
-                """).fetchone()[0] or 0
-                print(f"Debug: Manual False = {false_items}")
-                
-                # 5. Item Mismatch
-                sum_parts = catalog_total + out_of_stock + false_items
-                item_mismatch = final_data_total - sum_parts
-                print(f"Debug: Mismatch = {item_mismatch} (Total {final_data_total} - Sum {sum_parts})")
+            print(f"\n--- DEBUG: Updating Summary Stats [DB: {self.final_db_name}] ---")
+            conn = self.db.get_connection(self.final_db_name)
+            if not conn:
+                return
+            cursor = conn.cursor()
             
+            # 1. Final Data Total (Simple Count)
+            final_data_total = cursor.execute("SELECT COUNT(*) FROM catalog").fetchone()[0] or 0
+            print(f"Debug: Final Total = {final_data_total}")
+
+            # 2. Catalog Total (Passed Inclusion Logic)
+            # TF is '1' OR (TF is Empty AND Stock > 0)
+            catalog_total = cursor.execute("""
+                SELECT COUNT(*) FROM catalog 
+                WHERE (LOWER(LTRIM(RTRIM(CAST([True/False] AS NVARCHAR(MAX))))) IN ('1', 'true', 'yes'))
+                OR (
+                    (ISNULL(LTRIM(RTRIM([True/False])), '') = '') 
+                    AND (ISNULL(CAST(REPLACE(REPLACE(Stock, ',', ''), ' ', '') AS FLOAT), 0) > 0)
+                )
+            """).fetchone()[0] or 0
+            print(f"Debug: Catalog Total = {catalog_total}")
+            
+            # 3. Excluded by Stock (Stock <= 0 AND TF is Empty)
+            out_of_stock = cursor.execute("""
+                SELECT COUNT(*) FROM catalog 
+                WHERE (ISNULL(CAST(REPLACE(REPLACE(Stock, ',', ''), ' ', '') AS FLOAT), 0) <= 0)
+                AND (ISNULL(LTRIM(RTRIM([True/False])), '') = '')
+            """).fetchone()[0] or 0
+            print(f"Debug: Excluded (Stock) = {out_of_stock}")
+            
+            # 4. Manual False (Explicitly marked 'false', '0', 'no')
+            false_items = cursor.execute("""
+                SELECT COUNT(*) FROM catalog 
+                WHERE LOWER(LTRIM(RTRIM(CAST([True/False] AS NVARCHAR(MAX))))) IN ('false', '0', 'no')
+            """).fetchone()[0] or 0
+            print(f"Debug: Manual False = {false_items}")
+            
+            # 5. Item Mismatch
+            sum_parts = catalog_total + out_of_stock + false_items
+            item_mismatch = final_data_total - sum_parts
+            print(f"Debug: Mismatch = {item_mismatch} (Total {final_data_total} - Sum {sum_parts})")            
             # Update labels
             self.lbl_catalog_total_val.setText(str(catalog_total))
             self.lbl_out_stock_val.setText(str(out_of_stock))

@@ -11,10 +11,10 @@ import os
 import re
 import json
 import hashlib
-import sqlite3
+import pyodbc
 from datetime import datetime
 
-from src.utils.path_utils import get_data_file_path
+from src.logic.db_manager import get_db_manager, build_logical_name, DB_SUPER, DB_CALENDAR
 from src.logic.text_utils import cluster_products, cluster_and_sort, clean_cat_name, is_similar
 from src.utils.app_logger import get_logger
 
@@ -35,18 +35,47 @@ class CatalogLogic:
     # ─── INIT & PATH MANAGEMENT ───────────────────────────────────────────────
 
     def __init__(self, db_path):
-        self.db_path = db_path
+        """Initialize CatalogLogic.
+        
+        Args:
+            db_path: Company folder path (used to derive logical DB names).
+                     e.g., 'D:\\SharedData\\CompanyA\\'
+        """
+        self.db_path = db_path  # Company folder path
+        self.company_name = os.path.basename(db_path) if db_path else ""
+        self.db = get_db_manager()
+        
+        # Logical DB names (derived from company folder name)
+        self.super_db_name = DB_SUPER
+        self.catalog_db_name = build_logical_name(self.company_name, "catalog") if self.company_name else ""
+        self.final_db_name = build_logical_name(self.company_name, "final_data") if self.company_name else ""
+        self.calendar_db_name = DB_CALENDAR
+        
+        # Legacy path fields (kept for compatibility during transition)
         self.catalog_db_path = None
         self.final_db_path = None
-        self.calendar_db_path = get_data_file_path("calendar_data.db")
+        self.calendar_db_path = None
         self._layout_cache = {}
         self._product_lookup_cache = {}
 
     def set_paths(self, catalog_db, final_db, super_db=None):
+        """Update database paths and derive logical names.
+        
+        During migration, this method bridges the old path-based approach
+        and the new logical-name approach.
+        """
         self.catalog_db_path = catalog_db
         self.final_db_path = final_db
         if super_db:
             self.db_path = super_db
+        
+        # Derive company name from final_db path (company folder)
+        if final_db:
+            company_folder = os.path.dirname(final_db) if os.path.isfile(final_db) else final_db
+            self.company_name = os.path.basename(company_folder)
+            self.catalog_db_name = build_logical_name(self.company_name, "catalog")
+            self.final_db_name = build_logical_name(self.company_name, "final_data")
+        
         self._layout_cache = {}
 
     def invalidate_cache(self):
@@ -59,49 +88,39 @@ class CatalogLogic:
         self._product_lookup_cache.pop(cache_key, None)
 
     def close(self):
-        pass  # connections are now per-call; nothing to close globally
+        pass  # connections managed by db_manager singleton
 
     # ─── CONNECTION MANAGER ───────────────────────────────────────────────────
 
     def _get_conn(self, db_key):
-        """Return a fresh SQLite connection for every call.
-
-        Each caller gets its own connection object so that the UI thread
-        and the background Engine thread never share a connection,
-        which eliminates SQLITE_MISUSE errors.
-        """
-        path_map = {
-            _DB_SUPER: self.db_path,
-            _DB_CATALOG: self.catalog_db_path,
-            _DB_FINAL: self.final_db_path,
-            _DB_CALENDAR: self.calendar_db_path,
+        """Return a SQL Server connection for the specified database key."""
+        name_map = {
+            _DB_SUPER: self.super_db_name,
+            _DB_CATALOG: self.catalog_db_name,
+            _DB_FINAL: self.final_db_name,
+            _DB_CALENDAR: self.calendar_db_name,
         }
-        path = path_map.get(db_key)
-        if not path or not os.path.exists(path):
+        logical_name = name_map.get(db_key)
+        if not logical_name:
             return None
 
         try:
-            conn = sqlite3.connect(path, check_same_thread=False)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=3000")
+            conn = self.db.get_connection(logical_name)
             return conn
         except Exception as e:
-            logger.error(f"Failed to connect to {db_key} ({path}): {e}")
+            logger.error(f"Failed to connect to {db_key} ({logical_name}): {e}")
             return None
 
     def _get_catalog_conn(self):
-        if self.catalog_db_path and not os.path.exists(self.catalog_db_path):
-            try:
-                os.makedirs(os.path.dirname(self.catalog_db_path), exist_ok=True)
-                conn = sqlite3.connect(self.catalog_db_path)
-                conn.close()
-            except Exception as e:
-                logger.error(f"Failed to create catalog DB: {e}")
-                return None
+        """Get connection to the catalog database, creating it if needed."""
+        if self.catalog_db_name:
+            # Ensure the DB exists on SQL Server
+            company_folder = os.path.dirname(self.catalog_db_path) if self.catalog_db_path else self.db_path
+            self.db.ensure_database_exists(self.catalog_db_name, company_folder)
         return self._get_conn(_DB_CATALOG)
 
     def _close_all_connections(self):
-        pass  # connections are now per-call; nothing to close globally
+        pass  # connections managed by db_manager singleton
 
     # ─── SCHEMA INITIALIZATION ────────────────────────────────────────────────
 
@@ -110,43 +129,42 @@ class CatalogLogic:
         if not conn:
             return
         try:
-            cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS catalog_pages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    mg_sn INTEGER,
-                    group_name TEXT,
-                    sg_sn INTEGER,
-                    page_no INTEGER,
-                    serial_no INTEGER,
-                    is_printable INTEGER DEFAULT 1
+            # Ensure tables exist using INFORMATION_SCHEMA checks
+            self.db.ensure_table(self.catalog_db_name, "catalog_pages", """
+                CREATE TABLE catalog_pages (
+                    id INT IDENTITY(1,1) PRIMARY KEY,
+                    mg_sn INT,
+                    group_name NVARCHAR(255),
+                    sg_sn INT,
+                    page_no INT,
+                    serial_no INT,
+                    is_printable INT DEFAULT 1,
+                    product_list NVARCHAR(MAX)
                 )
             """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS subgroup_display_order (
-                    cache_key TEXT PRIMARY KEY,
-                    product_order TEXT
+            self.db.ensure_table(self.catalog_db_name, "subgroup_display_order", """
+                CREATE TABLE subgroup_display_order (
+                    cache_key NVARCHAR(500) PRIMARY KEY,
+                    product_order NVARCHAR(MAX)
                 )
             """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS page_snapshots (
-                    serial_no TEXT PRIMARY KEY,
-                    content_hash TEXT,
-                    product_list TEXT
+            self.db.ensure_table(self.catalog_db_name, "page_snapshots", """
+                CREATE TABLE page_snapshots (
+                    serial_no NVARCHAR(50) PRIMARY KEY,
+                    content_hash NVARCHAR(255),
+                    product_list NVARCHAR(MAX)
                 )
             """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS build_config (
-                    key TEXT PRIMARY KEY,
-                    value TEXT
+            self.db.ensure_table(self.catalog_db_name, "build_config", """
+                CREATE TABLE build_config (
+                    [key] NVARCHAR(255) PRIMARY KEY,
+                    [value] NVARCHAR(MAX)
                 )
             """)
-            cursor.execute("PRAGMA table_info(catalog_pages)")
-            columns = [col[1] for col in cursor.fetchall()]
-            if "product_list" not in columns:
-                cursor.execute("ALTER TABLE catalog_pages ADD COLUMN product_list TEXT")
+            # Check if product_list column exists in catalog_pages
+            if not self.db.table_has_column(self.catalog_db_name, "catalog_pages", "product_list"):
+                self.db.add_column(self.catalog_db_name, "catalog_pages", "product_list", "NVARCHAR(MAX)")
                 logger.info("Schema migration: added product_list column to catalog_pages")
-            conn.commit()
             self._migrate_to_explicit_assignments()
         except Exception as e:
             logger.error(f"init_catalog_db error: {e}")
@@ -158,7 +176,7 @@ class CatalogLogic:
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT COUNT(*) FROM catalog_pages WHERE product_list IS NOT NULL AND TRIM(product_list) != ''"
+                "SELECT COUNT(*) FROM catalog_pages WHERE product_list IS NOT NULL AND LTRIM(RTRIM(product_list)) != ''"
             )
             if cursor.fetchone()[0] > 0:
                 return
@@ -166,7 +184,7 @@ class CatalogLogic:
                 SELECT cp.id, ps.product_list
                 FROM catalog_pages cp
                 LEFT JOIN page_snapshots ps
-                    ON CAST(cp.serial_no AS TEXT) = CAST(ps.serial_no AS TEXT)
+                    ON CAST(cp.serial_no AS NVARCHAR(50)) = CAST(ps.serial_no AS NVARCHAR(50))
                 WHERE ps.product_list IS NOT NULL
             """)
             updates = 0
@@ -199,11 +217,13 @@ class CatalogLogic:
             return None
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            cursor.execute("""
+                SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES 
+                WHERE TABLE_TYPE = 'BASE TABLE'
+            """)
             for (tbl,) in cursor.fetchall():
-                cursor.execute(f"PRAGMA table_info({tbl})")
-                columns = [col[1] for col in cursor.fetchall()]
-                if "MG_SN" in columns or "mg_sn" in columns:
+                cols = self.db.get_table_columns(self.super_db_name, tbl)
+                if "MG_SN" in cols or "mg_sn" in cols:
                     return tbl
         except Exception as e:
             logger.error(f"_get_master_table_name error: {e}")
@@ -221,9 +241,9 @@ class CatalogLogic:
             cursor.execute(f"""
                 SELECT DISTINCT [MG_SN], [Group_Name] FROM {table}
                 WHERE [MG_SN] IS NOT NULL
-                  AND TRIM(CAST([MG_SN] AS TEXT)) NOT IN ('', '0', '00')
+                  AND LTRIM(RTRIM(CAST([MG_SN] AS NVARCHAR(50)))) NOT IN ('', '0', '00')
                   AND CAST([MG_SN] AS INTEGER) < 90
-                  AND TRIM(IFNULL([Group_Name], '')) != ''
+                  AND TRIM(ISNULL([Group_Name], '')) != ''
                 ORDER BY CAST([MG_SN] AS INTEGER)
             """)
             return cursor.fetchall()
@@ -241,7 +261,7 @@ class CatalogLogic:
         try:
             cursor = conn.cursor()
             cursor.execute(
-                f"SELECT DISTINCT CAST([MG_SN] AS INTEGER) FROM {table} WHERE TRIM([Group_Name])=? COLLATE NOCASE",
+                f"SELECT DISTINCT CAST([MG_SN] AS INTEGER) FROM {table} WHERE TRIM([Group_Name])=? COLLATE Latin1_General_CI_AI",
                 (group_name.strip(),)
             )
             mg_row = cursor.fetchone()
@@ -249,7 +269,7 @@ class CatalogLogic:
                 return []
             cursor.execute(f"""
                 SELECT DISTINCT [SG_SN], [Sub_Group] FROM {table}
-                WHERE TRIM([Group_Name])=? COLLATE NOCASE
+                WHERE TRIM([Group_Name])=? COLLATE Latin1_General_CI_AI
                   AND [Sub_Group] IS NOT NULL AND [Sub_Group]!=''
                 ORDER BY CAST([SG_SN] AS INTEGER)
             """, (group_name.strip(),))
@@ -709,8 +729,11 @@ class CatalogLogic:
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT OR REPLACE INTO subgroup_display_order (cache_key, product_order)
-                VALUES (?, ?)
+                MERGE subgroup_display_order AS target
+                USING (SELECT ? AS cache_key, ? AS product_order) AS source
+                ON target.cache_key = source.cache_key
+                WHEN MATCHED THEN UPDATE SET product_order = source.product_order
+                WHEN NOT MATCHED THEN INSERT (cache_key, product_order) VALUES (source.cache_key, source.product_order);
             """, (cache_key, json.dumps(ordered_names)))
             conn.commit()
         except Exception as e:
@@ -725,7 +748,7 @@ class CatalogLogic:
             cursor.execute("""
                 SELECT ps.product_list
                 FROM catalog_pages cp
-                LEFT JOIN page_snapshots ps ON CAST(cp.serial_no AS TEXT) = CAST(ps.serial_no AS TEXT)
+                LEFT JOIN page_snapshots ps ON CAST(cp.serial_no AS NVARCHAR(50)) = CAST(ps.serial_no AS NVARCHAR(50))
                 WHERE cp.group_name=? AND cp.sg_sn=?
                 ORDER BY cp.page_no, cp.serial_no
             """, (group_name, sg_sn))
@@ -756,7 +779,7 @@ class CatalogLogic:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT product_list FROM catalog_pages
-                WHERE TRIM(group_name)=? COLLATE NOCASE
+                WHERE TRIM(group_name)=? COLLATE Latin1_General_CI_AI
                   AND CAST(sg_sn AS INTEGER) = CAST(? AS INTEGER)
                   AND page_no=?
             """, (group_name.strip(), sg_sn, page_no))
@@ -778,7 +801,7 @@ class CatalogLogic:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT page_no, product_list FROM catalog_pages
-                WHERE TRIM(group_name)=? COLLATE NOCASE
+                WHERE TRIM(group_name)=? COLLATE Latin1_General_CI_AI
                   AND CAST(sg_sn AS INTEGER) = CAST(? AS INTEGER)
                 ORDER BY page_no
             """, (group_name.strip(), sg_sn))
@@ -808,7 +831,7 @@ class CatalogLogic:
                 product_list_json = json.dumps(names)
                 cursor.execute("""
                     UPDATE catalog_pages SET product_list=?
-                    WHERE TRIM(group_name)=? COLLATE NOCASE
+                    WHERE TRIM(group_name)=? COLLATE Latin1_General_CI_AI
                       AND CAST(sg_sn AS INTEGER) = CAST(? AS INTEGER)
                       AND page_no=?
                 """, (product_list_json, group_name.strip(), sg_sn, page_no))
@@ -830,16 +853,15 @@ class CatalogLogic:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT COUNT(*) FROM catalog_pages
-                WHERE TRIM(group_name)=? COLLATE NOCASE
+                WHERE TRIM(group_name)=? COLLATE Latin1_General_CI_AI
                   AND CAST(sg_sn AS INTEGER) = CAST(? AS INTEGER)
                   AND page_no=?
             """, (group_name.strip(), sg_sn, page_no))
             if cursor.fetchone()[0] == 0:
                 cursor.execute("""
-                    SELECT mg_sn FROM catalog_pages
-                    WHERE TRIM(group_name)=? COLLATE NOCASE
+                    SELECT TOP 1 mg_sn FROM catalog_pages
+                    WHERE TRIM(group_name)=? COLLATE Latin1_General_CI_AI
                       AND CAST(sg_sn AS INTEGER) = CAST(? AS INTEGER)
-                    LIMIT 1
                 """, (group_name.strip(), sg_sn))
                 mg_row = cursor.fetchone()
                 mg_sn = mg_row[0] if mg_row else 1
@@ -865,18 +887,18 @@ class CatalogLogic:
                        [Product_Size], [MOQ], [Category], [M_Packing], [Unit],
                        [Update_date], [ID], [Image_Date]
                 FROM catalog
-                WHERE REPLACE(TRIM([Group]), '.', '') = REPLACE(TRIM(?), '.', '') COLLATE NOCASE
+                WHERE REPLACE(TRIM([Group]), '.', '') = REPLACE(TRIM(?), '.', '') COLLATE Latin1_General_CI_AI
                   AND CAST([SG_SN] AS INTEGER) = CAST(? AS INTEGER)
                   AND (
                       [True/False] IS NULL
                       OR TRIM([True/False]) = ''
-                      OR LOWER(TRIM(CAST([True/False] AS TEXT))) NOT IN ('false', '0', 'no')
+                      OR LOWER(TRIM(CAST([True/False] AS NVARCHAR(MAX)))) NOT IN ('false', '0', 'no')
                   )
                   AND (
-                      CAST(REPLACE(IFNULL([Stock], '0'), ',', '') AS REAL) > 0
-                      OR LOWER(TRIM(CAST([True/False] AS TEXT))) IN ('1', 'true', 'yes')
+                      CAST(REPLACE(ISNULL([Stock], '0'), ',', '') AS FLOAT) > 0
+                      OR LOWER(TRIM(CAST([True/False] AS NVARCHAR(MAX)))) IN ('1', 'true', 'yes')
                   )
-                ORDER BY [ID] COLLATE NOCASE ASC
+                ORDER BY [ID] COLLATE Latin1_General_CI_AI ASC
             """, (group_name.strip(), sg_sn))
             rows = cursor.fetchall()
         except Exception as e:
@@ -1185,7 +1207,7 @@ class CatalogLogic:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT MIN(page_no) FROM catalog_pages
-                WHERE TRIM(group_name)=? COLLATE NOCASE
+                WHERE TRIM(group_name)=? COLLATE Latin1_General_CI_AI
                   AND CAST(sg_sn AS INTEGER) = CAST(? AS INTEGER)
             """, (group_name.strip(), sg_sn))
             res = cursor.fetchone()
@@ -1303,9 +1325,9 @@ class CatalogLogic:
                 if unassigned:
                     cursor.execute("""
                         SELECT serial_no FROM catalog_pages
-                        WHERE TRIM(group_name)=? COLLATE NOCASE
+                        WHERE TRIM(group_name)=? COLLATE Latin1_General_CI_AI
                           AND CAST(sg_sn AS INTEGER) = CAST(? AS INTEGER)
-                        ORDER BY page_no DESC LIMIT 1
+                        ORDER BY page_no DESC
                     """, (group_name.strip(), sg_sn))
                     row = cursor.fetchone()
                     if row and row[0]:
@@ -1338,7 +1360,7 @@ class CatalogLogic:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT page_no FROM catalog_pages
-                WHERE TRIM(group_name)=? COLLATE NOCASE
+                WHERE TRIM(group_name)=? COLLATE Latin1_General_CI_AI
                   AND CAST(sg_sn AS INTEGER) = CAST(? AS INTEGER)
                 ORDER BY page_no
             """, (group_name.strip(), sg_sn))
@@ -1606,8 +1628,11 @@ class CatalogLogic:
                 content_hash = self._compute_page_hash(sn)
                 product_names = self._get_page_product_list(group_name, sg_sn, page_no)
                 cursor.execute("""
-                    INSERT OR REPLACE INTO page_snapshots (serial_no, content_hash, product_list)
-                    VALUES (?, ?, ?)
+                    MERGE page_snapshots AS target
+                    USING (SELECT ? AS serial_no, ? AS content_hash, ? AS product_list) AS source
+                    ON target.serial_no = source.serial_no
+                    WHEN MATCHED THEN UPDATE SET content_hash = source.content_hash, product_list = source.product_list
+                    WHEN NOT MATCHED THEN INSERT (serial_no, content_hash, product_list) VALUES (source.serial_no, source.content_hash, source.product_list);
                 """, (sn, content_hash, json.dumps(product_names)))
             conn.commit()
             logger.info(f"Saved snapshots for {len(all_pages)} pages")
@@ -1633,8 +1658,11 @@ class CatalogLogic:
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT OR REPLACE INTO build_config (key, value)
-                VALUES ('last_build_date', ?)
+                MERGE build_config AS target
+                USING (SELECT 'last_build_date' AS [key], ? AS [value]) AS source
+                ON target.[key] = source.[key]
+                WHEN MATCHED THEN UPDATE SET [value] = source.[value]
+                WHEN NOT MATCHED THEN INSERT ([key], [value]) VALUES (source.[key], source.[value]);
             """, (date_str,))
             conn.commit()
         except Exception as e:
@@ -1827,7 +1855,7 @@ class CatalogLogic:
             query = "UPDATE catalog SET [Lenth] = ?, [Update_date] = ? WHERE ([Product Name] = ? OR [Item_Name] = ?)"
             params = [str(new_length), now, product_name, product_name]
             if group_name and sg_sn:
-                query += " AND REPLACE(TRIM([Group]), '.', '') = REPLACE(TRIM(?), '.', '') COLLATE NOCASE AND CAST([SG_SN] AS INTEGER) = CAST(? AS INTEGER)"
+                query += " AND REPLACE(TRIM([Group]), '.', '') = REPLACE(TRIM(?), '.', '') COLLATE Latin1_General_CI_AI AND CAST([SG_SN] AS INTEGER) = CAST(? AS INTEGER)"
                 params.extend([group_name.strip(), sg_sn])
             cursor.execute(query, tuple(params))
             affected = cursor.rowcount
