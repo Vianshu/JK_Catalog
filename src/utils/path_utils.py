@@ -43,15 +43,6 @@ def get_app_dir():
         return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def get_secure_data_dir():
-    """
-    Get the directory for storing sensitive/secure data (like security.db).
-    
-    Since get_app_dir() now properly returns a user-writable path in frozen mode,
-    we simply reuse it here.
-    """
-    return get_app_dir()
-
 
 def get_data_file_path(filename):
     """
@@ -84,19 +75,6 @@ def get_data_file_path(filename):
     base = get_base_path()
     return os.path.join(base, "data", filename)
 
-
-def get_asset_path(filename):
-    """
-    Get path to an asset file (style.qss, etc.)
-    
-    Args:
-        filename: Just the filename, e.g., "style.qss"
-    
-    Returns:
-        Full absolute path to the file
-    """
-    base = get_base_path()
-    return os.path.join(base, "src", "assets", filename)
 
 
 def get_writable_data_path(subfolder=""):

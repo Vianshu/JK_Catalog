@@ -31,7 +31,6 @@ from src.ui.cheque_list import ChequeListUI
 from src.ui.calendar_mapping import CalendarMappingUI
 from src.ui.group_test_tab import GroupTestTab
 from src.ui.ledger_row_data import LedgerRowDataUI
-from src.utils.path_utils import get_writable_data_path
 from src.utils.app_logger import get_logger, set_company_context
 
 logger = get_logger(__name__)

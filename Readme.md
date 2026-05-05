@@ -109,11 +109,12 @@ backup code/
 | Component | Technology | Why |
 |---|---|---|
 | GUI Framework | PyQt6 | Desktop UI. We force the `Fusion` style so it looks the same on every Windows version. |
-| Data Processing | pandas | Only used in `tally_sync.py` to handle ODBC result sets. Everything else talks to SQLite directly. |
-| Database (Local) | SQLite | One DB file per company. WAL journal mode is turned on for every connection so reads don't block writes. |
+| Data Processing | pandas | Only used in `tally_sync.py` to handle ODBC result sets. Everything else uses SQL queries. |
+| Database (App) | SQL Server Express via pyodbc | Centralized multi-user DB. All connections go through `db_manager.py`. Each company gets separate logical databases (e.g., `JK_CompanyName_Catalog`). |
 | Database (ERP) | ODBC via pyodbc | Talks to Tally Prime's ODBC driver to pull stock items and ledger data. |
+| Connection Layer | `db_manager.py` | Singleton connection manager. Handles database creation (MDF/LDF), connection caching, and schema provisioning. |
 | Excel Export | openpyxl | Price list and cost sheet dialogs use this for `.xlsx` export. |
-| Packaging | PyInstaller | Bundles everything into a single `.exe`. Bundled assets land in a temp `_MEIPASS` folder at runtime. |
+| Packaging | PyInstaller | Bundles everything into a single `.exe`. `pyodbc` added as a hidden import. |
 | Hashing | hashlib (MD5) | MD5 for page change detection, SHA-256 for passwords in `security_manager.py`. |
 
 ---
@@ -142,11 +143,10 @@ Running as a compiled executable:
 
 | Function | Returns | What it's for |
 |---|---|---|
-| `get_base_dir()` | `sys._MEIPASS` or script directory | Where bundled assets live (config files, QSS, splash image). Read-only in frozen mode. |
+| `get_base_path()` | `sys._MEIPASS` or script directory | Where bundled assets live (config files, QSS). Read-only in frozen mode. |
 | `get_app_dir()` | `%APPDATA%/JK_Catalog` | Writable folder for user settings (`config.json`, `company_history.json`). Auto-created on first call. |
-| `get_secure_data_dir()` | `%APPDATA%/JK_Catalog/secure` | Writable folder for `security.db`. Kept in its own subfolder to keep credentials separate. |
-| `get_data_file_path(filename)` | Full path to `filename` | Checks `get_app_dir()` first for a writable copy, falls back to `get_base_dir()` for the bundled read-only version. |
-| `get_writable_data_path(filename)` | `get_app_dir()/filename` | Always gives you the writable path, even if the file doesn't exist yet. Used when you need to create something new. |
+| `get_data_file_path(filename)` | Full path to `filename` | Resolves paths for shared DB files. Checks config's `default_path` first, falls back to Desktop, then AppData. |
+| `get_writable_data_path(subfolder)` | `get_app_dir()/data/subfolder` | Always gives you a writable path, even if the folder doesn't exist yet. Creates it on call. |
 
 ### 3.4 Why Some Files Live in `%APPDATA%`
 
@@ -203,11 +203,12 @@ The `similarity_threshold` controls how aggressively products get clustered - 0.
 
 ```json
 {
-    "default_path": "C:\\Data"
+    "default_path": "C:\\Data",
+    "sql_server_name": ".\\SQLEXPRESS"
 }
 ```
 
-Stores the user's selected data directory path. Changed via "Change Data Path" in the company selection screen.
+Stores the user's selected data directory path and SQL Server instance name. Changed via "Change Data Path" in the company selection screen. The `sql_server_name` is used by `db_manager.py` to connect to the database server.
 
 ### 4.4 `%APPDATA%/JK_Catalog/company_history.json`
 
@@ -444,30 +445,27 @@ Used by `CatalogLogic.get_nepali_date()` to convert footer dates to Nepali calen
 
 Stored in each company folder. Read during login to get the display name and image folder path. Credentials are **not** stored here (moved to `security.db`).
 
-#### `crm_data.json`
+#### `crm_data` (SQL Table — `crm_names` in Catalog DB)
 
-```json
-["Raju", "Mohan", "Krishna"]
-```
+Stored in each company's Catalog database (`JK_{CompanyName}_Catalog.crm_names`). Contains CRM representative names.
 
-Simple JSON array of CRM representative names. Stored in each company folder.
+| Column | Type | Purpose |
+|---|---|---|
+| `id` | INT IDENTITY | Auto-increment primary key |
+| `crm_name` | NVARCHAR(255) | CRM representative name (UNIQUE) |
 
-#### `REPORT_DATA.JSON`
+#### `report_data` (SQL Table — `report_data` in Catalog DB)
 
-```json
-{
-    "Raju": {
-        "pending": ["1", "2", "5", "12"],
-        "recent": ["3", "4"]
-    },
-    "Mohan": {
-        "pending": ["1", "2", "5"],
-        "recent": []
-    }
-}
-```
+Stored in each company's Catalog database (`JK_{CompanyName}_Catalog.report_data`). Tracks per-CRM dirty (pending) and recently printed pages.
 
-Per-CRM tracking of dirty (pending) and recently printed pages. Serial numbers are stored as strings. See [CRM & Dirty Page Tracking](#15-crm--dirty-page-tracking).
+| Column | Type | Purpose |
+|---|---|---|
+| `id` | INT IDENTITY | Auto-increment primary key |
+| `crm_name` | NVARCHAR(255) | CRM representative name |
+| `serial_no` | NVARCHAR(50) | Page serial number |
+| `status` | NVARCHAR(20) | `'pending'` or `'completed'` |
+
+The `load_report_json()` and `save_report_json()` functions in `settings.py` translate between this table and the legacy dict format `{ "CRM": {"pending": [...], "recent": [...]} }` for backward compatibility with UI code.
 
 ---
 
