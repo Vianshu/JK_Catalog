@@ -7,7 +7,6 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QEvent
 from PyQt6.QtGui import QShortcut, QKeySequence
-import sqlite3
 import pandas as pd
 import re
 from src.logic.session_manager import SessionManager

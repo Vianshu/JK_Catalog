@@ -1,27 +1,33 @@
-import sqlite3
 import os
 import pandas as pd
 from PyQt6.QtWidgets import *
 from PyQt6.QtCore import *
 from PyQt6.QtGui import *
 from PyQt6.QtPrintSupport import QPrintPreviewDialog, QPrinter
+from src.logic.db_manager import get_db_manager, build_logical_name
 
 class GodownListUI(QWidget):
     def __init__(self, data_folder_path, final_data_df=None):
         super().__init__()
         self.settings = QSettings("TallySync", "GodownList")
         self.export_folder = self.settings.value("export_folder", "")
-        self.final_data = None  # Will be loaded from final_data.db
+        self.final_data = None  # Will be loaded from final_data DB
         self.company_path = ""
+        self.db = get_db_manager()
+        self.godown_db_name = ""
+        self.final_db_name = ""
         self.init_ui()
         self.change_data_folder(data_folder_path, final_data_df)
 
     def change_data_folder(self, company_path, final_data_df=None):
         if not company_path: return
         self.company_path = company_path
-        self.db_path = os.path.join(company_path, "godown_stock.db")
+        company_name = os.path.basename(company_path)
+        self.godown_db_name = build_logical_name(company_name, "godown_stock")
+        self.final_db_name = build_logical_name(company_name, "final_data")
+        self.db_path = os.path.join(company_path, "godown_stock.db")  # Legacy for export
         
-        # Load product data from final_data.db for autocomplete
+        # Load product data from final_data DB for autocomplete
         self.load_final_data_from_db(company_path)
         
         self.init_db()
@@ -35,38 +41,33 @@ class GodownListUI(QWidget):
 
     # ---------------- LOAD PRODUCT DATA ----------------
     def load_final_data_from_db(self, company_path):
-        """Load Alias, Item_Name, Unit, Part_No from final_data.db for autocomplete"""
-        final_db = os.path.join(company_path, "final_data.db")
-        print(f"[GODOWN] Looking for final_data.db at: {final_db}")
-        if not os.path.exists(final_db):
-            print(f"[GODOWN] final_data.db NOT FOUND")
-            self.final_data = None
-            return
-        
+        """Load Alias, Item_Name, Unit, Part_No from final_data DB for autocomplete"""
         try:
-            conn = sqlite3.connect(final_db)
-            # Use bracket-quoted column names to match catalog table creation
+            conn = self.db.get_connection(self.final_db_name)
+            if not conn:
+                print(f"[GODOWN] Cannot connect to final_data DB")
+                self.final_data = None
+                return
             query = "SELECT [Alias], [Item_Name], [Unit], [Part_No] FROM catalog"
             self.final_data = pd.read_sql_query(query, conn)
-            conn.close()
-            print(f"[GODOWN] Loaded {len(self.final_data)} rows from final_data.db")
+            print(f"[GODOWN] Loaded {len(self.final_data)} rows from final_data DB")
             print(f"[GODOWN] Columns: {list(self.final_data.columns)}")
             if not self.final_data.empty:
                 print(f"[GODOWN] Sample Alias: {self.final_data['Alias'].head(3).tolist()}")
         except Exception as e:
-            print(f"[GODOWN] Failed to load final_data.db: {e}")
+            print(f"[GODOWN] Failed to load final_data: {e}")
             self.final_data = None
 
     # ---------------- DATABASE ----------------
     def init_db(self):
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS stock (
-                item_name TEXT, qty_per_ctn TEXT, unit TEXT,
-                total_ctn TEXT, godown TEXT, part_no TEXT, cn TEXT
+        company_folder = self.company_path
+        self.db.ensure_database_exists(self.godown_db_name, company_folder)
+        self.db.ensure_table(self.godown_db_name, "stock", """
+            CREATE TABLE stock (
+                item_name NVARCHAR(MAX), qty_per_ctn NVARCHAR(MAX), unit NVARCHAR(MAX),
+                total_ctn NVARCHAR(MAX), godown NVARCHAR(MAX), part_no NVARCHAR(MAX), cn NVARCHAR(MAX)
             )
         """)
-        conn.close()
 
     # ---------------- COMPLETER ----------------
     def update_completer(self):
@@ -279,10 +280,12 @@ class GodownListUI(QWidget):
         self.save_data_to_db()   
     
     def load_data_from_db(self):
-        if not os.path.exists(self.db_path): return
-        conn = sqlite3.connect(self.db_path)
-        rows = conn.execute("SELECT * FROM stock").fetchall()
-        conn.close()
+        conn = self.db.get_connection(self.godown_db_name)
+        if not conn:
+            return
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM stock")
+        rows = cursor.fetchall()
 
         self.table.blockSignals(True)
         if len(rows) > self.table.rowCount():
@@ -300,10 +303,11 @@ class GodownListUI(QWidget):
         self.table.blockSignals(False)
         
     def save_data_to_db(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = self.db.get_connection(self.godown_db_name)
+        if not conn:
+            return
         cur = conn.cursor()
         try:
-            cur.execute("BEGIN TRANSACTION")
             cur.execute("DELETE FROM stock")
             for r in range(self.table.rowCount()):
                 row_data = [self.table.item(r, c).text() if self.table.item(r, c) else "" for c in range(7)]
@@ -313,8 +317,6 @@ class GodownListUI(QWidget):
         except Exception as e:
             conn.rollback()
             print(f"[ERROR] Failed to save godown stock: {e}")
-        finally:
-            conn.close()
     
     def manual_save_and_sort(self):
         self.table.blockSignals(True)

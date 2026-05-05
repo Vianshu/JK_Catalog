@@ -1,4 +1,3 @@
-import sqlite3
 import os
 import pandas as pd
 from PyQt6.QtWidgets import (
@@ -12,6 +11,7 @@ from PyQt6.QtGui import QTextDocument, QPageSize, QPageLayout, QFont, QPainter, 
 from PyQt6.QtCore import Qt, QEvent, QSettings, QSizeF, QMarginsF, QRect
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 from difflib import SequenceMatcher
+from src.logic.db_manager import get_db_manager, build_logical_name
 
 class NumericTableWidgetItem(QTableWidgetItem):
     def __lt__(self, other):
@@ -27,6 +27,9 @@ class ChequeListUI(QWidget):
         # ================= BASIC =================
         self.db_path = ""
         self.company_path = ""
+        self.db = get_db_manager()
+        self.cheque_db_name = ""
+        self.ledger_db_name = ""
         self.settings = QSettings("TallySync", "ChequeList")
         self.export_folder = self.settings.value("export_folder", "")
         self.bank_list_data = []
@@ -276,11 +279,11 @@ class ChequeListUI(QWidget):
     
     # ================= DB =================
     def save_cheques_to_db(self):
-        if not self.db_path: return
-        conn = sqlite3.connect(self.db_path)
+        if not self.cheque_db_name: return
+        conn = self.db.get_connection(self.cheque_db_name)
+        if not conn: return
         cur = conn.cursor()
         try:
-            cur.execute("BEGIN TRANSACTION")
             cur.execute("DELETE FROM cheques")
 
             for r in range(self.table.rowCount()):
@@ -298,8 +301,6 @@ class ChequeListUI(QWidget):
         except Exception as e:
             conn.rollback()
             print(f"[ERROR] Failed to save cheques: {e}")
-        finally:
-            conn.close()
         self.update_summary()
         
     # ================= BANK LIST =================
@@ -312,18 +313,19 @@ class ChequeListUI(QWidget):
         new_name = item.text().strip()
 
         # DB Update Logic (Export explicit list items to bank_list)
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("DELETE FROM bank_list")
+        conn = self.db.get_connection(self.cheque_db_name)
+        if not conn: return
+        cur = conn.cursor()
+        cur.execute("DELETE FROM bank_list")
         save_idx = 1
         self.bank_list_data = []
         for r in range(total_row_idx):
             it = self.bank_table.item(r, 1)
             if it and it.text().strip():
-                conn.execute("INSERT INTO bank_list VALUES (?, ?)", (str(save_idx), it.text().strip()))
+                cur.execute("INSERT INTO bank_list VALUES (?, ?)", (str(save_idx), it.text().strip()))
                 self.bank_list_data.append(it.text().strip())
                 save_idx += 1
         conn.commit()
-        conn.close()
 
         self.ensure_bank_row_capacity()
     
@@ -437,12 +439,12 @@ class ChequeListUI(QWidget):
 
         self.table.blockSignals(False)
 
-    def ensure_cheque_schema(self, conn):
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(cheques)")]
+    def ensure_cheque_schema(self):
+        cols = self.db.get_table_columns(self.cheque_db_name, "cheques")
         if "clear_date" not in cols:
-            conn.execute("ALTER TABLE cheques ADD COLUMN clear_date TEXT")
+            self.db.add_column(self.cheque_db_name, "cheques", "clear_date", "NVARCHAR(MAX)")
         if "narration" not in cols:
-            conn.execute("ALTER TABLE cheques ADD COLUMN narration TEXT")
+            self.db.add_column(self.cheque_db_name, "cheques", "narration", "NVARCHAR(MAX)")
 
     def sync_cheque_rows(self):
         self.table.blockSignals(True)
@@ -551,14 +553,15 @@ class ChequeListUI(QWidget):
         reply = QMessageBox.question(self, "Confirm Clear", "Kya aap saare 'C' (Cleared) cheques hatana chahte hain?", 
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
-            conn = sqlite3.connect(self.db_path)
-            conn.execute("DELETE FROM cheques WHERE status = 'C'")
-            conn.commit(); conn.close()
+            self.db.execute_query(self.cheque_db_name, "DELETE FROM cheques WHERE status = 'C'", fetch=False)
             self.load_all_data()
 
     def set_company_path(self, path):
         self.company_path = path
-        self.db_path = os.path.join(path, "chq_list.db")
+        self.db_path = os.path.join(path, "chq_list.db")  # Legacy
+        company_name = os.path.basename(path)
+        self.cheque_db_name = build_logical_name(company_name, "cheque")
+        self.ledger_db_name = build_logical_name(company_name, "ledger_data")
         
         # 1. Load CRM Data
         crm_file = os.path.join(path, "crm_data.json")
@@ -575,44 +578,44 @@ class ChequeListUI(QWidget):
             self.crm_list_data = []
 
         # 2. Load Party Mapping
-        ledger_db = os.path.join(path, "ledger_internal_data.db")
         self.party_mapping = {}
-        if os.path.exists(ledger_db):
-            try:
-                l_conn = sqlite3.connect(ledger_db)
-                c_rows = l_conn.execute("SELECT Alias, Name FROM row_leger_data WHERE \"Group\" LIKE '%Sundry Debtors%'").fetchall()
-                for alias, name in c_rows:
+        try:
+            l_conn = self.db.get_connection(self.ledger_db_name)
+            if l_conn:
+                l_cursor = l_conn.cursor()
+                l_cursor.execute("SELECT Alias, Name FROM row_leger_data WHERE [Group] LIKE '%Sundry Debtors%'")
+                for alias, name in l_cursor.fetchall():
                     if alias and str(alias).strip():
                         self.party_mapping[str(alias).strip()] = str(name).strip() if name else ""
-                l_conn.close()
-            except Exception as e:
-                print("Error loading ledger:", e)
+        except Exception as e:
+            print("Error loading ledger:", e)
 
         # 3. Setup Cheque DB
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS cheques (
-                sn TEXT, date TEXT, party TEXT, bank TEXT,
-                chq_no TEXT, crm TEXT, amount TEXT,
-                status TEXT
+        self.db.ensure_database_exists(self.cheque_db_name, path)
+        self.db.ensure_table(self.cheque_db_name, "cheques", """
+            CREATE TABLE cheques (
+                sn NVARCHAR(MAX), date NVARCHAR(MAX), party NVARCHAR(MAX), bank NVARCHAR(MAX),
+                chq_no NVARCHAR(MAX), crm NVARCHAR(MAX), amount NVARCHAR(MAX),
+                status NVARCHAR(MAX), clear_date NVARCHAR(MAX), narration NVARCHAR(MAX)
             )
         """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS bank_list (
-                sn TEXT, bank_name TEXT
+        self.db.ensure_table(self.cheque_db_name, "bank_list", """
+            CREATE TABLE bank_list (
+                sn NVARCHAR(MAX), bank_name NVARCHAR(MAX)
             )
         """)
-        self.ensure_cheque_schema(conn)
-        conn.commit()
-        conn.close()
+        self.ensure_cheque_schema()
         self.load_all_data()
 
     def load_all_data(self):
-        if not self.db_path: return
-        conn = sqlite3.connect(self.db_path)
+        if not self.cheque_db_name: return
+        conn = self.db.get_connection(self.cheque_db_name)
+        if not conn: return
+        cursor = conn.cursor()
         
         # Bank list loading logic
-        bnks = conn.execute("SELECT * FROM bank_list").fetchall()
+        cursor.execute("SELECT * FROM bank_list")
+        bnks = cursor.fetchall()
         self.bank_table.blockSignals(True)
         total_required_rows = max(30, len(bnks)+10)
         self.bank_table.setRowCount(total_required_rows)
@@ -637,8 +640,8 @@ class ChequeListUI(QWidget):
         self.bank_list_data = [b[1] for b in bnks]
         
         # Cheque list loading logic
-        chqs = conn.execute("SELECT * FROM cheques").fetchall()
-        conn.close()
+        cursor.execute("SELECT * FROM cheques")
+        chqs = cursor.fetchall()
         
         self.table.blockSignals(True)
         self.table.setRowCount(len(chqs))
