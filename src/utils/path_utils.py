@@ -44,6 +44,25 @@ def get_app_dir():
 
 
 
+def get_exe_dir():
+    """
+    Get the directory where the executable is located.
+    When running as script, returns the project root.
+    """
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    else:
+        return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+def get_asset_path(filename):
+    """
+    Get path to a static asset file (icons, stylesheets, etc.)
+    These are bundled inside the EXE (READ-ONLY).
+    """
+    base = get_base_path()
+    return os.path.join(base, "src", "assets", filename)
+
+
 def get_data_file_path(filename):
     """
     Get path to a core data file (super_master.db, calendar_data.db, etc.)

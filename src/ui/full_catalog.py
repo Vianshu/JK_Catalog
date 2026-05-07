@@ -113,9 +113,10 @@ class FullCatalogUI(QWidget):
         """Set the active company and initialize its catalog database."""
         self.company_path = company_path
 
-        # Clear image cache on company switch
+        # Clear in-memory image cache on company switch, set disk cache dir
         from src.ui.a4_renderer import PixmapCache
         PixmapCache.clear()
+        PixmapCache.set_cache_dir(company_path)
 
         catalog_db = os.path.join(company_path, "catalog.db")
         final_db = os.path.join(company_path, "final_data.db")
@@ -430,39 +431,8 @@ class FullCatalogUI(QWidget):
             self.total_lbl.setText(f"/{len(self.all_pages_data)}")
             if self.current_page_index >= len(self.all_pages_data):
                 self.current_page_index = 0
-            # Pre-warm image cache in background (non-blocking)
-            self._prewarm_cache_bg()
 
         self._update_catalog_page()
-
-    def _prewarm_cache_bg(self):
-        """Pre-warm PixmapCache in a background thread.
-        Scans all pages, collects unique image paths, and loads them."""
-        import threading
-
-        pages_data = list(self.all_pages_data)  # snapshot
-        logic = self.logic
-
-        def _worker():
-            from src.ui.a4_renderer import PixmapCache
-            seen = set()
-            for mg_sn, group_name, sg_sn, page_no, serial_no in pages_data:
-                try:
-                    products = logic.get_items_for_page_dynamic(group_name, sg_sn, page_no)
-                    if not products:
-                        continue
-                    for it in products:
-                        prod = it.get("data") or it
-                        img_path = prod.get("image_path", "")
-                        if img_path and img_path not in seen and os.path.exists(img_path):
-                            seen.add(img_path)
-                            PixmapCache.get(img_path, 200, 200)
-                except Exception:
-                    continue
-            print(f"[CacheWarm] Pre-warmed {len(seen)} images")
-
-        t = threading.Thread(target=_worker, daemon=True, name="CacheWarm")
-        t.start()
 
     # ───────────────────────────────────────────────────────────────────────────
     # PAGE DISPLAY

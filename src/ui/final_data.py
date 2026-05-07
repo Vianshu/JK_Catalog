@@ -507,10 +507,16 @@ class FinalDataUI(QWidget):
             if conn_check:
                 cursor_check = conn_check.cursor()
                 try:
-                    cursor_check.execute("CREATE UNIQUE INDEX idx_guid ON catalog (GUID)")
+                    # SQL Server will abort the transaction if this fails, so we must rollback
+                    cursor_check.execute("""
+                        IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_guid' AND object_id = OBJECT_ID('catalog'))
+                        BEGIN
+                            CREATE UNIQUE INDEX idx_guid ON catalog (GUID)
+                        END
+                    """)
                     conn_check.commit()
                 except Exception:
-                    pass  # Index already exists
+                    conn_check.rollback()
         except Exception:
             pass
         
@@ -572,13 +578,33 @@ class FinalDataUI(QWidget):
         cur.execute("SELECT GUID FROM catalog")
         catalog_guids = [row[0] for row in cur.fetchall()]
         guids_to_delete = [g for g in catalog_guids if g not in tally_guids_set]
-        for g in guids_to_delete:
-            cur.execute("DELETE FROM catalog WHERE GUID=?", (g,))
+        if guids_to_delete:
+            # Batch delete in chunks of 500 to avoid query size limits
+            for i in range(0, len(guids_to_delete), 500):
+                chunk = guids_to_delete[i:i+500]
+                placeholders = ','.join(['?'] * len(chunk))
+                cur.execute(f"DELETE FROM catalog WHERE GUID IN ({placeholders})", chunk)
 
         now = self.current_datetime()
 
         # Calculate sync label (using current time since DB is on SQL Server now)
         sync_label = f"Last Sync: {now}"
+
+        # Pre-fetch ALL existing catalog rows into a dict keyed by GUID
+        # This eliminates ~2000 individual SELECT queries
+        cur.execute("""
+            SELECT GUID, Item_Name, Alias, Part_No, Category, Unit,
+                   MRP, Stock, MG_SN, [Group], SG_SN, Sub_Group
+            FROM catalog
+        """)
+        existing_rows = {}
+        for erow in cur.fetchall():
+            existing_rows[erow[0]] = erow[1:]  # GUID → (Item_Name, Alias, ...)
+
+        # Pre-build INSERT query once (reused for all new items)
+        insert_placeholders = ', '.join(['?'] * len(self.headers))
+        insert_cols = ', '.join([f"[{h}]" for h in self.headers])
+        insert_query = f"INSERT INTO catalog ({insert_cols}) VALUES ({insert_placeholders})"
 
         # Main sync loop
         emit(f"Syncing {len(rows)} items...")
@@ -587,12 +613,7 @@ class FinalDataUI(QWidget):
             sub_group_name = r[6]
             s_data = super_mapping.get(sub_group_name, ("", "", ""))
 
-            cur.execute("""
-                SELECT Item_Name, Alias, Part_No, Category, Unit,
-                       MRP, Stock, MG_SN, [Group], SG_SN, Sub_Group
-                FROM catalog WHERE GUID=?
-            """, (guid,))
-            old_row_db = cur.fetchone()
+            old_row_db = existing_rows.get(guid)
 
             new_row = tuple("" if v is None else str(v) for v in (
                 r[1], r[2], r[3], r[4], r[5],
@@ -628,10 +649,7 @@ class FinalDataUI(QWidget):
                 f_row[self.col_index("Sub_Group")] = r[6]
                 f_row[self.col_index("Lenth")] = "1"
                 f_row[self.col_index("Update_date")] = now
-                placeholders = ', '.join(['?'] * len(self.headers))
-                cols = ', '.join([f"[{h}]" for h in self.headers])
-                query = f"INSERT INTO catalog ({cols}) VALUES ({placeholders})"
-                cur.execute(query, f_row)
+                cur.execute(insert_query, f_row)
 
         final_conn.commit()
 
@@ -687,7 +705,7 @@ class FinalDataUI(QWidget):
             img_map, dup_map = self.get_image_mapping()
             self._duplicate_images = dup_map  # Store for UI warnings
             cursor = conn.cursor()
-            cursor.execute("SELECT rowid, Image_Name FROM catalog")
+            cursor.execute("SELECT GUID, Image_Name FROM catalog")
             for rid, img_name in cursor.fetchall():
                 clean = img_name.lower().strip() if img_name else ""
                 
@@ -696,9 +714,9 @@ class FinalDataUI(QWidget):
                 if clean in img_map:
                     path = img_map[clean]
                     date = self.get_file_modify_date(path)
-                    cursor.execute("UPDATE catalog SET Image_Path=?, Image_Date=? WHERE rowid=?", (path, date, rid))
+                    cursor.execute("UPDATE catalog SET Image_Path=?, Image_Date=? WHERE GUID=?", (path, date, rid))
                 else:
-                    cursor.execute("UPDATE catalog SET Image_Path='', Image_Date='' WHERE rowid=?", (rid,))
+                    cursor.execute("UPDATE catalog SET Image_Path='', Image_Date='' WHERE GUID=?", (rid,))
             conn.commit()
             
             # After image sync, update True/False values
@@ -727,7 +745,7 @@ class FinalDataUI(QWidget):
             
             # Get all rows with relevant columns
             cursor.execute("""
-                SELECT rowid, Stock, Image_Path, [Group], [True/False]
+                SELECT GUID, Stock, Image_Path, [Group], [True/False]
                 FROM catalog
             """)
             rows = cursor.fetchall()
@@ -763,7 +781,7 @@ class FinalDataUI(QWidget):
                 
                 # Update only if changed
                 if current_tf_str != new_tf and not (current_tf_str == "1" and new_tf == "1"):
-                    cursor.execute("UPDATE catalog SET [True/False]=? WHERE rowid=?", (new_tf, rid))
+                    cursor.execute("UPDATE catalog SET [True/False]=? WHERE GUID=?", (new_tf, rid))
             
             # --- FORCE DEFAULT LENGTH 1|0 ---
             cursor.execute("UPDATE catalog SET Lenth='1|0' WHERE Lenth IS NULL OR LTRIM(RTRIM(Lenth))=''")

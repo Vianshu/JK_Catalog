@@ -27,14 +27,41 @@ import time
 # Automatically re-reads from disk if the source file's mtime changes.
 
 class PixmapCache:
-    """Process-wide pixmap cache with automatic file-change detection."""
+    """Process-wide pixmap cache with disk-backed thumbnail persistence.
+    
+    Scaled images are saved as small PNG thumbnails in a cache directory.
+    On subsequent loads, the cached thumbnail is read directly instead of
+    re-scaling the original high-res image — dramatically faster startup.
+    Thumbnails auto-invalidate when the source file's mtime changes.
+    """
     _cache = {}      # (path, w, h) → QPixmap
     _mtimes = {}     # path → last known mtime
+    _cache_dir = None  # Set per-company
+
+    @classmethod
+    def set_cache_dir(cls, company_path):
+        """Set the thumbnail cache directory for the current company."""
+        if company_path:
+            cls._cache_dir = os.path.join(company_path, ".thumb_cache")
+            os.makedirs(cls._cache_dir, exist_ok=True)
+
+    @classmethod
+    def _thumb_path(cls, path: str, w: int, h: int) -> str:
+        """Generate a deterministic thumbnail filename from source path + dimensions."""
+        if not cls._cache_dir:
+            return ""
+        import hashlib
+        # Hash the full source path to avoid filename collisions
+        path_hash = hashlib.md5(path.encode('utf-8', errors='replace')).hexdigest()[:12]
+        return os.path.join(cls._cache_dir, f"{path_hash}_{w}x{h}.png")
 
     @classmethod
     def get(cls, path: str, w: int, h: int):
         """Return a cached QPixmap scaled to (w, h), or None.
-        Re-loads from disk if the file's mtime has changed."""
+        
+        Priority: memory cache → disk thumbnail → scale from source.
+        Re-loads from source if the file's mtime has changed.
+        """
         if not path or not os.path.exists(path):
             return None
 
@@ -45,15 +72,30 @@ class PixmapCache:
 
         # Invalidate ALL sizes of this path if file changed
         cached_mtime = cls._mtimes.get(path)
-        if cached_mtime is None or current_mtime != cached_mtime:
+        if cached_mtime is not None and current_mtime != cached_mtime:
             cls._invalidate_path(path)
-            cls._mtimes[path] = current_mtime
+        cls._mtimes[path] = current_mtime
 
         key = (path, w, h)
         if key in cls._cache:
             return cls._cache[key]
 
-        # Load, scale, cache
+        # Try loading from disk thumbnail cache
+        thumb = cls._thumb_path(path, w, h)
+        if thumb and os.path.exists(thumb):
+            try:
+                thumb_mtime = os.path.getmtime(thumb)
+                # Only use thumbnail if it's newer than source
+                if thumb_mtime >= current_mtime:
+                    from PyQt6.QtGui import QPixmap
+                    pm = QPixmap(thumb)
+                    if not pm.isNull():
+                        cls._cache[key] = pm
+                        return pm
+            except OSError:
+                pass
+
+        # Load from source, scale, cache to memory + disk
         from PyQt6.QtGui import QImageReader, QPixmap
         from PyQt6.QtCore import Qt
         reader = QImageReader(path)
@@ -77,18 +119,33 @@ class PixmapCache:
             Qt.TransformationMode.SmoothTransformation,
         )
         cls._cache[key] = scaled
+
+        # Save thumbnail to disk for next startup
+        if thumb:
+            try:
+                scaled.save(thumb, "PNG")
+            except Exception:
+                pass  # Non-critical — next run will re-scale
+
         return scaled
 
     @classmethod
     def _invalidate_path(cls, path: str):
-        """Remove all cached sizes for a given file path."""
+        """Remove all cached sizes for a given file path (memory + disk)."""
         keys_to_remove = [k for k in cls._cache if k[0] == path]
         for k in keys_to_remove:
+            # Delete disk thumbnail too
+            thumb = cls._thumb_path(k[0], k[1], k[2])
+            if thumb and os.path.exists(thumb):
+                try:
+                    os.remove(thumb)
+                except OSError:
+                    pass
             del cls._cache[k]
 
     @classmethod
     def clear(cls):
-        """Clear entire cache (e.g. on company switch)."""
+        """Clear in-memory cache (e.g. on company switch). Disk cache persists."""
         cls._cache.clear()
         cls._mtimes.clear()
 

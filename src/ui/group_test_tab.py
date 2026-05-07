@@ -34,7 +34,7 @@ class GroupPreviewWorker(QThread):
             
             rows = db.execute_query(
                 catalog_db,
-                "SELECT DISTINCT group_name, sg_sn FROM catalog_pages ORDER BY CAST(mg_sn AS INT), CAST(sg_sn AS INT)"
+                "SELECT group_name, sg_sn FROM catalog_pages GROUP BY group_name, sg_sn, mg_sn ORDER BY CAST(mg_sn AS INT), CAST(sg_sn AS INT)"
             )
             
             subgroups = [(r[0], r[1]) for r in rows] if rows else []

@@ -71,7 +71,11 @@ class CatalogLogic:
         
         # Derive company name from final_db path (company folder)
         if final_db:
-            company_folder = os.path.dirname(final_db) if os.path.isfile(final_db) else final_db
+            # Safely handle both file paths and directory paths
+            if final_db.lower().endswith('.db'):
+                company_folder = os.path.dirname(final_db)
+            else:
+                company_folder = final_db
             self.company_name = os.path.basename(company_folder)
             self.catalog_db_name = build_logical_name(self.company_name, "catalog")
             self.final_db_name = build_logical_name(self.company_name, "final_data")
@@ -114,8 +118,8 @@ class CatalogLogic:
     def _get_catalog_conn(self):
         """Get connection to the catalog database, creating it if needed."""
         if self.catalog_db_name:
-            # Ensure the DB exists on SQL Server
-            company_folder = os.path.dirname(self.catalog_db_path) if self.catalog_db_path else self.db_path
+            # Use db_path (company folder) directly — catalog_db_path may be a legacy .db path
+            company_folder = self.db_path
             self.db.ensure_database_exists(self.catalog_db_name, company_folder)
         return self._get_conn(_DB_CATALOG)
 
@@ -239,11 +243,12 @@ class CatalogLogic:
         try:
             cursor = conn.cursor()
             cursor.execute(f"""
-                SELECT DISTINCT [MG_SN], [Group_Name] FROM {table}
+                SELECT [MG_SN], [Group_Name] FROM {table}
                 WHERE [MG_SN] IS NOT NULL
                   AND LTRIM(RTRIM(CAST([MG_SN] AS NVARCHAR(50)))) NOT IN ('', '0', '00')
                   AND CAST([MG_SN] AS INTEGER) < 90
                   AND TRIM(ISNULL([Group_Name], '')) != ''
+                GROUP BY [MG_SN], [Group_Name]
                 ORDER BY CAST([MG_SN] AS INTEGER)
             """)
             return cursor.fetchall()
@@ -268,9 +273,10 @@ class CatalogLogic:
             if mg_row and mg_row[0] is not None and mg_row[0] >= 90:
                 return []
             cursor.execute(f"""
-                SELECT DISTINCT [SG_SN], [Sub_Group] FROM {table}
+                SELECT [SG_SN], [Sub_Group] FROM {table}
                 WHERE TRIM([Group_Name])=? COLLATE Latin1_General_CI_AI
                   AND [Sub_Group] IS NOT NULL AND [Sub_Group]!=''
+                GROUP BY [SG_SN], [Sub_Group]
                 ORDER BY CAST([SG_SN] AS INTEGER)
             """, (group_name.strip(),))
             return cursor.fetchall()
@@ -288,9 +294,10 @@ class CatalogLogic:
         try:
             cursor = conn.cursor()
             cursor.execute(f"""
-                SELECT DISTINCT [MG_SN], [Group_Name], [SG_SN] FROM {table}
+                SELECT [MG_SN], [Group_Name], [SG_SN] FROM {table}
                 WHERE [Group_Name] IS NOT NULL AND [SG_SN] IS NOT NULL
                   AND CAST([MG_SN] AS INTEGER) < 90
+                GROUP BY [MG_SN], [Group_Name], [SG_SN]
                 ORDER BY CAST([MG_SN] AS INTEGER), CAST([SG_SN] AS INTEGER)
             """)
             results = []

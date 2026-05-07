@@ -260,7 +260,7 @@ class DataProcessor:
             cursor = conn.cursor()
             
             # Sabse pehle processing ke liye data uthayein
-            cursor.execute('SELECT rowid, Alias, Unit, Item_Name, "Product Name", Product_Size FROM catalog ORDER BY MG_SN ASC, SG_SN ASC, rowid ASC')
+            cursor.execute('SELECT GUID, Alias, Unit, Item_Name, [Product Name], Product_Size FROM catalog ORDER BY MG_SN ASC, SG_SN ASC, GUID ASC')
             rows = cursor.fetchall()
             
             row_data_list = []
@@ -376,7 +376,7 @@ class DataProcessor:
                             image_name_val = info['base_name'] if info['base_name'] else info['original_text']
 
                 # 1. Pehle DB se purani values mangwayein
-                cursor.execute('SELECT "Product Name", Product_Size, Image_Name, MOQ, M_Packing FROM catalog WHERE rowid = ?', (info['row_id'],))
+                cursor.execute('SELECT [Product Name], Product_Size, Image_Name, MOQ, M_Packing FROM catalog WHERE GUID = ?', (info['row_id'],))
                 old_row = cursor.fetchone()
 
                 # 2. Nayi values jo processor ne nikali hain
@@ -395,7 +395,7 @@ class DataProcessor:
                             "Image_Name" = ?, 
                             "MOQ" = ?, 
                             "M_Packing" = ?
-                        WHERE rowid = ?
+                        WHERE GUID = ?
                     """, (info['product_name'], info['product_size'], image_name_val, moq, m_packing, info['row_id']))
 
             conn.commit()
@@ -498,8 +498,8 @@ class DataProcessor:
             
             cursor.execute('UPDATE catalog SET ID = NULL')
             cursor.execute(
-                'SELECT rowid, [Product Name], MG_SN, SG_SN, MRP, Product_Size '
-                'FROM catalog ORDER BY MG_SN, SG_SN, rowid ASC'
+                'SELECT GUID, [Product Name], MG_SN, SG_SN, MRP, Product_Size '
+                'FROM catalog ORDER BY MG_SN, SG_SN, GUID ASC'
             )
             columns = [desc[0] for desc in cursor.description]
             raw_rows = cursor.fetchall()
@@ -549,8 +549,8 @@ class DataProcessor:
                         for vi, item in enumerate(variants, start=1):
                             final_id = f"{mg_sn}_{sg_sn}_{ci:02d}_{ii:02d}_{vi:02d}"
                             cursor.execute(
-                                "UPDATE catalog SET ID = ? WHERE rowid = ?",
-                                (final_id, item["rowid"])
+                                "UPDATE catalog SET ID = ? WHERE GUID = ?",
+                                (final_id, item["GUID"])
                             )
             
             conn.commit()

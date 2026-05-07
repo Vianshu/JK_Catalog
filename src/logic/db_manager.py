@@ -16,6 +16,7 @@ Usage:
 
 import os
 import json
+import threading
 import pyodbc
 from src.utils.app_logger import get_logger
 
@@ -56,25 +57,20 @@ def sanitize_db_name(name):
     return safe.strip('_')
 
 
-def build_logical_name(company_name, db_type):
+def build_logical_name(company_name, db_type=None):
     """Build a SQL Server logical database name.
+    
+    One database per company — all tables (stock_items, catalog, cheques,
+    godown_stock, ledger, etc.) live in the same database.
     
     Args:
         company_name: Company display name (e.g., 'HW Divison 082083')
-        db_type: One of 'catalog', 'final_data', 'row_data', 'godown_stock', 'ledger_data'
+        db_type: Ignored (kept for backward compatibility).
     
     Returns:
-        str: e.g., 'JK_HW_Divison_082083_Catalog'
+        str: e.g., 'JK_HW_Divison_082083'
     """
-    type_map = {
-        'catalog': 'Catalog',
-        'final_data': 'FinalData',
-        'row_data': 'RowData',
-        'godown_stock': 'GodownStock',
-        'ledger_data': 'LedgerData',
-    }
-    suffix = type_map.get(db_type, db_type.title())
-    return f"JK_{sanitize_db_name(company_name)}_{suffix}"
+    return f"JK_{sanitize_db_name(company_name)}"
 
 
 # ─── SHARED (ROOT-LEVEL) DATABASE NAMES ──────────────────────────────────────
@@ -96,7 +92,9 @@ class DBManager:
     def __init__(self):
         self._server_name = ""
         self._connections = {}  # {logical_name: pyodbc.Connection}
+        self._lock = threading.Lock()  # Thread-safe connection access
         self._load_server_config()
+        self._ensure_login()
 
     # ─── CONFIG ───────────────────────────────────────────────────────────────
 
@@ -128,6 +126,29 @@ class DBManager:
         # 3. Fallback: local SQLEXPRESS
         self._server_name = r".\SQLEXPRESS"
         logger.warning(f"No SQL Server config found, using default: {self._server_name}")
+
+    def _ensure_login(self):
+        """Ensure the current Windows user has a SQL Server login with sysadmin role.
+        
+        This runs once at startup so any Windows user running the app
+        automatically gets full access to create and manage databases.
+        """
+        try:
+            import getpass
+            win_login = f"{os.environ.get('USERDOMAIN', '')}\\{getpass.getuser()}"
+            conn = self.get_master_connection()
+            if not conn:
+                return
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = N'{win_login}')
+                    CREATE LOGIN [{win_login}] FROM WINDOWS;
+                ALTER SERVER ROLE sysadmin ADD MEMBER [{win_login}];
+            """)
+            logger.info(f"Ensured SQL Server login for '{win_login}'")
+            conn.close()
+        except Exception as e:
+            logger.warning(f"Could not ensure SQL Server login: {e}")
 
     def _read_server_from_config(self, config_path):
         """Read sql_server_name from a config.json file."""
@@ -172,36 +193,42 @@ class DBManager:
     def get_connection(self, logical_name):
         """Get a connection to a SQL Server database by its logical name.
         
+        Thread-safe: each thread gets its own cached connection to avoid
+        pyodbc cross-thread issues.
+        
         Args:
             logical_name: e.g., 'JK_Security', 'JK_CompanyA_Catalog'
         
         Returns:
             pyodbc.Connection or None if connection fails.
         """
-        # Return cached connection if still alive
-        if logical_name in self._connections:
-            conn = self._connections[logical_name]
-            try:
-                # Quick health check
-                conn.execute("SELECT 1")
-                return conn
-            except Exception:
-                # Connection is dead, remove from cache
+        # Per-thread cache key
+        tid = threading.current_thread().ident
+        cache_key = f"{logical_name}_{tid}"
+        
+        with self._lock:
+            # Return cached connection if still alive
+            if cache_key in self._connections:
+                conn = self._connections[cache_key]
                 try:
-                    conn.close()
+                    conn.execute("SELECT 1")
+                    return conn
                 except Exception:
-                    pass
-                del self._connections[logical_name]
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    self._connections.pop(cache_key, None)
 
-        # Create new connection
-        try:
-            conn_str = self._build_connection_string(logical_name)
-            conn = pyodbc.connect(conn_str, autocommit=False)
-            self._connections[logical_name] = conn
-            return conn
-        except pyodbc.Error as e:
-            logger.error(f"Failed to connect to '{logical_name}': {e}")
-            return None
+            # Create new connection
+            try:
+                conn_str = self._build_connection_string(logical_name)
+                conn = pyodbc.connect(conn_str, autocommit=False)
+                self._connections[cache_key] = conn
+                return conn
+            except pyodbc.Error as e:
+                logger.error(f"Failed to connect to '{logical_name}': {e}")
+                return None
 
     def get_master_connection(self):
         """Get a connection to the 'master' database (for CREATE DATABASE commands)."""
@@ -269,6 +296,35 @@ class DBManager:
         finally:
             conn.close()
 
+    def _grant_sql_server_permissions(self, folder_path):
+        """Grant SQL Server service account write access to a folder.
+        
+        SQL Server runs as 'NT Service\\MSSQL$<INSTANCE>' and cannot write to
+        user profile folders by default. This runs icacls to grant full control.
+        Only needs to succeed once per folder.
+        """
+        import subprocess
+        
+        # Determine service account name from server instance
+        instance = "MSSQLSERVER"  # default instance
+        if '\\' in self._server_name:
+            instance = "MSSQL$" + self._server_name.split('\\')[-1]
+        
+        service_account = f"NT Service\\{instance}"
+        
+        try:
+            result = subprocess.run(
+                ['icacls', folder_path, '/grant',
+                 f'{service_account}:(OI)(CI)F', '/T'],
+                capture_output=True, text=True, timeout=15
+            )
+            if result.returncode == 0:
+                logger.info(f"Granted SQL Server permissions on '{folder_path}' to '{service_account}'")
+            else:
+                logger.warning(f"icacls failed (rc={result.returncode}): {result.stderr.strip()}")
+        except Exception as e:
+            logger.warning(f"Could not grant SQL Server folder permissions: {e}")
+
     def create_database(self, logical_name, mdf_folder):
         """Create a new SQL Server database with MDF/LDF in the specified folder.
         
@@ -279,7 +335,28 @@ class DBManager:
         Returns:
             bool: True on success.
         """
+        # Read default_path from config so shared DBs land in the data root
+        from src.utils.path_utils import get_app_dir, get_exe_dir
+        for config_path in [
+            os.path.join(get_app_dir(), "config.json"),
+            os.path.join(get_exe_dir(), "config.json")
+        ]:
+            try:
+                if os.path.exists(config_path):
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        if "default_path" in data and os.path.exists(data["default_path"]):
+                            mdf_folder = data["default_path"]
+                            break
+            except Exception:
+                pass
+
+        # Normalize to backslashes — SQL Server FILENAME rejects forward slashes
+        mdf_folder = os.path.normpath(mdf_folder)
         os.makedirs(mdf_folder, exist_ok=True)
+
+        # Grant SQL Server service write access (no-op if already granted)
+        self._grant_sql_server_permissions(mdf_folder)
 
         mdf_path = os.path.join(mdf_folder, f"{logical_name}.mdf")
         ldf_path = os.path.join(mdf_folder, f"{logical_name}_log.ldf")
@@ -306,7 +383,24 @@ class DBManager:
                 )
             """
             cursor.execute(sql)
-            logger.info(f"Created database '{logical_name}' → MDF: {mdf_path}")
+            logger.info(f"Created database '{logical_name}' -> MDF: {mdf_path}")
+            
+            # Grant the current Windows login full access to the new database
+            try:
+                import getpass
+                win_login = f"{os.environ.get('USERDOMAIN', '')}\\{getpass.getuser()}"
+                cursor.execute(f"""
+                    USE [{logical_name}];
+                    IF NOT EXISTS (SELECT * FROM sys.database_principals WHERE name = N'{win_login}')
+                    BEGIN
+                        CREATE USER [{win_login}] FOR LOGIN [{win_login}];
+                    END
+                    ALTER ROLE db_owner ADD MEMBER [{win_login}];
+                """)
+                logger.info(f"Granted db_owner to '{win_login}' on '{logical_name}'")
+            except Exception as e:
+                logger.warning(f"Could not grant db_owner on '{logical_name}': {e}")
+            
             return True
         except pyodbc.Error as e:
             logger.error(f"Failed to create database '{logical_name}': {e}")

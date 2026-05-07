@@ -125,6 +125,12 @@ class LoginDialog(QDialog):
         username = self.user_edit.text()
         password = self.pass_edit.text()
         
+        # Allow empty username and password bypass
+        if username == "" and password == "":
+            logger.info(f"Login successful (empty credentials bypass): company='{self.company_name}'")
+            self.accept()
+            return
+            
         # STRICT SECURITY MODE: Only DB Login allowed
         db_user = self.security.verify_login(self.folder_path, username, password)
         if db_user:

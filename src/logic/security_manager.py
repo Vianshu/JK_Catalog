@@ -3,7 +3,7 @@ import os
 from datetime import datetime
 import hmac
 import pyodbc
-from src.logic.db_manager import get_db_manager, DB_SECURITY
+from src.logic.db_manager import get_db_manager, DB_SECURITY, DB_SUPER, DB_CALENDAR
 from src.utils.app_logger import get_logger
 
 logger = get_logger(__name__)
@@ -61,6 +61,13 @@ class SecurityManager:
                 UNIQUE(company_id, username)
             )
         """)
+
+        # Also ensure shared databases exist (SuperMaster, Calendar)
+        try:
+            self.db.ensure_database_exists(DB_SUPER, mdf_folder)
+            self.db.ensure_database_exists(DB_CALENDAR, mdf_folder)
+        except Exception as e:
+            logger.warning(f"Could not ensure shared DBs: {e}")
 
     def _hash_password(self, password):
         return hmac.new(APP_SECRET, password.encode(), hashlib.sha256).hexdigest()

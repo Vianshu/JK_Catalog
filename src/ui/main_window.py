@@ -401,18 +401,15 @@ class MainWindow(QWidget):
             QMessageBox.critical(self, "Error", f"Ledger Sync Failed: {str(e)}")
 
     def on_main_stack_change(self, idx):
-        """Handle main tab changes -> Auto-save/Build Catalog if needed."""
-        # If entering Reports (7) or Full Catalog (2), ensure catalog layout is updated
-        # This acts as the "Auto Save" feature when switching tabs
-        if idx in [2, 7]:
-            if hasattr(self, 'full_catalog_page'):
-                # Silent build (only processes changes if any)
-                self.full_catalog_page.build_catalog(silent=True)
-                
-                # If entering Reports tab, check if it's currently building
-                if idx == 7 and hasattr(self, 'reports_page'):
-                    is_running = hasattr(self.full_catalog_page, '_build_worker') and self.full_catalog_page._build_worker is not None and self.full_catalog_page._build_worker.isRunning()
-                    self.reports_page.set_refreshing(is_running)
+        """Handle main tab changes -> Auto-save/Build Catalog on every switch."""
+        # Silent catalog build on every tab switch (picks up any data changes)
+        if hasattr(self, 'full_catalog_page') and idx not in [0, 1]:
+            self.full_catalog_page.build_catalog(silent=True)
+            
+        # If entering Reports tab, check if it's currently building
+        if idx == 7 and hasattr(self, 'reports_page'):
+            is_running = hasattr(self.full_catalog_page, '_build_worker') and self.full_catalog_page._build_worker is not None and self.full_catalog_page._build_worker.isRunning()
+            self.reports_page.set_refreshing(is_running)
 
     def on_catalog_built(self):
         """Called when Full Catalog finishes building in the background"""
@@ -553,7 +550,7 @@ class MainWindow(QWidget):
             
             # Register all pages with their setup functions
             session.register("Final Data", self.final_data_page,
-                lambda page, path: (page.load_and_sync_data(comp_name, path), page.set_company_path(path)))
+                lambda page, path: (page.set_company_path(path), page.refresh_table()))
             
             session.register("Super Master", self.super_master_page,
                 lambda page, path: page.load_super_master_data(path))
@@ -666,7 +663,8 @@ class MainWindow(QWidget):
     def final_data(self):
         if self.current_company and hasattr(self, 'current_company_path'):
             self.main_stack.setCurrentIndex(5)
-            self.final_data_page.load_and_sync_data(self.current_company, self.current_company_path)
+            # Only refresh the table view, don't re-sync from scratch
+            self.final_data_page.refresh_table()
 
     def handle_super_master(self):
         if self.current_company and hasattr(self, 'current_company_path'):

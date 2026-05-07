@@ -42,6 +42,168 @@ def load_stylesheet(app, file_name):
     else:
         print(f"Warning: {file_name} file not found!")
 
+
+def check_first_launch_setup(app):
+    """Show setup dialog if config.json is missing or incomplete.
+    
+    Must run BEFORE MainWindow/DBManager are imported, because
+    DBManager reads config.json at import time.
+    
+    Returns True if setup is complete (existing or just configured).
+    Returns False if user cancelled (app should exit).
+    """
+    import json
+    from src.utils.path_utils import get_app_dir, get_exe_dir
+
+    user_config = os.path.join(get_app_dir(), "config.json")
+    exe_config = os.path.join(get_exe_dir(), "config.json")
+
+    # Check if a valid config already exists
+    for path in [user_config, exe_config]:
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    has_path = data.get("default_path", "") and os.path.isdir(data["default_path"])
+                    # sql_server_name is optional — defaults to .\SQLEXPRESS
+                    if has_path:
+                        return True
+            except Exception:
+                pass
+
+    # No valid config found — show setup dialog
+    from PyQt6.QtWidgets import (
+        QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+        QPushButton, QFileDialog, QMessageBox, QFrame
+    )
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QFont
+
+    dlg = QDialog()
+    dlg.setWindowTitle("JK Catalog — First Time Setup")
+    dlg.setFixedSize(520, 340)
+    dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+
+    layout = QVBoxLayout(dlg)
+    layout.setSpacing(12)
+    layout.setContentsMargins(24, 24, 24, 24)
+
+    # Title
+    title = QLabel("Welcome to JK Catalog")
+    title.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
+    title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    layout.addWidget(title)
+
+    subtitle = QLabel("Please configure the application before first use.")
+    subtitle.setFont(QFont("Segoe UI", 10))
+    subtitle.setStyleSheet("color: #666;")
+    subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    layout.addWidget(subtitle)
+
+    # Separator
+    line = QFrame()
+    line.setFrameShape(QFrame.Shape.HLine)
+    line.setStyleSheet("color: #ddd;")
+    layout.addWidget(line)
+
+    # Data Path
+    layout.addWidget(QLabel("📁 Data Folder Path:"))
+    path_row = QHBoxLayout()
+    path_input = QLineEdit()
+    path_input.setPlaceholderText("Select where company data will be stored...")
+    path_input.setMinimumHeight(32)
+    browse_btn = QPushButton("Browse...")
+    browse_btn.setMinimumHeight(32)
+    browse_btn.setFixedWidth(90)
+    path_row.addWidget(path_input)
+    path_row.addWidget(browse_btn)
+    layout.addLayout(path_row)
+
+    def browse_folder():
+        folder = QFileDialog.getExistingDirectory(dlg, "Select Data Folder", "")
+        if folder:
+            path_input.setText(folder)
+
+    browse_btn.clicked.connect(browse_folder)
+
+    # SQL Server
+    layout.addWidget(QLabel("🗄️ SQL Server Instance Name:"))
+    sql_input = QLineEdit(r".\SQLEXPRESS")
+    sql_input.setMinimumHeight(32)
+    sql_input.setPlaceholderText(r"e.g. .\SQLEXPRESS or SERVERNAME\SQLEXPRESS")
+    layout.addWidget(sql_input)
+
+    hint = QLabel("Leave default if SQL Server Express is installed locally.")
+    hint.setStyleSheet("color: #888; font-size: 10px;")
+    layout.addWidget(hint)
+
+    layout.addStretch()
+
+    # Buttons
+    btn_row = QHBoxLayout()
+    btn_row.addStretch()
+    save_btn = QPushButton("✅ Save && Continue")
+    save_btn.setMinimumHeight(36)
+    save_btn.setMinimumWidth(160)
+    save_btn.setStyleSheet(
+        "background-color: #28a745; color: white; font-weight: bold; "
+        "border-radius: 4px; padding: 6px 16px;"
+    )
+    cancel_btn = QPushButton("Cancel")
+    cancel_btn.setMinimumHeight(36)
+    cancel_btn.setMinimumWidth(90)
+    btn_row.addWidget(save_btn)
+    btn_row.addWidget(cancel_btn)
+    layout.addLayout(btn_row)
+
+    result = {"accepted": False}
+
+    def save_config():
+        data_path = path_input.text().strip()
+        sql_name = sql_input.text().strip() or r".\SQLEXPRESS"
+
+        if not data_path:
+            QMessageBox.warning(dlg, "Missing Path", "Please select a data folder path.")
+            return
+
+        # Create the folder if it doesn't exist
+        os.makedirs(data_path, exist_ok=True)
+
+        if not os.path.isdir(data_path):
+            QMessageBox.warning(dlg, "Invalid Path", f"Cannot create folder:\n{data_path}")
+            return
+
+        config_data = {
+            "default_path": data_path,
+            "sql_server_name": sql_name,
+        }
+
+        # Save to user config
+        try:
+            os.makedirs(os.path.dirname(user_config), exist_ok=True)
+            with open(user_config, 'w', encoding='utf-8') as f:
+                json.dump(config_data, f, indent=2)
+        except Exception as e:
+            QMessageBox.critical(dlg, "Error", f"Cannot save user config:\n{e}")
+            return
+
+        # Also save global config next to EXE (for other RDP users)
+        if exe_config != user_config:
+            try:
+                with open(exe_config, 'w', encoding='utf-8') as f:
+                    json.dump(config_data, f, indent=2)
+            except Exception:
+                pass  # Non-critical — user config is enough
+
+        result["accepted"] = True
+        dlg.accept()
+
+    save_btn.clicked.connect(save_config)
+    cancel_btn.clicked.connect(dlg.reject)
+
+    dlg.exec()
+    return result["accepted"]
+
 def main():
     # Initialize crash logger FIRST, before anything else
     setup_crash_logger()
@@ -66,6 +228,11 @@ def main():
     splash = QSplashScreen(splash_pix, Qt.WindowType.WindowStaysOnTopHint)
     splash.show()
     app.processEvents()
+
+    # --- First Launch Setup (before any DB imports) ---
+    if not check_first_launch_setup(app):
+        # User cancelled setup — exit cleanly
+        sys.exit(0)
 
     # Heavy import AFTER splash is visible — MainWindow pulls in 20+ modules
     from src.ui.main_window import MainWindow
