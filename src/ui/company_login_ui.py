@@ -54,6 +54,7 @@ class LoginDialog(QDialog):
         self.company_name = company_name
         self.folder_path = folder_path
         self.security = security_mgr
+        self.session = None  # UserSession set on successful login
         
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setFixedSize(450, 300) 
@@ -125,16 +126,12 @@ class LoginDialog(QDialog):
         username = self.user_edit.text()
         password = self.pass_edit.text()
         
-        # Allow empty username and password bypass
-        if username == "" and password == "":
-            logger.info(f"Login successful (empty credentials bypass): company='{self.company_name}'")
-            self.accept()
-            return
-            
-        # STRICT SECURITY MODE: Only DB Login allowed
-        db_user = self.security.verify_login(self.folder_path, username, password)
-        if db_user:
-            logger.info(f"Login successful: company='{self.company_name}', user='{username}'")
+        # Verify via SecurityManager (returns UserSession on success, None on failure)
+        # Empty username + password is allowed — handled by normal bcrypt flow
+        session = self.security.verify_login(self.folder_path, username, password)
+        if session:
+            self.session = session
+            logger.info(f"Login successful: {session}")
             self.accept()
             return
 
@@ -334,7 +331,7 @@ class CompanyCreateForm(QWidget):
 
 # ================= 4. MAIN UI MANAGER (DECENTRALIZED) =================
 class CompanyLoginUI(QWidget):
-    login_success_signal = pyqtSignal(str, str) 
+    login_success_signal = pyqtSignal(str, str, object)  # (company_name, path, UserSession)
 
     def __init__(self):
         super().__init__()
@@ -593,9 +590,9 @@ class CompanyLoginUI(QWidget):
             # Pass only the path and security manager. No legacy credentials!
             dlg = LoginDialog(display_name, path, self.security, self)
             
-            if dlg.exec():
+            if dlg.exec() and dlg.session:
                 self.save_history(path)
-                self.login_success_signal.emit(display_name, path)
+                self.login_success_signal.emit(display_name, path, dlg.session)
         except Exception as e:
             QMessageBox.critical(self, "Login Error", str(e))
 

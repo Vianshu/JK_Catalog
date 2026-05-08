@@ -39,6 +39,7 @@ logger = get_logger(__name__)
 # Settings & Services
 from src.ui.settings import (
     CRMDialog, UserManagerDialog, SecurityDialog,
+    AuditLogDialog, ChangePasswordDialog,
     load_crm_list, save_crm_to_json, update_crm_in_json
 )
 from src.services.tally_sync import fetch_tally_data, fetch_tally_ledger_data
@@ -148,6 +149,14 @@ class MainWindow(QWidget):
         self.current_company = ""
         self.is_maximized = True
         self.current_active_btn = None
+        self.user_session = None  # UserSession set after login
+        
+        # Session timeout timer (30 min default, reset on user activity)
+        from PyQt6.QtCore import QTimer
+        self._timeout_timer = QTimer(self)
+        self._timeout_timer.setSingleShot(True)
+        self._timeout_timer.timeout.connect(self._on_session_timeout)
+        self._timeout_minutes = 30  # Configurable per-company
         
         # Shortcuts
         QShortcut(QKeySequence("Ctrl+Q"), self, activated=self.close)
@@ -174,6 +183,7 @@ class MainWindow(QWidget):
 
     def keyPressEvent(self, event):
         """Handle Alt+Key shortcuts contextually and Toggle Highlights."""
+        self._reset_timeout()  # Reset session timeout on keyboard activity
         if event.key() == Qt.Key.Key_Alt:
             self.toggle_hotkey_hints(True)
 
@@ -308,44 +318,46 @@ class MainWindow(QWidget):
         ])
         self.nav_stack.addWidget(m_main)
 
-        # Index 2: Catalog Menu
+        # Index 2: Catalog Menu (permission keys for access control)
         m_catalog = self.create_menu_widget([
             ("⬅️ &Back", self.go_back_to_main, True),
-            ("🔄 S&ync Tally", self.on_sync_tally_clicked),
-            ("📑 Super &Master", self.handle_super_master),
-            ("✅ &Final Data", self.final_data),
-            ("📖 Full Catalo&g", lambda: self.main_stack.setCurrentIndex(2)),
-            ("📈 Rep&orts", lambda: self.main_stack.setCurrentIndex(7)),
+            ("🔄 S&ync Tally", self.on_sync_tally_clicked, False, None, "final_data.sync"),
+            ("📑 Super &Master", self.handle_super_master, False, None, "tab.super_master"),
+            ("✅ &Final Data", self.final_data, False, None, "tab.final_data"),
+            ("📖 Full Catalo&g", lambda: self.main_stack.setCurrentIndex(2), False, None, "tab.catalog"),
+            ("📈 Rep&orts", lambda: self.main_stack.setCurrentIndex(7), False, None, "tab.reports"),
             ("🏷 Cat / &Price List", self.handle_catalog_price_list),
-            ("🧪 Preview &Rows", lambda: self.main_stack.setCurrentIndex(17)),
-            ("➕ &Create CRM", self.handle_create_crm),
-            ("✏️ &Alter CRM", self.handle_alter_crm)
+            ("🧪 Preview &Rows", lambda: self.main_stack.setCurrentIndex(17), False, None, "tab.group_test"),
+            ("➕ &Create CRM", self.handle_create_crm, False, None, "settings.manage_crm"),
+            ("✏️ &Alter CRM", self.handle_alter_crm, False, None, "settings.manage_crm")
         ])
         self.nav_stack.addWidget(m_catalog)
 
         # Index 3: Settings Menu
         m_settings = self.create_menu_widget([
             ("⬅️ &Back", self.go_back_to_main, True),
-            ("🏢 &Alter Company", self.handle_alter_company),
+            ("🏢 &Alter Company", self.handle_alter_company, False, None, "settings.company_config"),
             ("🔄 S&witch Co.", self.back_to_login_screen),
-            ("👤 &Create User", self.handle_create_user),
-            ("✏️ Alter &User", self.handle_alter_user),
-            ("🛡️ Secu&rity", self.handle_security),
-            ("📅 Ca&lendar", self.handle_calendar_mapping)
+            ("👤 &Create User", self.handle_create_user, False, None, "settings.manage_users"),
+            ("✏️ Alter &User", self.handle_alter_user, False, None, "settings.manage_users"),
+            ("🛡️ Secu&rity", self.handle_security, False, None, "settings.manage_roles"),
+            ("📋 Audit &Log", self.handle_audit_log, False, None, "settings.manage_roles"),
+            ("🔑 Change &Password", self.handle_change_password),
+            ("📅 Ca&lendar", self.handle_calendar_mapping, False, None, "tab.calendar")
         ])
         self.nav_stack.addWidget(m_settings)
 
         # Index 4: Tally Internal
         m_tally = self.create_menu_widget([
             ("⬅️ &Back", self.go_back_to_main, True),
-            ("🔄 Sync &Ledger", self.on_sync_ledger_clicked),
-            ("🧪 Ledger &Rows", self.on_ledger_row_data_clicked),
-            ("💰 &On Account", lambda: self.main_stack.setCurrentIndex(9)),
-            ("🧾 C&hq. List", self.handle_cheque_list),
-            ("🏠 &Godown List", lambda: self.main_stack.setCurrentIndex(10)),
-            ("📈 &Sales Chat", lambda: self.main_stack.setCurrentIndex(11)),
+            ("🔄 Sync &Ledger", self.on_sync_ledger_clicked, False, None, "ledger.sync"),
+            ("🧪 Ledger &Rows", self.on_ledger_row_data_clicked, False, None, "tab.ledger"),
+            ("💰 &On Account", lambda: self.main_stack.setCurrentIndex(9), False, None, "tab.payment_list"),
+            ("🧾 C&hq. List", self.handle_cheque_list, False, None, "tab.cheque_list"),
+            ("🏠 &Godown List", lambda: self.main_stack.setCurrentIndex(10), False, None, "tab.godown"),
+            ("📈 &Sales Chat", lambda: self.main_stack.setCurrentIndex(11), False, None, "tab.sales_chat"),
             ("💸 Supp. Pa&yment", lambda: self.main_stack.setCurrentIndex(12)),
-            ("🏷 Pri&ce List", lambda: self.main_stack.setCurrentIndex(8)),
+            ("🏷 Pri&ce List", lambda: self.main_stack.setCurrentIndex(8), False, None, "tab.price_list"),
             ("📥 Pur &Import", self.handle_pur_import),
             ("📊 Cos&t Sheet", self.handle_int_cost_sheet),
             ("🏢 For &Branch", self.show_branch_submenu)
@@ -472,6 +484,7 @@ class MainWindow(QWidget):
             func = data[1]
             is_back = data[2] if len(data) > 2 else False
             custom_key = data[3] if len(data) > 3 else None
+            perm_key = data[4] if len(data) > 4 else None
             
             # --- Shortcut Logic (Custom Keys only) ---
             sc = None
@@ -485,6 +498,10 @@ class MainWindow(QWidget):
                  display_text = f"{text} ({custom_key})"
                  
             btn = MenuButtonWidget(display_text, is_back)
+            
+            # Store permission key on the button for later enforcement
+            if perm_key:
+                btn.setProperty("permission_key", perm_key)
             
             if func:
                 btn.clicked.connect(lambda checked=False, b=btn: self.set_active_menu_btn(b))
@@ -529,10 +546,11 @@ class MainWindow(QWidget):
     def show_branch_submenu(self): self.nav_stack.setCurrentIndex(6)
 
     # --- Business Logic Methods (Login, Sync, CRM etc.) ---
-    def handle_login_success(self, comp_name, company_path):
+    def handle_login_success(self, comp_name, company_path, user_session=None):
         try:
             self.current_company = comp_name
             self.current_company_path = company_path
+            self.user_session = user_session
             set_company_context(comp_name)
             
             # Update UI with company name
@@ -599,6 +617,20 @@ class MainWindow(QWidget):
             self.nav_stack.setCurrentIndex(1) 
             self.main_stack.setCurrentIndex(1)
             
+            # Apply RBAC permissions to menu buttons and inside-tab controls
+            # Propagate session to pages that need internal permission checks
+            for page in [self.final_data_page, self.super_master_page,
+                         self.full_catalog_page, self.reports_page,
+                         self.godown_page]:
+                page._user_session = self.user_session
+            if hasattr(self, 'cheque_list_page'):
+                self.cheque_list_page._user_session = self.user_session
+            if hasattr(self, 'calendar_page'):
+                self.calendar_page._user_session = self.user_session
+            
+            self._apply_permissions()
+            self._start_timeout()  # Start session timeout
+            
             # CRITICAL FIX: Lock the window size again so the dashboard
             # cannot push the bottom out of bounds.
             self.maximize_window()
@@ -606,6 +638,138 @@ class MainWindow(QWidget):
         except Exception as e:
             logger.error(f"Login failed: company='{comp_name}', error={e}", exc_info=True)
             QMessageBox.critical(self, "Login Error", f"Failed to load company data:\n{str(e)}")
+
+    def _apply_permissions(self):
+        """Enforce RBAC on menu buttons AND inside-tab controls after login.
+        
+        Two layers:
+        1. Menu buttons — scanned for 'permission_key' property
+        2. Inside-tab controls — buttons/tables disabled based on permission keys
+        """
+        if not self.user_session:
+            return
+        
+        s = self.user_session  # shorthand
+        
+        # ── Layer 1: Menu Buttons ──
+        for menu_widget in [self.nav_stack.widget(i) for i in range(self.nav_stack.count())]:
+            if not menu_widget:
+                continue
+            for btn in menu_widget.findChildren(MenuButtonWidget):
+                perm_key = btn.property("permission_key")
+                if perm_key and isinstance(perm_key, str):
+                    allowed = s.can(perm_key)
+                    btn.setEnabled(allowed)
+                    if not allowed:
+                        btn.setToolTip(f"🔒 Access denied — requires '{perm_key}' permission")
+                        btn.setStyleSheet("opacity: 0.4;")
+                    else:
+                        btn.setToolTip("")
+                        btn.setStyleSheet("")
+        
+        # ── Layer 2: Inside-Tab Controls ──
+        
+        # Final Data — table editing
+        if hasattr(self, 'final_data_page'):
+            page = self.final_data_page
+            can_edit = s.can("final_data.edit")
+            if hasattr(page, 'table'):
+                if can_edit:
+                    page.table.setEditTriggers(
+                        page.table.EditTrigger.DoubleClicked | page.table.EditTrigger.EditKeyPressed)
+                else:
+                    page.table.setEditTriggers(page.table.EditTrigger.NoEditTriggers)
+        
+        # Full Catalog — build, print, export, reshuffle, page management
+        if hasattr(self, 'full_catalog_page'):
+            page = self.full_catalog_page
+            if hasattr(page, 'btn_build'):
+                page.btn_build.setEnabled(s.can("catalog.build"))
+            if hasattr(page, 'btn_print'):
+                page.btn_print.setEnabled(s.can("catalog.print"))
+            if hasattr(page, 'btn_export'):
+                page.btn_export.setEnabled(s.can("catalog.print"))
+            if hasattr(page, 'btn_reshuffle'):
+                page.btn_reshuffle.setEnabled(s.can("catalog.edit_assignment"))
+            if hasattr(page, 'btn_add_page'):
+                page.btn_add_page.setEnabled(s.can("catalog.edit_assignment"))
+            if hasattr(page, 'btn_remove_page'):
+                page.btn_remove_page.setEnabled(s.can("catalog.edit_assignment"))
+        
+        # Reports — print and mark done
+        if hasattr(self, 'reports_page'):
+            page = self.reports_page
+            can_print = s.can("reports.print")
+            can_mark = s.can("reports.mark_done")
+            # Reports page buttons may have different naming — guard safely
+            for attr in ['btn_print', 'print_btn', 'btn_print_all']:
+                if hasattr(page, attr):
+                    getattr(page, attr).setEnabled(can_print)
+            for attr in ['btn_mark_done', 'mark_done_btn', 'btn_done']:
+                if hasattr(page, attr):
+                    getattr(page, attr).setEnabled(can_mark)
+        
+        # Super Master — editing
+        if hasattr(self, 'super_master_page'):
+            page = self.super_master_page
+            can_edit = s.can("super_master.edit")
+            if hasattr(page, 'table'):
+                if can_edit:
+                    page.table.setEditTriggers(
+                        page.table.EditTrigger.DoubleClicked | page.table.EditTrigger.EditKeyPressed)
+                else:
+                    page.table.setEditTriggers(page.table.EditTrigger.NoEditTriggers)
+        
+        # Cheque List — editing
+        if hasattr(self, 'cheque_list_page'):
+            page = self.cheque_list_page
+            can_edit = s.can("cheque_list.edit")
+            if hasattr(page, 'table'):
+                if can_edit:
+                    page.table.setEditTriggers(
+                        page.table.EditTrigger.DoubleClicked | page.table.EditTrigger.EditKeyPressed)
+                else:
+                    page.table.setEditTriggers(page.table.EditTrigger.NoEditTriggers)
+        
+        # Calendar — editing
+        if hasattr(self, 'calendar_page'):
+            page = self.calendar_page
+            can_edit = s.can("calendar.edit")
+            if hasattr(page, 'table'):
+                if can_edit:
+                    page.table.setEditTriggers(
+                        page.table.EditTrigger.DoubleClicked | page.table.EditTrigger.EditKeyPressed)
+                else:
+                    page.table.setEditTriggers(page.table.EditTrigger.NoEditTriggers)
+        
+        logger.info(f"Permissions applied: user='{s.username}', "
+                     f"role='{s.role_name}', admin={s.is_admin}")
+
+    def _start_timeout(self):
+        """Start/restart the session timeout timer after login."""
+        if self._timeout_minutes > 0:
+            self._timeout_timer.start(self._timeout_minutes * 60 * 1000)
+
+    def _reset_timeout(self):
+        """Reset the timer on any user activity (called from event handlers)."""
+        if self.user_session and self._timeout_timer.isActive():
+            self._timeout_timer.start(self._timeout_minutes * 60 * 1000)
+
+    def _on_session_timeout(self):
+        """Auto-logout when session times out."""
+        if not self.user_session:
+            return
+        logger.warning(f"Session timeout: user='{self.user_session.username}'")
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.warning(self, "Session Expired",
+            f"Your session has timed out after {self._timeout_minutes} minutes of inactivity.\n"
+            "You will be logged out.")
+        self.back_to_login_screen()
+
+    def mousePressEvent(self, event):
+        """Reset timeout on mouse click."""
+        self._reset_timeout()
+        super().mousePressEvent(event)
 
     def on_sync_tally_clicked(self):
         if not self.current_company: return
@@ -674,10 +838,22 @@ class MainWindow(QWidget):
     def handle_catalog_price_list(self): CatalogPriceListUI(self).exec()
     def handle_int_cost_sheet(self): IntCostSheetUI(self).exec()
     def handle_pur_import(self): PurImportUI(self).exec()
-    def handle_security(self): SecurityDialog(self).exec()
+    def handle_security(self): 
+        if self.current_company and hasattr(self, 'current_company_path'):
+            SecurityDialog(self.current_company, self.current_company_path, parent=self).exec()
     def handle_alter_user(self): 
         if self.current_company and hasattr(self, 'current_company_path'):
             UserManagerDialog(self.current_company, self.current_company_path, parent=self).exec()
+    
+    def handle_audit_log(self):
+        if self.current_company and hasattr(self, 'current_company_path'):
+            AuditLogDialog(self.current_company, self.current_company_path, parent=self).exec()
+    
+    def handle_change_password(self):
+        if self.user_session:
+            from src.logic.security_manager import SecurityManager
+            sm = SecurityManager(os.path.dirname(self.current_company_path) if hasattr(self, 'current_company_path') else "")
+            ChangePasswordDialog(self.user_session, sm, parent=self).exec()
     
     def handle_cheque_list(self):
         self.main_stack.setCurrentIndex(15)
@@ -687,14 +863,25 @@ class MainWindow(QWidget):
     
     def handle_create_user(self):
         if self.current_company and hasattr(self, 'current_company_path'):
-            # Dialog handles saving internally now via SecurityManager
             UserManagerDialog(self.current_company, self.current_company_path, parent=self).exec()
 
     def back_to_login_screen(self):
         logger.info(f"User logged out")
         set_company_context("")
+        self.user_session = None  # Clear session
+        self._timeout_timer.stop()  # Stop session timeout
         self.set_active_menu_btn(None) # Clear highlighting
         self.company_btn.hide()
+        
+        # Re-enable all menu buttons (clear permission locks from previous session)
+        for menu_widget in [self.nav_stack.widget(i) for i in range(self.nav_stack.count())]:
+            if not menu_widget:
+                continue
+            for btn in menu_widget.findChildren(MenuButtonWidget):
+                btn.setEnabled(True)
+                btn.setToolTip("")
+                btn.setStyleSheet("")
+        
         self.nav_stack.setCurrentIndex(0)
         self.main_stack.setCurrentIndex(0)
         self.company_login.show_list()
@@ -708,8 +895,8 @@ class MainWindow(QWidget):
         menu.exec(self.company_btn.mapToGlobal(self.company_btn.rect().bottomLeft()))
 
     def handle_alter_company(self):
-        if self.current_company:
-            self.company_login.form_screen.load_for_alter(self.current_company)
+        if self.current_company and hasattr(self, 'current_company_path'):
+            self.company_login.form_screen.load_for_alter(self.current_company_path)
             self.main_stack.setCurrentIndex(0)
             self.company_login.stack.setCurrentIndex(1)
 

@@ -2,7 +2,8 @@ import json
 import os
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
-    QPushButton, QComboBox, QTableWidget, QTableWidgetItem, QMessageBox
+    QPushButton, QComboBox, QTableWidget, QTableWidgetItem, QMessageBox,
+    QWidget, QFrame, QInputDialog, QScrollArea, QCheckBox, QGridLayout, QGroupBox
 )
 
 class EmptyPagesDialog(QDialog):
@@ -107,129 +108,573 @@ class CRMDialog(QDialog):
 
         super().accept()
         
-# --- User Manager Dialog ---
+# --- User Manager Dialog (RBAC-aware) ---
+
 class UserManagerDialog(QDialog):
-    def __init__(self, company_name, company_path, parent=None):
+    """Manage users within a company — create, edit roles, reset passwords, deactivate."""
+    def __init__(self, company_name, company_path, security_mgr=None, parent=None):
+        super().__init__(parent)
+        self.company_name = company_name
+        self.company_path = company_path
+        self.roles = []
+        
+        # Use provided security manager or create one
+        if security_mgr:
+            self.security = security_mgr
+        else:
+            from src.logic.security_manager import SecurityManager
+            data_path = os.path.dirname(company_path) if company_path else ""
+            try:
+                self.security = SecurityManager(data_path)
+            except Exception as e:
+                self.security = None
+                QMessageBox.warning(self, "Security Error", f"Could not connect.\n{e}")
+        
+        self.setObjectName("UserManagerDialog")
+        self.setWindowTitle(f"User Management — {company_name}")
+        self.setFixedSize(700, 500)
+
+        layout = QVBoxLayout(self)
+        title = QLabel(f"<h3>👤 Users — {company_name}</h3>")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
+        # User table
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["Username", "Role", "Active", "Last Login", "Actions"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setColumnWidth(0, 140)
+        self.table.setColumnWidth(1, 150)
+        self.table.setColumnWidth(2, 60)
+        self.table.setColumnWidth(3, 130)
+        layout.addWidget(self.table)
+
+        # Add user section
+        add_frame = QFrame()
+        add_layout = QHBoxLayout(add_frame)
+        add_layout.setContentsMargins(0, 5, 0, 5)
+        add_layout.addWidget(QLabel("New:"))
+        self.new_user_edit = QLineEdit()
+        self.new_user_edit.setPlaceholderText("Username")
+        self.new_user_edit.setFixedWidth(120)
+        add_layout.addWidget(self.new_user_edit)
+        self.new_pass_edit = QLineEdit()
+        self.new_pass_edit.setPlaceholderText("Password")
+        self.new_pass_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.new_pass_edit.setFixedWidth(120)
+        add_layout.addWidget(self.new_pass_edit)
+        self.new_role_combo = QComboBox()
+        self.new_role_combo.setFixedWidth(140)
+        add_layout.addWidget(self.new_role_combo)
+        add_btn = QPushButton("➕ Add")
+        add_btn.clicked.connect(self._add_user)
+        add_layout.addWidget(add_btn)
+        add_layout.addStretch()
+        layout.addWidget(add_frame)
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
+        
+        self._load_roles()
+        self._load_users()
+
+    def _get_company_id(self):
+        if not self.security:
+            return None
+        conn = self.security.db.get_connection('JK_Security')
+        if not conn:
+            return None
+        try:
+            cursor = conn.cursor()
+            fp = os.path.normpath(os.path.abspath(self.company_path))
+            cursor.execute("SELECT id FROM companies WHERE folder_path = ?", (fp,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+        except Exception:
+            return None
+
+    def _load_roles(self):
+        self.new_role_combo.clear()
+        cid = self._get_company_id()
+        if not cid or not self.security:
+            return
+        self.roles = self.security.get_roles_for_company(cid)
+        for r in self.roles:
+            self.new_role_combo.addItem(r["role_name"], r["id"])
+
+    def _load_users(self):
+        if not self.security:
+            return
+        users = self.security.get_users_for_company(self.company_path)
+        self.table.setRowCount(len(users))
+        
+        for i, u in enumerate(users):
+            name_item = QTableWidgetItem(f"{'👑 ' if u['is_admin'] else ''}{u['username'] or '(empty)'}")
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(i, 0, name_item)
+            
+            role_combo = QComboBox()
+            for r in self.roles:
+                role_combo.addItem(r["role_name"], r["id"])
+            for idx in range(role_combo.count()):
+                if role_combo.itemText(idx) == u["role_name"]:
+                    role_combo.setCurrentIndex(idx)
+                    break
+            if u["is_admin"]:
+                role_combo.setEnabled(False)
+            else:
+                uid = u["id"]
+                role_combo.currentIndexChanged.connect(
+                    lambda _, uid=uid, cb=role_combo: self.security.update_user(uid, role_id=cb.currentData()))
+            self.table.setCellWidget(i, 1, role_combo)
+            
+            active_item = QTableWidgetItem("✅" if u["is_active"] else "❌")
+            active_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            active_item.setFlags(active_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(i, 2, active_item)
+            
+            login_text = str(u["last_login"])[:16] if u["last_login"] else "Never"
+            login_item = QTableWidgetItem(login_text)
+            login_item.setFlags(login_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(i, 3, login_item)
+            
+            if not u["is_admin"]:
+                action_w = QWidget()
+                al = QHBoxLayout(action_w)
+                al.setContentsMargins(2, 2, 2, 2)
+                al.setSpacing(4)
+                uid, uname, is_active = u["id"], u["username"], u["is_active"]
+                
+                rb = QPushButton("🔑"); rb.setToolTip("Reset Password"); rb.setFixedSize(30, 25)
+                rb.clicked.connect(lambda _, uid=uid, un=uname: self._reset_pw(uid, un))
+                al.addWidget(rb)
+                
+                tb = QPushButton("🚫" if is_active else "✅")
+                tb.setToolTip("Deactivate" if is_active else "Activate"); tb.setFixedSize(30, 25)
+                tb.clicked.connect(lambda _, uid=uid, a=is_active: self._toggle(uid, a))
+                al.addWidget(tb)
+                
+                db = QPushButton("🗑"); db.setToolTip("Delete"); db.setFixedSize(30, 25)
+                db.clicked.connect(lambda _, uid=uid, un=uname: self._del(uid, un))
+                al.addWidget(db)
+                self.table.setCellWidget(i, 4, action_w)
+
+    def _reset_pw(self, uid, uname):
+        pw, ok = QInputDialog.getText(self, "Reset Password", f"New password for '{uname}':", QLineEdit.EchoMode.Password)
+        if ok:
+            self.security.update_user(uid, password=pw)
+            QMessageBox.information(self, "Done", f"Password reset for '{uname}'.")
+
+    def _toggle(self, uid, active):
+        self.security.update_user(uid, is_active=not active)
+        self._load_users()
+
+    def _del(self, uid, uname):
+        if QMessageBox.question(self, "Delete", f"Delete '{uname}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            self.security.delete_user(uid)
+            self._load_users()
+
+    def _add_user(self):
+        uname = self.new_user_edit.text().strip()
+        pw = self.new_pass_edit.text()
+        rid = self.new_role_combo.currentData()
+        if not uname:
+            QMessageBox.warning(self, "Error", "Username required."); return
+        if self.security.add_user(self.company_path, uname, pw, rid):
+            self.new_user_edit.clear(); self.new_pass_edit.clear()
+            self._load_users()
+        else:
+            QMessageBox.warning(self, "Error", f"User '{uname}' already exists.")
+
+
+# --- Role / Security Manager Dialog ---
+class SecurityDialog(QDialog):
+    """Manage roles and permissions with a checkbox grid."""
+    def __init__(self, company_name="", company_path="", security_mgr=None, parent=None):
+        super().__init__(parent)
+        self.company_name = company_name
+        self.company_path = company_path
+        self.roles = []
+        
+        if security_mgr:
+            self.security = security_mgr
+        else:
+            from src.logic.security_manager import SecurityManager
+            data_path = os.path.dirname(company_path) if company_path else ""
+            try:
+                self.security = SecurityManager(data_path)
+            except Exception:
+                self.security = None
+        
+        self.setObjectName("SecurityDialog")
+        self.setWindowTitle(f"Role & Permissions — {company_name}")
+        self.setFixedSize(800, 600)
+        
+        layout = QVBoxLayout(self)
+        title = QLabel(f"<h3>🛡️ Security Roles — {company_name}</h3>")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+        
+        # Role selector bar
+        role_bar = QHBoxLayout()
+        role_bar.addWidget(QLabel("Role:"))
+        self.role_combo = QComboBox()
+        self.role_combo.setMinimumWidth(200)
+        self.role_combo.currentIndexChanged.connect(self._on_role_selected)
+        role_bar.addWidget(self.role_combo)
+        self.btn_new = QPushButton("➕ New")
+        self.btn_new.clicked.connect(self._create_role)
+        role_bar.addWidget(self.btn_new)
+        self.btn_del = QPushButton("🗑 Delete")
+        self.btn_del.clicked.connect(self._delete_role)
+        role_bar.addWidget(self.btn_del)
+        role_bar.addStretch()
+        layout.addLayout(role_bar)
+        
+        desc_bar = QHBoxLayout()
+        desc_bar.addWidget(QLabel("Description:"))
+        self.desc_edit = QLineEdit()
+        desc_bar.addWidget(self.desc_edit)
+        layout.addLayout(desc_bar)
+        
+        # Permission checkboxes in scrollable area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        perm_widget = QWidget()
+        self.perm_layout = QVBoxLayout(perm_widget)
+        self.checkboxes = {}
+        self._build_perm_grid()
+        scroll.setWidget(perm_widget)
+        layout.addWidget(scroll, 1)
+        
+        btn_bar = QHBoxLayout()
+        save_btn = QPushButton("💾 Save Permissions")
+        save_btn.clicked.connect(self._save_role)
+        btn_bar.addWidget(save_btn)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_bar.addWidget(close_btn)
+        layout.addLayout(btn_bar)
+        
+        self._load_roles()
+
+    def _get_company_id(self):
+        if not self.security:
+            return None
+        conn = self.security.db.get_connection('JK_Security')
+        if not conn:
+            return None
+        try:
+            cursor = conn.cursor()
+            fp = os.path.normpath(os.path.abspath(self.company_path))
+            cursor.execute("SELECT id FROM companies WHERE folder_path = ?", (fp,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+        except Exception:
+            return None
+
+    def _build_perm_grid(self):
+        from src.logic.session import PERMISSION_REGISTRY
+        groups = {}
+        for key, desc in PERMISSION_REGISTRY.items():
+            cat = key.split(".")[0]
+            groups.setdefault(cat, []).append((key, desc))
+        
+        cat_labels = {
+            "tab": "📁 Tab Visibility", "final_data": "✅ Final Data",
+            "super_master": "📑 Super Master", "catalog": "📖 Catalog",
+            "godown": "🏠 Godown", "reports": "📈 Reports",
+            "row_data": "🧪 Row Data", "ledger": "📒 Ledger",
+            "cheque_list": "🧾 Cheque List", "calendar": "📅 Calendar",
+            "settings": "⚙️ Settings / Admin",
+        }
+        for cat, perms in groups.items():
+            gb = QGroupBox(cat_labels.get(cat, cat.title()))
+            grid = QGridLayout(gb)
+            grid.setSpacing(4)
+            for i, (key, desc) in enumerate(perms):
+                cb = QCheckBox(f"{key.split('.')[-1]}  —  {desc}")
+                self.checkboxes[key] = cb
+                grid.addWidget(cb, i // 3, i % 3)
+            self.perm_layout.addWidget(gb)
+        self.perm_layout.addStretch()
+
+    def _load_roles(self):
+        self.role_combo.blockSignals(True)
+        self.role_combo.clear()
+        cid = self._get_company_id()
+        if cid and self.security:
+            self.roles = self.security.get_roles_for_company(cid)
+            for r in self.roles:
+                sfx = " (system)" if r["is_system"] else ""
+                self.role_combo.addItem(f"{r['role_name']}{sfx}", r["id"])
+        self.role_combo.blockSignals(False)
+        if self.role_combo.count() > 0:
+            self._on_role_selected()
+
+    def _on_role_selected(self):
+        rid = self.role_combo.currentData()
+        if not rid:
+            return
+        info = next((r for r in self.roles if r["id"] == rid), None)
+        if info:
+            self.desc_edit.setText(info.get("description", "") or "")
+            self.btn_del.setEnabled(not info.get("is_system", False))
+        perms = self.security.get_role_permissions(rid)
+        for key, cb in self.checkboxes.items():
+            cb.setChecked(key in perms)
+
+    def _save_role(self):
+        rid = self.role_combo.currentData()
+        if not rid:
+            return
+        selected = [k for k, cb in self.checkboxes.items() if cb.isChecked()]
+        desc = self.desc_edit.text().strip()
+        if self.security.update_role(rid, description=desc, permission_keys=selected):
+            QMessageBox.information(self, "Saved", f"Updated with {len(selected)} permissions.")
+        else:
+            QMessageBox.warning(self, "Error", "Save failed.")
+
+    def _create_role(self):
+        name, ok = QInputDialog.getText(self, "New Role", "Role name:")
+        if ok and name.strip():
+            cid = self._get_company_id()
+            if cid:
+                rid = self.security.create_role(cid, name.strip(), "", [])
+                if rid:
+                    self._load_roles()
+                    for i in range(self.role_combo.count()):
+                        if self.role_combo.itemData(i) == rid:
+                            self.role_combo.setCurrentIndex(i)
+                            break
+                else:
+                    QMessageBox.warning(self, "Error", f"Role '{name}' already exists.")
+
+    def _delete_role(self):
+        rid = self.role_combo.currentData()
+        rname = self.role_combo.currentText()
+        if rid and QMessageBox.question(self, "Delete", f"Delete '{rname}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            if self.security.delete_role(rid):
+                self._load_roles()
+            else:
+                QMessageBox.warning(self, "Error", "Cannot delete system roles.")
+
+
+# --- Audit Log Viewer ---
+class AuditLogDialog(QDialog):
+    """View login history, failed attempts, and user actions."""
+    def __init__(self, company_name="", company_path="", security_mgr=None, parent=None):
         super().__init__(parent)
         self.company_name = company_name
         self.company_path = company_path
         
-        # Initialize Security Manager (SQL Server — takes data_path, not .db file)
-        from src.logic.security_manager import SecurityManager
-        data_path = os.path.dirname(company_path) if company_path else ""
-        try:
-            self.security = SecurityManager(data_path)
-        except Exception as e:
-            self.security = None
-            QMessageBox.warning(self, "Security Error",
-                f"Could not connect to Security database.\n{e}")
+        if security_mgr:
+            self.security = security_mgr
+        else:
+            from src.logic.security_manager import SecurityManager
+            try:
+                self.security = SecurityManager(os.path.dirname(company_path) if company_path else "")
+            except Exception:
+                self.security = None
         
-        self.setObjectName("UserManagerDialog") # Style Tag
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
-        self.setFixedSize(550, 450)
-
+        self.setWindowTitle(f"Audit Log — {company_name}")
+        self.setFixedSize(850, 500)
+        
         layout = QVBoxLayout(self)
-        title = QLabel("List of User")
-        title.setObjectName("UserDialogTitle") # Style Tag
+        title = QLabel(f"<h3>📋 Audit Log — {company_name}</h3>")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
-
-        layout.addWidget(QLabel(f"<b>Company:</b> {company_name}"))
-
-        self.table = QTableWidget(10, 3)
-        self.table.setObjectName("UserSetupTable") # Style Tag
-        self.table.setHorizontalHeaderLabels(["User Roles", "Username", "Password"])
+        
+        # Filter bar
+        filter_bar = QHBoxLayout()
+        filter_bar.addWidget(QLabel("Filter:"))
+        self.filter_combo = QComboBox()
+        self.filter_combo.addItems(["All", "login", "failed_login", "logout", "role_change", "user_created"])
+        self.filter_combo.currentTextChanged.connect(self._load_log)
+        filter_bar.addWidget(self.filter_combo)
+        
+        self.filter_user = QLineEdit()
+        self.filter_user.setPlaceholderText("Username...")
+        self.filter_user.setFixedWidth(120)
+        self.filter_user.textChanged.connect(self._load_log)
+        filter_bar.addWidget(self.filter_user)
+        
+        refresh_btn = QPushButton("🔄 Refresh")
+        refresh_btn.clicked.connect(self._load_log)
+        filter_bar.addWidget(refresh_btn)
+        filter_bar.addStretch()
+        layout.addLayout(filter_bar)
+        
+        # Log table
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["Time", "User", "Action", "Module", "Detail"])
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setColumnWidth(0, 140)
+        self.table.setColumnWidth(1, 100)
+        self.table.setColumnWidth(2, 100)
+        self.table.setColumnWidth(3, 80)
+        self.table.setEditTriggers(self.table.EditTrigger.NoEditTriggers)
         layout.addWidget(self.table)
         
-        # Load existing users from DB
-        self.load_users()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
+        
+        self._load_log()
 
-        btn_box = QHBoxLayout()
-        save_btn = QPushButton("Save (Yes/No)")
-        save_btn.setObjectName("ExecuteImportBtn") # Style Tag
-        save_btn.clicked.connect(self.confirm_save)
-        cancel_btn = QPushButton("Cancel / Close")
-        cancel_btn.clicked.connect(self.reject)
-
-        btn_box.addWidget(save_btn)
-        btn_box.addWidget(cancel_btn)
-        layout.addLayout(btn_box)
-
-    def load_users(self):
+    def _get_company_id(self):
+        if not self.security:
+            return None
+        conn = self.security.db.get_connection('JK_Security')
+        if not conn:
+            return None
         try:
-            users = self.security.get_users_for_company(self.company_path)
-            # Users is a list of dicts: [{'username': 'a', 'role': 'r'}, ...]
-            # Note: We CANNOT retrieve passwords because they are hashed.
-            # We will show empty password fields (or placeholder).
+            cursor = conn.cursor()
+            fp = os.path.normpath(os.path.abspath(self.company_path))
+            cursor.execute("SELECT id FROM companies WHERE folder_path = ?", (fp,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+        except Exception:
+            return None
+
+    def _load_log(self):
+        if not self.security:
+            return
+        cid = self._get_company_id()
+        if not cid:
+            return
+        
+        conn = self.security.db.get_connection('JK_Security')
+        if not conn:
+            return
+        try:
+            cursor = conn.cursor()
+            query = "SELECT TOP 200 timestamp, username, action, module, detail FROM audit_log WHERE company_id = ?"
+            params = [cid]
             
-            self.table.setRowCount(max(10, len(users) + 5))
+            action_filter = self.filter_combo.currentText()
+            if action_filter != "All":
+                query += " AND action = ?"
+                params.append(action_filter)
             
-            for i, u in enumerate(users):
-                self.table.setItem(i, 0, QTableWidgetItem(u['role']))
-                self.table.setItem(i, 1, QTableWidgetItem(u['username']))
-                self.table.setItem(i, 2, QTableWidgetItem("")) # Password empty for security
-        except Exception as e:
-            print(f"Error loading users: {e}")
-
-    def confirm_save(self):
-        reply = QMessageBox.question(self, 'Save Data', 'Do you want to save users?\n(Only rows with passwords will be updated/added)', 
-                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if reply == QMessageBox.StandardButton.Yes:
-            self.save_users()
-            self.accept()
-
-    def save_users(self):
-        rows = self.table.rowCount()
-        for row in range(rows):
-            role_item = self.table.item(row, 0)
-            user_item = self.table.item(row, 1)
-            pwd_item = self.table.item(row, 2)
-
-            if role_item and user_item and pwd_item:
-                r = role_item.text().strip()
-                u = user_item.text().strip()
-                p = pwd_item.text().strip()
+            user_filter = self.filter_user.text().strip()
+            if user_filter:
+                query += " AND username LIKE ?"
+                params.append(f"%{user_filter}%")
+            
+            query += " ORDER BY timestamp DESC"
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            
+            self.table.setRowCount(len(rows))
+            for i, r in enumerate(rows):
+                ts = str(r[0])[:19] if r[0] else ""
+                self.table.setItem(i, 0, QTableWidgetItem(ts))
+                self.table.setItem(i, 1, QTableWidgetItem(r[1] or ""))
                 
-                # Only add/update if password is provided (since we can't read old hash back to UI)
-                if r and u and p:
-                    success = self.security.add_user(self.company_path, u, p, r)
-                    if not success:
-                        print(f"Failed to add user {u} (might already exist)")
-        
-        QMessageBox.information(self, "Success", "Users updated in secure database.")
+                action_item = QTableWidgetItem(r[2] or "")
+                # Color-code actions
+                if r[2] == "failed_login":
+                    action_item.setForeground(Qt.GlobalColor.red)
+                elif r[2] == "login":
+                    action_item.setForeground(Qt.GlobalColor.darkGreen)
+                self.table.setItem(i, 2, action_item)
+                
+                self.table.setItem(i, 3, QTableWidgetItem(r[3] or ""))
+                self.table.setItem(i, 4, QTableWidgetItem(r[4] or ""))
+        except Exception as e:
+            self.table.setRowCount(1)
+            self.table.setItem(0, 0, QTableWidgetItem(f"Error: {e}"))
 
-# --- Security Dialog ---
-class SecurityDialog(QDialog):
-    def __init__(self, parent=None):
+
+# --- Change Password Dialog (self-service) ---
+class ChangePasswordDialog(QDialog):
+    """Allows the logged-in user to change their own password."""
+    def __init__(self, user_session=None, security_mgr=None, parent=None):
         super().__init__(parent)
-        self.setObjectName("SecurityDialog") # Style Tag
-        self.setWindowTitle("Security Level")
-        self.setFixedSize(600, 450)
+        self.user_session = user_session
+        self.security = security_mgr
+        
+        self.setWindowTitle("Change Password")
+        self.setFixedSize(400, 250)
+        
         layout = QVBoxLayout(self)
+        title = QLabel(f"<h3>🔑 Change Password</h3>")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
         
-        header = QLabel("<h2>Security Level</h2>")
-        header.setObjectName("SecurityHeader") # Style Tag
-        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(header)
+        if user_session:
+            layout.addWidget(QLabel(f"User: <b>{user_session.username or '(admin)'}</b>"))
         
-        name_layout = QHBoxLayout()
-        name_layout.addWidget(QLabel("Name of Security Level:"))
-        self.sec_name = QLineEdit()
-        self.sec_name.setObjectName("SecurityNameInput") # Style Tag
-        name_layout.addWidget(self.sec_name)
-        layout.addLayout(name_layout)
+        form = QGridLayout()
+        form.addWidget(QLabel("Current Password:"), 0, 0)
+        self.current_pw = QLineEdit()
+        self.current_pw.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addWidget(self.current_pw, 0, 1)
+        
+        form.addWidget(QLabel("New Password:"), 1, 0)
+        self.new_pw = QLineEdit()
+        self.new_pw.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addWidget(self.new_pw, 1, 1)
+        
+        form.addWidget(QLabel("Confirm Password:"), 2, 0)
+        self.confirm_pw = QLineEdit()
+        self.confirm_pw.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addWidget(self.confirm_pw, 2, 1)
+        layout.addLayout(form)
+        
+        self.error_lbl = QLabel("")
+        self.error_lbl.setStyleSheet("color: red; font-weight: bold;")
+        self.error_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.error_lbl)
+        
+        btn_bar = QHBoxLayout()
+        save_btn = QPushButton("💾 Change Password")
+        save_btn.clicked.connect(self._save)
+        btn_bar.addWidget(save_btn)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_bar.addWidget(cancel_btn)
+        layout.addLayout(btn_bar)
 
-        self.table = QTableWidget(10, 4)
-        self.table.setObjectName("SecurityTable") # Style Tag
-        self.table.setHorizontalHeaderLabels(["Type", "Disallow", "Type", "Allow"])
-        layout.addWidget(self.table)
+    def _save(self):
+        if not self.user_session or not self.security:
+            self.error_lbl.setText("Session error.")
+            return
+        
+        current = self.current_pw.text()
+        new = self.new_pw.text()
+        confirm = self.confirm_pw.text()
+        
+        if new != confirm:
+            self.error_lbl.setText("❌ New passwords don't match.")
+            return
+        
+        # Verify current password
+        session = self.security.verify_login(
+            self.user_session.company_path,
+            self.user_session.username,
+            current
+        )
+        if not session:
+            self.error_lbl.setText("❌ Current password is wrong.")
+            return
+        
+        # Update password
+        if self.security.update_user(self.user_session.user_id, password=new):
+            QMessageBox.information(self, "Success", "Password changed successfully!")
+            self.accept()
+        else:
+            self.error_lbl.setText("❌ Failed to update password.")
 
-        save_btn = QPushButton("Save Security Level")
-        save_btn.setObjectName("PrimaryActionButton") # Style Tag
-        save_btn.clicked.connect(self.accept)
-        layout.addWidget(save_btn)
+
 
 # --- CRM & Report Data Functions (SQL Server via db_manager) ---
 

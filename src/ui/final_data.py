@@ -274,6 +274,17 @@ class FinalDataUI(QWidget):
     def save_cell_to_db(self, item):
         if self.table.signalsBlocked(): return
         
+        # RBAC: Block edits if user lacks permission
+        session = getattr(self, '_user_session', None)
+        if session and not session.can("final_data.edit"):
+            # Revert the change silently
+            old = item.data(Qt.ItemDataRole.UserRole)
+            if old is not None:
+                self.table.blockSignals(True)
+                item.setText(str(old))
+                self.table.blockSignals(False)
+            return
+        
         new_val = item.text().strip()
         old_val = item.data(Qt.ItemDataRole.UserRole)
         row, col = item.row(), item.column()
