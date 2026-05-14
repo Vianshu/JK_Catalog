@@ -138,11 +138,11 @@ class SecurityManager:
     def register_company(self, display_name, folder_path, image_path, admin_user, admin_pass):
         """Register a new company with its admin user + default roles.
 
-        If company exists (same path), updates details and resets admin password.
+        If company exists (same path), updates details.
+        Only updates admin credentials if admin_user and admin_pass are provided.
         Returns company_id on success, None on failure.
         """
         folder_path = os.path.normpath(os.path.abspath(folder_path))
-        pass_hash = self._hash_password(admin_pass)
 
         conn = self.db.get_connection(DB_SECURITY)
         if not conn:
@@ -154,6 +154,7 @@ class SecurityManager:
             # Check if company exists
             cursor.execute("SELECT id FROM companies WHERE folder_path = ?", (folder_path,))
             row = cursor.fetchone()
+            is_new_company = row is None
 
             if row:
                 company_id = row[0]
@@ -171,30 +172,32 @@ class SecurityManager:
                 # Create default roles for new company
                 self._create_default_roles(cursor, company_id)
 
-            # Upsert admin user
-            cursor.execute("SELECT id FROM users WHERE company_id = ? AND is_admin = 1", (company_id,))
-            admin_row = cursor.fetchone()
+            # For NEW companies: always create admin (even with empty credentials)
+            # For EXISTING companies: only update admin if credentials are provided
+            if is_new_company or (admin_user or admin_pass):
+                pass_hash = self._hash_password(admin_pass)
+                cursor.execute("SELECT id FROM users WHERE company_id = ? AND is_admin = 1", (company_id,))
+                admin_row = cursor.fetchone()
 
-            if admin_row:
-                cursor.execute("""
-                    UPDATE users SET username = ?, password_hash = ? WHERE id = ?
-                """, (admin_user, pass_hash, admin_row[0]))
-            else:
-                # Get Full Access role for this company
-                cursor.execute("""
-                    SELECT id FROM roles WHERE company_id = ? AND role_name = 'Full Access'
-                """, (company_id,))
-                fa_row = cursor.fetchone()
-                fa_role_id = fa_row[0] if fa_row else None
+                if admin_row:
+                    cursor.execute("""
+                        UPDATE users SET username = ?, password_hash = ? WHERE id = ?
+                    """, (admin_user, pass_hash, admin_row[0]))
+                else:
+                    # Get Full Access role for this company
+                    cursor.execute("""
+                        SELECT id FROM roles WHERE company_id = ? AND role_name = 'Full Access'
+                    """, (company_id,))
+                    fa_row = cursor.fetchone()
+                    fa_role_id = fa_row[0] if fa_row else None
 
-                cursor.execute("""
-                    INSERT INTO users (company_id, username, password_hash, is_admin, role_id)
-                    VALUES (?, ?, ?, 1, ?)
-                """, (company_id, admin_user, pass_hash, fa_role_id))
-
+                    cursor.execute("""
+                        INSERT INTO users (company_id, username, password_hash, is_admin, role_id)
+                        VALUES (?, ?, ?, 1, ?)
+                    """, (company_id, admin_user, pass_hash, fa_role_id))
 
             conn.commit()
-            logger.info(f"Company registered: id={company_id}, name='{display_name}', admin='{admin_user}'")
+            logger.info(f"Company registered: id={company_id}, name='{display_name}'")
             return company_id
 
         except pyodbc.IntegrityError as e:
@@ -233,25 +236,40 @@ class SecurityManager:
         """Verify credentials and return a UserSession on success.
 
         Handles: bcrypt verification, lockout check, failed attempt tracking.
+        Uses folder_path to scope login to a specific company (prevents cross-
+        company username collisions). Falls back to username-only if folder_path
+        doesn't match (supports copied/moved data folders).
         Returns UserSession on success, None on failure.
         """
-        folder_path = os.path.normpath(os.path.abspath(folder_path))
         conn = self.db.get_connection(DB_SECURITY)
         if not conn:
             return None
 
         try:
             cursor = conn.cursor()
-            cursor.execute("""
+            
+            base_query = """
                 SELECT u.id, u.username, u.password_hash, u.is_admin, u.role_id,
                        u.failed_attempts, u.locked_until,
                        c.id AS company_id, c.display_name, c.max_login_attempts
                 FROM users u
                 JOIN companies c ON u.company_id = c.id
-                WHERE c.folder_path = ? AND u.username = ? AND u.is_active = 1
-            """, (folder_path, username))
-
-            row = cursor.fetchone()
+            """
+            
+            row = None
+            # Pass 1: Try exact folder_path match (prevents username collisions)
+            if folder_path:
+                norm_path = os.path.normpath(os.path.abspath(folder_path))
+                cursor.execute(base_query + " WHERE c.folder_path = ? AND u.username = ? AND u.is_active = 1",
+                               (norm_path, username))
+                row = cursor.fetchone()
+            
+            # Pass 2: Fall back to username-only (for copied/moved data)
+            if not row:
+                cursor.execute(base_query + " WHERE u.username = ? AND u.is_active = 1",
+                               (username,))
+                row = cursor.fetchone()
+            
             if not row:
                 self._log_audit(cursor, conn, None, username, None, "failed_login",
                                 detail=f"User not found: {username}")

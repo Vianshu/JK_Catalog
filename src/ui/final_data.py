@@ -643,6 +643,20 @@ class FinalDataUI(QWidget):
                         Update_date=?
                         WHERE GUID=?"""
                     cur.execute(query, (*new_row, now, guid))
+                    
+                    # Fix: If reverting from Price List or MG_SN >= 90 back to normal, reset True/False
+                    old_group = str(old_row_db[8]).lower().strip() if old_row_db[8] else ""
+                    new_group = str(s_data[1]).lower().strip() if s_data[1] else ""
+                    try: old_mg = int(str(old_row_db[7]).strip())
+                    except: old_mg = 0
+                    try: new_mg = int(str(s_data[0]).strip())
+                    except: new_mg = 0
+                    
+                    was_excluded = old_group == "price list" or old_mg >= 90
+                    is_now_included = new_group != "price list" and new_mg < 90
+                    
+                    if was_excluded and is_now_included:
+                        cur.execute("UPDATE catalog SET [True/False]='' WHERE GUID=?", (guid,))
             else:
                 # New item — Insert
                 f_row = [None] * len(self.headers)
