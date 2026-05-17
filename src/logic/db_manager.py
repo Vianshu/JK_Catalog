@@ -168,8 +168,8 @@ class DBManager:
             # Ensure BUILTIN\Users login exists at server level
             try:
                 cursor.execute("""
-                    IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = N'BUILTIN\\Users')
-                        CREATE LOGIN [BUILTIN\\Users] FROM WINDOWS;
+                    IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = N'BUILTIN\Users')
+                        CREATE LOGIN [BUILTIN\Users] FROM WINDOWS;
                 """)
             except Exception:
                 pass
@@ -445,14 +445,14 @@ class DBManager:
         try:
             cursor.execute(f"""
                 USE [{db_b}];
-                IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = N'BUILTIN\\Users')
-                    CREATE LOGIN [BUILTIN\\Users] FROM WINDOWS;
+                IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = N'BUILTIN\Users')
+                    CREATE LOGIN [BUILTIN\Users] FROM WINDOWS;
             """)
             cursor.execute(f"""
                 USE [{db_b}];
                 IF NOT EXISTS (SELECT * FROM sys.database_principals WHERE name = N'BuiltinUsers')
                 BEGIN
-                    CREATE USER [BuiltinUsers] FOR LOGIN [BUILTIN\\Users];
+                    CREATE USER [BuiltinUsers] FOR LOGIN [BUILTIN\Users];
                 END
                 ALTER ROLE db_owner ADD MEMBER [BuiltinUsers];
             """)
