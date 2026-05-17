@@ -38,7 +38,7 @@ logger = get_logger(__name__)
 # Settings & Services
 # Settings & Services
 from src.ui.settings import (
-    CRMDialog, UserManagerDialog, SecurityDialog,
+    CRMDialog, UserManagerDialog, SecurityUI,
     AuditLogDialog, ChangePasswordDialog,
     load_crm_list, save_crm_to_json, update_crm_in_json
 )
@@ -72,7 +72,7 @@ class MenuButtonWidget(QFrame):
         self.html_text = self.plain_text
         
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(15, 12, 15, 12)
+        layout.setContentsMargins(6, 12, 6, 12)
         layout.setSpacing(0)
         
         if "&" in text:
@@ -97,7 +97,7 @@ class MenuButtonWidget(QFrame):
             #MenuButtonWidget {
                 background: transparent;
                 border-radius: 8px;
-                margin: 4px 12px;
+                margin: 4px 4px;
             }
             #MenuButtonWidget:hover {
                 background-color: rgba(255, 255, 255, 0.08);
@@ -105,6 +105,10 @@ class MenuButtonWidget(QFrame):
             #MenuButtonWidget[active="true"] {
                 background-color: rgba(255, 255, 255, 0.15);
                 border-left: 4px solid #3498db;
+                border-radius: 4px;
+            }
+            #MenuButtonWidget:disabled {
+                background: transparent;
             }
             QLabel {
                 color: #dcdde1;
@@ -112,12 +116,29 @@ class MenuButtonWidget(QFrame):
                 background: transparent;
             }
             #MenuButtonWidget:hover QLabel {
-                color: #3498db;
+                color: #ffffff;
                 font-weight: bold;
             }
             #MenuButtonWidget[active="true"] QLabel {
-                color: #3498db;
+                color: #ffffff;
                 font-weight: bold;
+            }
+            #MenuButtonWidget:disabled QLabel {
+                color: #636e72;
+            }
+            #CompanyDisplayBtn {
+                background-color: transparent;
+                color: #ecf0f1;
+                font-weight: 800;
+                font-size: 16px;
+                text-align: left;
+                padding: 10px 4px;
+                border: none;
+                border-bottom: 1px solid #37474f;
+                margin-bottom: 10px;
+            }
+            #CompanyDisplayBtn:hover {
+                color: #3498db;
             }
         """)
 
@@ -140,7 +161,7 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
-        self.setWindowTitle("JK Catalog")
+        self.setWindowTitle("JK Catalog Multi")
         
         # Global Event Filter for Alt Key
         self.alt_filter = AltKeyFilter(self)
@@ -156,7 +177,13 @@ class MainWindow(QWidget):
         self._timeout_timer = QTimer(self)
         self._timeout_timer.setSingleShot(True)
         self._timeout_timer.timeout.connect(self._on_session_timeout)
-        self._timeout_minutes = 30  # Configurable per-company
+        self._timeout_minutes = 0  # Disabled per user request (was 30)
+        
+        # Live permission polling timer (60s interval)
+        self._perm_poll_timer = QTimer(self)
+        self._perm_poll_timer.setInterval(60_000)  # 60 seconds
+        self._perm_poll_timer.timeout.connect(self._poll_permissions)
+        self._security_mgr = None  # Initialized on login
         
         # Shortcuts
         QShortcut(QKeySequence("Ctrl+Q"), self, activated=self.close)
@@ -255,7 +282,7 @@ class MainWindow(QWidget):
         sidebar_layout.setSpacing(0)
 
         # Company Display Button
-        self.company_btn = QPushButton("🏢 Select Company ▼")
+        self.company_btn = QPushButton("🏢 Select Company  ▼")
         self.company_btn.setObjectName("CompanyDisplayBtn")
         self.company_btn.clicked.connect(self.show_company_dropdown)
         self.company_btn.hide()
@@ -282,10 +309,20 @@ class MainWindow(QWidget):
         self.logout_btn.setObjectName("MenuButton") # Use standard style base
         # Override specific colors for logout
         self.logout_btn.setStyleSheet("""
-            background-color: #c0392b; 
-            color: white; 
-            font-weight: bold; 
-            margin-top: 10px;
+            QPushButton {
+                background-color: transparent; 
+                color: #e74c3c; 
+                border: 1px solid #e74c3c;
+                border-radius: 6px;
+                font-weight: bold; 
+                padding: 8px;
+                margin-top: 10px;
+                margin-left: 6px;
+                margin-right: 6px;
+            }
+            QPushButton:hover {
+                background-color: rgba(231, 76, 60, 0.15);
+            }
         """)
         self.logout_btn.clicked.connect(self.back_to_login_screen)
         sidebar_layout.addWidget(self.logout_btn)
@@ -326,7 +363,7 @@ class MainWindow(QWidget):
             ("✅ &Final Data", self.final_data, False, None, "tab.final_data"),
             ("📖 Full Catalo&g", lambda: self.main_stack.setCurrentIndex(2), False, None, "tab.catalog"),
             ("📈 Rep&orts", lambda: self.main_stack.setCurrentIndex(7), False, None, "tab.reports"),
-            ("🏷 Cat / &Price List", self.handle_catalog_price_list),
+            ("🏷 Cat / &Price List", self.handle_catalog_price_list, False, None, "tab.cat_price_list"),
             ("🧪 Preview &Rows", lambda: self.main_stack.setCurrentIndex(17), False, None, "tab.group_test"),
             ("➕ &Create CRM", self.handle_create_crm, False, None, "settings.manage_crm"),
             ("✏️ &Alter CRM", self.handle_alter_crm, False, None, "settings.manage_crm")
@@ -338,11 +375,10 @@ class MainWindow(QWidget):
             ("⬅️ &Back", self.go_back_to_main, True),
             ("🏢 &Alter Company", self.handle_alter_company, False, None, "settings.company_config"),
             ("🔄 S&witch Co.", self.back_to_login_screen),
-            ("👤 &Create User", self.handle_create_user, False, None, "settings.manage_users"),
-            ("✏️ Alter &User", self.handle_alter_user, False, None, "settings.manage_users"),
+            ("👥 &Manage Users", self.handle_manage_users, False, None, "settings.manage_users"),
             ("🛡️ Secu&rity", self.handle_security, False, None, "settings.manage_roles"),
             ("📋 Audit &Log", self.handle_audit_log, False, None, "settings.manage_roles"),
-            ("🔑 Change &Password", self.handle_change_password),
+            ("🔑 Change &Password", self.handle_change_password, False, None, "settings.manage_users"),
             ("📅 Ca&lendar", self.handle_calendar_mapping, False, None, "tab.calendar")
         ])
         self.nav_stack.addWidget(m_settings)
@@ -356,19 +392,19 @@ class MainWindow(QWidget):
             ("🧾 C&hq. List", self.handle_cheque_list, False, None, "tab.cheque_list"),
             ("🏠 &Godown List", lambda: self.main_stack.setCurrentIndex(10), False, None, "tab.godown"),
             ("📈 &Sales Chat", lambda: self.main_stack.setCurrentIndex(11), False, None, "tab.sales_chat"),
-            ("💸 Supp. Pa&yment", lambda: self.main_stack.setCurrentIndex(12)),
+            ("💸 Supp. Pa&yment", lambda: self.main_stack.setCurrentIndex(12), False, None, "tab.supp_payment"),
             ("🏷 Pri&ce List", lambda: self.main_stack.setCurrentIndex(8), False, None, "tab.price_list"),
-            ("📥 Pur &Import", self.handle_pur_import),
-            ("📊 Cos&t Sheet", self.handle_int_cost_sheet),
-            ("🏢 For &Branch", self.show_branch_submenu)
+            ("📥 Pur &Import", self.handle_pur_import, False, None, "tab.pur_import"),
+            ("📊 Cos&t Sheet", self.handle_int_cost_sheet, False, None, "tab.int_cost_sheet"),
+            ("🏢 For &Branch", self.show_branch_submenu, False, None, "tab.for_branch")
         ])
         self.nav_stack.addWidget(m_tally)
 
         # Index 5: Vat Working
         m_vat = self.create_menu_widget([
             ("⬅️ &Back", self.go_back_to_main, True),
-            ("💰 Ba&lance", lambda: self.main_stack.setCurrentIndex(13)),
-            ("📦 Stoc&k", lambda: self.main_stack.setCurrentIndex(14))
+            ("💰 Ba&lance", lambda: self.main_stack.setCurrentIndex(13), False, None, "tab.vat_balance"),
+            ("📦 Stoc&k", lambda: self.main_stack.setCurrentIndex(14), False, None, "tab.vat_stock")
         ])
         self.nav_stack.addWidget(m_vat)
 
@@ -385,6 +421,8 @@ class MainWindow(QWidget):
     def on_sync_ledger_clicked(self):
         """Sync Ledger data from Tally into the company's ledger DB."""
         if not self.current_company:
+            return
+        if not self._check_permission("ledger.sync", "Ledger Sync"):
             return
 
         progress = QProgressDialog("Syncing Ledger Data...", None, 0, 0, self)
@@ -471,7 +509,9 @@ class MainWindow(QWidget):
 
         self.ledger_row_data_page = LedgerRowDataUI()
         self.main_stack.addWidget(self.ledger_row_data_page) # Index 18
-    # --- Helper UI Functions ---
+
+        self.security_page = SecurityUI(self)
+        self.main_stack.addWidget(self.security_page) # Index 19
     # --- Helper UI Functions ---
     def create_menu_widget(self, buttons_data):
         widget = QWidget()
@@ -631,6 +671,12 @@ class MainWindow(QWidget):
             self._apply_permissions()
             self._start_timeout()  # Start session timeout
             
+            # Start live permission polling
+            from src.logic.security_manager import SecurityManager
+            self._security_mgr = SecurityManager(
+                os.path.dirname(company_path) if company_path else "")
+            self._perm_poll_timer.start()
+            
             # CRITICAL FIX: Lock the window size again so the dashboard
             # cannot push the bottom out of bounds.
             self.maximize_window()
@@ -662,10 +708,8 @@ class MainWindow(QWidget):
                     btn.setEnabled(allowed)
                     if not allowed:
                         btn.setToolTip(f"🔒 Access denied — requires '{perm_key}' permission")
-                        btn.setStyleSheet("opacity: 0.4;")
                     else:
                         btn.setToolTip("")
-                        btn.setStyleSheet("")
         
         # ── Layer 2: Inside-Tab Controls ──
         
@@ -745,6 +789,73 @@ class MainWindow(QWidget):
         logger.info(f"Permissions applied: user='{s.username}', "
                      f"role='{s.role_name}', admin={s.is_admin}")
 
+    def _poll_permissions(self):
+        """Called every 60s to silently refresh permissions from SQL.
+        
+        If the admin changed this user's role or permissions while
+        the app is open, the sidebar and tab controls update automatically.
+        If the user was deactivated, they are force-logged out.
+        """
+        if not self.user_session or not self._security_mgr:
+            return
+        
+        try:
+            changed = self._security_mgr.refresh_session_permissions(self.user_session)
+            if not changed:
+                return  # Nothing to do
+            
+            # Check if user was deactivated
+            if self.user_session.role_name == "Deactivated":
+                self._perm_poll_timer.stop()
+                QMessageBox.warning(self, "Account Deactivated",
+                    "Your account has been deactivated by an administrator.\n"
+                    "You will be logged out now.")
+                self.back_to_login_screen()
+                return
+            
+            # Permissions changed — re-apply to UI
+            self._apply_permissions()
+            logger.info("Live permission refresh applied")
+            
+        except Exception as e:
+            logger.error(f"Permission polling error: {e}")
+
+    def _check_permission(self, permission_key, action_name="this action"):
+        """Action-gate: verify permission at the exact moment of action.
+        
+        Call this at the top of any handler that performs a protected action.
+        Returns True if allowed, False if denied (shows a popup).
+        
+        Usage:
+            def on_sync_tally_clicked(self):
+                if not self._check_permission("final_data.sync", "Tally Sync"):
+                    return
+                # ... proceed with sync
+        """
+        if not self.user_session:
+            return False
+        
+        # Admins always pass
+        if self.user_session.is_admin:
+            return True
+        
+        # Do a live micro-check from the database
+        if self._security_mgr:
+            self._security_mgr.refresh_session_permissions(self.user_session)
+        
+        if self.user_session.can(permission_key):
+            return True
+        
+        QMessageBox.warning(self, "Access Denied",
+            f"🔒 You do not have permission to perform {action_name}.\n\n"
+            f"Required: '{permission_key}'\n"
+            f"Your role: '{self.user_session.role_name}'\n\n"
+            "Contact your administrator to request access.")
+        
+        # Also refresh the UI since permissions may have changed
+        self._apply_permissions()
+        return False
+
     def _start_timeout(self):
         """Start/restart the session timeout timer after login."""
         if self._timeout_minutes > 0:
@@ -773,6 +884,7 @@ class MainWindow(QWidget):
 
     def on_sync_tally_clicked(self):
         if not self.current_company: return
+        if not self._check_permission("final_data.sync", "Tally Sync"): return
         logger.info(f"Tally sync started")
         progress = QProgressDialog("Syncing Tally Data...", None, 0, 0, self)
         progress.setWindowTitle("Please Wait")
@@ -799,6 +911,10 @@ class MainWindow(QWidget):
                             self.full_catalog_page.logic.invalidate_cache()
                         self.full_catalog_page.build_catalog(silent=True)
                     QMessageBox.information(self, "Sync Complete", f"Data Synced Successfully!\nLoaded {row_count} rows.\n\nClick OK to close.")
+                    # L-6: Audit log for Tally sync
+                    if self._security_mgr and self.user_session:
+                        self._security_mgr.log_action(self.user_session, "tally_sync",
+                            module="final_data", detail=f"Synced {row_count} rows")
                 
                 if hasattr(self, 'final_data_page'):
                     self.final_data_page.sync_complete.connect(_after_sync)
@@ -840,20 +956,27 @@ class MainWindow(QWidget):
     def handle_pur_import(self): PurImportUI(self).exec()
     def handle_security(self): 
         if self.current_company and hasattr(self, 'current_company_path'):
-            SecurityDialog(self.current_company, self.current_company_path, parent=self).exec()
-    def handle_alter_user(self): 
-        if self.current_company and hasattr(self, 'current_company_path'):
-            UserManagerDialog(self.current_company, self.current_company_path, parent=self).exec()
+            self.security_page.refresh_data()
+            self.main_stack.setCurrentIndex(19)
     
     def handle_audit_log(self):
         if self.current_company and hasattr(self, 'current_company_path'):
             AuditLogDialog(self.current_company, self.current_company_path, parent=self).exec()
     
     def handle_change_password(self):
-        if self.user_session:
+        if not self.user_session:
+            return
+        # Admin-only: block at UI level as well
+        if not self.user_session.is_admin:
+            QMessageBox.warning(self, "Access Denied",
+                "Only administrators can change passwords.")
+            return
+        # Reuse existing SecurityManager instance instead of creating a new one
+        sm = self._security_mgr
+        if not sm:
             from src.logic.security_manager import SecurityManager
             sm = SecurityManager(os.path.dirname(self.current_company_path) if hasattr(self, 'current_company_path') else "")
-            ChangePasswordDialog(self.user_session, sm, parent=self).exec()
+        ChangePasswordDialog(self.user_session, sm, parent=self).exec()
     
     def handle_cheque_list(self):
         self.main_stack.setCurrentIndex(15)
@@ -861,7 +984,7 @@ class MainWindow(QWidget):
     def handle_calendar_mapping(self):
         self.main_stack.setCurrentIndex(16)
     
-    def handle_create_user(self):
+    def handle_manage_users(self):
         if self.current_company and hasattr(self, 'current_company_path'):
             UserManagerDialog(self.current_company, self.current_company_path, parent=self).exec()
 
@@ -870,6 +993,8 @@ class MainWindow(QWidget):
         set_company_context("")
         self.user_session = None  # Clear session
         self._timeout_timer.stop()  # Stop session timeout
+        self._perm_poll_timer.stop()  # Stop permission polling
+        self._security_mgr = None
         self.set_active_menu_btn(None) # Clear highlighting
         self.company_btn.hide()
         
@@ -880,7 +1005,6 @@ class MainWindow(QWidget):
             for btn in menu_widget.findChildren(MenuButtonWidget):
                 btn.setEnabled(True)
                 btn.setToolTip("")
-                btn.setStyleSheet("")
         
         self.nav_stack.setCurrentIndex(0)
         self.main_stack.setCurrentIndex(0)
@@ -918,6 +1042,10 @@ class MainWindow(QWidget):
                 if save_crm_to_json(name, company_path):
                     logger.info(f"CRM created: name='{name}'")
                     QMessageBox.information(self, "Success", f"CRM '{name}' created successfully!")
+                    # L-6: Audit log for CRM creation
+                    if self._security_mgr and self.user_session:
+                        self._security_mgr.log_action(self.user_session, "crm_create",
+                            module="crm", detail=f"Created CRM: {name}")
                     # Refresh reports page if available
                     if hasattr(self, 'reports_page'):
                         self.reports_page.refresh_report_data()
@@ -940,6 +1068,10 @@ class MainWindow(QWidget):
                 if update_crm_in_json(old_name, new_name, company_path):
                     logger.info(f"CRM renamed: '{old_name}' -> '{new_name}'")
                     QMessageBox.information(self, "Success", f"CRM updated from '{old_name}' to '{new_name}'")
+                    # L-6: Audit log for CRM alteration
+                    if self._security_mgr and self.user_session:
+                        self._security_mgr.log_action(self.user_session, "crm_rename",
+                            module="crm", detail=f"Renamed: {old_name} -> {new_name}")
                     # Refresh reports page if available
                     if hasattr(self, 'reports_page'):
                         self.reports_page.refresh_report_data()

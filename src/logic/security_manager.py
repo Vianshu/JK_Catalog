@@ -228,17 +228,122 @@ class SecurityManager:
             except pyodbc.IntegrityError:
                 pass  # Role already exists
 
+    def get_company_id_by_path(self, folder_path):
+        """Look up company ID by its folder path.
+        
+        Centralised helper — replaces duplicated _get_company_id() in dialogs.
+        Returns company_id (int) or None.
+        """
+        conn = self.db.get_connection(DB_SECURITY)
+        if not conn:
+            return None
+        try:
+            cursor = conn.cursor()
+            fp = os.path.normpath(os.path.abspath(folder_path))
+            cursor.execute("SELECT id FROM companies WHERE folder_path = ?", (fp,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+        except Exception:
+            return None
+
+    def get_company_id_by_name(self, display_name):
+        """Look up company ID by display name.
+        
+        Company names are unique within a data path. Used as the primary
+        lookup for login (survives folder copy/move).
+        Returns company_id (int) or None.
+        """
+        conn = self.db.get_connection(DB_SECURITY)
+        if not conn:
+            return None
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM companies WHERE display_name = ?", (display_name,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+        except Exception:
+            return None
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # LIVE PERMISSION REFRESH
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def refresh_session_permissions(self, session):
+        """Re-read a user's role & permissions from SQL and update the session in-place.
+
+        Called periodically (every 60s) by MainWindow to pick up admin changes
+        without requiring re-login.
+
+        Returns True if permissions actually changed, False otherwise.
+        """
+        if not session or session.is_admin:
+            return False  # Admins bypass everything, nothing to refresh
+
+        conn = self.db.get_connection(DB_SECURITY)
+        if not conn:
+            return False
+
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT u.role_id, u.is_active, r.role_name
+                FROM users u
+                LEFT JOIN roles r ON u.role_id = r.id
+                WHERE u.id = ?
+            """, (session.user_id,))
+            row = cursor.fetchone()
+
+            if not row:
+                return False
+
+            role_id, is_active, role_name = row
+
+            # If user was deactivated, signal a forced logout
+            if not is_active:
+                session.permissions = set()
+                session.role_name = "Deactivated"
+                return True
+
+            # Fetch current permissions for the role
+            new_perms = set()
+            if role_id:
+                cursor.execute(
+                    "SELECT permission_key FROM role_permissions WHERE role_id = ?",
+                    (role_id,))
+                new_perms = {r[0] for r in cursor.fetchall()}
+
+            # Compare with existing session
+            old_perms = session.permissions
+            old_role = session.role_name
+
+            if new_perms != old_perms or role_name != old_role:
+                session.permissions = new_perms
+                session.role_name = role_name or "No Role"
+                logger.info(f"Permissions refreshed for '{session.username}': "
+                            f"role='{session.role_name}', perms={len(new_perms)}")
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"refresh_session_permissions error: {e}")
+            return False
+
     # ═══════════════════════════════════════════════════════════════════════════
     # LOGIN & SESSION
     # ═══════════════════════════════════════════════════════════════════════════
 
-    def verify_login(self, folder_path, username, password):
+    def verify_login(self, folder_path, username, password, company_name=None):
         """Verify credentials and return a UserSession on success.
 
         Handles: bcrypt verification, lockout check, failed attempt tracking.
-        Uses folder_path to scope login to a specific company (prevents cross-
-        company username collisions). Falls back to username-only if folder_path
-        doesn't match (supports copied/moved data folders).
+        
+        Lookup strategy:
+          1. Find company by display_name (unique within the data path)
+          2. Fallback: find company by folder_path
+          3. Then verify user within that company
+        
+        This design survives folder copy/move since display_name is portable.
         Returns UserSession on success, None on failure.
         """
         conn = self.db.get_connection(DB_SECURITY)
@@ -248,35 +353,51 @@ class SecurityManager:
         try:
             cursor = conn.cursor()
             
-            base_query = """
+            # Step 1: Resolve company_id
+            company_id = None
+            
+            # Primary: lookup by display_name (portable, survives copy/move)
+            if company_name:
+                cursor.execute("SELECT id FROM companies WHERE display_name = ?",
+                               (company_name,))
+                crow = cursor.fetchone()
+                if crow:
+                    company_id = crow[0]
+            
+            # Fallback: lookup by folder_path
+            if company_id is None and folder_path:
+                norm_path = os.path.normpath(os.path.abspath(folder_path))
+                cursor.execute("SELECT id FROM companies WHERE folder_path = ?",
+                               (norm_path,))
+                crow = cursor.fetchone()
+                if crow:
+                    company_id = crow[0]
+            
+            if company_id is None:
+                self._log_audit(cursor, None, username, None, "failed_login",
+                                detail=f"Company not found: {company_name or folder_path}")
+                conn.commit()
+                return None
+            
+            # Step 2: Find the user within this company
+            cursor.execute("""
                 SELECT u.id, u.username, u.password_hash, u.is_admin, u.role_id,
                        u.failed_attempts, u.locked_until,
                        c.id AS company_id, c.display_name, c.max_login_attempts
                 FROM users u
                 JOIN companies c ON u.company_id = c.id
-            """
-            
-            row = None
-            # Pass 1: Try exact folder_path match (prevents username collisions)
-            if folder_path:
-                norm_path = os.path.normpath(os.path.abspath(folder_path))
-                cursor.execute(base_query + " WHERE c.folder_path = ? AND u.username = ? AND u.is_active = 1",
-                               (norm_path, username))
-                row = cursor.fetchone()
-            
-            # Pass 2: Fall back to username-only (for copied/moved data)
-            if not row:
-                cursor.execute(base_query + " WHERE u.username = ? AND u.is_active = 1",
-                               (username,))
-                row = cursor.fetchone()
+                WHERE u.company_id = ? AND u.username = ? AND u.is_active = 1
+            """, (company_id, username))
+            row = cursor.fetchone()
             
             if not row:
-                self._log_audit(cursor, conn, None, username, None, "failed_login",
+                self._log_audit(cursor, None, username, company_id, "failed_login",
                                 detail=f"User not found: {username}")
+                conn.commit()
                 return None
 
             (user_id, db_username, stored_hash, is_admin, role_id,
-             failed_attempts, locked_until, company_id, company_name,
+             failed_attempts, locked_until, company_id, company_name_db,
              max_attempts) = row
 
             # Check lockout
@@ -296,10 +417,10 @@ class SecurityManager:
                 cursor.execute("""
                     UPDATE users SET failed_attempts = ?, locked_until = ? WHERE id = ?
                 """, (new_failures, lock_time, user_id))
-                conn.commit()
 
-                self._log_audit(cursor, conn, user_id, username, company_id,
+                self._log_audit(cursor, user_id, username, company_id,
                                 "failed_login", detail=f"Attempt #{new_failures}")
+                conn.commit()
                 return None
 
             # Success — reset failures, update last_login
@@ -321,12 +442,13 @@ class SecurityManager:
                 """, (role_id,))
                 permissions = {r[0] for r in cursor.fetchall()}
 
-            self._log_audit(cursor, conn, user_id, username, company_id, "login")
+            self._log_audit(cursor, user_id, username, company_id, "login")
+            conn.commit()
 
             session = UserSession(
                 user_id=user_id, username=db_username,
                 is_admin=bool(is_admin), company_id=company_id,
-                company_name=company_name, company_path=folder_path,
+                company_name=company_name_db, company_path=folder_path,
                 role_name=role_name, permissions=permissions,
             )
             logger.info(f"Login successful: {session}")
@@ -566,15 +688,18 @@ class SecurityManager:
     # AUDIT LOGGING
     # ═══════════════════════════════════════════════════════════════════════════
 
-    def _log_audit(self, cursor, conn, user_id, username, company_id, action,
+    def _log_audit(self, cursor, user_id, username, company_id, action,
                    module=None, detail=None):
-        """Write an audit log entry."""
+        """Write an audit log entry.
+        
+        NOTE: Does NOT commit — the caller is responsible for committing.
+        This prevents mid-transaction commits from flushing unrelated changes.
+        """
         try:
             cursor.execute("""
                 INSERT INTO audit_log (user_id, username, company_id, action, module, detail)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (user_id, username, company_id, action, module, detail))
-            conn.commit()
         except Exception:
             pass  # Audit logging must never crash the app
 
@@ -583,6 +708,10 @@ class SecurityManager:
         conn = self.db.get_connection(DB_SECURITY)
         if not conn:
             return
-        cursor = conn.cursor()
-        self._log_audit(cursor, conn, session.user_id, session.username,
-                        session.company_id, action, module, detail)
+        try:
+            cursor = conn.cursor()
+            self._log_audit(cursor, session.user_id, session.username,
+                            session.company_id, action, module, detail)
+            conn.commit()
+        except Exception:
+            pass

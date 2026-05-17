@@ -58,12 +58,13 @@ def setup_file_logging(log_path: str) -> str:
     root.setLevel(logging.DEBUG)
 
     # ── File handler (captures DEBUG and above) ──────────────────────
+    from logging.handlers import RotatingFileHandler
     try:
-        file_handler = logging.FileHandler(log_path, encoding='utf-8')
+        file_handler = RotatingFileHandler(log_path, encoding='utf-8', maxBytes=5*1024*1024, backupCount=3)
     except (PermissionError, OSError):
         import tempfile
         log_path = os.path.join(tempfile.gettempdir(), "jk_catalog_error.log")
-        file_handler = logging.FileHandler(log_path, encoding='utf-8')
+        file_handler = RotatingFileHandler(log_path, encoding='utf-8', maxBytes=5*1024*1024, backupCount=3)
 
     file_handler.setLevel(logging.DEBUG)
     file_fmt = logging.Formatter(

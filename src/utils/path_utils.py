@@ -33,7 +33,7 @@ def get_app_dir():
         # Running as compiled EXE - use %APPDATA% for writable data
         appdata = os.environ.get("APPDATA")
         if appdata:
-            path = os.path.join(appdata, "JK_Catalog")
+            path = os.path.join(appdata, "JK_Catalog_Multi")
             os.makedirs(path, exist_ok=True)
             return path
         # Extremely unlikely fallback

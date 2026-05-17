@@ -3,3 +3,4 @@ pandas
 pyodbc
 openpyxl
 bcrypt
+nepali_datetime

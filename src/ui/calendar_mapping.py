@@ -130,8 +130,17 @@ class CalendarMappingUI(QWidget):
             self.table.setRowCount(0)
             return
         
-        self.table.setRowCount(len(rows))
-        for r, row in enumerate(rows):
+        # Sort rows chronologically by ad_date (index 0) which is in "DD-MM-YYYY" format
+        def parse_date(row):
+            try:
+                return datetime.datetime.strptime(row[0], "%d-%m-%Y")
+            except Exception:
+                return datetime.datetime.min
+                
+        sorted_rows = sorted(rows, key=parse_date)
+        
+        self.table.setRowCount(len(sorted_rows))
+        for r, row in enumerate(sorted_rows):
             for c, val in enumerate(row):
                 self.table.setItem(r, c, QTableWidgetItem(str(val) if val else ""))
 

@@ -80,7 +80,7 @@ def check_first_launch_setup(app):
     from PyQt6.QtGui import QFont
 
     dlg = QDialog()
-    dlg.setWindowTitle("JK Catalog — First Time Setup")
+    dlg.setWindowTitle("JK Catalog Multi — First Time Setup")
     dlg.setFixedSize(520, 340)
     dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
 
@@ -89,7 +89,7 @@ def check_first_launch_setup(app):
     layout.setContentsMargins(24, 24, 24, 24)
 
     # Title
-    title = QLabel("Welcome to JK Catalog")
+    title = QLabel("Welcome to JK Catalog Multi")
     title.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
     title.setAlignment(Qt.AlignmentFlag.AlignCenter)
     layout.addWidget(title)
@@ -218,7 +218,7 @@ def main():
     painter = QPainter(splash_pix)
     painter.setPen(QColor("#ecf0f1"))
     painter.setFont(QFont("Segoe UI", 28, QFont.Weight.Bold))
-    painter.drawText(splash_pix.rect(), Qt.AlignmentFlag.AlignCenter, "JK Catalog Loading...")
+    painter.drawText(splash_pix.rect(), Qt.AlignmentFlag.AlignCenter, "JK Catalog Multi Loading...")
     
     painter.setPen(QColor("#3498db"))
     painter.setFont(QFont("Segoe UI", 12))

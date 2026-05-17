@@ -20,10 +20,15 @@ QWidget {
     color: white;
 }
 
-/* --- 2. Professional Sidebar (Dark Gradient) --- */
+/* --- 2. Professional Sidebar (Dark Slate — Stitch Reference) --- */
 #MainSidebar {
-    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1e272e, stop:1 #2d3436);
-    border-right: 2px solid #000000;
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1e272e, stop:1 #263238);
+    border-right: 1px solid #37474f;
+}
+
+/* Content Area — light grey background (Stitch reference) */
+#ContentArea {
+    background-color: #F0F2F5;
 }
 
 /* Fix: Internal elements of sidebar should be light text */
@@ -149,11 +154,21 @@ QTabBar::tab {
     border-top-right-radius: 8px;
 }
 
+QTabBar::tab:hover {
+    background-color: #e3f2fd;
+    color: #1976d2;
+}
+
 QTabBar::tab:selected {
     background-color: #ffffff;
     color: #2f3640;
     font-weight: bold;
     border-top: 4px solid #3498db; /* Default Blue line */
+}
+
+QTabBar::tab:disabled {
+    color: #bdc3c7;
+    background-color: #f5f5f5;
 }
 
 /* Module Specific Tab Accents */
@@ -177,14 +192,77 @@ QTabBar::tab:selected {
 #AddNewSheetBtn:hover, #SalesAddSheetBtn:hover { background-color: #e67e22; }
 #VatAddBtn:hover { background-color: #27ae60; }
 
-/* --- 8. Welcome UI (Impactful Design) --- */
-#WelcomeScreenLabel {
-    font-size: 65px;
+/* --- 8. Welcome Dashboard (Card-Based — Stitch Reference) --- */
+#WelcomePage {
+    background-color: #F0F2F5;
+}
+
+#WelcomeCard {
+    background-color: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 12px;
+}
+
+#WelcomeSubtitle {
+    font-size: 18px;
+    color: #6C757D;
+    font-weight: 400;
+}
+
+#WelcomeTitle {
+    font-size: 42px;
     font-weight: 900;
-    color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2c3e50, stop:1 #3498db);
-    background-color: transparent;
-    qproperty-alignment: 'AlignCenter';
-    letter-spacing: 2px;
+    color: #1A3A5F;
+    letter-spacing: 1px;
+}
+
+#WelcomeTagline {
+    font-size: 14px;
+    color: #6C757D;
+    margin-top: 8px;
+}
+
+#StatCard {
+    background-color: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    min-height: 90px;
+}
+
+#StatIcon {
+    font-size: 24px;
+    background: transparent;
+}
+
+#StatValue {
+    font-size: 18px;
+    font-weight: bold;
+    color: #1A3A5F;
+    background: transparent;
+}
+
+#StatLabel {
+    font-size: 12px;
+    color: #6C757D;
+    background: transparent;
+}
+
+#TipsCard {
+    background-color: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+}
+
+#TipsTitle {
+    font-size: 16px;
+    font-weight: bold;
+    color: #1A3A5F;
+}
+
+#TipItem {
+    font-size: 13px;
+    color: #495057;
+    padding: 2px 0;
 }
 
 /* --- 9. Misc Elements --- */
@@ -363,4 +441,131 @@ QTabBar::tab:selected {
 }
 #ReportActionDialog #SecondaryButton:hover {
     background-color: #7f8c8d;
+}
+
+/* --- 17. Security UI (Tally / Stitch Layout) --- */
+#SecurityUI {
+    background-color: #f4f6f9;
+}
+
+#SecurityTitle {
+    color: #2c3e50;
+    font-size: 20px;
+    margin-bottom: 10px;
+}
+
+#SecurityDetailsFrame {
+    background-color: #ffffff;
+    border: 1px solid #d1d8e0;
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 10px;
+}
+
+#SecurityDetailsFrame QLabel {
+    font-size: 15px;
+    font-weight: 500;
+    color: #34495e;
+}
+
+#SecurityDetailsFrame QComboBox {
+    padding: 6px;
+    border: 1px solid #bdc3c7;
+    border-radius: 4px;
+    background: #fff;
+    min-width: 150px;
+    font-size: 15px;
+}
+
+#SecurityNewBtn {
+    background-color: #2ecc71;
+    color: white;
+    font-weight: bold;
+    border-radius: 4px;
+    padding: 6px 12px;
+}
+#SecurityNewBtn:hover {
+    background-color: #27ae60;
+}
+
+#SecurityDelBtn {
+    background-color: #e74c3c;
+    color: white;
+    font-weight: bold;
+    border-radius: 4px;
+    padding: 6px 12px;
+}
+#SecurityDelBtn:hover {
+    background-color: #c0392b;
+}
+
+#GranularAccessTable {
+    background-color: transparent;
+    border: none;
+    font-size: 15px;
+}
+
+#GranularAccessTable::item {
+    padding: 8px;
+    border: none;
+}
+
+#GranularAccessTable::item:hover {
+    background-color: #f1f8ff;
+}
+
+#GranularAccessTable QComboBox {
+    background-color: transparent;
+    border: none;
+    padding: 4px 8px;
+    font-size: 15px;
+    font-weight: bold;
+    color: #000000;
+}
+
+#GranularAccessTable QComboBox:hover {
+    color: #3498db;
+    background-color: #f8f9fa;
+    border-radius: 4px;
+}
+
+#GranularAccessTable QComboBox::drop-down {
+    border: none;
+    width: 0px;
+}
+
+#GranularAccessTable QComboBox:focus {
+    border: 1px solid #3498db;
+    background-color: #f1f8ff;
+}
+
+#PrimaryActionButton {
+    background-color: #3498db;
+    color: white;
+    font-weight: bold;
+    border-radius: 4px;
+    padding: 8px 16px;
+}
+#PrimaryActionButton:hover {
+    background-color: #2980b9;
+}
+
+#SecondaryButton {
+    background-color: #95a5a6;
+    color: white;
+    font-weight: bold;
+    border-radius: 4px;
+    padding: 8px 16px;
+}
+#SecondaryButton:hover {
+    background-color: #7f8c8d;
+}
+
+/* --- 18. CRM & Empty Pages Dialog Polish --- */
+#CRMManagerDialog {
+    background-color: #f8f9fa;
+}
+#CRMManagerDialog QLabel {
+    font-size: 13px;
+    color: #2d3436;
 }

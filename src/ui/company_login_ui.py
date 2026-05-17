@@ -128,7 +128,8 @@ class LoginDialog(QDialog):
         
         # Verify via SecurityManager (returns UserSession on success, None on failure)
         # Empty username + password is allowed — handled by normal bcrypt flow
-        session = self.security.verify_login(self.folder_path, username, password)
+        session = self.security.verify_login(self.folder_path, username, password,
+                                              company_name=self.company_name)
         if session:
             self.session = session
             logger.info(f"Login successful: {session}")
@@ -250,16 +251,39 @@ class CompanyCreateForm(QWidget):
         self.base_folder_path = os.path.dirname(company_path)
         self.header_label.setText("  Edit Company Config")
         
+        loaded = False
+        # Primary: Read from SQL (source of truth)
         try:
-             info_p = os.path.join(company_path, "company_info.json")
-             if os.path.exists(info_p):
-                 with open(info_p, 'r') as f:
-                     d = json.load(f)
-                     self.fields[0].setText(d.get("display_name", ""))
-                     # Security Update: We no longer store/load credentials from JSON
-                     self.fields[4].setText(self.base_folder_path) # Show parent loc
-                     self.fields[5].setText(d.get("image_path", ""))
-        except: pass
+            from src.logic.security_manager import SecurityManager
+            sm = SecurityManager(self.base_folder_path)
+            from src.logic.db_manager import get_db_manager, DB_SECURITY
+            conn = get_db_manager().get_connection(DB_SECURITY)
+            if conn:
+                cursor = conn.cursor()
+                norm = os.path.normpath(os.path.abspath(company_path))
+                cursor.execute(
+                    "SELECT display_name, image_path FROM companies WHERE folder_path = ?",
+                    (norm,))
+                row = cursor.fetchone()
+                if row:
+                    self.fields[0].setText(row[0] or "")
+                    self.fields[4].setText(self.base_folder_path)
+                    self.fields[5].setText(row[1] or "")
+                    loaded = True
+        except Exception:
+            pass
+        
+        # Fallback: Read from company_info.json (for unregistered or copied companies)
+        if not loaded:
+            try:
+                info_p = os.path.join(company_path, "company_info.json")
+                if os.path.exists(info_p):
+                    with open(info_p, 'r') as f:
+                        d = json.load(f)
+                        self.fields[0].setText(d.get("display_name", ""))
+                        self.fields[4].setText(self.base_folder_path)
+                        self.fields[5].setText(d.get("image_path", ""))
+            except Exception: pass
 
     def back_to_list(self):
         self.back_callback()
@@ -467,7 +491,7 @@ class CompanyLoginUI(QWidget):
                         if full.lower() not in seen_paths:
                             found_folders.append(full)
                             seen_paths.add(full.lower())
-            except: pass
+            except Exception: pass
         
         if not found_folders:
              self.add_item("(No folders found)", role=None)
@@ -484,7 +508,7 @@ class CompanyLoginUI(QWidget):
                         disp_name = data.get("display_name", folder_name)
                         itm = self.add_item(f"🏢 {disp_name}", role="login")
                         itm.setData(Qt.ItemDataRole.UserRole + 1, path)
-                except:
+                except Exception:
                     self.add_item(f"⚠️ {folder_name} (Error)", role="error")
             # Unconfigured folders are intentionally ignored
 
@@ -600,7 +624,7 @@ class CompanyLoginUI(QWidget):
         if os.path.exists(self.history_file):
             try:
                 with open(self.history_file, 'r') as f: return json.load(f)
-            except: return []
+            except Exception: return []
         return []
 
     def save_history(self, new_path):

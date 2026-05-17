@@ -15,8 +15,10 @@ Usage:
 """
 
 import os
+import re
 import json
 import threading
+import getpass
 import pyodbc
 from src.utils.app_logger import get_logger
 
@@ -127,26 +129,35 @@ class DBManager:
         self._server_name = r".\SQLEXPRESS"
         logger.warning(f"No SQL Server config found, using default: {self._server_name}")
 
+    @staticmethod
+    def _safe_sql_ident(value):
+        """Sanitize a value for DDL contexts where parameterized queries aren't supported."""
+        if not re.match(r'^[A-Za-z0-9_ \\\.$\-]+$', value):
+            raise ValueError(f"Unsafe SQL identifier rejected: {value!r}")
+        return value.replace("'", "''"), value.replace("]", "]]")
+
     def _ensure_login(self):
-        """Ensure the current Windows user has a SQL Server login with sysadmin role.
+        """Ensure the current Windows user has a SQL Server login with dbcreator role.
         
-        This runs once at startup so any Windows user running the app
-        automatically gets full access to create and manage databases.
+        Uses dbcreator instead of sysadmin to follow least-privilege principle.
+        The user can create databases but cannot drop others' or access system tables.
         """
         try:
-            import getpass
             win_login = f"{os.environ.get('USERDOMAIN', '')}\\{getpass.getuser()}"
+            safe_q, safe_b = self._safe_sql_ident(win_login)
             conn = self.get_master_connection()
             if not conn:
                 return
             cursor = conn.cursor()
             cursor.execute(f"""
-                IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = N'{win_login}')
-                    CREATE LOGIN [{win_login}] FROM WINDOWS;
-                ALTER SERVER ROLE sysadmin ADD MEMBER [{win_login}];
+                IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = N'{safe_q}')
+                    CREATE LOGIN [{safe_b}] FROM WINDOWS;
+                ALTER SERVER ROLE dbcreator ADD MEMBER [{safe_b}];
             """)
             logger.info(f"Ensured SQL Server login for '{win_login}'")
             conn.close()
+        except ValueError as e:
+            logger.warning(f"Skipping _ensure_login: {e}")
         except Exception as e:
             logger.warning(f"Could not ensure SQL Server login: {e}")
 
@@ -242,21 +253,23 @@ class DBManager:
 
     def close_connection(self, logical_name):
         """Close and remove a specific connection from the cache."""
-        if logical_name in self._connections:
-            try:
-                self._connections[logical_name].close()
-            except Exception:
-                pass
-            del self._connections[logical_name]
+        with self._lock:
+            if logical_name in self._connections:
+                try:
+                    self._connections[logical_name].close()
+                except Exception:
+                    pass
+                del self._connections[logical_name]
 
     def close_all(self):
         """Close all cached connections."""
-        for name, conn in list(self._connections.items()):
-            try:
-                conn.close()
-            except Exception:
-                pass
-        self._connections.clear()
+        with self._lock:
+            for name, conn in list(self._connections.items()):
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self._connections.clear()
 
     # ─── DATABASE CREATION ────────────────────────────────────────────────────
 
@@ -361,22 +374,27 @@ class DBManager:
         mdf_path = os.path.join(mdf_folder, f"{logical_name}.mdf")
         ldf_path = os.path.join(mdf_folder, f"{logical_name}_log.ldf")
 
+        # If MDF already exists on disk (copied/moved from another machine), ATTACH it
+        if os.path.exists(mdf_path):
+            return self._attach_database(logical_name, mdf_path, ldf_path)
+
         conn = self.get_master_connection()
         if not conn:
             return False
 
         try:
+            safe_q, safe_b = self._safe_sql_ident(logical_name)
             cursor = conn.cursor()
             sql = f"""
-                CREATE DATABASE [{logical_name}]
+                CREATE DATABASE [{safe_b}]
                 ON PRIMARY (
-                    NAME = N'{logical_name}_Data',
+                    NAME = N'{safe_q}_Data',
                     FILENAME = N'{mdf_path}',
                     SIZE = 4MB,
                     FILEGROWTH = 2MB
                 )
                 LOG ON (
-                    NAME = N'{logical_name}_Log',
+                    NAME = N'{safe_q}_Log',
                     FILENAME = N'{ldf_path}',
                     SIZE = 2MB,
                     FILEGROWTH = 1MB
@@ -386,24 +404,71 @@ class DBManager:
             logger.info(f"Created database '{logical_name}' -> MDF: {mdf_path}")
             
             # Grant the current Windows login full access to the new database
-            try:
-                import getpass
-                win_login = f"{os.environ.get('USERDOMAIN', '')}\\{getpass.getuser()}"
-                cursor.execute(f"""
-                    USE [{logical_name}];
-                    IF NOT EXISTS (SELECT * FROM sys.database_principals WHERE name = N'{win_login}')
-                    BEGIN
-                        CREATE USER [{win_login}] FOR LOGIN [{win_login}];
-                    END
-                    ALTER ROLE db_owner ADD MEMBER [{win_login}];
-                """)
-                logger.info(f"Granted db_owner to '{win_login}' on '{logical_name}'")
-            except Exception as e:
-                logger.warning(f"Could not grant db_owner on '{logical_name}': {e}")
+            self._grant_db_owner(cursor, logical_name)
             
             return True
         except pyodbc.Error as e:
             logger.error(f"Failed to create database '{logical_name}': {e}")
+            return False
+        finally:
+            conn.close()
+
+    def _grant_db_owner(self, cursor, logical_name):
+        """Grant db_owner to the current Windows user on a specific database."""
+        try:
+            win_login = f"{os.environ.get('USERDOMAIN', '')}\\{getpass.getuser()}"
+            safe_q, safe_b = self._safe_sql_ident(win_login)
+            _, db_b = self._safe_sql_ident(logical_name)
+            cursor.execute(f"""
+                USE [{db_b}];
+                IF NOT EXISTS (SELECT * FROM sys.database_principals WHERE name = N'{safe_q}')
+                BEGIN
+                    CREATE USER [{safe_b}] FOR LOGIN [{safe_b}];
+                END
+                ALTER ROLE db_owner ADD MEMBER [{safe_b}];
+            """)
+            logger.info(f"Granted db_owner to '{win_login}' on '{logical_name}'")
+        except Exception as e:
+            logger.warning(f"Could not grant db_owner on '{logical_name}': {e}")
+
+    def _attach_database(self, logical_name, mdf_path, ldf_path):
+        """Attach an existing MDF file as a database.
+        
+        Used when data folders are copied/moved from another machine.
+        The MDF file exists on disk but isn't registered with this SQL Server instance.
+        """
+        conn = self.get_master_connection()
+        if not conn:
+            return False
+
+        try:
+            safe_q, safe_b = self._safe_sql_ident(logical_name)
+            cursor = conn.cursor()
+
+            if os.path.exists(ldf_path):
+                sql = f"""
+                    CREATE DATABASE [{safe_b}]
+                    ON PRIMARY (NAME = N'{safe_q}_Data', FILENAME = N'{mdf_path}')
+                    LOG ON (NAME = N'{safe_q}_Log', FILENAME = N'{ldf_path}')
+                    FOR ATTACH
+                """
+            else:
+                # LDF missing — SQL Server will rebuild it
+                sql = f"""
+                    CREATE DATABASE [{safe_b}]
+                    ON PRIMARY (NAME = N'{safe_q}_Data', FILENAME = N'{mdf_path}')
+                    FOR ATTACH_REBUILD_LOG
+                """
+
+            cursor.execute(sql)
+            logger.info(f"Attached database '{logical_name}' from MDF: {mdf_path}")
+
+            # Grant db_owner to current user on the attached database
+            self._grant_db_owner(cursor, logical_name)
+
+            return True
+        except pyodbc.Error as e:
+            logger.error(f"Failed to attach database '{logical_name}': {e}")
             return False
         finally:
             conn.close()

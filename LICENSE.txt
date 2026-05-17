@@ -1,0 +1,53 @@
+END USER LICENSE AGREEMENT (EULA)
+JK Catalog Multi — Version 1.0.0
+Copyright © 2026 JK Hardware. All rights reserved.
+
+IMPORTANT: PLEASE READ THIS AGREEMENT CAREFULLY BEFORE INSTALLING OR USING THIS SOFTWARE.
+
+By installing, copying, or otherwise using JK Catalog Multi ("Software"), you agree to be bound by the terms of this End User License Agreement ("Agreement"). If you do not agree to these terms, do not install or use the Software.
+
+1. LICENSE GRANT
+JK Enterprises ("Licensor") grants you a non-exclusive, non-transferable, limited license to install and use the Software on computers owned or controlled by your organization, solely for your internal business purposes. This license does not include the right to sublicense, distribute, or make the Software available to third parties.
+
+2. RESTRICTIONS
+You may NOT:
+  (a) Copy, modify, or distribute the Software except as expressly permitted;
+  (b) Reverse engineer, decompile, or disassemble the Software;
+  (c) Remove or alter any proprietary notices, labels, or marks on the Software;
+  (d) Use the Software to provide services to third parties (SaaS, hosting, etc.) without written consent from the Licensor;
+  (e) Transfer or assign this license without prior written approval.
+
+3. OWNERSHIP
+The Software is licensed, not sold. JK Enterprises retains all right, title, and interest in the Software, including all intellectual property rights. This Agreement does not grant you any rights to trademarks or service marks of JK Enterprises.
+
+4. DATA AND PRIVACY
+  (a) The Software stores business data locally on your SQL Server instance and on-premise storage. No data is transmitted to JK Enterprises or any external server.
+  (b) You are solely responsible for maintaining backups of your data.
+  (c) The Software does not collect telemetry, usage analytics, or personal information.
+
+5. MULTI-USER DEPLOYMENT
+This license permits deployment in a shared environment (e.g., Remote Desktop / RDP server) where multiple authorized users within your organization may access the Software through individual sessions. Each organization requires a separate license.
+
+6. UPDATES AND SUPPORT
+  (a) JK Enterprises may, at its discretion, provide updates, patches, or new versions of the Software.
+  (b) Support terms are governed by a separate support agreement, if applicable.
+  (c) This Agreement applies to any updates or supplements to the Software unless a separate license accompanies them.
+
+7. WARRANTY DISCLAIMER
+THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. JK ENTERPRISES DOES NOT WARRANT THAT THE SOFTWARE WILL BE ERROR-FREE OR UNINTERRUPTED.
+
+8. LIMITATION OF LIABILITY
+IN NO EVENT SHALL JK ENTERPRISES BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, INCLUDING BUT NOT LIMITED TO LOSS OF PROFITS, DATA, OR BUSINESS OPPORTUNITIES, ARISING OUT OF OR RELATED TO THIS AGREEMENT OR THE USE OF THE SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+9. TERMINATION
+This Agreement is effective until terminated. JK Enterprises may terminate this Agreement immediately if you breach any of its terms. Upon termination, you must cease all use of the Software and destroy all copies in your possession.
+
+10. GOVERNING LAW
+This Agreement shall be governed by and construed in accordance with the laws of India. Any disputes arising under this Agreement shall be subject to the exclusive jurisdiction of the courts in the applicable jurisdiction.
+
+11. ENTIRE AGREEMENT
+This Agreement constitutes the entire agreement between you and JK Enterprises regarding the Software and supersedes all prior agreements, understandings, or representations.
+
+By clicking "I Agree" or installing the Software, you acknowledge that you have read, understood, and agree to be bound by the terms of this Agreement.
+
+JK Hardware

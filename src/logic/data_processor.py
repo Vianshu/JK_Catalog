@@ -404,78 +404,7 @@ class DataProcessor:
             logger.error(f"Processor Error: {e}", exc_info=True)
             return False
     
-    def smart_db_sync(self, new_data_list):
-        """
-        new_data_list: Wo data jo Tally ya syncing se naya aaya hai (List of Dictionaries)
-        """
-        conn = self.db.get_connection(self.db_name)
-        if not conn:
-            return
-        
-        # 1. DB se purana data read karein
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM catalog")
-            cols = [desc[0] for desc in cursor.description]
-            rows = cursor.fetchall()
-            df_old = pd.DataFrame.from_records(rows, columns=cols) if rows else pd.DataFrame()
-        except:
-            df_old = pd.DataFrame() # Agar table khali hai
 
-        # 2. Naye data ka DataFrame banayein
-        df_new = pd.DataFrame(new_data_list)
-
-        if df_old.empty:
-            # Agar DB khali hai toh pura data insert karein aur aaj ki date daalein
-            df_new['Update_date'] = datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')
-            # Drop and recreate table
-            cursor = conn.cursor()
-            try:
-                cursor.execute("IF OBJECT_ID('catalog', 'U') IS NOT NULL DROP TABLE catalog")
-                conn.commit()
-            except:
-                pass
-            col_defs = ", ".join([f"[{c}] NVARCHAR(MAX)" for c in df_new.columns])
-            cursor.execute(f"CREATE TABLE catalog ({col_defs})")
-            conn.commit()
-            placeholders = ", ".join(["?" for _ in df_new.columns])
-            for _, row in df_new.iterrows():
-                vals = [str(v) if pd.notna(v) else None for v in row]
-                cursor.execute(f"INSERT INTO catalog VALUES ({placeholders})", vals)
-            conn.commit()
-        else:
-            # 3. Dono ko GUID par merge karein (Comparison ke liye)
-            # Hum check karenge ki kya koi bhi column badla hai
-            # Hum Update_date ko comparison se bahar rakhenge
-            cols_to_compare = [c for c in df_new.columns if c != 'Update_date']
-            
-            for index, row_new in df_new.iterrows():
-                guid = row_new['GUID']
-                
-                # Purani row dhundein
-                row_old = df_old[df_old['GUID'] == guid]
-                
-                if row_old.empty:
-                    # Naya Item hai -> Insert
-                    row_new['Update_date'] = datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')
-                    # SQL Insert Logic...
-                else:
-                    # Purana Item hai -> Compare karein
-                    # Hum sirf un columns ko dekh rahe hain jo important hain
-                    changed = False
-                    for col in cols_to_compare:
-                        if str(row_new[col]) != str(row_old.iloc[0][col]):
-                            changed = True
-                            break
-                    
-                    if changed:
-                        # Sirf tabhi update karein jab kuch badla ho
-                        now_time = datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')
-                        # SQL Update query with current now_time...
-                    else:
-                        # Kuch nahi badla -> Do nothing (Date purani hi rahegi)
-                        pass
-    
     def generate_complex_ids(self):
         """Generate deterministic IDs encoding the full product hierarchy.
         
@@ -523,7 +452,7 @@ class DataProcessor:
                 def get_price(x):
                     try:
                         return float(str(x.get("MRP", "0")).replace(",", "").strip())
-                    except:
+                    except (ValueError, TypeError):
                         return 999999.0
                 
                 # Fuzzy cluster
@@ -568,5 +497,6 @@ class DataProcessor:
             cursor.execute("SELECT * FROM catalog")
             data = cursor.fetchall()
             return data
-        except:
+        except Exception as e:
+            logger.error(f"get_display_data error: {e}")
             return []

@@ -71,13 +71,13 @@ class LedgerRowDataUI(QWidget):
             # Check if table exists
             cursor.execute("""
                 SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES 
-                WHERE TABLE_NAME = 'row_leger_data'
+                WHERE TABLE_NAME = 'row_ledger_data'
             """)
             if cursor.fetchone()[0] == 0:
-                self.show_error("Table 'row_leger_data' is missing in the database.")
+                self.show_error("Table 'row_ledger_data' is missing in the database.")
                 return
 
-            cursor.execute("SELECT * FROM row_leger_data")
+            cursor.execute("SELECT * FROM row_ledger_data")
             db_headers = [desc[0] for desc in cursor.description]
             rows = cursor.fetchall()
 

@@ -255,7 +255,7 @@ class FinalDataUI(QWidget):
                 # File ki modification date nikalna
                 mtime = os.path.getmtime(file_path)
                 return datetime.datetime.fromtimestamp(mtime).strftime('%d-%m-%Y %H:%M:%S')
-        except:
+        except Exception:
             pass
         return ""
 
@@ -461,7 +461,7 @@ class FinalDataUI(QWidget):
                      with open(info_file, 'r', encoding='utf-8') as f:
                          info = json.load(f)
                          if "image_path" in info: self.image_folder = info["image_path"]
-                 except: pass
+                 except Exception: pass
 
             self.db_path = os.path.join(folder_path, "final_data.db")
             self.super_master_path = os.path.join(os.path.dirname(folder_path), "super_master.db")
@@ -648,9 +648,9 @@ class FinalDataUI(QWidget):
                     old_group = str(old_row_db[8]).lower().strip() if old_row_db[8] else ""
                     new_group = str(s_data[1]).lower().strip() if s_data[1] else ""
                     try: old_mg = int(str(old_row_db[7]).strip())
-                    except: old_mg = 0
+                    except (ValueError, TypeError): old_mg = 0
                     try: new_mg = int(str(s_data[0]).strip())
-                    except: new_mg = 0
+                    except (ValueError, TypeError): new_mg = 0
                     
                     was_excluded = old_group == "price list" or old_mg >= 90
                     is_now_included = new_group != "price list" and new_mg < 90
@@ -864,9 +864,9 @@ class FinalDataUI(QWidget):
                             mg = row[0] or ""
                             sg = row[1] or ""
                             try: mg_int = int(str(mg).strip())
-                            except: mg_int = 9999
+                            except (ValueError, TypeError): mg_int = 9999
                             try: sg_int = int(str(sg).strip())
-                            except: sg_int = 9999
+                            except (ValueError, TypeError): sg_int = 9999
                             group_order[(mg_int, sg_int)] = (mg_int, sg_int)
             except Exception as e:
                 logger.warning(f"Could not load super_master ordering: {e}")
@@ -877,9 +877,9 @@ class FinalDataUI(QWidget):
                 mg_raw = str(r[mg_sn_idx]).strip() if r[mg_sn_idx] else ""
                 sg_raw = str(r[sg_sn_idx]).strip() if r[sg_sn_idx] else ""
                 try: mg_int = int(mg_raw)
-                except: mg_int = 9999
+                except (ValueError, TypeError): mg_int = 9999
                 try: sg_int = int(sg_raw)
-                except: sg_int = 9999
+                except (ValueError, TypeError): sg_int = 9999
                 key = (mg_int, sg_int)
                 if key not in grouped_rows:
                     grouped_rows[key] = []
@@ -898,7 +898,7 @@ class FinalDataUI(QWidget):
                 def get_price(row):
                     try:
                         return float(str(row[mrp_idx]).replace(",", "").strip())
-                    except:
+                    except (ValueError, TypeError):
                         return 99999999.0
                 
                 sorted_data.extend(cluster_and_sort(

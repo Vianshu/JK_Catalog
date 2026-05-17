@@ -34,42 +34,41 @@ PERMISSION_REGISTRY = {
     "tab.sales_chat":       "Sales Chat tab",
     "tab.cheque_list":      "Cheque List tab",
     "tab.calendar":         "Calendar Mapping tab",
+    "tab.cat_price_list":   "Catalog Price List tab",
+    "tab.vat_balance":      "Vat Balance tab",
+    "tab.vat_stock":        "Vat Stock tab",
+    "tab.supp_payment":     "Supplier Payment tab",
+    "tab.pur_import":       "Purchase Import tab",
+    "tab.int_cost_sheet":   "Internal Cost Sheet tab",
+    "tab.for_branch":       "Branch Submenu",
 
     # ── Final Data ──
-    "final_data.view":      "View final data table",
     "final_data.edit":      "Edit True/False toggles and cell values",
     "final_data.sync":      "Press Tally Sync button",
     "final_data.export":    "Export final data",
 
     # ── Super Master ──
-    "super_master.view":    "View super master data",
     "super_master.edit":    "Edit/add/delete super master entries",
 
     # ── Catalog ──
-    "catalog.view":         "View catalog pages",
     "catalog.build":        "Press Build Catalog button",
     "catalog.print":        "Print catalog pages",
     "catalog.edit_assignment": "Drag/reassign products to pages",
 
     # ── Godown ──
-    "godown.view":          "View godown stock data",
+    # (View only, controlled by tab.godown)
 
     # ── Reports ──
-    "reports.view":         "View reports",
     "reports.print":        "Print reports",
     "reports.mark_done":    "Mark pages as done/printed",
 
     # ── Row Data / Ledger ──
-    "row_data.view":        "View raw Tally data",
-    "ledger.view":          "View ledger data",
     "ledger.sync":          "Press Sync Ledger button",
 
     # ── Cheque List ──
-    "cheque_list.view":     "View cheque entries",
     "cheque_list.edit":     "Add/edit cheque entries",
 
     # ── Calendar ──
-    "calendar.view":        "View calendar",
     "calendar.edit":        "Edit calendar entries",
 
     # ── Settings / Admin ──
@@ -95,25 +94,25 @@ DEFAULT_ROLES = {
         "description": "Can view and edit final data, view godown and row data",
         "is_system": False,
         "permissions": [
-            "tab.final_data", "final_data.view", "final_data.edit",
-            "tab.godown", "godown.view",
-            "tab.row_data", "row_data.view",
+            "tab.final_data", "final_data.edit",
+            "tab.godown",
+            "tab.row_data",
         ],
     },
     "Catalog Viewer": {
         "description": "Can view and print catalog and reports",
         "is_system": False,
         "permissions": [
-            "tab.catalog", "catalog.view", "catalog.print",
-            "tab.reports", "reports.view", "reports.print",
+            "tab.catalog", "catalog.print",
+            "tab.reports", "reports.print",
         ],
     },
     "Accountant": {
         "description": "Access to ledger, cheques, payments, and sales",
         "is_system": False,
         "permissions": [
-            "tab.ledger", "ledger.view",
-            "tab.cheque_list", "cheque_list.view", "cheque_list.edit",
+            "tab.ledger",
+            "tab.cheque_list", "cheque_list.edit",
             "tab.payment_list",
             "tab.sales_chat",
         ],

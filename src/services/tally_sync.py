@@ -34,7 +34,7 @@ class TallyService:
                 try:
                     self.connection = pyodbc.connect(dsn, timeout=2)
                     return True
-                except:
+                except pyodbc.Error:
                     pass
 
             drivers = [d for d in pyodbc.drivers() if "Tally" in d]
@@ -48,12 +48,12 @@ class TallyService:
                     conn_str = f"DRIVER={{{driver}}};SERVER=(local);PORT={port}"
                     self.connection = pyodbc.connect(conn_str, timeout=2)
                     return True
-                except:
+                except pyodbc.Error:
                     pass
 
             return False
 
-        except:
+        except Exception:
             return False
 
     def _ensure_row_data_db(self, company_path):
@@ -153,24 +153,40 @@ class TallyService:
 
             cursor = conn.cursor()
             
-            # Drop and recreate the table (equivalent to if_exists="replace")
+            # Use staging table pattern to prevent data loss on failure
+            staging_table = "stock_items_staging"
             try:
-                cursor.execute("IF OBJECT_ID('stock_items', 'U') IS NOT NULL DROP TABLE stock_items")
+                cursor.execute(f"IF OBJECT_ID('{staging_table}', 'U') IS NOT NULL DROP TABLE [{staging_table}]")
                 conn.commit()
             except Exception:
                 pass
 
             # Build CREATE TABLE from DataFrame columns
             col_defs = ", ".join([f"[{col}] NVARCHAR(MAX)" for col in export_df.columns])
-            cursor.execute(f"CREATE TABLE stock_items ({col_defs})")
+            cursor.execute(f"CREATE TABLE [{staging_table}] ({col_defs})")
             conn.commit()
 
-            # Bulk insert rows
+            # Bulk insert rows into staging
             placeholders = ", ".join(["?" for _ in export_df.columns])
-            insert_sql = f"INSERT INTO stock_items VALUES ({placeholders})"
-            for _, row in export_df.iterrows():
-                values = [str(v) if pd.notna(v) else None for v in row]
-                cursor.execute(insert_sql, values)
+            insert_sql = f"INSERT INTO [{staging_table}] VALUES ({placeholders})"
+            values_list = [tuple(str(v) if pd.notna(v) else None for v in row) for row in export_df.itertuples(index=False, name=None)]
+            if hasattr(cursor, 'fast_executemany'):
+                cursor.fast_executemany = True
+            cursor.executemany(insert_sql, values_list)
+            conn.commit()
+
+            # Verify staging has data before swapping
+            cursor.execute(f"SELECT COUNT(*) FROM [{staging_table}]")
+            staging_count = cursor.fetchone()[0]
+            if staging_count == 0:
+                logger.warning("Staging table is empty, aborting swap")
+                cursor.execute(f"DROP TABLE [{staging_table}]")
+                conn.commit()
+                raise Exception("Staging table was empty after insert")
+
+            # Atomic swap: drop old → rename staging
+            cursor.execute("IF OBJECT_ID('stock_items', 'U') IS NOT NULL DROP TABLE stock_items")
+            cursor.execute(f"EXEC sp_rename '{staging_table}', 'stock_items'")
             conn.commit()
 
             logger.info(f"Row data saved to SQL Server: db='{db_name}', rows={len(export_df)}")
@@ -359,22 +375,36 @@ def fetch_tally_ledger_data(company_path=None):
 
         cursor = conn.cursor()
 
-        # Drop and recreate (equivalent to if_exists="replace")
+        # Use staging table pattern to prevent data loss on failure
+        staging_table = "row_ledger_data_staging"
         try:
-            cursor.execute("IF OBJECT_ID('row_leger_data', 'U') IS NOT NULL DROP TABLE row_leger_data")
+            cursor.execute(f"IF OBJECT_ID('{staging_table}', 'U') IS NOT NULL DROP TABLE [{staging_table}]")
             conn.commit()
         except Exception:
             pass
 
         col_defs = ", ".join([f"[{col}] NVARCHAR(MAX)" for col in ledger_df.columns])
-        cursor.execute(f"CREATE TABLE row_leger_data ({col_defs})")
+        cursor.execute(f"CREATE TABLE [{staging_table}] ({col_defs})")
         conn.commit()
 
         placeholders = ", ".join(["?" for _ in ledger_df.columns])
-        insert_sql = f"INSERT INTO row_leger_data VALUES ({placeholders})"
-        for _, row in ledger_df.iterrows():
-            values = [str(v) if pd.notna(v) else None for v in row]
-            cursor.execute(insert_sql, values)
+        insert_sql = f"INSERT INTO [{staging_table}] VALUES ({placeholders})"
+        values_list = [tuple(str(v) if pd.notna(v) else None for v in row) for row in ledger_df.itertuples(index=False, name=None)]
+        if hasattr(cursor, 'fast_executemany'):
+            cursor.fast_executemany = True
+        cursor.executemany(insert_sql, values_list)
+        conn.commit()
+
+        # Verify staging before swap
+        cursor.execute(f"SELECT COUNT(*) FROM [{staging_table}]")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute(f"DROP TABLE [{staging_table}]")
+            conn.commit()
+            return 0, "Staging table empty after insert — original data preserved."
+
+        # Atomic swap
+        cursor.execute("IF OBJECT_ID('row_ledger_data', 'U') IS NOT NULL DROP TABLE row_ledger_data")
+        cursor.execute(f"EXEC sp_rename '{staging_table}', 'row_ledger_data'")
         conn.commit()
 
         logger.info(f"Ledger data saved to SQL Server: db='{db_name}', rows={len(ledger_df)}")
