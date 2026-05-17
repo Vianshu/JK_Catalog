@@ -901,9 +901,14 @@ class FinalDataUI(QWidget):
                     except (ValueError, TypeError):
                         return 99999999.0
                 
-                sorted_data.extend(cluster_and_sort(
-                    rows_in_group, get_name_fn=get_name, get_price_fn=get_price
-                ))
+                # Skip expensive clustering for unclassified items (no super_master group)
+                if gkey == (9999, 9999):
+                    rows_in_group.sort(key=lambda x: (get_name(x).lower(), get_price(x)))
+                    sorted_data.extend(rows_in_group)
+                else:
+                    sorted_data.extend(cluster_and_sort(
+                        rows_in_group, get_name_fn=get_name, get_price_fn=get_price
+                    ))
             
             # 5. Split into missing-image (top) and found-image (bottom)
             #    Both sections preserve the unified sort order above

@@ -348,22 +348,6 @@ class DBManager:
         Returns:
             bool: True on success.
         """
-        # Read default_path from config so shared DBs land in the data root
-        from src.utils.path_utils import get_app_dir, get_exe_dir
-        for config_path in [
-            os.path.join(get_app_dir(), "config.json"),
-            os.path.join(get_exe_dir(), "config.json")
-        ]:
-            try:
-                if os.path.exists(config_path):
-                    with open(config_path, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                        if "default_path" in data and os.path.exists(data["default_path"]):
-                            mdf_folder = data["default_path"]
-                            break
-            except Exception:
-                pass
-
         # Normalize to backslashes — SQL Server FILENAME rejects forward slashes
         mdf_folder = os.path.normpath(mdf_folder)
         os.makedirs(mdf_folder, exist_ok=True)

@@ -35,7 +35,10 @@ class SecurityManager:
 
     def _init_schema(self):
         """Create all security tables if they don't exist."""
-        mdf_folder = self.data_path if self.data_path else os.getcwd()
+        if not self.data_path or not os.path.isdir(self.data_path):
+            logger.warning("SecurityManager: No valid data_path — skipping DB creation")
+            return
+        mdf_folder = self.data_path
         try:
             self.db.ensure_database_exists(DB_SECURITY, mdf_folder)
         except Exception as e:
