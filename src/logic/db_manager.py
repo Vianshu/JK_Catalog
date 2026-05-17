@@ -141,8 +141,8 @@ class DBManager:
         
         Attempts to:
         1. Create a Windows login for the current user
-        2. Add them to dbcreator role (requires sysadmin — may fail for non-admin users)
-        3. Ensure BUILTIN\Users login exists (so _grant_db_owner can grant per-DB access)
+        2. Add them to dbcreator role (requires sysadmin, may fail for non-admin users)
+        3. Ensure BUILTIN Users login exists (so _grant_db_owner can grant per-DB access)
         """
         conn = self.get_master_connection()
         if not conn:
@@ -167,10 +167,10 @@ class DBManager:
             
             # Ensure BUILTIN\Users login exists at server level
             try:
-                cursor.execute("""
-                    IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = N'BUILTIN\Users')
-                        CREATE LOGIN [BUILTIN\Users] FROM WINDOWS;
-                """)
+                cursor.execute(
+                    "IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = N'BUILTIN\\Users')"
+                    " CREATE LOGIN [BUILTIN\\Users] FROM WINDOWS;"
+                )
             except Exception:
                 pass
                 
@@ -419,7 +419,7 @@ class DBManager:
     def _grant_db_owner(self, cursor, logical_name):
         """Grant db_owner to the current Windows user AND all local users on a database.
         
-        Granting BUILTIN\\Users ensures all RDP users can access the database
+        Granting BUILTIN Users ensures all RDP users can access the database
         without manual per-user SQL commands. The app's RBAC system handles
         actual access control (roles, permissions).
         """
@@ -443,19 +443,19 @@ class DBManager:
         
         # Grant BUILTIN\Users (all Windows users on this machine)
         try:
-            cursor.execute(f"""
-                USE [{db_b}];
-                IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = N'BUILTIN\Users')
-                    CREATE LOGIN [BUILTIN\Users] FROM WINDOWS;
-            """)
-            cursor.execute(f"""
-                USE [{db_b}];
-                IF NOT EXISTS (SELECT * FROM sys.database_principals WHERE name = N'BuiltinUsers')
-                BEGIN
-                    CREATE USER [BuiltinUsers] FOR LOGIN [BUILTIN\Users];
-                END
-                ALTER ROLE db_owner ADD MEMBER [BuiltinUsers];
-            """)
+            cursor.execute(
+                f"USE [{db_b}]; "
+                f"IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = N'BUILTIN\\Users') "
+                f"CREATE LOGIN [BUILTIN\\Users] FROM WINDOWS;"
+            )
+            cursor.execute(
+                f"USE [{db_b}]; "
+                "IF NOT EXISTS (SELECT * FROM sys.database_principals WHERE name = N'BuiltinUsers') "
+                "BEGIN "
+                "CREATE USER [BuiltinUsers] FOR LOGIN [BUILTIN\\Users]; "
+                "END; "
+                "ALTER ROLE db_owner ADD MEMBER [BuiltinUsers];"
+            )
             logger.info(f"Granted db_owner to BUILTIN\\Users on '{logical_name}'")
         except Exception as e:
             logger.warning(f"Could not grant BUILTIN\\Users on '{logical_name}': {e}")
