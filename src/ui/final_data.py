@@ -109,7 +109,7 @@ class FinalDataUI(QWidget):
         # 1. Sync Time (Top)
         self.sync_lbl = QLabel("Last Sync: N/A")
         self.sync_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.sync_lbl.setStyleSheet("font-weight: 600; color: #6B7280; padding: 5px;")
+        self.sync_lbl.setObjectName("SyncLabel")
         side_layout.addWidget(self.sync_lbl)
 
         # 2. Search Bar
@@ -121,24 +121,18 @@ class FinalDataUI(QWidget):
         # 3. Image Preview (NOW ON TOP)
         from PyQt6.QtWidgets import QFrame, QGridLayout, QSizePolicy
         img_container = QFrame()
-        img_container.setStyleSheet("""
-            QFrame {
-                background-color: #ffffff;
-                border: 1px solid #E2E4E8;
-                border-radius: 8px;
-            }
-        """)
+        img_container.setObjectName("ImgContainer")
         img_container_layout = QVBoxLayout(img_container)
         img_container_layout.setContentsMargins(5, 5, 5, 5)
         
         img_title = QLabel("🖼️ Image Preview")
-        img_title.setStyleSheet("font-weight: 600; color: #1A2035; border: none;")
+        img_title.setObjectName("ImgTitle")
         img_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         img_container_layout.addWidget(img_title)
         
         self.img_preview = QLabel("NO IMAGE")
         self.img_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.img_preview.setStyleSheet("background-color: #FAFBFC; border: 1px solid #E2E4E8; border-radius: 6px;")
+        self.img_preview.setObjectName("ImgPreview")
         self.img_preview.setMinimumSize(200, 150)
         self.img_preview.setMaximumSize(400, 300)
         self.img_preview.setSizePolicy(
@@ -150,11 +144,7 @@ class FinalDataUI(QWidget):
         # Duplicate image warning label (hidden by default)
         self._dup_warning_lbl = QLabel()
         self._dup_warning_lbl.setWordWrap(True)
-        self._dup_warning_lbl.setStyleSheet(
-            "color: #dc3545; font-weight: bold; font-size: 10px; "
-            "background-color: #fff3cd; border: 1px solid #dc3545; "
-            "border-radius: 4px; padding: 4px;"
-        )
+        self._dup_warning_lbl.setObjectName("DupWarningLabel")
         self._dup_warning_lbl.setVisible(False)
         img_container_layout.addWidget(self._dup_warning_lbl)
         self._duplicate_images = {}  # populated by sync_images_after_processing
@@ -163,70 +153,63 @@ class FinalDataUI(QWidget):
 
         # 4. Summary Statistics Panel (BELOW IMAGE)
         summary_frame = QFrame()
-        summary_frame.setStyleSheet("""
-            QFrame {
-                background-color: #FAFBFC;
-                border: 1px solid #E2E4E8;
-                border-radius: 8px;
-                padding: 10px;
-            }
-        """)
+        summary_frame.setObjectName("SummaryFrame")
         summary_grid = QGridLayout(summary_frame)
         summary_grid.setSpacing(5)
         
         # Summary Title
         summary_title = QLabel("📊 Summary")
-        summary_title.setStyleSheet("font-weight: 600; font-size: 12pt; color: #1A2035; border: none;")
+        summary_title.setObjectName("SummaryTitle")
         summary_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         summary_grid.addWidget(summary_title, 0, 0, 1, 2)
         
         # Catalog Total Items (True/False = 1)
         self.lbl_catalog_total = QLabel("Catalog Total:")
-        self.lbl_catalog_total.setStyleSheet("font-weight: 500; color: #1A2035; border: none;")
+        self.lbl_catalog_total.setObjectName("SummaryLabel")
         self.lbl_catalog_total_val = QLabel("0")
-        self.lbl_catalog_total_val.setStyleSheet("font-weight: bold; color: #28a745; border: none;")
+        self.lbl_catalog_total_val.setObjectName("SummaryValueGreen")
         self.lbl_catalog_total_val.setAlignment(Qt.AlignmentFlag.AlignRight)
         summary_grid.addWidget(self.lbl_catalog_total, 1, 0)
         summary_grid.addWidget(self.lbl_catalog_total_val, 1, 1)
         
         # Excluded by Stock (Empty TF + 0 Stock)
         self.lbl_out_stock = QLabel("Excluded (Stock):")
-        self.lbl_out_stock.setStyleSheet("font-weight: 500; color: #1A2035; border: none;")
+        self.lbl_out_stock.setObjectName("SummaryLabel")
         self.lbl_out_stock_val = QLabel("0")
-        self.lbl_out_stock_val.setStyleSheet("font-weight: bold; color: #fd7e14; border: none;")
+        self.lbl_out_stock_val.setObjectName("SummaryValueOrange")
         self.lbl_out_stock_val.setAlignment(Qt.AlignmentFlag.AlignRight)
         summary_grid.addWidget(self.lbl_out_stock, 2, 0)
         summary_grid.addWidget(self.lbl_out_stock_val, 2, 1)
         
         # Manual False Items
         self.lbl_false = QLabel("Manual False:")
-        self.lbl_false.setStyleSheet("font-weight: 500; color: #1A2035; border: none;")
+        self.lbl_false.setObjectName("SummaryLabel")
         self.lbl_false_val = QLabel("0")
-        self.lbl_false_val.setStyleSheet("font-weight: bold; color: #dc3545; border: none;")
+        self.lbl_false_val.setObjectName("SummaryValueRed")
         self.lbl_false_val.setAlignment(Qt.AlignmentFlag.AlignRight)
         summary_grid.addWidget(self.lbl_false, 3, 0)
         summary_grid.addWidget(self.lbl_false_val, 3, 1)
         
         # Separator
         sep_line = QLabel("─" * 20)
-        sep_line.setStyleSheet("color: #E2E4E8; border: none;")
+        sep_line.setObjectName("SummarySeparator")
         sep_line.setAlignment(Qt.AlignmentFlag.AlignCenter)
         summary_grid.addWidget(sep_line, 4, 0, 1, 2)
         
         # Final Data Total
         self.lbl_final_total = QLabel("Final Data Total:")
-        self.lbl_final_total.setStyleSheet("font-weight: 500; color: #1A2035; border: none;")
+        self.lbl_final_total.setObjectName("SummaryLabel")
         self.lbl_final_total_val = QLabel("0")
-        self.lbl_final_total_val.setStyleSheet("font-weight: bold; color: #0B9B8A; border: none;")
+        self.lbl_final_total_val.setObjectName("SummaryValueTeal")
         self.lbl_final_total_val.setAlignment(Qt.AlignmentFlag.AlignRight)
         summary_grid.addWidget(self.lbl_final_total, 5, 0)
         summary_grid.addWidget(self.lbl_final_total_val, 5, 1)
         
         # Item Mismatch
         self.lbl_mismatch = QLabel("Item Mismatch:")
-        self.lbl_mismatch.setStyleSheet("font-weight: 500; color: #1A2035; border: none;")
+        self.lbl_mismatch.setObjectName("SummaryLabel")
         self.lbl_mismatch_val = QLabel("0")
-        self.lbl_mismatch_val.setStyleSheet("font-weight: bold; color: #6f42c1; border: none;")
+        self.lbl_mismatch_val.setObjectName("SummaryValuePurple")
         self.lbl_mismatch_val.setAlignment(Qt.AlignmentFlag.AlignRight)
         summary_grid.addWidget(self.lbl_mismatch, 6, 0)
         summary_grid.addWidget(self.lbl_mismatch_val, 6, 1)
@@ -1061,9 +1044,11 @@ class FinalDataUI(QWidget):
             # Special Visual for Mismatch
             self.lbl_mismatch_val.setText(str(item_mismatch))
             if item_mismatch != 0:
-                self.lbl_mismatch_val.setStyleSheet("font-weight: bold; color: red; border: 1px solid red; padding: 2px;")
+                self.lbl_mismatch_val.setProperty("alert", "true")
             else:
-                 self.lbl_mismatch_val.setStyleSheet("font-weight: bold; color: #6f42c1; border: none;")
+                self.lbl_mismatch_val.setProperty("alert", "false")
+            self.lbl_mismatch_val.style().unpolish(self.lbl_mismatch_val)
+            self.lbl_mismatch_val.style().polish(self.lbl_mismatch_val)
 
         except Exception as e:
             logger.error(f"Summary Stats Error: {e}", exc_info=True)

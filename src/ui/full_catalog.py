@@ -201,7 +201,6 @@ class FullCatalogUI(QWidget):
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setObjectName("CatalogScrollArea")
-        self.scroll_area.setStyleSheet("background-color: #E2E4E8;")
         self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.renderer = A4PageRenderer()
@@ -269,11 +268,9 @@ class FullCatalogUI(QWidget):
         self.page_input.setObjectName("CatalogPageInput")
         self.page_input.setFixedWidth(50)
         self.page_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.page_input.setStyleSheet("font-size: 13px; font-weight: 600;")
 
         self.total_lbl = QLabel("/1")
         self.total_lbl.setObjectName("CatalogTotalLabel")
-        self.total_lbl.setStyleSheet("font-size: 13px; font-weight: 600; padding-left: 5px;")
 
         info_row = QHBoxLayout()
         info_row.setSpacing(2)
@@ -305,14 +302,6 @@ class FullCatalogUI(QWidget):
         self.btn_reshuffle.setObjectName("CatalogReshuffleBtn")
         self.btn_reshuffle.setToolTip("Re-sort all products into proper groups\n(Use after adding new items)")
         self.btn_reshuffle.setFixedHeight(40)
-        self.btn_reshuffle.setStyleSheet("""
-            QPushButton {
-                background-color: #8e44ad; color: white;
-                font-weight: 600; border: none; border-radius: 8px;
-            }
-            QPushButton:hover { background-color: #9b59b6; }
-            QPushButton:pressed { background-color: #7d3c98; }
-        """)
 
         parent_layout.addWidget(self.btn_build)
         parent_layout.addWidget(self.btn_export)

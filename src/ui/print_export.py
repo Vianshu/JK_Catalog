@@ -87,7 +87,7 @@ class PDFPreviewDialog(QDialog):
         
         # 2. Right side: Vertical Toolbar
         self.sidebar_frame = QFrame()
-        self.sidebar_frame.setStyleSheet("background-color: #2b2b2b; border-left: 1px solid #444;")
+        self.sidebar_frame.setObjectName("PdfSidebarFrame")
         self.sidebar_frame.setFixedWidth(160)
         self.sidebar = QVBoxLayout(self.sidebar_frame)
         self.sidebar.setContentsMargins(10, 15, 10, 15)
@@ -95,12 +95,12 @@ class PDFPreviewDialog(QDialog):
         
         # Primary Action Buttons
         self.btn_print = QPushButton("🖨️ Print")
-        self.btn_print.setStyleSheet("background-color: #28a745; color: white; padding: 10px; font-weight: bold; border-radius: 4px; font-size: 14px;")
+        self.btn_print.setObjectName("PdfPrintBtn")
         self.btn_print.clicked.connect(self.print_document)
         self.sidebar.addWidget(self.btn_print)
         
         self.btn_close = QPushButton("Close")
-        self.btn_close.setStyleSheet("background-color: #dc3545; color: white; padding: 8px; font-weight: bold; border-radius: 4px;")
+        self.btn_close.setObjectName("PdfCloseBtn")
         self.btn_close.clicked.connect(self.reject)
         self.sidebar.addWidget(self.btn_close)
         
@@ -109,24 +109,23 @@ class PDFPreviewDialog(QDialog):
         
         # Zoom Controls Label
         zoom_lbl = QLabel("VIEW CONTROLS")
-        zoom_lbl.setStyleSheet("color: #888; font-size: 11px; font-weight: bold; margin-bottom: 5px;")
+        zoom_lbl.setObjectName("PdfZoomLabel")
         self.sidebar.addWidget(zoom_lbl)
         
         # Zoom Buttons
-        btn_style = "background-color: #444; color: white; padding: 6px; border-radius: 4px; text-align: left; padding-left: 10px;"
         
         self.btn_zoom_in = QPushButton("🔍 Zoom In")
-        self.btn_zoom_in.setStyleSheet(btn_style)
+        self.btn_zoom_in.setObjectName("PdfZoomBtn")
         self.btn_zoom_in.clicked.connect(self.zoom_in)
         self.sidebar.addWidget(self.btn_zoom_in)
         
         self.btn_zoom_out = QPushButton("🔎 Zoom Out")
-        self.btn_zoom_out.setStyleSheet(btn_style)
+        self.btn_zoom_out.setObjectName("PdfZoomBtn")
         self.btn_zoom_out.clicked.connect(self.zoom_out)
         self.sidebar.addWidget(self.btn_zoom_out)
         
         self.btn_fit_width = QPushButton("↔️ Fit Width")
-        self.btn_fit_width.setStyleSheet(btn_style)
+        self.btn_fit_width.setObjectName("PdfZoomBtn")
         self.btn_fit_width.clicked.connect(self.fit_width)
         self.sidebar.addWidget(self.btn_fit_width)
         
@@ -260,21 +259,21 @@ class PrintExportDialog(QDialog):
         self.setWindowTitle("Print / Export Catalog")
         self.setMinimumSize(500, 400)
         
-        # PROPER STYLING to fix visibility issues (Dark Mode)
+        # Styling to match app theme (Light Mode — Teal accent)
         self.setStyleSheet("""
-            QDialog { background-color: #1e1e1e; color: #ffffff; }
-            QLabel { color: #ffffff; font-size: 13px; }
-            QGroupBox { font-weight: bold; color: #ffffff; border: 1px solid #555; margin-top: 10px; }
-            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; }
-            QCheckBox { color: #ffffff; spacing: 5px; }
-            QSpinBox { background-color: #333333; color: #ffffff; padding: 4px; border: 1px solid #555; border-radius: 4px; }
-            QComboBox { background-color: #333333; color: #ffffff; padding: 4px; border: 1px solid #555; border-radius: 4px; }
-            QComboBox::drop-down { border: none; }
-            QComboBox QAbstractItemView { background-color: #333333; color: #ffffff; selection-background-color: #007bff; }
-            QPushButton { background-color: #007bff; color: white; border-radius: 4px; font-weight: bold; }
-            QPushButton:hover { background-color: #0056b3; }
-            QPushButton#BtnCancel { background-color: #555555; }
-            QPushButton#BtnCancel:hover { background-color: #444444; }
+            QDialog { background-color: #ffffff; color: #1A2035; }
+            QLabel { color: #1A2035; font-size: 13px; }
+            QGroupBox { font-weight: bold; color: #1A2035; border: 1px solid #E2E4E8; border-radius: 6px; margin-top: 10px; padding-top: 14px; }
+            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 8px; color: #1A2035; }
+            QCheckBox { color: #1A2035; spacing: 5px; }
+            QSpinBox { background-color: #FAFBFC; color: #1A2035; padding: 6px; border: 1px solid #E2E4E8; border-radius: 6px; }
+            QComboBox { background-color: #FAFBFC; color: #1A2035; padding: 6px; border: 1px solid #E2E4E8; border-radius: 6px; }
+            QComboBox::drop-down { border: none; width: 20px; }
+            QComboBox QAbstractItemView { background-color: #ffffff; color: #1A2035; selection-background-color: #EBF5F5; selection-color: #0B9B8A; border: 1px solid #E2E4E8; }
+            QPushButton { background-color: #0B9B8A; color: white; border-radius: 8px; font-weight: bold; padding: 10px 18px; font-size: 13px; }
+            QPushButton:hover { background-color: #099179; }
+            QPushButton#BtnCancel { background-color: #F4F5F7; color: #1A2035; border: 1px solid #E2E4E8; }
+            QPushButton#BtnCancel:hover { background-color: #E2E4E8; }
         """)
         
         # Get company path for CRM list

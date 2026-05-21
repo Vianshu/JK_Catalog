@@ -242,7 +242,7 @@ class UserManagerDialog(QDialog):
                 rb = QPushButton("🔑 Reset")
                 rb.setToolTip("Reset Password")
                 rb.setFixedHeight(28)
-                rb.setStyleSheet("QPushButton { background-color: #f39c12; color: white; border-radius: 3px; font-weight: bold; padding: 0 5px; } QPushButton:hover { background-color: #e67e22; }")
+                rb.setObjectName("BtnResetPw")
                 rb.clicked.connect(lambda _, uid=uid, un=uname: self._reset_pw(uid, un))
                 al.addWidget(rb)
                 
@@ -250,16 +250,16 @@ class UserManagerDialog(QDialog):
                 tb.setToolTip("Deactivate" if is_active else "Activate")
                 tb.setFixedHeight(28)
                 if is_active:
-                    tb.setStyleSheet("QPushButton { background-color: #e74c3c; color: white; border-radius: 3px; font-weight: bold; padding: 0 5px; } QPushButton:hover { background-color: #c0392b; }")
+                    tb.setObjectName("BtnDisableUser")
                 else:
-                    tb.setStyleSheet("QPushButton { background-color: #2ecc71; color: white; border-radius: 3px; font-weight: bold; padding: 0 5px; } QPushButton:hover { background-color: #27ae60; }")
+                    tb.setObjectName("BtnEnableUser")
                 tb.clicked.connect(lambda _, uid=uid, a=is_active: self._toggle(uid, a))
                 al.addWidget(tb)
                 
                 db = QPushButton("🗑 Delete")
                 db.setToolTip("Delete User")
                 db.setFixedHeight(28)
-                db.setStyleSheet("QPushButton { background-color: #34495e; color: white; border-radius: 3px; font-weight: bold; padding: 0 5px; } QPushButton:hover { background-color: #2c3e50; }")
+                db.setObjectName("BtnDeleteUser")
                 db.clicked.connect(lambda _, uid=uid, un=uname: self._del(uid, un))
                 al.addWidget(db)
                 self.table.setCellWidget(i, 4, action_w)
@@ -745,7 +745,7 @@ class ChangePasswordDialog(QDialog):
         # Admin-only gate: block non-admin users immediately
         if user_session and not user_session.is_admin:
             denied_lbl = QLabel("🔒 Only administrators can change passwords.")
-            denied_lbl.setStyleSheet("color: #c0392b; font-weight: bold; padding: 20px;")
+            denied_lbl.setObjectName("DeniedLabel")
             denied_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             denied_lbl.setWordWrap(True)
             layout.addWidget(denied_lbl)
@@ -775,7 +775,7 @@ class ChangePasswordDialog(QDialog):
         layout.addLayout(form)
         
         self.error_lbl = QLabel("")
-        self.error_lbl.setStyleSheet("color: red; font-weight: bold;")
+        self.error_lbl.setObjectName("SettingsErrorLabel")
         self.error_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.error_lbl)
         

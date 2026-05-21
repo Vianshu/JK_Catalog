@@ -73,18 +73,7 @@ class ProductCardRow(QFrame):
     def __init__(self, product_data, page_info):
         super().__init__()
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet("""
-            ProductCardRow {
-                background-color: white;
-                border: 1px solid #e0e0e0;
-                border-radius: 6px;
-                margin-bottom: 4px;
-            }
-            ProductCardRow:hover {
-                border: 1px solid #3498db;
-                background-color: #f8fbff;
-            }
-        """)
+        self.setObjectName("ProductCardRow")
         self.setFixedHeight(100)
         
         layout = QHBoxLayout(self)
@@ -94,7 +83,7 @@ class ProductCardRow(QFrame):
         # 1. Image Preview
         self.img_lbl = QLabel()
         self.img_lbl.setFixedSize(90, 90)
-        self.img_lbl.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ddd;")
+        self.img_lbl.setObjectName("CardImgLabel")
         self.img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.img_lbl.setScaledContents(True)
         
@@ -123,7 +112,7 @@ class ProductCardRow(QFrame):
         # Group / Subgroup
         grp = f"{page_info.get('group_name', '')} > {page_info.get('sg_sn', '')}"
         lbl_grp = QLabel(grp)
-        lbl_grp.setStyleSheet("color: #666; font-size: 10px;")
+        lbl_grp.setObjectName("CardGroupLabel")
         details_layout.addWidget(lbl_grp)
         
         # Size & Price
@@ -142,7 +131,7 @@ class ProductCardRow(QFrame):
         
         info_str = f"Sizes: {len(sizes)} | MRP: {mrp_str}"
         lbl_info = QLabel(info_str)
-        lbl_info.setStyleSheet("color: #333; font-size: 11px;")
+        lbl_info.setObjectName("CardInfoLabel")
         details_layout.addWidget(lbl_info)
         
         details_layout.addStretch()
@@ -151,12 +140,12 @@ class ProductCardRow(QFrame):
         # 3. Page Info (Right Side)
         page_layout = QVBoxLayout()
         page_lbl = QLabel(f"Page: {page_info.get('page_no', 0)}")
-        page_lbl.setStyleSheet("font-weight: bold; color: #2980b9;")
+        page_lbl.setObjectName("CardPageLabel")
         page_layout.addWidget(page_lbl, 0, Qt.AlignmentFlag.AlignRight)
         
         # Visual Order
         order_lbl = QLabel(f"Pos: {product_data.get('row')},{product_data.get('col')}")
-        order_lbl.setStyleSheet("color: #888; font-size: 10px;")
+        order_lbl.setObjectName("CardOrderLabel")
         page_layout.addWidget(order_lbl, 0, Qt.AlignmentFlag.AlignRight)
         
         page_layout.addStretch()
@@ -199,7 +188,7 @@ class GroupTestTab(QWidget):
         # Content Area
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
-        self.scroll.setStyleSheet("background-color: #f5f5f5;")
+        self.scroll.setObjectName("GroupTestScroll")
         
         self.container = QWidget()
         self.container_layout = QVBoxLayout(self.container)
@@ -267,7 +256,7 @@ class GroupTestTab(QWidget):
             
             # Add Header
             header_lbl = QLabel(f"\U0001f4c2 {group_name} > {sg_sn} ({len(items)} items)")
-            header_lbl.setStyleSheet("background: #555; color: white; font-weight: bold; padding: 5px; margin-top: 10px;")
+            header_lbl.setObjectName("GroupSectionHeader")
             self.container_layout.addWidget(header_lbl)
 
             for c_idx, cluster in enumerate(clusters):
@@ -278,7 +267,7 @@ class GroupTestTab(QWidget):
                 min_p = cluster[0].get("sort_price", 0)
                 
                 c_header = QLabel(f"   \U0001f539 Group {c_idx+1}: ~ {cluster_rep} (Starts \u20b9{min_p})")
-                c_header.setStyleSheet("color: #2c3e50; font-weight: bold; font-style: italic; margin-top: 5px;")
+                c_header.setObjectName("ClusterHeader")
                 self.container_layout.addWidget(c_header)
                 
                 for item in cluster:
@@ -289,20 +278,8 @@ class GroupTestTab(QWidget):
                     }
                     
                     card = ProductCardRow(item, page_info)
-                    bg_col = "#ffffff" if c_idx % 2 == 0 else "#f9f9f9"
-                    card.setStyleSheet(f"""
-                        ProductCardRow {{
-                            background-color: {bg_col};
-                            border: 1px solid #e0e0e0;
-                            border-radius: 6px;
-                            margin-bottom: 2px;
-                            margin-left: 20px;
-                        }}
-                        ProductCardRow:hover {{
-                            border: 1px solid #3498db;
-                            background-color: #eaf2f8;
-                        }}
-                    """)
+                    if c_idx % 2 != 0:
+                        card.setProperty("alt", "true")
                     self.container_layout.addWidget(card)
     
     def _on_load_finished(self, msg):

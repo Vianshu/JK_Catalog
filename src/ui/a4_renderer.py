@@ -299,10 +299,10 @@ class ProductSizeDialog(QDialog):
         # Buttons
         btns = QHBoxLayout()
         ok = QPushButton("Apply")
-        ok.setStyleSheet("background-color: #28a745; color: white; font-weight: bold; border-radius: 4px; padding: 6px;")
+        ok.setObjectName("BtnApplyGreen")
         ok.clicked.connect(self.save)
         cancel = QPushButton("Cancel")
-        cancel.setStyleSheet("background-color: #dc3545; color: white; font-weight: bold; border-radius: 4px; padding: 6px;")
+        cancel.setObjectName("BtnCancelRed")
         cancel.clicked.connect(self.reject)
         btns.addStretch()
         btns.addWidget(ok)

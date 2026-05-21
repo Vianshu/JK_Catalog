@@ -71,7 +71,7 @@ class MenuButtonWidget(QFrame):
         self.html_text = self.plain_text
         
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 7, 8, 7)
+        layout.setContentsMargins(6, 12, 6, 12)
         layout.setSpacing(0)
         
         if "&" in text:
@@ -81,53 +81,20 @@ class MenuButtonWidget(QFrame):
                     char = text[idx+1]
                     # BADGE STYLE (Front) - High Contrast Red Badge
                     # User requested: "add the letter on the front itself"
-                    self.html_text = f"<font color='#DC2626'><b>[{char.upper()}]</b></font> {self.plain_text}"
+                    self.html_text = f"<font color='#ff4d4d'><b>[{char.upper()}]</b></font> {self.plain_text}"
                     self.hotkey_char = char.upper()
             except: pass
             
         # Default to PLAIN text (Clean state)
         self.lbl = QLabel(self.plain_text)
         self.lbl.setObjectName("MenuLabel")
+        # Direct style on label — required because Fusion style engine overrides
+        # QSS child selectors from app-level stylesheet on QFrame children.
+        self.lbl.setStyleSheet("color: #1A2035; font-size: 14px; font-weight: 600; background: transparent; border: none;")
         layout.addWidget(self.lbl)
         layout.addStretch()
         
-        # Inline Style — refined compact enterprise styling
-        self.setStyleSheet("""
-            #MenuButtonWidget {
-                background: transparent;
-                border-radius: 5px;
-                margin: 1px 4px;
-                border-left: 3px solid transparent;
-            }
-            #MenuButtonWidget:hover {
-                background-color: #F0FAF8;
-            }
-            #MenuButtonWidget[active="true"] {
-                background-color: #EDF8F6;
-                border-left: 3px solid #0B9B8A;
-                border-radius: 4px;
-            }
-            #MenuButtonWidget:disabled {
-                background: transparent;
-            }
-            QLabel {
-                color: #4A5568;
-                font-size: 12px;
-                font-weight: 500;
-                background: transparent;
-            }
-            #MenuButtonWidget:hover QLabel {
-                color: #0B9B8A;
-                font-weight: 600;
-            }
-            #MenuButtonWidget[active="true"] QLabel {
-                color: #0B9B8A;
-                font-weight: 600;
-            }
-            #MenuButtonWidget:disabled QLabel {
-                color: #D1D5DB;
-            }
-        """)
+        # Styling handled by style.qss via #MenuButtonWidget selector
 
     def set_hotkey_visibility(self, visible):
         """Toggle between Plain text and HTML Badge."""
@@ -262,16 +229,11 @@ class MainWindow(QWidget):
         # ========== LEFT SIDEBAR ==========
         self.sidebar = QFrame()
         self.sidebar.setObjectName("MainSidebar")
-        self.sidebar.setFixedWidth(200)
+        self.sidebar.setFixedWidth(180)
         
         sidebar_layout = QVBoxLayout(self.sidebar)
-        sidebar_layout.setContentsMargins(10, 14, 10, 8)
+        sidebar_layout.setContentsMargins(10, 20, 10, 10)
         sidebar_layout.setSpacing(0)
-
-        # App Branding
-        brand_lbl = QLabel("JK CATALOG")
-        brand_lbl.setObjectName("AppBrandLabel")
-        sidebar_layout.addWidget(brand_lbl)
 
         # Company Display Button
         self.company_btn = QPushButton("🏢 Select Company  ▼")
@@ -291,32 +253,14 @@ class MainWindow(QWidget):
         sidebar_layout.addStretch()
 
         # Quit Hint
-        quit_lbl = QLabel("Ctrl+Q to Quit")
+        # Quit Hint
+        quit_lbl = QLabel("Press Ctrl+Q to Quit")
         quit_lbl.setObjectName("QuitHint")
         sidebar_layout.addWidget(quit_lbl)
 
         # Logout Button (User Request)
-        self.logout_btn = QPushButton("Logout")
-        self.logout_btn.setObjectName("MenuButton")
-        self.logout_btn.setStyleSheet("""
-            QPushButton {
-                background-color: transparent; 
-                color: #DC2626; 
-                border: 1px solid #FCA5A5;
-                border-radius: 5px;
-                font-weight: 600; 
-                font-size: 12px;
-                padding: 7px;
-                margin-top: 4px;
-                margin-left: 6px;
-                margin-right: 6px;
-                margin-bottom: 2px;
-            }
-            QPushButton:hover {
-                background-color: rgba(220, 38, 38, 0.06);
-                border-color: #DC2626;
-            }
-        """)
+        self.logout_btn = QPushButton("🚪 LOGOUT")
+        self.logout_btn.setObjectName("LogoutBtn")
         self.logout_btn.clicked.connect(self.back_to_login_screen)
         sidebar_layout.addWidget(self.logout_btn)
 
@@ -507,8 +451,8 @@ class MainWindow(QWidget):
     def create_menu_widget(self, buttons_data):
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.setContentsMargins(4, 6, 4, 6)
-        layout.setSpacing(2)
+        layout.setContentsMargins(5, 10, 5, 10)
+        layout.setSpacing(10)
         
         for data in buttons_data:
             text = data[0]
@@ -586,8 +530,7 @@ class MainWindow(QWidget):
             
             # Update UI with company name
             clean_name = re.sub(r'\s*\(\d{4}[-/].*?\)', '', comp_name)
-            self.company_btn.setText(f"🏢 {clean_name} ▼")
-            self.company_btn.setStyleSheet("")
+            self.company_btn.setText(f"\U0001f3e2 {clean_name} \u25bc")
             self.company_btn.show()
 
             if not company_path or not os.path.exists(company_path):

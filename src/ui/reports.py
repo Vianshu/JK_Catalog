@@ -103,8 +103,8 @@ class ReportsUI(QWidget):
         title = QLabel("📈 CRM Performance Reports")
         title.setObjectName("SectionTitle")
         
-        self.lbl_refresh = QLabel("⏳ Refreshing Catalog... Please Wait")
-        self.lbl_refresh.setStyleSheet("color: #ff9900; font-weight: bold; font-size: 14px;")
+        self.lbl_refresh = QLabel("\u23f3 Refreshing Catalog... Please Wait")
+        self.lbl_refresh.setObjectName("RefreshLabel")
         self.lbl_refresh.hide()
         
         button_box = QHBoxLayout()

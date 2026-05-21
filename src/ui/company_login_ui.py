@@ -57,7 +57,7 @@ class LoginDialog(QDialog):
         self.session = None  # UserSession set on successful login
         
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
-        self.setFixedSize(420, 340) 
+        self.setFixedSize(450, 260) 
         self.setModal(True)
         self.setObjectName("LoginDialog") 
         
@@ -65,48 +65,29 @@ class LoginDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── Header ──
         header = QFrame()
-        header.setFixedHeight(56)
+        header.setFixedHeight(50)
         header.setObjectName("LoginHeader") 
-        h_layout = QVBoxLayout(header)
-        h_layout.setContentsMargins(20, 10, 12, 8)
-        h_layout.setSpacing(2)
-        
-        # Header row with title and close button
-        header_row = QHBoxLayout()
-        header_row.setSpacing(0)
-        
-        title_col = QVBoxLayout()
-        title_col.setSpacing(1)
-        title = QLabel("Company Login")
+        h_layout = QHBoxLayout(header)
+        title = QLabel(f"🏢 Company Login: {company_name}")
         title.setObjectName("LoginTitle")
-        title_col.addWidget(title)
+        h_layout.addWidget(title)
         
-        subtitle = QLabel(company_name)
-        subtitle.setObjectName("LoginSubtitle")
-        title_col.addWidget(subtitle)
-        
-        header_row.addLayout(title_col)
-        header_row.addStretch()
-        
-        close_btn = QPushButton("\u00d7")
-        close_btn.setFixedSize(28, 28)
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(30, 30)
         close_btn.setObjectName("LoginCloseBtn")
         close_btn.clicked.connect(self.reject)
-        header_row.addWidget(close_btn)
+        h_layout.addWidget(close_btn)
         
-        h_layout.addLayout(header_row)
         layout.addWidget(header)
 
-        # ── Form Content ──
         content = QFrame()
         content.setObjectName("LoginContent")
         form_grid = QGridLayout(content)
-        form_grid.setContentsMargins(32, 28, 32, 12)
-        form_grid.setSpacing(14)
+        form_grid.setContentsMargins(30, 20, 30, 10)
+        form_grid.setSpacing(12)
         
-        lbl_user = QLabel("Username")
+        lbl_user = QLabel("User Name :-")
         lbl_user.setObjectName("LoginLabel")
         form_grid.addWidget(lbl_user, 0, 0)
         
@@ -115,7 +96,7 @@ class LoginDialog(QDialog):
         self.user_edit.setPlaceholderText("Enter username")
         form_grid.addWidget(self.user_edit, 0, 1)
         
-        lbl_pass = QLabel("Password")
+        lbl_pass = QLabel("Password :-")
         lbl_pass.setObjectName("LoginLabel")
         form_grid.addWidget(lbl_pass, 1, 0)
         
@@ -126,17 +107,13 @@ class LoginDialog(QDialog):
         form_grid.addWidget(self.pass_edit, 1, 1)
         layout.addWidget(content)
 
-        # ── Error Label ──
         self.error_lbl = QLabel("")
         self.error_lbl.setObjectName("LoginErrorLabel") 
-        self.error_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.error_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.error_lbl)
-        
-        layout.addStretch()
 
-        # ── Login Button ──
         self.btn_login = QPushButton("Login")
-        self.btn_login.setFixedHeight(42)
+        self.btn_login.setFixedHeight(45)
         self.btn_login.setObjectName("LoginActionButton") 
         self.btn_login.clicked.connect(self.verify_login)
         layout.addWidget(self.btn_login)
@@ -473,7 +450,7 @@ class CompanyLoginUI(QWidget):
         layout.addWidget(header)
         
         cl = QVBoxLayout()
-        cl.setContentsMargins(40, 20, 40, 20)
+        cl.setContentsMargins(20, 10, 20, 10)
         
         self.list = QListWidget()
         self.list.setObjectName("CompanyListWidget") 
@@ -497,7 +474,7 @@ class CompanyLoginUI(QWidget):
         line.setFlags(Qt.ItemFlag.NoItemFlags)
         line.setSizeHint(QSize(100, 2))
         self.list.addItem(line)
-        f = QFrame(); f.setFixedHeight(2); f.setStyleSheet("background-color: #E2E4E8;") 
+        f = QFrame(); f.setFixedHeight(2); f.setObjectName("ListSeparator")
         self.list.setItemWidget(line, f)
         
         self.add_item(f"Current Path: {self.current_data_path}", is_bold=True)

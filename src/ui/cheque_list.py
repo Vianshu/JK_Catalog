@@ -56,7 +56,7 @@ class ChequeListUI(QWidget):
         
         # 1. Left Side: Clear Button
         self.btn_clear = QPushButton("✅ Clear Chq Unhide")
-        self.btn_clear.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        self.btn_clear.setObjectName("BtnClearChq")
         self.btn_clear.clicked.connect(self.toggle_clear_visibility)
         
         self.search_box = QLineEdit()
@@ -72,8 +72,8 @@ class ChequeListUI(QWidget):
         
         self.lbl_count = QLabel("Total No. of Chq.: 0")
         self.lbl_total = QLabel("Amount: 0.00")
-        self.lbl_count.setStyleSheet("font-weight: 600; margin-right: 10px;")
-        self.lbl_total.setStyleSheet("font-weight: 600; margin-right: 10px;")
+        self.lbl_count.setObjectName("ChqSummaryLabel")
+        self.lbl_total.setObjectName("ChqSummaryLabel")
         
         top_bar.addWidget(self.lbl_count)
         top_bar.addWidget(self.lbl_total)
@@ -82,20 +82,20 @@ class ChequeListUI(QWidget):
 
         # 3. Right Side: Utility Buttons
         self.btn_set_location = QPushButton("📂 Set Location")
-        self.btn_set_location.setStyleSheet("background-color: #f39c12; color: white;")
+        self.btn_set_location.setObjectName("BtnOrange")
         self.btn_set_location.clicked.connect(self.set_export_location)
 
         self.btn_print = QPushButton("🖨️ Print")
-        self.btn_print.setStyleSheet("background-color: #3498db; color: white;")
+        self.btn_print.setObjectName("BtnBlue")
         self.btn_print.clicked.connect(self.print_table)
         
         self.btn_bank_list = QPushButton("🏦 Bank List")
         self.btn_bank_list.setCheckable(True)
-        self.btn_bank_list.setStyleSheet("background-color: #3498db; color: white;")
+        self.btn_bank_list.setObjectName("BtnBlue")
         self.btn_bank_list.clicked.connect(self.toggle_bank_list)
         
         self.btn_export = QPushButton("Excel")
-        self.btn_export.setStyleSheet("background-color: #3498db; color: white;")
+        self.btn_export.setObjectName("BtnBlue")
         self.btn_export.clicked.connect(self.export_to_excel)
         
         top_bar.addWidget(self.btn_set_location)
@@ -188,10 +188,12 @@ class ChequeListUI(QWidget):
         # Button update
         if is_currently_hidden:
             self.btn_clear.setText("🚫 Clear Chq Hide")
-            self.btn_clear.setStyleSheet("background-color: #f0f0f0; color: black;")
+            self.btn_clear.setProperty("state", "inactive")
         else:
             self.btn_clear.setText("✅ Clear Chq Unhide")
-            self.btn_clear.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+            self.btn_clear.setProperty("state", "active")
+        self.btn_clear.style().unpolish(self.btn_clear)
+        self.btn_clear.style().polish(self.btn_clear)
             
         # 🔥 Sabse important: click ke baad summary update trigger karein
         self.update_summary()
