@@ -123,7 +123,7 @@ class GodownListUI(QWidget):
         self.table.setColumnWidth(6, 80)
         
         self.table.setEditTriggers(
-            QAbstractItemView.EditTrigger.DoubleClicked | 
+            QAbstractItemView.EditTrigger.CurrentChanged | 
             QAbstractItemView.EditTrigger.AnyKeyPressed | 
             QAbstractItemView.EditTrigger.EditKeyPressed
         )

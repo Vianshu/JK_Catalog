@@ -49,7 +49,7 @@ class SuperMasterUI(QWidget):
         
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setSortIndicator(0, Qt.SortOrder.AscendingOrder)
-        self.table.verticalHeader().setDefaultSectionSize(25)
+        self.table.verticalHeader().setDefaultSectionSize(28)
         self.table.verticalHeader().setVisible(False)
 
         # Filter Container

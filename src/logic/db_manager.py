@@ -17,6 +17,7 @@ Usage:
 import os
 import re
 import json
+import time
 import threading
 import getpass
 import pyodbc
@@ -27,12 +28,15 @@ logger = get_logger(__name__)
 # ─── SINGLETON ────────────────────────────────────────────────────────────────
 
 _instance = None
+_instance_lock = threading.Lock()
 
 def get_db_manager():
-    """Get the singleton DBManager instance."""
+    """Get the singleton DBManager instance (thread-safe)."""
     global _instance
     if _instance is None:
-        _instance = DBManager()
+        with _instance_lock:
+            if _instance is None:  # Double-checked locking
+                _instance = DBManager()
     return _instance
 
 
@@ -94,6 +98,8 @@ class DBManager:
     def __init__(self):
         self._server_name = ""
         self._connections = {}  # {logical_name: pyodbc.Connection}
+        self._health_timestamps = {}  # {cache_key: last_healthy_epoch}
+        self._HEALTH_TTL = 30  # seconds — skip SELECT 1 if verified recently
         self._lock = threading.Lock()  # Thread-safe connection access
         self._load_server_config()
         self._ensure_login()
@@ -240,8 +246,13 @@ class DBManager:
             # Return cached connection if still alive
             if cache_key in self._connections:
                 conn = self._connections[cache_key]
+                # Skip health check if verified recently (saves ~5ms per call)
+                last_healthy = self._health_timestamps.get(cache_key, 0)
+                if time.time() - last_healthy < self._HEALTH_TTL:
+                    return conn
                 try:
                     conn.execute("SELECT 1")
+                    self._health_timestamps[cache_key] = time.time()
                     return conn
                 except Exception:
                     try:
@@ -249,6 +260,7 @@ class DBManager:
                     except Exception:
                         pass
                     self._connections.pop(cache_key, None)
+                    self._health_timestamps.pop(cache_key, None)
 
             # Create new connection
             try:
@@ -289,6 +301,7 @@ class DBManager:
                 except Exception:
                     pass
             self._connections.clear()
+            self._health_timestamps.clear()
 
     # ─── DATABASE CREATION ────────────────────────────────────────────────────
 

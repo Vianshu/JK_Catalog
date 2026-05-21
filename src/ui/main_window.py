@@ -29,7 +29,6 @@ from src.ui.int_cost_sheet import IntCostSheetUI
 from src.ui.catalog_price_list import CatalogPriceListUI
 from src.ui.cheque_list import ChequeListUI
 from src.ui.calendar_mapping import CalendarMappingUI
-from src.ui.group_test_tab import GroupTestTab
 from src.ui.ledger_row_data import LedgerRowDataUI
 from src.utils.app_logger import get_logger, set_company_context
 
@@ -364,7 +363,6 @@ class MainWindow(QWidget):
             ("📖 Full Catalo&g", lambda: self.main_stack.setCurrentIndex(2), False, None, "tab.catalog"),
             ("📈 Rep&orts", lambda: self.main_stack.setCurrentIndex(7), False, None, "tab.reports"),
             ("🏷 Cat / &Price List", self.handle_catalog_price_list, False, None, "tab.cat_price_list"),
-            ("🧪 Preview &Rows", lambda: self.main_stack.setCurrentIndex(17), False, None, "tab.group_test"),
             ("➕ &Create CRM", self.handle_create_crm, False, None, "settings.manage_crm"),
             ("✏️ &Alter CRM", self.handle_alter_crm, False, None, "settings.manage_crm")
         ])
@@ -451,9 +449,10 @@ class MainWindow(QWidget):
             QMessageBox.critical(self, "Error", f"Ledger Sync Failed: {str(e)}")
 
     def on_main_stack_change(self, idx):
-        """Handle main tab changes -> Auto-save/Build Catalog on every switch."""
-        # Silent catalog build on every tab switch (picks up any data changes)
-        if hasattr(self, 'full_catalog_page') and idx not in [0, 1]:
+        """Handle main tab changes -> Auto-build Catalog only on relevant tabs."""
+        # Silent catalog build ONLY on Catalog (2) and Reports (7) tabs
+        # Other tabs have zero dependency on catalog build output
+        if idx in (2, 7) and hasattr(self, 'full_catalog_page'):
             self.full_catalog_page.build_catalog(silent=True)
             
         # If entering Reports tab, check if it's currently building
@@ -504,14 +503,12 @@ class MainWindow(QWidget):
         self.calendar_page = CalendarMappingUI()
         self.main_stack.addWidget(self.calendar_page) # Maan lijiye index 16 hai
 
-        self.group_test_page = GroupTestTab()
-        self.main_stack.addWidget(self.group_test_page) # Index 17
 
         self.ledger_row_data_page = LedgerRowDataUI()
-        self.main_stack.addWidget(self.ledger_row_data_page) # Index 18
+        self.main_stack.addWidget(self.ledger_row_data_page) # Index 17
 
         self.security_page = SecurityUI(self)
-        self.main_stack.addWidget(self.security_page) # Index 19
+        self.main_stack.addWidget(self.security_page) # Index 18
     # --- Helper UI Functions ---
     def create_menu_widget(self, buttons_data):
         widget = QWidget()
@@ -632,9 +629,6 @@ class MainWindow(QWidget):
                 session.register("Full Catalog", self.full_catalog_page,
                     lambda page, path: page.set_company_path(path))
 
-            if hasattr(self, 'group_test_page') and hasattr(self, 'full_catalog_page'):
-                session.register("Group Test", self.group_test_page,
-                    lambda page, path: page.set_logic(self.full_catalog_page.logic, path))
 
             session.register("Row Data", self.row_data_page,
                 lambda page, path: page.load_data(path))
@@ -720,7 +714,7 @@ class MainWindow(QWidget):
             if hasattr(page, 'table'):
                 if can_edit:
                     page.table.setEditTriggers(
-                        page.table.EditTrigger.DoubleClicked | page.table.EditTrigger.EditKeyPressed)
+                        page.table.EditTrigger.CurrentChanged | page.table.EditTrigger.EditKeyPressed)
                 else:
                     page.table.setEditTriggers(page.table.EditTrigger.NoEditTriggers)
         
@@ -760,7 +754,7 @@ class MainWindow(QWidget):
             if hasattr(page, 'table'):
                 if can_edit:
                     page.table.setEditTriggers(
-                        page.table.EditTrigger.DoubleClicked | page.table.EditTrigger.EditKeyPressed)
+                        page.table.EditTrigger.CurrentChanged | page.table.EditTrigger.EditKeyPressed)
                 else:
                     page.table.setEditTriggers(page.table.EditTrigger.NoEditTriggers)
         
@@ -771,7 +765,7 @@ class MainWindow(QWidget):
             if hasattr(page, 'table'):
                 if can_edit:
                     page.table.setEditTriggers(
-                        page.table.EditTrigger.DoubleClicked | page.table.EditTrigger.EditKeyPressed)
+                        page.table.EditTrigger.CurrentChanged | page.table.EditTrigger.EditKeyPressed)
                 else:
                     page.table.setEditTriggers(page.table.EditTrigger.NoEditTriggers)
         
@@ -782,7 +776,7 @@ class MainWindow(QWidget):
             if hasattr(page, 'table'):
                 if can_edit:
                     page.table.setEditTriggers(
-                        page.table.EditTrigger.DoubleClicked | page.table.EditTrigger.EditKeyPressed)
+                        page.table.EditTrigger.CurrentChanged | page.table.EditTrigger.EditKeyPressed)
                 else:
                     page.table.setEditTriggers(page.table.EditTrigger.NoEditTriggers)
         
@@ -938,7 +932,7 @@ class MainWindow(QWidget):
     def on_ledger_row_data_clicked(self):
         if self.current_company and hasattr(self, 'current_company_path'):
             self.ledger_row_data_page.load_data(self.current_company_path)
-            self.main_stack.setCurrentIndex(18)
+            self.main_stack.setCurrentIndex(17)
 
     def final_data(self):
         if self.current_company and hasattr(self, 'current_company_path'):
@@ -957,7 +951,7 @@ class MainWindow(QWidget):
     def handle_security(self): 
         if self.current_company and hasattr(self, 'current_company_path'):
             self.security_page.refresh_data()
-            self.main_stack.setCurrentIndex(19)
+            self.main_stack.setCurrentIndex(18)
     
     def handle_audit_log(self):
         if self.current_company and hasattr(self, 'current_company_path'):

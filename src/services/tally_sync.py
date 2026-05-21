@@ -172,6 +172,9 @@ class TallyService:
             values_list = [tuple(str(v) if pd.notna(v) else None for v in row) for row in export_df.itertuples(index=False, name=None)]
             if hasattr(cursor, 'fast_executemany'):
                 cursor.fast_executemany = True
+                logger.info("fast_executemany: ENABLED for stock_items")
+            else:
+                logger.warning("fast_executemany: NOT AVAILABLE — bulk insert will be slow")
             cursor.executemany(insert_sql, values_list)
             conn.commit()
 
@@ -185,9 +188,15 @@ class TallyService:
                 raise Exception("Staging table was empty after insert")
 
             # Atomic swap: drop old → rename staging
-            cursor.execute("IF OBJECT_ID('stock_items', 'U') IS NOT NULL DROP TABLE stock_items")
-            cursor.execute(f"EXEC sp_rename '{staging_table}', 'stock_items'")
-            conn.commit()
+            # With autocommit=False, both statements run in the same implicit
+            # transaction — conn.commit() makes them atomic.
+            try:
+                cursor.execute("IF OBJECT_ID('stock_items', 'U') IS NOT NULL DROP TABLE stock_items")
+                cursor.execute(f"EXEC sp_rename '{staging_table}', 'stock_items'")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
 
             logger.info(f"Row data saved to SQL Server: db='{db_name}', rows={len(export_df)}")
             return True
@@ -392,6 +401,9 @@ def fetch_tally_ledger_data(company_path=None):
         values_list = [tuple(str(v) if pd.notna(v) else None for v in row) for row in ledger_df.itertuples(index=False, name=None)]
         if hasattr(cursor, 'fast_executemany'):
             cursor.fast_executemany = True
+            logger.info("fast_executemany: ENABLED for ledger_data")
+        else:
+            logger.warning("fast_executemany: NOT AVAILABLE — bulk insert will be slow")
         cursor.executemany(insert_sql, values_list)
         conn.commit()
 
@@ -402,10 +414,16 @@ def fetch_tally_ledger_data(company_path=None):
             conn.commit()
             return 0, "Staging table empty after insert — original data preserved."
 
-        # Atomic swap
-        cursor.execute("IF OBJECT_ID('row_ledger_data', 'U') IS NOT NULL DROP TABLE row_ledger_data")
-        cursor.execute(f"EXEC sp_rename '{staging_table}', 'row_ledger_data'")
-        conn.commit()
+        # Atomic swap: drop old → rename staging
+        # With autocommit=False, both statements run in the same implicit
+        # transaction — conn.commit() makes them atomic.
+        try:
+            cursor.execute("IF OBJECT_ID('row_ledger_data', 'U') IS NOT NULL DROP TABLE row_ledger_data")
+            cursor.execute(f"EXEC sp_rename '{staging_table}', 'row_ledger_data'")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
         logger.info(f"Ledger data saved to SQL Server: db='{db_name}', rows={len(ledger_df)}")
         return len(ledger_df), ""

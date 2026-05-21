@@ -398,6 +398,19 @@ QTabBar::tab:disabled {
     border: 1px solid #bdc3c7;
     alternate-background-color: #ffffff;
 }
+#DetailedMappingTable::item {
+    padding: 2px 4px;
+}
+
+/* Fix: Inline cell editors in tables inherit global QLineEdit padding (8px 12px)
+   which clips text in compact table rows. Override with minimal padding. */
+QTableWidget QLineEdit {
+    padding: 1px 2px;
+    border: 1px solid #3498db;
+    border-radius: 0px;
+    margin: 0px;
+}
+
 #SummaryTable {
     border: 1px solid #bdc3c7;
     background-color: #ffffff;

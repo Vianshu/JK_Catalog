@@ -13,6 +13,7 @@ All DB access is routed through CatalogLogic — no direct sqlite3 usage here.
 """
 
 import os
+import time
 import datetime
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFrame,
@@ -100,6 +101,8 @@ class FullCatalogUI(QWidget):
         self.current_page_index = 0
         self.all_pages_data = []
         self._build_worker = None
+        self._last_build_time = 0
+        self._last_build_no_changes = False
 
         self._setup_ui()
         self._load_index_data()
@@ -700,6 +703,12 @@ class FullCatalogUI(QWidget):
         if self._build_worker and self._build_worker.isRunning():
             return
 
+        # Debounce: skip silent builds if last check was <10s ago with no changes
+        if silent and self._last_build_no_changes:
+            elapsed = time.time() - self._last_build_time
+            if elapsed < 10:
+                return
+
         logger.info(f"Catalog build started: silent={silent}")
 
         from PyQt6.QtWidgets import QProgressDialog, QApplication
@@ -738,6 +747,9 @@ class FullCatalogUI(QWidget):
         self.refresh_catalog_data()
 
         if result["success"]:
+            # Track build result for debounce logic
+            self._last_build_time = time.time()
+            self._last_build_no_changes = (result['affected_count'] == 0)
             self.catalog_built.emit()
             logger.info(
                 f"Catalog build completed: changed={result['affected_count']}, "

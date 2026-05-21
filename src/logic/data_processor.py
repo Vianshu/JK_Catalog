@@ -375,28 +375,44 @@ class DataProcessor:
                         else:
                             image_name_val = info['base_name'] if info['base_name'] else info['original_text']
 
-                # 1. Pehle DB se purani values mangwayein
-                cursor.execute('SELECT [Product Name], Product_Size, Image_Name, MOQ, M_Packing FROM catalog WHERE GUID = ?', (info['row_id'],))
-                old_row = cursor.fetchone()
+                info['image_name'] = image_name_val
+                info['moq'] = moq
+                info['m_packing'] = m_packing
 
-                # 2. Nayi values jo processor ne nikali hain
-                # Note: str() mein wrap kiya hai taaki None vs "" ka issue na aaye comparison mein
-                new_v = (str(info['product_name']), str(info['product_size']), str(image_name_val), str(moq), str(m_packing))
-                
-                # 3. Purani values jo DB mein pehle se hain
-                old_v = (str(old_row[0]), str(old_row[1]), str(old_row[2]), str(old_row[3]), str(old_row[4])) if old_row else None
+            # --- Batch read: fetch ALL existing values in one query ---
+            cursor.execute('SELECT GUID, [Product Name], Product_Size, Image_Name, MOQ, M_Packing FROM catalog')
+            old_data_map = {}
+            for row in cursor.fetchall():
+                old_data_map[row[0]] = (str(row[1]), str(row[2]), str(row[3]), str(row[4]), str(row[5]))
 
-                # 4. AGAR DATA BADLA HAI, SIRF TABHI UPDATE KAREIN
+            # --- Diff in memory and collect updates ---
+            updates = []
+            for info in row_data_list:
+                new_v = (str(info['product_name']), str(info['product_size']),
+                         str(info['image_name']), str(info['moq']), str(info['m_packing']))
+                old_v = old_data_map.get(info['row_id'])
+
                 if new_v != old_v:
-                    cursor.execute("""
-                        UPDATE catalog 
-                        SET "Product Name" = ?, 
-                            "Product_Size" = ?, 
-                            "Image_Name" = ?, 
-                            "MOQ" = ?, 
-                            "M_Packing" = ?
-                        WHERE GUID = ?
-                    """, (info['product_name'], info['product_size'], image_name_val, moq, m_packing, info['row_id']))
+                    updates.append((
+                        info['product_name'], info['product_size'],
+                        info['image_name'], info['moq'], info['m_packing'],
+                        info['row_id']
+                    ))
+
+            # --- Batch write: single executemany for all changed rows ---
+            if updates:
+                if hasattr(cursor, 'fast_executemany'):
+                    cursor.fast_executemany = True
+                cursor.executemany("""
+                    UPDATE catalog 
+                    SET "Product Name" = ?, 
+                        "Product_Size" = ?, 
+                        "Image_Name" = ?, 
+                        "MOQ" = ?, 
+                        "M_Packing" = ?
+                    WHERE GUID = ?
+                """, updates)
+                logger.info(f"Processor: {len(updates)} of {len(row_data_list)} rows updated (batch)")
 
             conn.commit()
             return True

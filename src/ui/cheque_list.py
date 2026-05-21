@@ -132,7 +132,7 @@ class ChequeListUI(QWidget):
         
         # Table Events
         self.table.cellDoubleClicked.connect(self.start_cell_search)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.EditKeyPressed)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.CurrentChanged | QAbstractItemView.EditTrigger.EditKeyPressed)
 
         # ================= RIGHT (BANK LIST) =================
         self.right_container = QWidget()
