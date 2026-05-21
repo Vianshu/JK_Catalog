@@ -109,7 +109,7 @@ class FinalDataUI(QWidget):
         # 1. Sync Time (Top)
         self.sync_lbl = QLabel("Last Sync: N/A")
         self.sync_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.sync_lbl.setStyleSheet("font-weight: bold; color: #555; padding: 5px;")
+        self.sync_lbl.setStyleSheet("font-weight: 600; color: #6B7280; padding: 5px;")
         side_layout.addWidget(self.sync_lbl)
 
         # 2. Search Bar
@@ -124,7 +124,7 @@ class FinalDataUI(QWidget):
         img_container.setStyleSheet("""
             QFrame {
                 background-color: #ffffff;
-                border: 2px solid #007bff;
+                border: 1px solid #E2E4E8;
                 border-radius: 8px;
             }
         """)
@@ -132,13 +132,13 @@ class FinalDataUI(QWidget):
         img_container_layout.setContentsMargins(5, 5, 5, 5)
         
         img_title = QLabel("🖼️ Image Preview")
-        img_title.setStyleSheet("font-weight: bold; color: #333; border: none;")
+        img_title.setStyleSheet("font-weight: 600; color: #1A2035; border: none;")
         img_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         img_container_layout.addWidget(img_title)
         
         self.img_preview = QLabel("NO IMAGE")
         self.img_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.img_preview.setStyleSheet("background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px;")
+        self.img_preview.setStyleSheet("background-color: #FAFBFC; border: 1px solid #E2E4E8; border-radius: 6px;")
         self.img_preview.setMinimumSize(200, 150)
         self.img_preview.setMaximumSize(400, 300)
         self.img_preview.setSizePolicy(
@@ -165,8 +165,8 @@ class FinalDataUI(QWidget):
         summary_frame = QFrame()
         summary_frame.setStyleSheet("""
             QFrame {
-                background-color: #f8f9fa;
-                border: 1px solid #dee2e6;
+                background-color: #FAFBFC;
+                border: 1px solid #E2E4E8;
                 border-radius: 8px;
                 padding: 10px;
             }
@@ -176,13 +176,13 @@ class FinalDataUI(QWidget):
         
         # Summary Title
         summary_title = QLabel("📊 Summary")
-        summary_title.setStyleSheet("font-weight: bold; font-size: 12pt; color: #333; border: none;")
+        summary_title.setStyleSheet("font-weight: 600; font-size: 12pt; color: #1A2035; border: none;")
         summary_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         summary_grid.addWidget(summary_title, 0, 0, 1, 2)
         
         # Catalog Total Items (True/False = 1)
         self.lbl_catalog_total = QLabel("Catalog Total:")
-        self.lbl_catalog_total.setStyleSheet("font-weight: 500; color: #333; border: none;")
+        self.lbl_catalog_total.setStyleSheet("font-weight: 500; color: #1A2035; border: none;")
         self.lbl_catalog_total_val = QLabel("0")
         self.lbl_catalog_total_val.setStyleSheet("font-weight: bold; color: #28a745; border: none;")
         self.lbl_catalog_total_val.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -191,7 +191,7 @@ class FinalDataUI(QWidget):
         
         # Excluded by Stock (Empty TF + 0 Stock)
         self.lbl_out_stock = QLabel("Excluded (Stock):")
-        self.lbl_out_stock.setStyleSheet("font-weight: 500; color: #333; border: none;")
+        self.lbl_out_stock.setStyleSheet("font-weight: 500; color: #1A2035; border: none;")
         self.lbl_out_stock_val = QLabel("0")
         self.lbl_out_stock_val.setStyleSheet("font-weight: bold; color: #fd7e14; border: none;")
         self.lbl_out_stock_val.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -200,7 +200,7 @@ class FinalDataUI(QWidget):
         
         # Manual False Items
         self.lbl_false = QLabel("Manual False:")
-        self.lbl_false.setStyleSheet("font-weight: 500; color: #333; border: none;")
+        self.lbl_false.setStyleSheet("font-weight: 500; color: #1A2035; border: none;")
         self.lbl_false_val = QLabel("0")
         self.lbl_false_val.setStyleSheet("font-weight: bold; color: #dc3545; border: none;")
         self.lbl_false_val.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -209,22 +209,22 @@ class FinalDataUI(QWidget):
         
         # Separator
         sep_line = QLabel("─" * 20)
-        sep_line.setStyleSheet("color: #ccc; border: none;")
+        sep_line.setStyleSheet("color: #E2E4E8; border: none;")
         sep_line.setAlignment(Qt.AlignmentFlag.AlignCenter)
         summary_grid.addWidget(sep_line, 4, 0, 1, 2)
         
         # Final Data Total
         self.lbl_final_total = QLabel("Final Data Total:")
-        self.lbl_final_total.setStyleSheet("font-weight: 500; color: #333; border: none;")
+        self.lbl_final_total.setStyleSheet("font-weight: 500; color: #1A2035; border: none;")
         self.lbl_final_total_val = QLabel("0")
-        self.lbl_final_total_val.setStyleSheet("font-weight: bold; color: #007bff; border: none;")
+        self.lbl_final_total_val.setStyleSheet("font-weight: bold; color: #0B9B8A; border: none;")
         self.lbl_final_total_val.setAlignment(Qt.AlignmentFlag.AlignRight)
         summary_grid.addWidget(self.lbl_final_total, 5, 0)
         summary_grid.addWidget(self.lbl_final_total_val, 5, 1)
         
         # Item Mismatch
         self.lbl_mismatch = QLabel("Item Mismatch:")
-        self.lbl_mismatch.setStyleSheet("font-weight: 500; color: #333; border: none;")
+        self.lbl_mismatch.setStyleSheet("font-weight: 500; color: #1A2035; border: none;")
         self.lbl_mismatch_val = QLabel("0")
         self.lbl_mismatch_val.setStyleSheet("font-weight: bold; color: #6f42c1; border: none;")
         self.lbl_mismatch_val.setAlignment(Qt.AlignmentFlag.AlignRight)

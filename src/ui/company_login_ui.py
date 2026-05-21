@@ -93,7 +93,7 @@ class LoginDialog(QDialog):
         
         self.user_edit = QLineEdit()
         self.user_edit.setObjectName("LoginInput")
-        self.user_edit.setStyleSheet("QLineEdit { background-color: #ffffff; color: #000000; padding: 6px; } QLineEdit:focus { border: 2px solid #87CEFA; background-color: #ffffff; color: #000000; }")
+        self.user_edit.setStyleSheet("QLineEdit { background-color: #ffffff; color: #1A2035; padding: 6px; } QLineEdit:focus { border: 2px solid #0B9B8A; background-color: #ffffff; color: #1A2035; }")
         form_grid.addWidget(self.user_edit, 0, 1)
         
         lbl_pass = QLabel("Password :-")
@@ -103,7 +103,7 @@ class LoginDialog(QDialog):
         self.pass_edit = QLineEdit()
         self.pass_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.pass_edit.setObjectName("LoginInput")
-        self.pass_edit.setStyleSheet("QLineEdit { background-color: #ffffff; color: #000000; padding: 6px; } QLineEdit:focus { border: 2px solid #87CEFA; background-color: #ffffff; color: #000000; }")
+        self.pass_edit.setStyleSheet("QLineEdit { background-color: #ffffff; color: #1A2035; padding: 6px; } QLineEdit:focus { border: 2px solid #0B9B8A; background-color: #ffffff; color: #1A2035; }")
         form_grid.addWidget(self.pass_edit, 1, 1)
         layout.addWidget(content)
 
@@ -474,7 +474,7 @@ class CompanyLoginUI(QWidget):
         line.setFlags(Qt.ItemFlag.NoItemFlags)
         line.setSizeHint(QSize(100, 2))
         self.list.addItem(line)
-        f = QFrame(); f.setFixedHeight(2); f.setStyleSheet("background-color: #eee;") 
+        f = QFrame(); f.setFixedHeight(2); f.setStyleSheet("background-color: #E2E4E8;") 
         self.list.setItemWidget(line, f)
         
         self.add_item(f"Current Path: {self.current_data_path}", is_bold=True)

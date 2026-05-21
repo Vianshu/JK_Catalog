@@ -95,49 +95,50 @@ class MenuButtonWidget(QFrame):
         self.setStyleSheet("""
             #MenuButtonWidget {
                 background: transparent;
-                border-radius: 8px;
-                margin: 4px 4px;
+                border-radius: 6px;
+                margin: 2px 4px;
             }
             #MenuButtonWidget:hover {
-                background-color: rgba(255, 255, 255, 0.08);
+                background-color: #EBF5F5;
             }
             #MenuButtonWidget[active="true"] {
-                background-color: rgba(255, 255, 255, 0.15);
-                border-left: 4px solid #3498db;
+                background-color: #EBF5F5;
+                border-left: 3px solid #0B9B8A;
                 border-radius: 4px;
             }
             #MenuButtonWidget:disabled {
                 background: transparent;
             }
             QLabel {
-                color: #dcdde1;
-                font-size: 14px;
+                color: #4A5568;
+                font-size: 13px;
+                font-weight: 500;
                 background: transparent;
             }
             #MenuButtonWidget:hover QLabel {
-                color: #ffffff;
-                font-weight: bold;
+                color: #0B9B8A;
+                font-weight: 600;
             }
             #MenuButtonWidget[active="true"] QLabel {
-                color: #ffffff;
-                font-weight: bold;
+                color: #0B9B8A;
+                font-weight: 600;
             }
             #MenuButtonWidget:disabled QLabel {
-                color: #636e72;
+                color: #D1D5DB;
             }
             #CompanyDisplayBtn {
                 background-color: transparent;
-                color: #ecf0f1;
-                font-weight: 800;
-                font-size: 16px;
+                color: #1A2035;
+                font-weight: 700;
+                font-size: 14px;
                 text-align: left;
                 padding: 10px 4px;
                 border: none;
-                border-bottom: 1px solid #37474f;
-                margin-bottom: 10px;
+                border-bottom: 1px solid #E2E4E8;
+                margin-bottom: 8px;
             }
             #CompanyDisplayBtn:hover {
-                color: #3498db;
+                color: #0B9B8A;
             }
         """)
 

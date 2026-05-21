@@ -90,20 +90,20 @@ def check_first_launch_setup(app):
 
     # Title
     title = QLabel("Welcome to JK Catalog Multi")
-    title.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
+    title.setFont(QFont("Inter", 18, QFont.Weight.Bold))
     title.setAlignment(Qt.AlignmentFlag.AlignCenter)
     layout.addWidget(title)
 
     subtitle = QLabel("Please configure the application before first use.")
-    subtitle.setFont(QFont("Segoe UI", 10))
-    subtitle.setStyleSheet("color: #666;")
+    subtitle.setFont(QFont("Inter", 10))
+    subtitle.setStyleSheet("color: #6B7280;")
     subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
     layout.addWidget(subtitle)
 
     # Separator
     line = QFrame()
     line.setFrameShape(QFrame.Shape.HLine)
-    line.setStyleSheet("color: #ddd;")
+    line.setStyleSheet("color: #E2E4E8;")
     layout.addWidget(line)
 
     # Data Path
@@ -134,7 +134,7 @@ def check_first_launch_setup(app):
     layout.addWidget(sql_input)
 
     hint = QLabel("Leave default if SQL Server Express is installed locally.")
-    hint.setStyleSheet("color: #888; font-size: 10px;")
+    hint.setStyleSheet("color: #6B7280; font-size: 10px;")
     layout.addWidget(hint)
 
     layout.addStretch()
@@ -146,8 +146,8 @@ def check_first_launch_setup(app):
     save_btn.setMinimumHeight(36)
     save_btn.setMinimumWidth(160)
     save_btn.setStyleSheet(
-        "background-color: #28a745; color: white; font-weight: bold; "
-        "border-radius: 4px; padding: 6px 16px;"
+        "background-color: #0B9B8A; color: white; font-weight: 600; "
+        "border-radius: 8px; padding: 6px 16px;"
     )
     cancel_btn = QPushButton("Cancel")
     cancel_btn.setMinimumHeight(36)
@@ -214,14 +214,14 @@ def main():
     from PyQt6.QtWidgets import QSplashScreen
     from PyQt6.QtCore import Qt
     splash_pix = QPixmap(500, 300)
-    splash_pix.fill(QColor("#1e272e"))
+    splash_pix.fill(QColor("#1A2035"))
     painter = QPainter(splash_pix)
     painter.setPen(QColor("#ecf0f1"))
-    painter.setFont(QFont("Segoe UI", 28, QFont.Weight.Bold))
+    painter.setFont(QFont("Inter", 28, QFont.Weight.Bold))
     painter.drawText(splash_pix.rect(), Qt.AlignmentFlag.AlignCenter, "JK Catalog Multi Loading...")
     
-    painter.setPen(QColor("#3498db"))
-    painter.setFont(QFont("Segoe UI", 12))
+    painter.setPen(QColor("#0B9B8A"))
+    painter.setFont(QFont("Inter", 12))
     painter.drawText(0, 0, 500, 270, Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, "Please wait while the application starts")
     painter.end()
 
@@ -256,8 +256,8 @@ def main():
     light_palette.setColor(QPalette.ColorRole.Button, QColor(240, 240, 240))
     light_palette.setColor(QPalette.ColorRole.ButtonText, QColor(0, 0, 0))
     light_palette.setColor(QPalette.ColorRole.BrightText, QColor(255, 0, 0))
-    light_palette.setColor(QPalette.ColorRole.Link, QColor(42, 130, 218))
-    light_palette.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
+    light_palette.setColor(QPalette.ColorRole.Link, QColor(11, 155, 138))
+    light_palette.setColor(QPalette.ColorRole.Highlight, QColor(11, 155, 138))
     light_palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
     app.setPalette(light_palette)
 

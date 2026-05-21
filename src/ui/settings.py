@@ -474,14 +474,14 @@ class SecurityUI(QWidget):
             header_item = QTableWidgetItem(group_name)
             header_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
             header_item.setFont(header_font)
-            header_item.setBackground(QColor("#e8ecef"))
-            header_item.setForeground(QColor("#2c3e50"))
+            header_item.setBackground(QColor("#F4F5F7"))
+            header_item.setForeground(QColor("#1A2035"))
             self.perm_table.setItem(row, 1, header_item)
             
             # Span combo column with empty disabled cell
             spacer = QTableWidgetItem("")
             spacer.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            spacer.setBackground(QColor("#e8ecef"))
+            spacer.setBackground(QColor("#F4F5F7"))
             self.perm_table.setItem(row, 0, spacer)
             row += 1
             
