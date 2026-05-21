@@ -57,7 +57,7 @@ class LoginDialog(QDialog):
         self.session = None  # UserSession set on successful login
         
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
-        self.setFixedSize(450, 300) 
+        self.setFixedSize(420, 340) 
         self.setModal(True)
         self.setObjectName("LoginDialog") 
         
@@ -65,55 +65,78 @@ class LoginDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        # ── Header ──
         header = QFrame()
-        header.setFixedHeight(50)
+        header.setFixedHeight(56)
         header.setObjectName("LoginHeader") 
-        h_layout = QHBoxLayout(header)
-        title = QLabel(f"🏢 Company Login: {company_name}")
+        h_layout = QVBoxLayout(header)
+        h_layout.setContentsMargins(20, 10, 12, 8)
+        h_layout.setSpacing(2)
+        
+        # Header row with title and close button
+        header_row = QHBoxLayout()
+        header_row.setSpacing(0)
+        
+        title_col = QVBoxLayout()
+        title_col.setSpacing(1)
+        title = QLabel("Company Login")
         title.setObjectName("LoginTitle")
-        h_layout.addWidget(title)
+        title_col.addWidget(title)
         
-        close_btn = QPushButton("X")
-        close_btn.setFixedSize(30, 30)
-        close_btn.setStyleSheet("color:white; border:none; font-weight:bold;")
+        subtitle = QLabel(company_name)
+        subtitle.setObjectName("LoginSubtitle")
+        title_col.addWidget(subtitle)
+        
+        header_row.addLayout(title_col)
+        header_row.addStretch()
+        
+        close_btn = QPushButton("\u00d7")
+        close_btn.setFixedSize(28, 28)
+        close_btn.setObjectName("LoginCloseBtn")
         close_btn.clicked.connect(self.reject)
-        h_layout.addWidget(close_btn)
+        header_row.addWidget(close_btn)
         
+        h_layout.addLayout(header_row)
         layout.addWidget(header)
 
+        # ── Form Content ──
         content = QFrame()
         content.setObjectName("LoginContent")
         form_grid = QGridLayout(content)
-        form_grid.setContentsMargins(40, 30, 40, 10)
-        form_grid.setSpacing(15)
+        form_grid.setContentsMargins(32, 28, 32, 12)
+        form_grid.setSpacing(14)
         
-        lbl_user = QLabel("User Name :-")
+        lbl_user = QLabel("Username")
         lbl_user.setObjectName("LoginLabel")
         form_grid.addWidget(lbl_user, 0, 0)
         
         self.user_edit = QLineEdit()
         self.user_edit.setObjectName("LoginInput")
-        self.user_edit.setStyleSheet("QLineEdit { background-color: #ffffff; color: #1A2035; padding: 6px; } QLineEdit:focus { border: 2px solid #0B9B8A; background-color: #ffffff; color: #1A2035; }")
+        self.user_edit.setPlaceholderText("Enter username")
         form_grid.addWidget(self.user_edit, 0, 1)
         
-        lbl_pass = QLabel("Password :-")
+        lbl_pass = QLabel("Password")
         lbl_pass.setObjectName("LoginLabel")
         form_grid.addWidget(lbl_pass, 1, 0)
         
         self.pass_edit = QLineEdit()
         self.pass_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.pass_edit.setObjectName("LoginInput")
-        self.pass_edit.setStyleSheet("QLineEdit { background-color: #ffffff; color: #1A2035; padding: 6px; } QLineEdit:focus { border: 2px solid #0B9B8A; background-color: #ffffff; color: #1A2035; }")
+        self.pass_edit.setPlaceholderText("Enter password")
         form_grid.addWidget(self.pass_edit, 1, 1)
         layout.addWidget(content)
 
+        # ── Error Label ──
         self.error_lbl = QLabel("")
         self.error_lbl.setObjectName("LoginErrorLabel") 
-        self.error_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.error_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self.error_lbl)
+        
+        layout.addStretch()
 
+        # ── Login Button ──
         self.btn_login = QPushButton("Login")
-        self.btn_login.setFixedHeight(45)
+        self.btn_login.setFixedHeight(42)
         self.btn_login.setObjectName("LoginActionButton") 
         self.btn_login.clicked.connect(self.verify_login)
         layout.addWidget(self.btn_login)

@@ -1,46 +1,61 @@
 /* ============================================================
-   JK Catalog Multi — Design System QSS
-   Palette: Teal Primary (#0B9B8A), Dark Navy (#1A2035)
+   JK Catalog Multi — Design System QSS v2.0
+   Palette: Teal Primary (#0B9B8A), Deep Navy (#111827)
    Font: Inter 13px base
-   Aesthetic: Minimalist Corporate (Linear / Vercel inspired)
+   Aesthetic: Enterprise-grade, clean, compact
    ============================================================ */
 
 /* --- 1. Global Setup --- */
 QWidget {
     font-family: 'Inter', 'Segoe UI', sans-serif;
     font-size: 13px;
-    color: #1A2035;
+    color: #111827;
 }
 
 /* Force text contrast on Login/Launch widgets */
 #CompanyListWidget, #LoginDialog, #PathDialog, #FormContent, #ListHeader, #ListHeaderTitle {
-    color: #1A2035;
+    color: #111827;
     background-color: transparent;
 }
 
 #CompanyListWidget::item {
-    color: #1A2035;
-    padding: 6px 10px;
+    color: #111827;
+    padding: 7px 12px;
+    border-radius: 4px;
+    margin: 1px 4px;
 }
 #CompanyListWidget::item:selected {
     background-color: #0B9B8A;
     color: white;
 }
+#CompanyListWidget::item:hover:!selected {
+    background-color: #F0FAF8;
+}
 
-/* --- 2. Sidebar (Pure White — Stitch Reference) --- */
+/* --- 2. Sidebar --- */
 #MainSidebar {
-    background-color: #FFFFFF;
-    border-right: 1px solid #E2E4E8;
+    background-color: #FAFBFC;
+    border-right: 1px solid #E5E7EB;
 }
 
 /* Content Area */
 #ContentArea {
-    background-color: #EFF1F5;
+    background-color: #F7F8FA;
 }
 
-/* Sidebar labels — dark text on white background */
+/* Sidebar labels — dark text on subtle background */
 #MainSidebar QLabel {
-    color: #1A2035;
+    color: #111827;
+}
+
+/* App brand label at sidebar top */
+#AppBrandLabel {
+    color: #0B9B8A;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.8px;
+    padding: 0px 6px 8px 6px;
+    background: transparent;
 }
 
 /* CRITICAL: Override global QPushButton teal for ALL sidebar buttons */
@@ -50,13 +65,13 @@ QWidget {
     border: none;
     text-align: left;
     font-weight: 500;
-    font-size: 13px;
-    padding: 10px 16px;
-    border-radius: 6px;
-    margin: 2px 8px;
+    font-size: 12px;
+    padding: 8px 14px;
+    border-radius: 5px;
+    margin: 1px 6px;
 }
 #MainSidebar QPushButton:hover {
-    background-color: #EBF5F5;
+    background-color: #F0FAF8;
     color: #0B9B8A;
     font-weight: 600;
 }
@@ -64,14 +79,14 @@ QWidget {
 /* Company name button at top of sidebar */
 #CompanyDisplayBtn {
     background-color: transparent;
-    color: #1A2035;
+    color: #111827;
     font-weight: 700;
-    font-size: 14px;
+    font-size: 13px;
     text-align: left;
-    padding: 10px 4px;
+    padding: 8px 6px 10px 6px;
     border: none;
-    border-bottom: 1px solid #E2E4E8;
-    margin-bottom: 8px;
+    border-bottom: 1px solid #E5E7EB;
+    margin-bottom: 6px;
     border-radius: 0px;
 }
 #CompanyDisplayBtn:hover {
@@ -80,10 +95,11 @@ QWidget {
 }
 
 #QuitHint {
-    color: #9CA3AF;
-    font-size: 11px;
+    color: #B0B7C3;
+    font-size: 10px;
     qproperty-alignment: 'AlignCenter';
-    margin-top: 10px;
+    margin-top: 6px;
+    margin-bottom: 4px;
 }
 
 /* --- 3. Menu Buttons (Sidebar Nav Items) --- */
@@ -91,30 +107,30 @@ QWidget {
     text-align: left;
     background-color: transparent;
     color: #4A5568;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
-    padding: 10px 16px;
-    border-radius: 6px;
-    margin: 2px 8px;
+    padding: 8px 14px;
+    border-radius: 5px;
+    margin: 1px 6px;
     border: none;
 }
 
 .MenuButton:hover, #MenuButton:hover {
-    background-color: #EBF5F5;
+    background-color: #F0FAF8;
     color: #0B9B8A;
     font-weight: 600;
 }
 
 /* Back button — stays red as user requested */
 #MenuBackButton {
-    color: #e74c3c;
+    color: #DC2626;
     font-weight: bold;
-    border-bottom: 1px solid #E2E4E8;
-    margin-bottom: 8px;
+    border-bottom: 1px solid #E5E7EB;
+    margin-bottom: 6px;
 }
 
 .MenuButton[active="true"], #MenuButton[active="true"] {
-    background-color: #EBF5F5;
+    background-color: #EDF8F6;
     color: #0B9B8A;
     border-left: 3px solid #0B9B8A;
     font-weight: 600;
@@ -124,8 +140,8 @@ QWidget {
 QPushButton {
     background-color: #0B9B8A;
     color: white;
-    border-radius: 8px;
-    padding: 8px 18px;
+    border-radius: 6px;
+    padding: 7px 16px;
     font-weight: 600;
     font-size: 13px;
     border: none;
@@ -140,24 +156,24 @@ QPushButton:pressed {
 }
 
 QPushButton:disabled {
-    background-color: #D1D5DB;
+    background-color: #E5E7EB;
     color: #9CA3AF;
 }
 
 /* --- 5. Inputs & Search --- */
 QLineEdit {
     background-color: #ffffff;
-    border: 1px solid #E2E4E8;
-    padding: 6px 10px;
+    border: 1px solid #D1D5DB;
+    padding: 7px 10px;
     border-radius: 6px;
-    color: #1A2035;
+    color: #111827;
     selection-background-color: #0B9B8A;
     selection-color: white;
 }
 
 QLineEdit:focus {
-    border: 1px solid #0B9B8A;
-    background-color: #EFF1F5;
+    border: 1.5px solid #0B9B8A;
+    background-color: #ffffff;
 }
 
 QLineEdit::placeholder {
@@ -175,36 +191,36 @@ QTableWidget QLineEdit {
 /* --- 6. Data Tables --- */
 QTableWidget {
     background-color: #ffffff;
-    gridline-color: #E2E4E8;
-    border: 1px solid #E2E4E8;
-    selection-background-color: #EBF5F5;
-    selection-color: #1A2035;
+    gridline-color: #E5E7EB;
+    border: 1px solid #E5E7EB;
+    selection-background-color: #EDF8F6;
+    selection-color: #111827;
     alternate-background-color: #F9FAFB;
     font-size: 13px;
 }
 
 QHeaderView::section {
-    background-color: #1A2035;
+    background-color: #111827;
     color: #ffffff;
     font-weight: 600;
     font-size: 12px;
     height: 34px;
     padding-left: 12px;
-    border: 1px solid #111827;
+    border: 1px solid #1F2937;
 }
 
 /* Module-specific header accents (functional colors stay) */
 #PaymentSheetTable QHeaderView::section, #SalesExcelTable QHeaderView::section {
-    background-color: #1A2035;
+    background-color: #111827;
 }
 
 #CostingTable QHeaderView::section {
-    background-color: #1A2035;
+    background-color: #111827;
 }
 
 /* --- 7. Tabs --- */
 QTabWidget::pane {
-    border: 1px solid #E2E4E8;
+    border: 1px solid #E5E7EB;
     background-color: white;
     top: -1px;
 }
@@ -212,24 +228,24 @@ QTabWidget::pane {
 QTabBar::tab {
     background: #F4F5F7;
     color: #4A5568;
-    padding: 10px 28px;
-    border: 1px solid #E2E4E8;
+    padding: 9px 24px;
+    border: 1px solid #E5E7EB;
     border-bottom: none;
-    margin-right: 4px;
-    border-top-left-radius: 8px;
-    border-top-right-radius: 8px;
+    margin-right: 3px;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
     font-weight: 500;
     font-size: 13px;
 }
 
 QTabBar::tab:hover {
-    background-color: #EBF5F5;
+    background-color: #F0FAF8;
     color: #0B9B8A;
 }
 
 QTabBar::tab:selected {
     background-color: #ffffff;
-    color: #1A2035;
+    color: #111827;
     font-weight: 600;
     border-top: 3px solid #0B9B8A;
 }
@@ -247,11 +263,11 @@ QTabBar::tab:disabled {
 
 /* --- 8. Add (+) Buttons --- */
 #AddNewSheetBtn, #SalesAddSheetBtn, #VatAddBtn, #AddSheetButton {
-    background-color: #1A2035;
+    background-color: #111827;
     color: white;
     font-size: 22px;
     font-weight: bold;
-    border-radius: 8px;
+    border-radius: 6px;
     min-width: 40px;
     margin: 4px;
     border: none;
@@ -262,37 +278,38 @@ QTabBar::tab:disabled {
 
 /* --- 9. Welcome Dashboard --- */
 #WelcomePage {
-    background-color: #EFF1F5;
+    background-color: #F7F8FA;
 }
 
 #WelcomeCard {
     background-color: #ffffff;
-    border: 1px solid #E2E4E8;
-    border-radius: 12px;
+    border: 1px solid #E5E7EB;
+    border-left: 3px solid #0B9B8A;
+    border-radius: 14px;
 }
 
 #WelcomeSubtitle {
-    font-size: 16px;
-    color: #6B7280;
+    font-size: 14px;
+    color: #9CA3AF;
     font-weight: 400;
 }
 
 #WelcomeTitle {
-    font-size: 36px;
-    font-weight: 800;
-    color: #1A2035;
+    font-size: 28px;
+    font-weight: 700;
+    color: #111827;
     letter-spacing: -0.02em;
 }
 
 #WelcomeTagline {
-    font-size: 13px;
+    font-size: 12px;
     color: #6B7280;
-    margin-top: 6px;
+    margin-top: 2px;
 }
 
 #StatCard {
     background-color: #ffffff;
-    border: 1px solid #E2E4E8;
+    border: 1px solid #E5E7EB;
     border-radius: 10px;
     min-height: 80px;
 }
@@ -305,7 +322,7 @@ QTabBar::tab:disabled {
 #StatValue {
     font-size: 18px;
     font-weight: 700;
-    color: #1A2035;
+    color: #111827;
     background: transparent;
 }
 
@@ -318,26 +335,54 @@ QTabBar::tab:disabled {
 
 #TipsCard {
     background-color: #ffffff;
-    border: 1px solid #E2E4E8;
+    border: 1px solid #E5E7EB;
     border-radius: 10px;
 }
 
 #TipsTitle {
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 600;
-    color: #1A2035;
+    color: #111827;
 }
 
 #TipItem {
-    font-size: 13px;
+    font-size: 12px;
     color: #4A5568;
-    padding: 2px 0;
+    padding: 3px 0;
+}
+
+#ShortcutsCard {
+    background-color: #ffffff;
+    border: 1px solid #E5E7EB;
+    border-radius: 10px;
+}
+
+#ShortcutsTitle {
+    font-size: 13px;
+    font-weight: 600;
+    color: #111827;
+}
+
+#ShortcutKey {
+    font-size: 11px;
+    font-weight: 600;
+    color: #0B9B8A;
+    background-color: #EDF8F6;
+    border: 1px solid #D1FAE5;
+    border-radius: 4px;
+    padding: 2px 8px;
+}
+
+#ShortcutDesc {
+    font-size: 12px;
+    color: #4A5568;
+    font-weight: 400;
 }
 
 /* --- 10. Misc Elements --- */
 #StatusLabel {
     color: #0B9B8A;
-    background-color: #EBF5F5;
+    background-color: #EDF8F6;
     border: 1px solid #0B9B8A;
     padding: 6px 10px;
     border-radius: 6px;
@@ -352,15 +397,15 @@ QTabBar::tab:disabled {
 
 /* --- 12. Settings / User Manager --- */
 #UserManagerDialog {
-    background-color: #EFF1F5;
-    border: 1px solid #E2E4E8;
+    background-color: #F7F8FA;
+    border: 1px solid #E5E7EB;
 }
 
 #UserDialogTitle {
     font-size: 20px;
     font-weight: 700;
     text-decoration: none;
-    color: #1A2035;
+    color: #111827;
 }
 
 /* --- 13. Cheque List --- */
@@ -370,7 +415,7 @@ QTabBar::tab:disabled {
     font-weight: 600;
 }
 #BtnPrintCheque, #BtnBankList, #BtnExportCheque {
-    background-color: #1A2035;
+    background-color: #111827;
     color: white;
 }
 #LblChequeCount, #LblChequeTotal {
@@ -384,12 +429,12 @@ QTabBar::tab:disabled {
     border: none;
 }
 #CatalogHeader {
-    border: 1px solid #1A2035;
+    border: 1px solid #111827;
 }
 #CatalogFooter {
-    border-bottom: 1px solid #1A2035;
-    border-left: 1px solid #1A2035;
-    border-right: 1px solid #1A2035;
+    border-bottom: 1px solid #111827;
+    border-left: 1px solid #111827;
+    border-right: 1px solid #111827;
 }
 #CatalogContentArea {
     border: none;
@@ -415,7 +460,7 @@ QTabBar::tab:disabled {
     color: white;
     font-weight: 600;
     height: 30px;
-    border: 1px solid #E2E4E8;
+    border: 1px solid #E5E7EB;
 }
 
 /* Stock (Teal) */
@@ -436,16 +481,16 @@ QTabBar::tab:disabled {
     color: white;
     font-weight: 600;
     height: 30px;
-    border: 1px solid #E2E4E8;
+    border: 1px solid #E5E7EB;
 }
 
 /* --- 16. Super Master --- */
 #SuperMasterMain {
-    background-color: #EFF1F5;
+    background-color: #F7F8FA;
 }
 
 #FilterBar QLineEdit {
-    border: 1px solid #E2E4E8;
+    border: 1px solid #D1D5DB;
     border-radius: 0px;
     background-color: #ffffff;
     font-size: 13px;
@@ -458,7 +503,7 @@ QTabBar::tab:disabled {
 }
 
 #DetailedMappingTable {
-    border: 1px solid #E2E4E8;
+    border: 1px solid #E5E7EB;
     alternate-background-color: #F9FAFB;
 }
 #DetailedMappingTable::item {
@@ -466,7 +511,7 @@ QTabBar::tab:disabled {
 }
 
 #SummaryTable {
-    border: 1px solid #E2E4E8;
+    border: 1px solid #E5E7EB;
     background-color: #ffffff;
 }
 
@@ -480,12 +525,12 @@ QTabBar::tab:disabled {
 }
 #ReportActionDialog #CrmSelector {
     padding: 6px;
-    border: 1px solid #E2E4E8;
+    border: 1px solid #E5E7EB;
     border-radius: 6px;
 }
 #ReportActionDialog #PendingPagesList {
-    border: 1px solid #E2E4E8;
-    background-color: #EFF1F5;
+    border: 1px solid #E5E7EB;
+    background-color: #F7F8FA;
     border-radius: 6px;
 }
 #ReportActionDialog #PrimaryActionButton {
@@ -493,7 +538,7 @@ QTabBar::tab:disabled {
     color: white;
     font-weight: 600;
     font-size: 13px;
-    border-radius: 8px;
+    border-radius: 6px;
     padding: 8px 16px;
 }
 #ReportActionDialog #PrimaryActionButton:hover {
@@ -503,21 +548,21 @@ QTabBar::tab:disabled {
     background-color: #F4F5F7;
     color: #4A5568;
     font-weight: 600;
-    border-radius: 8px;
+    border-radius: 6px;
     padding: 8px 16px;
-    border: 1px solid #E2E4E8;
+    border: 1px solid #E5E7EB;
 }
 #ReportActionDialog #SecondaryButton:hover {
-    background-color: #E2E4E8;
+    background-color: #E5E7EB;
 }
 
 /* --- 18. Security UI --- */
 #SecurityUI {
-    background-color: #EFF1F5;
+    background-color: #F7F8FA;
 }
 
 #SecurityTitle {
-    color: #1A2035;
+    color: #111827;
     font-size: 18px;
     font-weight: 600;
     margin-bottom: 8px;
@@ -525,7 +570,7 @@ QTabBar::tab:disabled {
 
 #SecurityDetailsFrame {
     background-color: #ffffff;
-    border: 1px solid #E2E4E8;
+    border: 1px solid #E5E7EB;
     border-radius: 8px;
     padding: 12px;
     margin-bottom: 8px;
@@ -539,7 +584,7 @@ QTabBar::tab:disabled {
 
 #SecurityDetailsFrame QComboBox {
     padding: 6px;
-    border: 1px solid #E2E4E8;
+    border: 1px solid #E5E7EB;
     border-radius: 6px;
     background: #fff;
     min-width: 150px;
@@ -558,18 +603,18 @@ QTabBar::tab:disabled {
 }
 
 #SecurityDelBtn {
-    background-color: #e74c3c;
+    background-color: #DC2626;
     color: white;
     font-weight: 600;
     border-radius: 6px;
     padding: 6px 12px;
 }
 #SecurityDelBtn:hover {
-    background-color: #c0392b;
+    background-color: #B91C1C;
 }
 
 #GranularAccessTable {
-    background-color: #EFF1F5;
+    background-color: #F7F8FA;
     border: none;
     font-size: 13px;
 }
@@ -577,32 +622,32 @@ QTabBar::tab:disabled {
 #GranularAccessTable::item {
     padding: 6px 10px;
     border: none;
-    border-bottom: 1px solid #E2E4E8;
+    border-bottom: 1px solid #E5E7EB;
 }
 
 #GranularAccessTable::item:hover {
-    background-color: #EBF5F5;
+    background-color: #F0FAF8;
 }
 
 #GranularAccessTable QComboBox {
     background-color: #ffffff;
-    border: 1px solid #E2E4E8;
+    border: 1px solid #E5E7EB;
     border-radius: 6px;
     padding: 5px 10px;
     font-size: 13px;
     font-weight: 600;
-    color: #1A2035;
+    color: #111827;
     min-height: 24px;
 }
 
 #GranularAccessTable QComboBox:hover {
     border: 1px solid #0B9B8A;
-    background-color: #EFF1F5;
+    background-color: #F7F8FA;
 }
 
 #GranularAccessTable QComboBox:focus {
     border: 2px solid #0B9B8A;
-    background-color: #EBF5F5;
+    background-color: #EDF8F6;
 }
 
 #GranularAccessTable QComboBox::drop-down {
@@ -621,7 +666,7 @@ QTabBar::tab:disabled {
     background-color: #0B9B8A;
     color: white;
     font-weight: 600;
-    border-radius: 8px;
+    border-radius: 6px;
     padding: 8px 16px;
 }
 #PrimaryActionButton:hover {
@@ -632,69 +677,109 @@ QTabBar::tab:disabled {
     background-color: #F4F5F7;
     color: #4A5568;
     font-weight: 600;
-    border-radius: 8px;
+    border-radius: 6px;
     padding: 8px 16px;
-    border: 1px solid #E2E4E8;
+    border: 1px solid #E5E7EB;
 }
 #SecondaryButton:hover {
-    background-color: #E2E4E8;
+    background-color: #E5E7EB;
 }
 
 /* --- 20. CRM & Dialog Polish --- */
 #CRMManagerDialog {
-    background-color: #EFF1F5;
+    background-color: #F7F8FA;
 }
 #CRMManagerDialog QLabel {
     font-size: 13px;
-    color: #1A2035;
+    color: #111827;
 }
 
 /* --- 21. Login Dialog --- */
+#LoginDialog {
+    background-color: #ffffff;
+    border: 1px solid #D1D5DB;
+    border-radius: 10px;
+}
+
 #LoginHeader {
-    background-color: #1A2035;
+    background-color: #111827;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
 }
 #LoginTitle {
     color: #ffffff;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
+    letter-spacing: 0.3px;
+}
+#LoginSubtitle {
+    color: #9CA3AF;
+    font-size: 11px;
+    font-weight: 400;
 }
 #LoginContent {
     background-color: #ffffff;
 }
 #LoginLabel {
-    color: #4A5568;
-    font-size: 13px;
+    color: #374151;
+    font-size: 12px;
     font-weight: 500;
 }
 #LoginInput {
-    border: 1px solid #E2E4E8;
+    border: 1px solid #D1D5DB;
     border-radius: 6px;
-    padding: 8px;
+    padding: 8px 12px;
     font-size: 13px;
     background-color: #ffffff;
-    color: #1A2035;
+    color: #111827;
+    min-height: 18px;
 }
 #LoginInput:focus {
-    border: 1px solid #0B9B8A;
-    background-color: #EFF1F5;
+    border: 1.5px solid #0B9B8A;
+    background-color: #ffffff;
 }
 #LoginErrorLabel {
-    color: #e74c3c;
-    font-size: 12px;
+    color: #DC2626;
+    font-size: 11px;
     font-weight: 500;
+    padding-left: 32px;
+}
+#LoginActionButton {
+    background-color: #0B9B8A;
+    color: white;
+    font-weight: 600;
+    font-size: 13px;
+    border-radius: 6px;
+    padding: 10px 16px;
+    margin: 8px 32px 16px 32px;
+}
+#LoginActionButton:hover {
+    background-color: #0AAE9B;
+}
+#LoginCloseBtn {
+    color: #6B7280;
+    background: transparent;
+    border: none;
+    font-size: 16px;
+    font-weight: 600;
+    padding: 4px;
+}
+#LoginCloseBtn:hover {
+    color: #DC2626;
+    background: transparent;
 }
 
 /* --- 22. Scrollbars --- */
 QScrollBar:vertical {
     background: #F4F5F7;
-    width: 10px;
+    width: 8px;
     border: none;
-    border-radius: 5px;
+    border-radius: 4px;
 }
 QScrollBar::handle:vertical {
     background: #D1D5DB;
     min-height: 30px;
-    border-radius: 5px;
+    border-radius: 4px;
 }
 QScrollBar::handle:vertical:hover {
     background: #9CA3AF;
@@ -705,14 +790,14 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
 
 QScrollBar:horizontal {
     background: #F4F5F7;
-    height: 10px;
+    height: 8px;
     border: none;
-    border-radius: 5px;
+    border-radius: 4px;
 }
 QScrollBar::handle:horizontal {
     background: #D1D5DB;
     min-width: 30px;
-    border-radius: 5px;
+    border-radius: 4px;
 }
 QScrollBar::handle:horizontal:hover {
     background: #9CA3AF;
@@ -723,7 +808,7 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
 
 /* --- 23. Tooltips --- */
 QToolTip {
-    background-color: #1A2035;
+    background-color: #111827;
     color: #ffffff;
     border: none;
     padding: 6px 10px;
@@ -733,11 +818,11 @@ QToolTip {
 
 /* --- 24. ComboBox (Global) --- */
 QComboBox {
-    border: 1px solid #E2E4E8;
+    border: 1px solid #D1D5DB;
     border-radius: 6px;
     padding: 5px 10px;
     background: #ffffff;
-    color: #1A2035;
+    color: #111827;
     font-size: 13px;
 }
 QComboBox:hover {
@@ -752,23 +837,81 @@ QComboBox::drop-down {
 }
 QComboBox QAbstractItemView {
     background-color: #ffffff;
-    border: 1px solid #E2E4E8;
-    selection-background-color: #EBF5F5;
-    selection-color: #1A2035;
+    border: 1px solid #E5E7EB;
+    selection-background-color: #EDF8F6;
+    selection-color: #111827;
     padding: 4px;
 }
 
 /* --- 25. Progress Bar --- */
 QProgressBar {
-    border: 1px solid #E2E4E8;
+    border: 1px solid #E5E7EB;
     border-radius: 6px;
     background-color: #F4F5F7;
     text-align: center;
     font-size: 12px;
-    color: #1A2035;
+    color: #111827;
     height: 20px;
 }
 QProgressBar::chunk {
     background-color: #0B9B8A;
     border-radius: 5px;
+}
+
+/* --- 26. Form Screens (Company Create) --- */
+#FormHeader {
+    background-color: #111827;
+    min-height: 44px;
+}
+#FormHeaderTitle {
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 600;
+}
+#EscHint {
+    color: #6B7280;
+    font-size: 11px;
+}
+#FormContent {
+    background-color: #ffffff;
+}
+#FormInput {
+    border: 1px solid #D1D5DB;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 13px;
+    background-color: #ffffff;
+    color: #111827;
+}
+#FormSaveButton {
+    background-color: #0B9B8A;
+    color: white;
+    font-weight: 600;
+    border-radius: 6px;
+}
+#FormBackButton {
+    background-color: #F4F5F7;
+    color: #4A5568;
+    font-weight: 600;
+    border-radius: 6px;
+    border: 1px solid #E5E7EB;
+}
+#FormBackButton:hover {
+    background-color: #E5E7EB;
+}
+#FormErrorLabel {
+    color: #DC2626;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+/* --- 27. List Header (Company Selection) --- */
+#ListHeader {
+    background-color: #111827;
+    min-height: 44px;
+}
+#ListHeaderTitle {
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 600;
 }
