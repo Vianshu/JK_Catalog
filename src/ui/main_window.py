@@ -126,20 +126,6 @@ class MenuButtonWidget(QFrame):
             #MenuButtonWidget:disabled QLabel {
                 color: #D1D5DB;
             }
-            #CompanyDisplayBtn {
-                background-color: transparent;
-                color: #1A2035;
-                font-weight: 700;
-                font-size: 14px;
-                text-align: left;
-                padding: 10px 4px;
-                border: none;
-                border-bottom: 1px solid #E2E4E8;
-                margin-bottom: 8px;
-            }
-            #CompanyDisplayBtn:hover {
-                color: #0B9B8A;
-            }
         """)
 
     def set_hotkey_visibility(self, visible):
@@ -594,7 +580,7 @@ class MainWindow(QWidget):
             # Update UI with company name
             clean_name = re.sub(r'\s*\(\d{4}[-/].*?\)', '', comp_name)
             self.company_btn.setText(f"\U0001f3e2 {clean_name} \u25bc")
-            self.company_btn.setStyleSheet("text-align: left; padding-left: 10px;")
+            self.company_btn.setStyleSheet("text-align: left; padding-left: 10px; background-color: transparent; color: #1A2035; border: none; font-weight: 700; font-size: 14px; border-bottom: 1px solid #E2E4E8;")
             self.company_btn.show()
 
             if not company_path or not os.path.exists(company_path):

@@ -61,6 +61,24 @@ QWidget {
     font-weight: 600;
 }
 
+/* Company name button at top of sidebar */
+#CompanyDisplayBtn {
+    background-color: transparent;
+    color: #1A2035;
+    font-weight: 700;
+    font-size: 14px;
+    text-align: left;
+    padding: 10px 4px;
+    border: none;
+    border-bottom: 1px solid #E2E4E8;
+    margin-bottom: 8px;
+    border-radius: 0px;
+}
+#CompanyDisplayBtn:hover {
+    color: #0B9B8A;
+    background-color: transparent;
+}
+
 #QuitHint {
     color: #9CA3AF;
     font-size: 11px;
