@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QComboBox, QTableWidget, QTableWidgetItem, QMessageBox,
     QWidget, QFrame, QInputDialog, QScrollArea, QCheckBox, QGridLayout, QGroupBox
 )
+from PyQt6.QtGui import QColor
 
 class EmptyPagesDialog(QDialog):
     def __init__(self, empty_pages, parent=None):
@@ -362,26 +363,40 @@ class SecurityUI(QWidget):
         self.perm_table.setObjectName("GranularAccessTable")
         
         self.facility_combos = {}
-        self.facilities = [
-            ("Final Data", ["tab.final_data"], ["final_data.edit", "final_data.sync", "final_data.export"]),
-            ("Super Master", ["tab.super_master"], ["super_master.edit"]),
-            ("Catalog", ["tab.catalog"], ["catalog.build", "catalog.print", "catalog.edit_assignment"]),
-            ("Godown", ["tab.godown"], []),
-            ("Reports", ["tab.reports"], ["reports.print", "reports.mark_done"]),
-            ("Row Data", ["tab.row_data"], []),
-            ("Ledger", ["tab.ledger"], ["ledger.sync"]),
-            ("Cheque List", ["tab.cheque_list"], ["cheque_list.edit"]),
-            ("Calendar", ["tab.calendar"], ["calendar.edit"]),
-            ("Payment List", ["tab.payment_list"], []),
-            ("Sales Chat", ["tab.sales_chat"], []),
-            ("Catalog Price List", ["tab.cat_price_list"], []),
-            ("Vat Balance", ["tab.vat_balance"], []),
-            ("Vat Stock", ["tab.vat_stock"], []),
-            ("Supplier Payment", ["tab.supp_payment"], []),
-            ("Purchase Import", ["tab.pur_import"], []),
-            ("Internal Cost Sheet", ["tab.int_cost_sheet"], []),
-            ("For Branch", ["tab.for_branch"], []),
-            ("Settings / Admin", [], ["settings.manage_users", "settings.manage_roles", "settings.manage_crm", "settings.company_config", "settings.change_path"]),
+        # Grouped by sidebar menu category for organized display
+        self.facility_groups = [
+            ("📁 Catalog", [
+                ("Sync Tally",          ["tab.final_data"],     ["final_data.sync"]),
+                ("Super Master",        ["tab.super_master"],   ["super_master.edit"]),
+                ("Final Data",          ["tab.final_data"],     ["final_data.edit", "final_data.export"]),
+                ("Full Catalog",        ["tab.catalog"],        ["catalog.build", "catalog.print", "catalog.edit_assignment"]),
+                ("Reports",             ["tab.reports"],        ["reports.print", "reports.mark_done"]),
+                ("Catalog Price List",  ["tab.cat_price_list"], []),
+            ]),
+            ("📊 Vat Working", [
+                ("Vat Balance",         ["tab.vat_balance"],    []),
+                ("Vat Stock",           ["tab.vat_stock"],      []),
+            ]),
+            ("⚙️ Tally Internal", [
+                ("Sync Ledger",         ["tab.ledger"],         ["ledger.sync"]),
+                ("Ledger Rows",         ["tab.ledger"],         []),
+                ("Row Data",            ["tab.row_data"],       []),
+                ("On Account",          ["tab.payment_list"],   []),
+                ("Cheque List",         ["tab.cheque_list"],    ["cheque_list.edit"]),
+                ("Godown List",         ["tab.godown"],         []),
+                ("Sales Chat",          ["tab.sales_chat"],     []),
+                ("Supplier Payment",    ["tab.supp_payment"],   []),
+                ("Price List",          ["tab.price_list"],     []),
+                ("Purchase Import",     ["tab.pur_import"],     []),
+                ("Internal Cost Sheet", ["tab.int_cost_sheet"], []),
+                ("For Branch",          ["tab.for_branch"],     []),
+            ]),
+            ("⚙️ Settings", [
+                ("Calendar",            ["tab.calendar"],       ["calendar.edit"]),
+                ("Admin / Users",       [],                     ["settings.manage_users", "settings.manage_roles",
+                                                                 "settings.manage_crm", "settings.company_config",
+                                                                 "settings.change_path"]),
+            ]),
         ]
         self._build_perm_grid()
         
@@ -400,6 +415,13 @@ class SecurityUI(QWidget):
         layout.addLayout(btn_bar)
         
         self._load_roles()
+
+    def _flat_facilities(self):
+        """Flatten grouped facilities into a single list for iteration."""
+        flat = []
+        for _, items in self.facility_groups:
+            flat.extend(items)
+        return flat
 
     def refresh_data(self):
         """Called when navigating to this page to refresh context."""
@@ -431,33 +453,59 @@ class SecurityUI(QWidget):
         return self.security.get_company_id_by_path(self.company_path)
 
     def _build_perm_grid(self):
-        """Build the Granular Facility Access table matching Stitch / Tally UI."""
-        self.perm_table.setRowCount(len(self.facilities))
+        """Build grouped permission table with category headers."""
+        from PyQt6.QtWidgets import QHeaderView
         
-        for i, (fac_name, view_keys, edit_keys) in enumerate(self.facilities):
-            # The combo box (Left side)
-            combo = QComboBox()
-            combo.addItem("None", "none")
+        # Count total rows: group headers + facility items
+        total_rows = 0
+        for group_name, items in self.facility_groups:
+            total_rows += 1  # header row
+            total_rows += len(items)
+        
+        self.perm_table.setRowCount(total_rows)
+        
+        row = 0
+        header_font = self.font()
+        header_font.setBold(True)
+        header_font.setPointSize(header_font.pointSize() + 1)
+        
+        for group_name, items in self.facility_groups:
+            # --- Group Header Row ---
+            header_item = QTableWidgetItem(group_name)
+            header_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            header_item.setFont(header_font)
+            header_item.setBackground(QColor("#e8ecef"))
+            header_item.setForeground(QColor("#2c3e50"))
+            self.perm_table.setItem(row, 1, header_item)
             
-            if view_keys:
-                combo.addItem("Display", "display")
+            # Span combo column with empty disabled cell
+            spacer = QTableWidgetItem("")
+            spacer.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            spacer.setBackground(QColor("#e8ecef"))
+            self.perm_table.setItem(row, 0, spacer)
+            row += 1
             
-            if edit_keys:
-                combo.addItem("Full Access", "full")
+            # --- Facility Items ---
+            for fac_name, view_keys, edit_keys in items:
+                combo = QComboBox()
+                combo.addItem("None", "none")
+                if view_keys:
+                    combo.addItem("Display", "display")
+                if edit_keys:
+                    combo.addItem("Full Access", "full")
                 
-            self.perm_table.setCellWidget(i, 0, combo)
-            self.facility_combos[fac_name] = combo
-
-            # The Facility Name (Right side)
-            item = QTableWidgetItem(fac_name)
-            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.perm_table.setItem(i, 1, item)
-            
-        self.perm_table.resizeColumnToContents(0)
+                self.perm_table.setCellWidget(row, 0, combo)
+                self.facility_combos[fac_name] = combo
+                
+                item = QTableWidgetItem(f"    {fac_name}")
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.perm_table.setItem(row, 1, item)
+                row += 1
+        
         self.perm_table.setColumnWidth(0, 200)
         self.perm_table.horizontalHeader().setStretchLastSection(True)
-        self.perm_table.resizeRowsToContents()
-        self.perm_table.verticalHeader().setDefaultSectionSize(35)
+        # Stretch rows to fill full available height — no scrolling needed
+        self.perm_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
 
     def _load_roles(self):
         self.role_combo.blockSignals(True)
@@ -481,7 +529,7 @@ class SecurityUI(QWidget):
             self.btn_del.setEnabled(not info.get("is_system", False))
         perms = self.security.get_role_permissions(rid)
         
-        for fac_name, view_keys, edit_keys in self.facilities:
+        for fac_name, view_keys, edit_keys in self._flat_facilities():
             combo = self.facility_combos.get(fac_name)
             if not combo: continue
             
@@ -511,7 +559,7 @@ class SecurityUI(QWidget):
         if not rid:
             return
         selected = []
-        for fac_name, view_keys, edit_keys in self.facilities:
+        for fac_name, view_keys, edit_keys in self._flat_facilities():
             combo = self.facility_combos.get(fac_name)
             if not combo: continue
             
