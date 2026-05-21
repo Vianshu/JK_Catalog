@@ -27,24 +27,42 @@ QWidget {
     color: white;
 }
 
-/* --- 2. Sidebar (Light Corporate) --- */
+/* --- 2. Sidebar (Pure White — Stitch Reference) --- */
 #MainSidebar {
-    background-color: #F4F5F7;
+    background-color: #FFFFFF;
     border-right: 1px solid #E2E4E8;
 }
 
 /* Content Area */
 #ContentArea {
-    background-color: #FAFBFC;
+    background-color: #EFF1F5;
 }
 
-/* Sidebar labels — dark text on light background */
+/* Sidebar labels — dark text on white background */
 #MainSidebar QLabel {
     color: #1A2035;
 }
 
+/* CRITICAL: Override global QPushButton teal for ALL sidebar buttons */
+#MainSidebar QPushButton {
+    background-color: transparent;
+    color: #4A5568;
+    border: none;
+    text-align: left;
+    font-weight: 500;
+    font-size: 13px;
+    padding: 10px 16px;
+    border-radius: 6px;
+    margin: 2px 8px;
+}
+#MainSidebar QPushButton:hover {
+    background-color: #EBF5F5;
+    color: #0B9B8A;
+    font-weight: 600;
+}
+
 #QuitHint {
-    color: #6B7280;
+    color: #9CA3AF;
     font-size: 11px;
     qproperty-alignment: 'AlignCenter';
     margin-top: 10px;
@@ -121,7 +139,7 @@ QLineEdit {
 
 QLineEdit:focus {
     border: 1px solid #0B9B8A;
-    background-color: #FAFBFC;
+    background-color: #EFF1F5;
 }
 
 QLineEdit::placeholder {
@@ -226,7 +244,7 @@ QTabBar::tab:disabled {
 
 /* --- 9. Welcome Dashboard --- */
 #WelcomePage {
-    background-color: #FAFBFC;
+    background-color: #EFF1F5;
 }
 
 #WelcomeCard {
@@ -316,7 +334,7 @@ QTabBar::tab:disabled {
 
 /* --- 12. Settings / User Manager --- */
 #UserManagerDialog {
-    background-color: #FAFBFC;
+    background-color: #EFF1F5;
     border: 1px solid #E2E4E8;
 }
 
@@ -405,7 +423,7 @@ QTabBar::tab:disabled {
 
 /* --- 16. Super Master --- */
 #SuperMasterMain {
-    background-color: #FAFBFC;
+    background-color: #EFF1F5;
 }
 
 #FilterBar QLineEdit {
@@ -449,7 +467,7 @@ QTabBar::tab:disabled {
 }
 #ReportActionDialog #PendingPagesList {
     border: 1px solid #E2E4E8;
-    background-color: #FAFBFC;
+    background-color: #EFF1F5;
     border-radius: 6px;
 }
 #ReportActionDialog #PrimaryActionButton {
@@ -477,7 +495,7 @@ QTabBar::tab:disabled {
 
 /* --- 18. Security UI --- */
 #SecurityUI {
-    background-color: #FAFBFC;
+    background-color: #EFF1F5;
 }
 
 #SecurityTitle {
@@ -533,7 +551,7 @@ QTabBar::tab:disabled {
 }
 
 #GranularAccessTable {
-    background-color: #FAFBFC;
+    background-color: #EFF1F5;
     border: none;
     font-size: 13px;
 }
@@ -561,7 +579,7 @@ QTabBar::tab:disabled {
 
 #GranularAccessTable QComboBox:hover {
     border: 1px solid #0B9B8A;
-    background-color: #FAFBFC;
+    background-color: #EFF1F5;
 }
 
 #GranularAccessTable QComboBox:focus {
@@ -606,7 +624,7 @@ QTabBar::tab:disabled {
 
 /* --- 20. CRM & Dialog Polish --- */
 #CRMManagerDialog {
-    background-color: #FAFBFC;
+    background-color: #EFF1F5;
 }
 #CRMManagerDialog QLabel {
     font-size: 13px;
@@ -640,7 +658,7 @@ QTabBar::tab:disabled {
 }
 #LoginInput:focus {
     border: 1px solid #0B9B8A;
-    background-color: #FAFBFC;
+    background-color: #EFF1F5;
 }
 #LoginErrorLabel {
     color: #e74c3c;
