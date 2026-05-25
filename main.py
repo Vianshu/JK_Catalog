@@ -265,6 +265,22 @@ def main():
     style_path = get_asset_path("style.qss")
     load_stylesheet(app, style_path)
 
+    # --- Disable QComboBox Wheel Scrolling Globally ---
+    from PyQt6.QtWidgets import QComboBox
+    from PyQt6.QtCore import QObject, QEvent
+    class ComboBoxScrollFilter(QObject):
+        def eventFilter(self, obj, event):
+            if event.type() == QEvent.Type.Wheel and isinstance(obj, QComboBox):
+                # Ignore wheel events on comboboxes to prevent accidental changes
+                event.ignore()
+                return True
+            return super().eventFilter(obj, event)
+    
+    cb_filter = ComboBoxScrollFilter()
+    app.installEventFilter(cb_filter)
+    # Keep reference alive
+    app._cb_filter = cb_filter
+
     window = MainWindow()
     window.maximize_window()
     

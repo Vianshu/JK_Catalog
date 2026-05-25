@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QFrame, QStackedWidget, QMenu, QMessageBox, QProgressDialog, QApplication
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QEvent
-from PyQt6.QtGui import QShortcut, QKeySequence
+from PyQt6.QtGui import QShortcut, QKeySequence, QIcon
 import pandas as pd
 import re
 from src.logic.session_manager import SessionManager
@@ -116,6 +116,12 @@ class MainWindow(QWidget):
         super().__init__()
         # Native title bar with minimize/maximize/close buttons
         self.setWindowTitle("JK Catalog Multi")
+        
+        # Set Application Icon
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "JK_Icon.ico")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+            
         self._apply_titlebar_color()
         
         # Global Event Filter for Alt Key
@@ -200,8 +206,8 @@ class MainWindow(QWidget):
             # DWMWA_CAPTION_COLOR = 35 (Windows 11 22H2+)
             # DWMWA_TEXT_COLOR = 36
             # Color format is COLORREF (0x00BBGGRR)
-            # Teal #0B9B8A → R=0x0B, G=0x9B, B=0x8A → COLORREF = 0x008A9B0B
-            caption_color = ctypes.c_int(0x008A9B0B)
+            # Darker Teal #045E54 → R=0x04, G=0x5E, B=0x54 → COLORREF = 0x00545E04
+            caption_color = ctypes.c_int(0x00545E04)
             dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(caption_color), ctypes.sizeof(caption_color))
             
             # White title text
