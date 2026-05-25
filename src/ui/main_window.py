@@ -353,36 +353,55 @@ class MainWindow(QWidget):
         self.nav_stack.addWidget(m_branch)
 
     def on_sync_ledger_clicked(self):
-        """Sync Ledger data from Tally into the company's ledger DB."""
+        """Sync Ledger data from Tally into the company's ledger DB (background thread)."""
         if not self.current_company:
             return
         if not self._check_permission("ledger.sync", "Ledger Sync"):
             return
 
-        progress = QProgressDialog("Syncing Ledger Data...", None, 0, 0, self)
-        progress.setWindowTitle("Please Wait")
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
-        progress.show()
-        QApplication.processEvents()
+        # Prevent concurrent syncs
+        if hasattr(self, '_ledger_worker') and self._ledger_worker and self._ledger_worker.isRunning():
+            return
 
-        try:
-            company_path = getattr(self, 'current_company_path', None)
-            row_count, error = fetch_tally_ledger_data(company_path=company_path)
-            progress.close()
+        self._ledger_progress = QProgressDialog("Syncing Ledger Data...", None, 0, 0, self)
+        self._ledger_progress.setWindowTitle("Please Wait")
+        self._ledger_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._ledger_progress.setMinimumDuration(0)
+        self._ledger_progress.setCancelButton(None)
+        self._ledger_progress.show()
 
-            if not error and row_count > 0:
-                QMessageBox.information(
-                    self, "Sync Complete",
-                    f"Ledger data synced successfully!\nLoaded {row_count} ledger entries."
-                )
-            else:
-                msg = error if error else "No ledger data received from Tally."
-                QMessageBox.warning(self, "Sync Issue", msg)
+        company_path = getattr(self, 'current_company_path', None)
 
-        except Exception as e:
-            progress.close()
-            QMessageBox.critical(self, "Error", f"Ledger Sync Failed: {str(e)}")
+        # Run in background thread
+        from PyQt6.QtCore import QThread, pyqtSignal
+        class _LedgerWorker(QThread):
+            finished = pyqtSignal(int, str)  # row_count, error
+            def __init__(self, path):
+                super().__init__()
+                self.path = path
+            def run(self):
+                try:
+                    rc, err = fetch_tally_ledger_data(company_path=self.path)
+                    self.finished.emit(rc or 0, err or "")
+                except Exception as e:
+                    self.finished.emit(0, str(e))
+
+        self._ledger_worker = _LedgerWorker(company_path)
+        self._ledger_worker.finished.connect(self._on_ledger_sync_done)
+        self._ledger_worker.start()
+
+    def _on_ledger_sync_done(self, row_count, error):
+        """Handle ledger sync completion (runs on main thread)."""
+        if hasattr(self, '_ledger_progress') and self._ledger_progress:
+            self._ledger_progress.close()
+        if not error and row_count > 0:
+            QMessageBox.information(
+                self, "Sync Complete",
+                f"Ledger data synced successfully!\nLoaded {row_count} ledger entries."
+            )
+        else:
+            msg = error if error else "No ledger data received from Tally."
+            QMessageBox.warning(self, "Sync Issue", msg)
 
     def on_main_stack_change(self, idx):
         """Handle main tab changes -> Auto-build Catalog only on relevant tabs."""

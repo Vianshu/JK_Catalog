@@ -100,7 +100,8 @@ class DBManager:
         self._connections = {}  # {logical_name: pyodbc.Connection}
         self._health_timestamps = {}  # {cache_key: last_healthy_epoch}
         self._HEALTH_TTL = 30  # seconds — skip SELECT 1 if verified recently
-        self._lock = threading.Lock()  # Thread-safe connection access
+        self._lock = threading.Lock()  # Protects _connections dict mutations
+        self._db_locks = {}  # {cache_key: Lock} — per-database locks reduce contention
         self._load_server_config()
         self._ensure_login()
 
@@ -242,7 +243,13 @@ class DBManager:
         tid = threading.current_thread().ident
         cache_key = f"{logical_name}_{tid}"
         
+        # Get or create a per-database lock (avoids global contention)
         with self._lock:
+            if cache_key not in self._db_locks:
+                self._db_locks[cache_key] = threading.Lock()
+            db_lock = self._db_locks[cache_key]
+        
+        with db_lock:
             # Return cached connection if still alive
             if cache_key in self._connections:
                 conn = self._connections[cache_key]

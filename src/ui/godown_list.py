@@ -1,5 +1,4 @@
 import os
-import pandas as pd
 from PyQt6.QtWidgets import *
 from PyQt6.QtCore import *
 from PyQt6.QtGui import *
@@ -12,10 +11,18 @@ class GodownListUI(QWidget):
         self.settings = QSettings("TallySync", "GodownList")
         self.export_folder = self.settings.value("export_folder", "")
         self.final_data = None  # Will be loaded from final_data DB
+        self._alias_lookup = {}  # {alias_lower: {Item_Name, Unit, Part_No}}
         self.company_path = ""
         self.db = get_db_manager()
         self.godown_db_name = ""
         self.final_db_name = ""
+        
+        # Debounced save timer — saves 1 second after last edit instead of on every keystroke
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(1000)
+        self._save_timer.timeout.connect(self.save_data_to_db)
+        
         self.init_ui()
         self.change_data_folder(data_folder_path, final_data_df)
 
@@ -41,22 +48,37 @@ class GodownListUI(QWidget):
 
     # ---------------- LOAD PRODUCT DATA ----------------
     def load_final_data_from_db(self, company_path):
-        """Load Alias, Item_Name, Unit, Part_No from final_data DB for autocomplete"""
+        """Load Alias, Item_Name, Unit, Part_No from final_data DB for autocomplete.
+        Uses a plain dict instead of Pandas for O(1) lookups."""
         try:
             conn = self.db.get_connection(self.final_db_name)
             if not conn:
-                print(f"[GODOWN] Cannot connect to final_data DB")
                 self.final_data = None
+                self._alias_lookup = {}
                 return
-            query = "SELECT [Alias], [Item_Name], [Unit], [Part_No] FROM catalog"
-            self.final_data = pd.read_sql_query(query, conn)
-            print(f"[GODOWN] Loaded {len(self.final_data)} rows from final_data DB")
-            print(f"[GODOWN] Columns: {list(self.final_data.columns)}")
-            if not self.final_data.empty:
-                print(f"[GODOWN] Sample Alias: {self.final_data['Alias'].head(3).tolist()}")
+            cursor = conn.cursor()
+            cursor.execute("SELECT [Alias], [Item_Name], [Unit], [Part_No] FROM catalog")
+            rows = cursor.fetchall()
+            
+            self._alias_lookup = {}
+            alias_list = []
+            for row in rows:
+                alias = str(row[0]).strip() if row[0] else ""
+                if alias and alias.lower() != 'none':
+                    self._alias_lookup[alias.lower()] = {
+                        "Item_Name": row[1] or "",
+                        "Unit": row[2] or "",
+                        "Part_No": row[3] or ""
+                    }
+                    alias_list.append(alias)
+            
+            self.final_data = alias_list  # Keep list for completer
+            print(f"[GODOWN] Loaded {len(rows)} rows from final_data DB")
+            print(f"[GODOWN] Completer created with {len(alias_list)} aliases")
         except Exception as e:
             print(f"[GODOWN] Failed to load final_data: {e}")
             self.final_data = None
+            self._alias_lookup = {}
 
     # ---------------- DATABASE ----------------
     def init_db(self):
@@ -72,19 +94,10 @@ class GodownListUI(QWidget):
     # ---------------- COMPLETER ----------------
     def update_completer(self):
         self.completer = None
-        if self.final_data is not None and not self.final_data.empty:
-            if "Alias" in self.final_data.columns:
-                alias_list = self.final_data["Alias"].dropna().astype(str).tolist()
-                # Filter out empty strings
-                alias_list = [a for a in alias_list if a.strip() and a.strip().lower() != 'none']
-                print(f"[GODOWN] Completer created with {len(alias_list)} aliases")
-                self.completer = QCompleter(alias_list)
-                self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-                self.completer.setFilterMode(Qt.MatchFlag.MatchContains)
-            else:
-                print(f"[GODOWN] 'Alias' column NOT found in final_data. Columns: {list(self.final_data.columns)}")
-        else:
-            print(f"[GODOWN] final_data is None or empty, no completer created")
+        if self.final_data:
+            self.completer = QCompleter(self.final_data)  # final_data is now a list of alias strings
+            self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            self.completer.setFilterMode(Qt.MatchFlag.MatchContains)
 
     # ---------------- UI ----------------
     def init_ui(self):
@@ -203,10 +216,8 @@ class GodownListUI(QWidget):
         Alias = editor.text().strip()
         self.table.removeCellWidget(row, 0)
         
-        if self.final_data is not None:
-            match = self.final_data[self.final_data["Alias"].astype(str).str.lower() == Alias.lower()]
-            if not match.empty:
-                data = match.iloc[0]
+        data = self._alias_lookup.get(Alias.lower())
+        if data:
                 
                 # 1. Set Item Name (from Name column, not Alias)
                 self.table.setItem(row, 0, self.create_table_item(data["Item_Name"]))
@@ -277,7 +288,7 @@ class GodownListUI(QWidget):
                 self.set_item_locked(row, c, "", should_lock=lock)
 
         self.table.blockSignals(False)
-        self.save_data_to_db()   
+        self._save_timer.start()  # Debounced save — fires 1s after last edit
     
     def load_data_from_db(self):
         conn = self.db.get_connection(self.godown_db_name)
@@ -362,11 +373,8 @@ class GodownListUI(QWidget):
         Alias = editor.text().strip()
         self.table.removeCellWidget(row, 0)
 
-        if self.final_data is not None:
-            match = self.final_data[self.final_data["Alias"].astype(str).str.lower() == Alias.lower()]
-            if not match.empty:
-                data = match.iloc[0]
-
+        data = self._alias_lookup.get(Alias.lower())
+        if data:
                 # 0: Item Name (Editable)
                 self.table.setItem(row, 0, QTableWidgetItem(str(data["Item_Name"])))
                 # 1: प्रति कार्टुन - Unlock & Right Align
@@ -409,8 +417,15 @@ class GodownListUI(QWidget):
                 self.table.removeRow(r)
     
     def refresh_part_no_from_item(self):
-        if self.final_data is None or self.final_data.empty:
+        if not self._alias_lookup:
             return
+
+        # Build item_name → Part_No lookup
+        item_lookup = {}
+        for alias_data in self._alias_lookup.values():
+            item_name = str(alias_data["Item_Name"]).strip().lower()
+            if item_name:
+                item_lookup[item_name] = alias_data.get("Part_No", "")
 
         for r in range(self.table.rowCount()):
             item0 = self.table.item(r, 0)
@@ -421,17 +436,10 @@ class GodownListUI(QWidget):
             if item_name == "":
                 continue
 
-            match = self.final_data[
-                self.final_data["Item_Name"].astype(str).str.lower()
-                == item_name.lower()
-            ]
-
-            if not match.empty:
-                part_no = match.iloc[0].get("Part_No", "")
-
+            part_no = item_lookup.get(item_name.lower())
+            if part_no is not None:
                 if part_no is None or str(part_no).strip().lower() == "none":
                     part_no = ""
-
                 self.set_item_locked(r, 5, part_no)
 
     # ---------------- EXPORT / PRINT ----------------
@@ -457,7 +465,7 @@ class GodownListUI(QWidget):
         if not data:
             return
 
-        df = pd.DataFrame(data, columns=[
+        df = __import__('pandas').DataFrame(data, columns=[
             "Item Name", "Qty/Ctn", "Unit",
             "Total Ctn", "Godown", "Part No", "CN"
         ])
@@ -473,7 +481,8 @@ class GodownListUI(QWidget):
         path = os.path.join(self.export_folder, filename)
 
         try:
-            writer = pd.ExcelWriter(path, engine='xlsxwriter')
+            import pandas as _pd
+            writer = _pd.ExcelWriter(path, engine='xlsxwriter')
             df.to_excel(writer, index=False, sheet_name='Godown Stock')
             
             worksheet = writer.sheets['Godown Stock']

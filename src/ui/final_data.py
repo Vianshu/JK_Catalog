@@ -801,7 +801,7 @@ class FinalDataUI(QWidget):
             # from sticking. Manual 'false' edits are now preserved.
             
             conn.commit()
-            print(f"True/False sync completed for {len(rows)} items")
+            logger.debug(f"True/False sync completed for {len(rows)} items")
             
         except Exception as e:
             logger.error(f"True/False Sync Error: {e}", exc_info=True)
@@ -911,8 +911,10 @@ class FinalDataUI(QWidget):
             right_align_cols = ["Unit", "MOQ", "M_Packing", "MRP", "Stock", "MG_SN", "SG_SN"]
             right_align_indices = [self.col_index(c) for c in right_align_cols if c in self.headers]
 
+            # Pre-allocate all rows at once (single layout recalc instead of N)
+            self.table.setRowCount(len(final_display_data))
+
             for r_idx, r_val in enumerate(final_display_data):
-                self.table.insertRow(r_idx)
                 
                 # Image missing color logic
                 is_row_missing = False
@@ -991,10 +993,10 @@ class FinalDataUI(QWidget):
         # print("CALLED: update_summary_stats") # DEBUG TRACE
         try:
             if not self.final_db_name:
-                print(f"ABORT: final_db_name invalid")
+                logger.debug("ABORT: final_db_name invalid")
                 return
             
-            print(f"\n--- DEBUG: Updating Summary Stats [DB: {self.final_db_name}] ---")
+            logger.debug(f"Updating Summary Stats [DB: {self.final_db_name}]")
             conn = self.db.get_connection(self.final_db_name)
             if not conn:
                 return
@@ -1002,7 +1004,7 @@ class FinalDataUI(QWidget):
             
             # 1. Final Data Total (Simple Count)
             final_data_total = cursor.execute("SELECT COUNT(*) FROM catalog").fetchone()[0] or 0
-            print(f"Debug: Final Total = {final_data_total}")
+            logger.debug(f"Final Total = {final_data_total}")
 
             # 2. Catalog Total (Passed Inclusion Logic)
             # TF is '1' OR (TF is Empty AND Stock > 0)
@@ -1014,7 +1016,7 @@ class FinalDataUI(QWidget):
                     AND (ISNULL(CAST(REPLACE(REPLACE(Stock, ',', ''), ' ', '') AS FLOAT), 0) > 0)
                 )
             """).fetchone()[0] or 0
-            print(f"Debug: Catalog Total = {catalog_total}")
+            logger.debug(f"Catalog Total = {catalog_total}")
             
             # 3. Excluded by Stock (Stock <= 0 AND TF is Empty)
             out_of_stock = cursor.execute("""
@@ -1022,19 +1024,19 @@ class FinalDataUI(QWidget):
                 WHERE (ISNULL(CAST(REPLACE(REPLACE(Stock, ',', ''), ' ', '') AS FLOAT), 0) <= 0)
                 AND (ISNULL(LTRIM(RTRIM([True/False])), '') = '')
             """).fetchone()[0] or 0
-            print(f"Debug: Excluded (Stock) = {out_of_stock}")
+            logger.debug(f"Excluded (Stock) = {out_of_stock}")
             
             # 4. Manual False (Explicitly marked 'false', '0', 'no')
             false_items = cursor.execute("""
                 SELECT COUNT(*) FROM catalog 
                 WHERE LOWER(LTRIM(RTRIM(CAST([True/False] AS NVARCHAR(MAX))))) IN ('false', '0', 'no')
             """).fetchone()[0] or 0
-            print(f"Debug: Manual False = {false_items}")
+            logger.debug(f"Manual False = {false_items}")
             
             # 5. Item Mismatch
             sum_parts = catalog_total + out_of_stock + false_items
             item_mismatch = final_data_total - sum_parts
-            print(f"Debug: Mismatch = {item_mismatch} (Total {final_data_total} - Sum {sum_parts})")            
+            logger.debug(f"Mismatch = {item_mismatch} (Total {final_data_total} - Sum {sum_parts})")
             # Update labels
             self.lbl_catalog_total_val.setText(str(catalog_total))
             self.lbl_out_stock_val.setText(str(out_of_stock))
