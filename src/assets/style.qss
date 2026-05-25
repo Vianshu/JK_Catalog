@@ -115,10 +115,10 @@ QWidget {
     background-color: #099179;
 }
 
-/* --- 2. Sidebar (Pure White — Stitch Reference) --- */
+/* --- 2. Sidebar (Solid Teal) --- */
 #MainSidebar {
-    background-color: #FFFFFF;
-    border-right: 1px solid #E2E4E8;
+    background-color: #0B9B8A;
+    border-right: none;
 }
 
 /* Content Area */
@@ -126,15 +126,15 @@ QWidget {
     background-color: #EFF1F5;
 }
 
-/* Sidebar labels — dark text on white background */
+/* Sidebar labels */
 #MainSidebar QLabel {
-    color: #1A2035;
+    color: #ffffff;
 }
 
 /* CRITICAL: Override global QPushButton teal for ALL sidebar buttons */
 #MainSidebar QPushButton {
     background-color: transparent;
-    color: #1A2035;
+    color: #ffffff;
     border: none;
     text-align: left;
     font-weight: 500;
@@ -144,31 +144,31 @@ QWidget {
     margin: 2px 8px;
 }
 #MainSidebar QPushButton:hover {
-    background-color: #EBF5F5;
-    color: #0B9B8A;
+    background-color: rgba(255, 255, 255, 0.15);
+    color: #ffffff;
     font-weight: 600;
 }
 
 /* Company name button at top of sidebar */
 QPushButton#CompanyDisplayBtn {
     background-color: transparent;
-    color: #1A2035;
+    color: #ffffff;
     font-weight: 700;
     font-size: 14px;
     text-align: left;
-    padding: 10px 4px;
+    padding: 10px 8px;
     border: none;
-    border-bottom: 1px solid #E2E4E8;
+    border-bottom: 1px solid rgba(255,255,255,0.2);
     margin-bottom: 8px;
     border-radius: 0px;
 }
 QPushButton#CompanyDisplayBtn:hover {
-    color: #0B9B8A;
-    background-color: transparent;
+    color: #ffffff;
+    background-color: rgba(255,255,255,0.1);
 }
 
 #QuitHint {
-    color: #9CA3AF;
+    color: rgba(255,255,255,0.5);
     font-size: 11px;
     qproperty-alignment: 'AlignCenter';
     margin-top: 10px;
@@ -178,7 +178,7 @@ QPushButton#CompanyDisplayBtn:hover {
 .MenuButton, #MenuButton {
     text-align: left;
     background-color: transparent;
-    color: #1A2035;
+    color: #ffffff;
     font-size: 13px;
     font-weight: 500;
     padding: 10px 16px;
@@ -188,27 +188,27 @@ QPushButton#CompanyDisplayBtn:hover {
 }
 
 .MenuButton:hover, #MenuButton:hover {
-    background-color: #EBF5F5;
-    color: #0B9B8A;
+    background-color: rgba(255, 255, 255, 0.15);
+    color: #ffffff;
     font-weight: 600;
 }
 
-/* Back button — stays red as user requested */
+/* Back button */
 #MenuBackButton {
-    color: #e74c3c;
+    color: #ffffff;
     font-weight: bold;
-    border-bottom: 1px solid #E2E4E8;
+    border-bottom: 1px solid rgba(255,255,255,0.2);
     margin-bottom: 8px;
 }
 
 .MenuButton[active="true"], #MenuButton[active="true"] {
-    background-color: #EBF5F5;
-    color: #0B9B8A;
-    border-left: 3px solid #0B9B8A;
+    background-color: rgba(255, 255, 255, 0.2);
+    color: #ffffff;
+    border-left: 3px solid #ffffff;
     font-weight: 600;
 }
 
-/* MenuButtonWidget — custom QFrame menu items (moved from inline Python) */
+/* MenuButtonWidget — custom QFrame menu items */
 #MenuButtonWidget {
     background: transparent;
     border-radius: 6px;
@@ -216,40 +216,40 @@ QPushButton#CompanyDisplayBtn:hover {
     border-left: 3px solid transparent;
 }
 #MenuButtonWidget:hover {
-    background-color: #EBF5F5;
+    background-color: rgba(255, 255, 255, 0.15);
 }
 #MenuButtonWidget[active="true"] {
-    background-color: #EBF5F5;
-    border-left: 3px solid #0B9B8A;
+    background-color: rgba(255, 255, 255, 0.2);
+    border-left: 3px solid #ffffff;
     border-radius: 4px;
 }
 #MenuButtonWidget:disabled {
     background: transparent;
 }
 #MenuButtonWidget QLabel, #MenuLabel {
-    color: #1A2035;
+    color: #ffffff;
     font-size: 14px;
     font-weight: 600;
     background: transparent;
     border: none;
 }
 #MenuButtonWidget:hover QLabel {
-    color: #0B9B8A;
+    color: #ffffff;
     font-weight: 700;
 }
 #MenuButtonWidget[active="true"] QLabel {
-    color: #0B9B8A;
+    color: #ffffff;
     font-weight: 700;
 }
 #MenuButtonWidget:disabled QLabel {
-    color: #D1D5DB;
+    color: rgba(255,255,255,0.35);
 }
 
-/* Logout Button — uses QPushButton#id for higher specificity over global QPushButton */
+/* Logout Button — white outline on teal sidebar */
 QPushButton#LogoutBtn {
     background-color: transparent;
-    color: #e74c3c;
-    border: 1px solid #e74c3c;
+    color: #ffffff;
+    border: 1px solid rgba(255,255,255,0.4);
     border-radius: 6px;
     font-weight: bold;
     font-size: 13px;
@@ -261,6 +261,7 @@ QPushButton#LogoutBtn {
 QPushButton#LogoutBtn:hover {
     background-color: #e74c3c;
     color: white;
+    border: 1px solid #e74c3c;
 }
 
 /* --- 4. Buttons --- */
@@ -892,17 +893,7 @@ QProgressBar::chunk {
     background-color: #E2E4E8;
 }
 
-/* --- 27. Company Display Button --- */
-#CompanyDisplayBtn {
-    text-align: left;
-    padding-left: 10px;
-    background-color: transparent;
-    color: #1A2035;
-    border: none;
-    font-weight: 700;
-    font-size: 14px;
-    border-bottom: 1px solid #E2E4E8;
-}
+/* (CompanyDisplayBtn rules consolidated in Section 2 above) */
 
 /* --- 28. Full Catalog Components (full_catalog.py) --- */
 #CatalogScrollArea {

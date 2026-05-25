@@ -304,7 +304,7 @@ class UserManagerDialog(QDialog):
 
 # --- Role / Security Manager Dialog ---
 class SecurityUI(QWidget):
-    """Manage roles and permissions with a modern vertical card layout (Full Screen)."""
+    """Manage roles and permissions with a 4-column card layout (one per main tab)."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.mw = parent  # MainWindow reference
@@ -316,54 +316,43 @@ class SecurityUI(QWidget):
         self.setObjectName("SecurityUI")
         
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(10)
+        
+        # --- Title ---
         title = QLabel(f"<h3>🛡️ Security Roles — {self.company_name}</h3>")
         title.setObjectName("SecurityTitle")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
         
-        # --- Security Level Details Frame ---
+        # --- Role Selector Bar ---
         details_frame = QFrame()
         details_frame.setObjectName("SecurityDetailsFrame")
-        details_layout = QVBoxLayout(details_frame)
+        details_layout = QHBoxLayout(details_frame)
+        details_layout.setContentsMargins(12, 8, 12, 8)
         
-        # Row 1: Name
-        top_form = QGridLayout()
-        top_form.addWidget(QLabel("Name of Security Level:"), 0, 0)
+        details_layout.addWidget(QLabel("Security Level:"))
         
         self.role_combo = QComboBox()
         self.role_combo.setMinimumWidth(200)
         self.role_combo.currentIndexChanged.connect(self._on_role_selected)
-        top_form.addWidget(self.role_combo, 0, 1)
+        details_layout.addWidget(self.role_combo)
         
         self.btn_new = QPushButton("➕ New")
         self.btn_new.setObjectName("SecurityNewBtn")
         self.btn_new.clicked.connect(self._create_role)
-        top_form.addWidget(self.btn_new, 0, 2)
+        details_layout.addWidget(self.btn_new)
         
         self.btn_del = QPushButton("🗑 Delete")
         self.btn_del.setObjectName("SecurityDelBtn")
         self.btn_del.clicked.connect(self._delete_role)
-        top_form.addWidget(self.btn_del, 0, 3)
+        details_layout.addWidget(self.btn_del)
         
-        top_form.setColumnStretch(4, 1)
-        details_layout.addLayout(top_form)
-        
+        details_layout.addStretch()
         layout.addWidget(details_frame)
         
-        # Main Content Area
-        self.perm_table = QTableWidget()
-        self.perm_table.setColumnCount(2)
-        self.perm_table.horizontalHeader().setVisible(False)
-        self.perm_table.verticalHeader().setVisible(False)
-        self.perm_table.setShowGrid(False)
-        self.perm_table.setAlternatingRowColors(False)
-        self.perm_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        self.perm_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.perm_table.setMouseTracking(True)
-        self.perm_table.setObjectName("GranularAccessTable")
-        
+        # --- Facility Groups (data — unchanged) ---
         self.facility_combos = {}
-        # Grouped by sidebar menu category for organized display
         self.facility_groups = [
             ("📁 Catalog", [
                 ("Sync Tally",          ["tab.final_data"],     ["final_data.sync"]),
@@ -398,10 +387,11 @@ class SecurityUI(QWidget):
                                                                  "settings.change_path"]),
             ]),
         ]
-        self._build_perm_grid()
         
-        layout.addWidget(self.perm_table, 1)
+        # --- 4-Column Card Layout ---
+        self._build_perm_grid(layout)
         
+        # --- Bottom Button Bar ---
         btn_bar = QHBoxLayout()
         btn_bar.addStretch()
         save_btn = QPushButton("💾 Save Permissions")
@@ -415,6 +405,69 @@ class SecurityUI(QWidget):
         layout.addLayout(btn_bar)
         
         self._load_roles()
+
+    def _build_perm_grid(self, parent_layout):
+        """Build 4-column card layout — one column per main tab."""
+        from PyQt6.QtWidgets import QScrollArea
+        
+        columns_layout = QHBoxLayout()
+        columns_layout.setSpacing(10)
+        
+        for group_name, items in self.facility_groups:
+            # --- Column Card Frame ---
+            card = QFrame()
+            card.setObjectName("SecurityColumn")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(0, 0, 0, 0)
+            card_layout.setSpacing(0)
+            
+            # Header
+            header = QLabel(group_name)
+            header.setObjectName("SecurityColumnHeader")
+            header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            card_layout.addWidget(header)
+            
+            # Scrollable content area for permission rows
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setObjectName("SecurityColumnScroll")
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            
+            content = QWidget()
+            content_layout = QVBoxLayout(content)
+            content_layout.setContentsMargins(10, 8, 10, 8)
+            content_layout.setSpacing(6)
+            
+            for fac_name, view_keys, edit_keys in items:
+                row_frame = QFrame()
+                row_frame.setObjectName("SecurityPermRow")
+                row_layout = QVBoxLayout(row_frame)
+                row_layout.setContentsMargins(8, 6, 8, 6)
+                row_layout.setSpacing(4)
+                
+                lbl = QLabel(fac_name)
+                lbl.setObjectName("SecurityPermLabel")
+                row_layout.addWidget(lbl)
+                
+                combo = QComboBox()
+                combo.addItem("None", "none")
+                if view_keys:
+                    combo.addItem("Display", "display")
+                if edit_keys:
+                    combo.addItem("Full Access", "full")
+                combo.setObjectName("SecurityPermCombo")
+                row_layout.addWidget(combo)
+                
+                self.facility_combos[fac_name] = combo
+                content_layout.addWidget(row_frame)
+            
+            content_layout.addStretch()
+            scroll.setWidget(content)
+            card_layout.addWidget(scroll, 1)
+            
+            columns_layout.addWidget(card, 1)
+        
+        parent_layout.addLayout(columns_layout, 1)
 
     def _flat_facilities(self):
         """Flatten grouped facilities into a single list for iteration."""
@@ -451,61 +504,6 @@ class SecurityUI(QWidget):
         if not self.security:
             return None
         return self.security.get_company_id_by_path(self.company_path)
-
-    def _build_perm_grid(self):
-        """Build grouped permission table with category headers."""
-        from PyQt6.QtWidgets import QHeaderView
-        
-        # Count total rows: group headers + facility items
-        total_rows = 0
-        for group_name, items in self.facility_groups:
-            total_rows += 1  # header row
-            total_rows += len(items)
-        
-        self.perm_table.setRowCount(total_rows)
-        
-        row = 0
-        header_font = self.font()
-        header_font.setBold(True)
-        header_font.setPointSize(header_font.pointSize() + 1)
-        
-        for group_name, items in self.facility_groups:
-            # --- Group Header Row ---
-            header_item = QTableWidgetItem(group_name)
-            header_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            header_item.setFont(header_font)
-            header_item.setBackground(QColor("#F4F5F7"))
-            header_item.setForeground(QColor("#1A2035"))
-            self.perm_table.setItem(row, 1, header_item)
-            
-            # Span combo column with empty disabled cell
-            spacer = QTableWidgetItem("")
-            spacer.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            spacer.setBackground(QColor("#F4F5F7"))
-            self.perm_table.setItem(row, 0, spacer)
-            row += 1
-            
-            # --- Facility Items ---
-            for fac_name, view_keys, edit_keys in items:
-                combo = QComboBox()
-                combo.addItem("None", "none")
-                if view_keys:
-                    combo.addItem("Display", "display")
-                if edit_keys:
-                    combo.addItem("Full Access", "full")
-                
-                self.perm_table.setCellWidget(row, 0, combo)
-                self.facility_combos[fac_name] = combo
-                
-                item = QTableWidgetItem(f"    {fac_name}")
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.perm_table.setItem(row, 1, item)
-                row += 1
-        
-        self.perm_table.setColumnWidth(0, 200)
-        self.perm_table.horizontalHeader().setStretchLastSection(True)
-        # Stretch rows to fill full available height — no scrolling needed
-        self.perm_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
 
     def _load_roles(self):
         self.role_combo.blockSignals(True)
