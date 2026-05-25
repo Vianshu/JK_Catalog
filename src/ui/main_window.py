@@ -114,8 +114,9 @@ class MenuButtonWidget(QFrame):
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        # Native title bar with minimize/maximize/close buttons
         self.setWindowTitle("JK Catalog Multi")
+        self._apply_titlebar_color()
         
         # Global Event Filter for Alt Key
         self.alt_filter = AltKeyFilter(self)
@@ -188,6 +189,27 @@ class MainWindow(QWidget):
             self.toggle_hotkey_hints(False)
         super().keyReleaseEvent(event)
 
+    def _apply_titlebar_color(self):
+        """Set Windows title bar color to match the teal theme using DWM API."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+            dwmapi = ctypes.windll.dwmapi
+            hwnd = int(self.winId())
+            
+            # DWMWA_CAPTION_COLOR = 35 (Windows 11 22H2+)
+            # DWMWA_TEXT_COLOR = 36
+            # Color format is COLORREF (0x00BBGGRR)
+            # Teal #0B9B8A → R=0x0B, G=0x9B, B=0x8A → COLORREF = 0x008A9B0B
+            caption_color = ctypes.c_int(0x008A9B0B)
+            dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(caption_color), ctypes.sizeof(caption_color))
+            
+            # White title text
+            text_color = ctypes.c_int(0x00FFFFFF)
+            dwmapi.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(text_color), ctypes.sizeof(text_color))
+        except Exception:
+            pass  # Silently fail on non-Windows or older Windows versions
+
     def toggle_min_max(self):
         if self.isMinimized():
             self.maximize_window()
@@ -195,31 +217,8 @@ class MainWindow(QWidget):
             self.showMinimized()
 
     def maximize_window(self):
-        """
-        Manually sizes the window to exactly fit the available screen.
-        Using setFixedSize locks the geometry so NO internal dashboard widgets
-        can force the window to expand off the bottom of the screen.
-        """
-        screen = QApplication.primaryScreen()
-        if not screen:
-            self.showMaximized()
-            return
-            
-        avail = screen.availableGeometry()
-        full = screen.geometry()
-        
-        if avail == full:
-            # Auto-hide taskbar is ON (no reserved space)
-            # Leave a 2px gap at bottom so the taskbar can still be triggered
-            self.setFixedSize(full.width(), full.height() - 2)
-            self.move(full.left(), full.top())
-        else:
-            # Taskbar is visible (reserving space)
-            # Snap exactly to the available space (prevents hiding behind taskbar)
-            self.setFixedSize(avail.width(), avail.height())
-            self.move(avail.left(), avail.top())
-            
-        self.showNormal()
+        """Use native maximize since we have a standard title bar."""
+        self.showMaximized()
     
     def setup_ui(self):
         self.root_layout = QHBoxLayout(self)
@@ -253,12 +252,11 @@ class MainWindow(QWidget):
         sidebar_layout.addStretch()
 
         # Quit Hint
-        # Quit Hint
         quit_lbl = QLabel("Press Ctrl+Q to Quit")
         quit_lbl.setObjectName("QuitHint")
         sidebar_layout.addWidget(quit_lbl)
 
-        # Logout Button (User Request)
+        # Logout Button
         self.logout_btn = QPushButton("🚪 LOGOUT")
         self.logout_btn.setObjectName("LogoutBtn")
         self.logout_btn.clicked.connect(self.back_to_login_screen)
@@ -311,8 +309,8 @@ class MainWindow(QWidget):
             ("⬅️ &Back", self.go_back_to_main, True),
             ("🏢 &Alter Company", self.handle_alter_company, False, None, "settings.company_config"),
             ("🔄 S&witch Co.", self.back_to_login_screen),
-            ("👥 &Manage Users", self.handle_manage_users, False, None, "settings.manage_users"),
-            ("🛡️ Secu&rity", self.handle_security, False, None, "settings.manage_roles"),
+            ("👥 &Users", self.handle_manage_users, False, None, "settings.manage_users"),
+            ("🛡️ User &Roles", self.handle_security, False, None, "settings.manage_roles"),
             ("📋 Audit &Log", self.handle_audit_log, False, None, "settings.manage_roles"),
             ("🔑 Change &Password", self.handle_change_password, False, None, "settings.manage_users"),
             ("📅 Ca&lendar", self.handle_calendar_mapping, False, None, "tab.calendar")
