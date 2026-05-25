@@ -92,7 +92,6 @@ class SuperMasterUI(QWidget):
         
         self.summary_table.verticalHeader().setVisible(False)
         self.summary_table.setFixedWidth(280)
-        self.summary_table.setMinimumHeight(600)
         
         self.summary_table.setColumnWidth(0, 45)
         self.summary_table.setColumnWidth(1, 160)

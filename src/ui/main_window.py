@@ -116,6 +116,9 @@ class MainWindow(QWidget):
         super().__init__()
         # Native title bar with minimize/maximize/close buttons
         self.setWindowTitle("JK Catalog Multi")
+        # Allow the window to shrink to any size — prevents children from
+        # pushing the window behind the taskbar on smaller screens.
+        self.setMinimumSize(0, 0)
         
         # Set Application Icon
         icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "JK_Icon.ico")
@@ -230,6 +233,9 @@ class MainWindow(QWidget):
         self.root_layout = QHBoxLayout(self)
         self.root_layout.setContentsMargins(0, 0, 0, 0)
         self.root_layout.setSpacing(0)
+        # Prevent child minimum sizes from forcing the window behind the taskbar
+        from PyQt6.QtWidgets import QLayout
+        self.root_layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
 
         # ========== LEFT SIDEBAR ==========
         self.sidebar = QFrame()

@@ -224,7 +224,29 @@ def main():
         splash_pix.fill(QColor("#1A2035"))
 
     splash = QSplashScreen(splash_pix, Qt.WindowType.WindowStaysOnTopHint)
+    
+    # --- Add Dynamic Loading Bar & Text to PyQt Splash ---
+    from PyQt6.QtWidgets import QProgressBar
+    from PyQt6.QtGui import QFont, QColor
+    
+    # "Loading..." Text at the bottom
+    splash.setFont(QFont("Inter", 10))
+    
+    # Progress Bar Overlay
+    progress = QProgressBar(splash)
+    # Splash is 600x500. Position bar near the bottom center.
+    progress.setGeometry(100, 440, 400, 4)
+    progress.setTextVisible(False)
+    progress.setRange(0, 100)
+    # Light theme styling: subtle grey background, teal chunk
+    progress.setStyleSheet("QProgressBar { border: none; background: #E2E8F0; } QProgressBar::chunk { background: #0B9B8A; }")
+    
     splash.show()
+    progress.show()
+    
+    # Text uses Dark Teal to match the title
+    splash.showMessage("Initializing Core Modules...", Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, QColor("#045E54"))
+    progress.setValue(10)
     app.processEvents()
 
     # --- First Launch Setup (before any DB imports) ---
@@ -232,8 +254,16 @@ def main():
         # User cancelled setup — exit cleanly
         sys.exit(0)
 
+    splash.showMessage("Loading UI Components...", Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, QColor("#045E54"))
+    progress.setValue(40)
+    app.processEvents()
+
     # Heavy import AFTER splash is visible — MainWindow pulls in 20+ modules
     from src.ui.main_window import MainWindow
+    
+    splash.showMessage("Starting Application...", Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, QColor("#045E54"))
+    progress.setValue(80)
+    app.processEvents()
 
     # --- Enforce Fusion Style (Cross-platform consistency) ---
     from PyQt6.QtWidgets import QStyleFactory
