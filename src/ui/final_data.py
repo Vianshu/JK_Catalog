@@ -41,6 +41,110 @@ class FinalDataSyncWorker(QThread):
             traceback.print_exc()
             self.error.emit(str(e))
 
+
+class RefreshWorker(QThread):
+    """Background worker for refresh_table data preparation.
+    Moves DB fetch, sorting, clustering, and image checks off the main thread.
+    Only the final table population happens on the main thread."""
+    finished = pyqtSignal(list, list, list)  # final_display_data, right_align_indices, column_indices
+    error = pyqtSignal(str)
+
+    def __init__(self, ui_ref):
+        super().__init__()
+        self.ui = ui_ref
+
+    def run(self):
+        try:
+            from src.logic.text_utils import cluster_and_sort
+
+            db = get_db_manager()
+            conn = db.get_connection(self.ui.final_db_name)
+            if not conn:
+                self.error.emit("Cannot connect to DB")
+                return
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM catalog")
+            data = cursor.fetchall()
+
+            grp_idx = self.ui.col_index("Group")
+            path_idx = self.ui.col_index("Image_Path")
+            mg_sn_idx = self.ui.col_index("MG_SN")
+            sg_sn_idx = self.ui.col_index("SG_SN")
+            product_name_idx = self.ui.col_index("Product Name")
+            mrp_idx = self.ui.col_index("MRP")
+
+            # 1. Build super_master group ordering map
+            try:
+                s_conn = db.get_connection(DB_SUPER)
+                if s_conn:
+                    s_cursor = s_conn.cursor()
+                    for row in s_cursor.execute(
+                        "SELECT MG_SN, SG_SN FROM super_master ORDER BY CAST(MG_SN AS INTEGER), CAST(SG_SN AS INTEGER)"
+                    ).fetchall():
+                        pass  # Just validates ordering exists
+            except Exception:
+                pass
+
+            # 2. Group rows by (MG_SN, SG_SN)
+            grouped_rows = {}
+            for r in data:
+                mg_raw = str(r[mg_sn_idx]).strip() if r[mg_sn_idx] else ""
+                sg_raw = str(r[sg_sn_idx]).strip() if r[sg_sn_idx] else ""
+                try: mg_int = int(mg_raw)
+                except (ValueError, TypeError): mg_int = 9999
+                try: sg_int = int(sg_raw)
+                except (ValueError, TypeError): sg_int = 9999
+                key = (mg_int, sg_int)
+                if key not in grouped_rows:
+                    grouped_rows[key] = []
+                grouped_rows[key].append(r)
+
+            # 3. Sort group keys
+            sorted_group_keys = sorted(grouped_rows.keys(), key=lambda k: (k[0], k[1]))
+
+            # 4. Within each group, cluster and sort
+            sorted_data = []
+            for gkey in sorted_group_keys:
+                rows_in_group = grouped_rows[gkey]
+                def get_name(row, _idx=product_name_idx):
+                    return str(row[_idx]) if row[_idx] else ""
+                def get_price(row, _idx=mrp_idx):
+                    try:
+                        return float(str(row[_idx]).replace(",", "").strip())
+                    except (ValueError, TypeError):
+                        return 99999999.0
+                if gkey == (9999, 9999):
+                    rows_in_group.sort(key=lambda x: (get_name(x).lower(), get_price(x)))
+                    sorted_data.extend(rows_in_group)
+                else:
+                    sorted_data.extend(cluster_and_sort(
+                        rows_in_group, get_name_fn=get_name, get_price_fn=get_price
+                    ))
+
+            # 5. Split into missing/found images
+            missing_rows = []
+            found_rows = []
+            for r in sorted_data:
+                grp = str(r[grp_idx]).lower().strip() if r[grp_idx] else ""
+                path = str(r[path_idx]) if r[path_idx] else ""
+                if grp != "price list" and (not path or not os.path.exists(path)):
+                    missing_rows.append(r)
+                else:
+                    found_rows.append(r)
+
+            final_display_data = missing_rows + found_rows
+
+            # Pre-compute column indices
+            right_align_cols = ["Unit", "MOQ", "M_Packing", "MRP", "Stock", "MG_SN", "SG_SN"]
+            right_align_indices = [self.ui.col_index(c) for c in right_align_cols if c in self.ui.headers]
+            col_indices = [grp_idx, path_idx]
+
+            self.finished.emit(final_display_data, right_align_indices, col_indices)
+
+        except Exception as e:
+            logger.error(f"RefreshWorker Error: {e}", exc_info=True)
+            self.error.emit(str(e))
+
 class NumericTableWidgetItem(QTableWidgetItem):
     def __lt__(self, other):
         try:
@@ -807,109 +911,36 @@ class FinalDataUI(QWidget):
             logger.error(f"True/False Sync Error: {e}", exc_info=True)
 
     def refresh_table(self):
+        """Launch background worker to fetch/sort data, then populate table on main thread."""
         logger.debug("CALLED: refresh_table")
         if not self.final_db_name: 
             logger.warning("ABORT: No final_db_name in refresh_table")
             return
+        
+        # Prevent concurrent refreshes
+        if hasattr(self, '_refresh_worker') and self._refresh_worker and self._refresh_worker.isRunning():
+            return
+        
+        # Show loading state
+        self.table.setRowCount(0)
+        self.table.blockSignals(True)
+        self.table.setSortingEnabled(False)
+        
+        self._refresh_worker = RefreshWorker(self)
+        self._refresh_worker.finished.connect(self._on_refresh_data_ready)
+        self._refresh_worker.error.connect(self._on_refresh_error)
+        self._refresh_worker.start()
+
+    def _on_refresh_error(self, error_msg):
+        """Handle refresh worker failure."""
+        logger.error(f"Refresh worker failed: {error_msg}")
+        self.table.blockSignals(False)
+        self._refresh_worker = None
+
+    def _on_refresh_data_ready(self, final_display_data, right_align_indices, col_indices):
+        """Populate table from pre-sorted data (runs on main thread, fast)."""
         try:
-            self.table.blockSignals(True)
-            self.table.setSortingEnabled(False)
-            self.table.setRowCount(0)
-            
-            conn = self.db.get_connection(self.final_db_name)
-            if not conn:
-                return
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM catalog")
-            data = cursor.fetchall()
-
-            # --- UNIFIED SORTING (Same as Preview/Catalog Tab) ---
-            # Order: super_master group sequence (MG_SN, SG_SN) → cluster by name similarity → price within cluster
-            from src.logic.text_utils import cluster_and_sort
-            
-            grp_idx = self.col_index("Group")
-            path_idx = self.col_index("Image_Path")
-            mg_sn_idx = self.col_index("MG_SN")
-            sg_sn_idx = self.col_index("SG_SN")
-            product_name_idx = self.col_index("Product Name")
-            mrp_idx = self.col_index("MRP")
-
-            # 1. Build super_master group ordering map
-            group_order = {}  # (MG_SN_int, SG_SN_int) → sort key
-            try:
-                super_db_name = DB_SUPER
-                s_conn = self.db.get_connection(super_db_name)
-                if s_conn:
-                    s_cursor = s_conn.cursor()
-                    for row in s_cursor.execute(
-                        "SELECT MG_SN, SG_SN FROM super_master ORDER BY CAST(MG_SN AS INTEGER), CAST(SG_SN AS INTEGER)"
-                    ).fetchall():
-                            mg = row[0] or ""
-                            sg = row[1] or ""
-                            try: mg_int = int(str(mg).strip())
-                            except (ValueError, TypeError): mg_int = 9999
-                            try: sg_int = int(str(sg).strip())
-                            except (ValueError, TypeError): sg_int = 9999
-                            group_order[(mg_int, sg_int)] = (mg_int, sg_int)
-            except Exception as e:
-                logger.warning(f"Could not load super_master ordering: {e}")
-
-            # 2. Group rows by (MG_SN, SG_SN)
-            grouped_rows = {}  # (mg_int, sg_int) → list of rows
-            for r in data:
-                mg_raw = str(r[mg_sn_idx]).strip() if r[mg_sn_idx] else ""
-                sg_raw = str(r[sg_sn_idx]).strip() if r[sg_sn_idx] else ""
-                try: mg_int = int(mg_raw)
-                except (ValueError, TypeError): mg_int = 9999
-                try: sg_int = int(sg_raw)
-                except (ValueError, TypeError): sg_int = 9999
-                key = (mg_int, sg_int)
-                if key not in grouped_rows:
-                    grouped_rows[key] = []
-                grouped_rows[key].append(r)
-
-            # 3. Sort group keys by super_master order
-            sorted_group_keys = sorted(grouped_rows.keys(), key=lambda k: (k[0], k[1]))
-
-            # 4. Within each group, cluster by similarity and sort by (name, price)
-            sorted_data = []
-            for gkey in sorted_group_keys:
-                rows_in_group = grouped_rows[gkey]
-                
-                def get_name(row):
-                    return str(row[product_name_idx]) if row[product_name_idx] else ""
-                def get_price(row):
-                    try:
-                        return float(str(row[mrp_idx]).replace(",", "").strip())
-                    except (ValueError, TypeError):
-                        return 99999999.0
-                
-                # Skip expensive clustering for unclassified items (no super_master group)
-                if gkey == (9999, 9999):
-                    rows_in_group.sort(key=lambda x: (get_name(x).lower(), get_price(x)))
-                    sorted_data.extend(rows_in_group)
-                else:
-                    sorted_data.extend(cluster_and_sort(
-                        rows_in_group, get_name_fn=get_name, get_price_fn=get_price
-                    ))
-            
-            # 5. Split into missing-image (top) and found-image (bottom)
-            #    Both sections preserve the unified sort order above
-            missing_rows = []
-            found_rows = []
-            for r in sorted_data:
-                grp = str(r[grp_idx]).lower().strip() if r[grp_idx] else ""
-                path = str(r[path_idx]) if r[path_idx] else ""
-                if grp != "price list" and (not path or not os.path.exists(path)):
-                    missing_rows.append(r)
-                else:
-                    found_rows.append(r)
-            
-            final_display_data = missing_rows + found_rows
-            
-            # Columns to right align
-            right_align_cols = ["Unit", "MOQ", "M_Packing", "MRP", "Stock", "MG_SN", "SG_SN"]
-            right_align_indices = [self.col_index(c) for c in right_align_cols if c in self.headers]
+            grp_idx, path_idx = col_indices
 
             # Pre-allocate all rows at once (single layout recalc instead of N)
             self.table.setRowCount(len(final_display_data))
@@ -985,6 +1016,8 @@ class FinalDataUI(QWidget):
         except Exception as e: 
             self.table.blockSignals(False)  # Always unblock on error too
             logger.error(f"Refresh Error: {e}", exc_info=True)
+        finally:
+            self._refresh_worker = None
 
     def update_summary_stats(self):
         """Calculate and update the summary statistics in the side panel.
