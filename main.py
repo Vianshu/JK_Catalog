@@ -213,17 +213,15 @@ def main():
     from PyQt6.QtGui import QPixmap, QColor, QPainter, QFont
     from PyQt6.QtWidgets import QSplashScreen
     from PyQt6.QtCore import Qt
-    splash_pix = QPixmap(500, 300)
-    splash_pix.fill(QColor("#1A2035"))
-    painter = QPainter(splash_pix)
-    painter.setPen(QColor("#ecf0f1"))
-    painter.setFont(QFont("Inter", 28, QFont.Weight.Bold))
-    painter.drawText(splash_pix.rect(), Qt.AlignmentFlag.AlignCenter, "JK Catalog Multi Loading...")
+    from src.utils.path_utils import get_base_path
+    import os
     
-    painter.setPen(QColor("#0B9B8A"))
-    painter.setFont(QFont("Inter", 12))
-    painter.drawText(0, 0, 500, 270, Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, "Please wait while the application starts")
-    painter.end()
+    splash_path = os.path.join(get_base_path(), "splash.png")
+    splash_pix = QPixmap(splash_path)
+    if splash_pix.isNull():
+        # Fallback if splash.png is missing
+        splash_pix = QPixmap(500, 300)
+        splash_pix.fill(QColor("#1A2035"))
 
     splash = QSplashScreen(splash_pix, Qt.WindowType.WindowStaysOnTopHint)
     splash.show()

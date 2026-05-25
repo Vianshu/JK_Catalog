@@ -52,6 +52,8 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
 WizardStyle=modern
 WizardSizePercent=110,110
+WizardImageFile=WizardImageFile.bmp
+WizardSmallImageFile=WizardSmallImageFile.bmp
 
 ; --- License ---
 LicenseFile=LICENSE.txt
