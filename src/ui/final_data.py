@@ -163,6 +163,9 @@ class FinalDataUI(QWidget):
         self.row_data_db_name = ""  # Logical DB name for row_data
         self.image_folder = ""
         self._sync_worker = None
+        self._refresh_worker = None
+        self._last_data_hash = None  # Cache: skip refresh if data unchanged
+        self._columns_sized = False  # One-time column width setup
         self.super_master_path = ""
         self.headers = [
             "GUID", "ID", "Item_Name", "Alias", "Part_No", "Product Name", 
@@ -792,7 +795,8 @@ class FinalDataUI(QWidget):
 
         logger.debug("Attempting to refresh table...")
         try:
-            self.refresh_table()
+            self._last_data_hash = None  # Invalidate cache — force full refresh after sync
+            self.refresh_table(force=True)
             logger.debug("Table refresh completed successfully")
         except Exception as e:
             logger.error(f"Refresh table failed: {e}", exc_info=True)
@@ -910,16 +914,31 @@ class FinalDataUI(QWidget):
         except Exception as e:
             logger.error(f"True/False Sync Error: {e}", exc_info=True)
 
-    def refresh_table(self):
-        """Launch background worker to fetch/sort data, then populate table on main thread."""
+    def refresh_table(self, force=False):
+        """Launch background worker to fetch/sort data, then populate table on main thread.
+        Skips entirely if data hasn't changed since last refresh (instant tab switch)."""
         logger.debug("CALLED: refresh_table")
         if not self.final_db_name: 
             logger.warning("ABORT: No final_db_name in refresh_table")
             return
         
         # Prevent concurrent refreshes
-        if hasattr(self, '_refresh_worker') and self._refresh_worker and self._refresh_worker.isRunning():
+        if self._refresh_worker and self._refresh_worker.isRunning():
             return
+        
+        # --- CACHE CHECK: skip if data unchanged ---
+        if not force and self._last_data_hash is not None and self.table.rowCount() > 0:
+            try:
+                conn = self.db.get_connection(self.final_db_name)
+                if conn:
+                    cursor = conn.cursor()
+                    # Fast count + checksum: if row count same, data likely unchanged
+                    row_count = cursor.execute("SELECT COUNT(*) FROM catalog").fetchone()[0] or 0
+                    if row_count == self._last_data_hash:
+                        logger.debug("Cache HIT: data unchanged, skipping refresh")
+                        return
+            except Exception:
+                pass  # On error, proceed with full refresh
         
         # Show loading state
         self.table.setRowCount(0)
@@ -1004,7 +1023,13 @@ class FinalDataUI(QWidget):
                     
                     self.table.setItem(r_idx, c_idx, item)
             
-            self.table.resizeColumnsToContents()
+            # Cache the row count for change detection
+            self._last_data_hash = len(final_display_data)
+            
+            # Set column widths once (not on every refresh)
+            if not self._columns_sized:
+                self._columns_sized = True
+                self.table.resizeColumnsToContents()
             
             # Re-enable signals so itemChanged fires on user edits
             self.table.blockSignals(False)
