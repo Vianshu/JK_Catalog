@@ -195,6 +195,11 @@ class ProductSizeDialog(QDialog):
     def __init__(self, current_str, prod_data, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Product Dimensions Setup")
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowType.WindowCloseButtonHint
+            | Qt.WindowType.WindowTitleHint
+        )
         self.setFixedSize(400, 300)
         self.result_str = current_str
         self.prod_data = prod_data
@@ -297,9 +302,11 @@ class ProductSizeDialog(QDialog):
         QTimer.singleShot(0, self._focus_and_select_img)
 
         # Buttons
+        layout.addStretch()
         btns = QHBoxLayout()
         ok = QPushButton("Apply")
         ok.setObjectName("BtnApplyGreen")
+        ok.setDefault(True)
         ok.clicked.connect(self.save)
         cancel = QPushButton("Cancel")
         cancel.setObjectName("BtnCancelRed")
@@ -389,15 +396,18 @@ class ProductSizeDialog(QDialog):
                 self.spin_data.setFocus()
             elif fw == self.spin_data:
                 if self.spin_h.isEnabled(): self.spin_h.setFocus()
-                else: self.check_auto.setFocus()
+                else: self.save()
             elif fw == self.spin_h:
-                self.check_auto.setFocus()
+                self.save()  # Enter on last field → Apply
             elif fw == self.check_auto:
-                self.save() # Last field -> Apply
+                self.save()
             else:
                  from PyQt6.QtWidgets import QPushButton
                  if isinstance(fw, QPushButton): fw.animateClick()
-                 else: self.focusNextChild()
+                 else: self.save()
+            return
+        elif event.key() == Qt.Key.Key_Escape:
+            self.reject()
             return
         super().keyPressEvent(event)
 

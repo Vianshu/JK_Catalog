@@ -256,8 +256,8 @@ class CompanyCreateForm(QWidget):
         try:
             from src.logic.security_manager import SecurityManager
             sm = SecurityManager(self.base_folder_path)
-            from src.logic.db_manager import get_db_manager, DB_SECURITY
-            conn = get_db_manager().get_connection(DB_SECURITY)
+            from src.logic.db_manager import get_db_manager
+            conn = get_db_manager().get_connection(sm._db_security)
             if conn:
                 cursor = conn.cursor()
                 norm = os.path.normpath(os.path.abspath(company_path))
@@ -394,6 +394,18 @@ class CompanyLoginUI(QWidget):
             self.security = SecurityManager(data_path)
             if hasattr(self, 'form_screen'):
                 self.form_screen.security = self.security
+            
+            # Notify user if this is a copied data folder
+            if self.security.is_copy:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(
+                    self, "Data Copy Detected",
+                    f"This data folder appears to have been copied from:\n\n"
+                    f"  Original: {self.security._original_path}\n"
+                    f"  Current:  {data_path}\n\n"
+                    f"New separate databases have been created for this copy.\n"
+                    f"Both locations will work independently."
+                )
         except Exception as e:
             logger.error(f"SecurityManager init failed for '{data_path}': {e}")
             self.security = None

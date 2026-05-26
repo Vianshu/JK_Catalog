@@ -407,11 +407,16 @@ class SecurityUI(QWidget):
         self._load_roles()
 
     def _build_perm_grid(self, parent_layout):
-        """Build 4-column card layout — one column per main tab."""
+        """Build 4-column card layout — one column per main tab.
+        Each column has a master selector that sets all sub-facilities at once."""
         from PyQt6.QtWidgets import QScrollArea
         
         columns_layout = QHBoxLayout()
         columns_layout.setSpacing(10)
+        
+        # Track master combos per group for bulk set
+        self.master_combos = {}  # group_name → QComboBox
+        self.group_facility_names = {}  # group_name → [fac_name, ...]
         
         for group_name, items in self.facility_groups:
             # --- Column Card Frame ---
@@ -426,6 +431,41 @@ class SecurityUI(QWidget):
             header.setObjectName("SecurityColumnHeader")
             header.setAlignment(Qt.AlignmentFlag.AlignCenter)
             card_layout.addWidget(header)
+            
+            # ── Master Selector ──
+            master_frame = QFrame()
+            master_frame.setObjectName("SecurityMasterRow")
+            master_frame.setStyleSheet("""
+                #SecurityMasterRow {
+                    background: #e8f0fe; border: 1px solid #c0d0e8;
+                    border-radius: 4px; margin: 4px 6px;
+                }
+            """)
+            master_lay = QHBoxLayout(master_frame)
+            master_lay.setContentsMargins(8, 4, 8, 4)
+            master_lay.setSpacing(6)
+            master_lbl = QLabel("🔒 Set All:")
+            master_lbl.setStyleSheet("font-weight: 600; font-size: 11px;")
+            master_lay.addWidget(master_lbl)
+            
+            master_combo = QComboBox()
+            master_combo.addItem("—", "mixed")
+            master_combo.addItem("None", "none")
+            master_combo.addItem("Display", "display")
+            master_combo.addItem("Full Access", "full")
+            master_combo.setObjectName("SecurityMasterCombo")
+            master_combo.setStyleSheet("font-weight: 600;")
+            master_lay.addWidget(master_combo, 1)
+            card_layout.addWidget(master_frame)
+            
+            self.master_combos[group_name] = master_combo
+            fac_names_in_group = [fac_name for fac_name, _, _ in items]
+            self.group_facility_names[group_name] = fac_names_in_group
+            
+            # Connect master combo — use closure to capture group_name
+            master_combo.currentIndexChanged.connect(
+                lambda idx, gn=group_name: self._on_master_changed(gn, idx)
+            )
             
             # Scrollable content area for permission rows
             scroll = QScrollArea()
@@ -458,6 +498,11 @@ class SecurityUI(QWidget):
                 combo.setObjectName("SecurityPermCombo")
                 row_layout.addWidget(combo)
                 
+                # When sub-combo changes, update the master combo state
+                combo.currentIndexChanged.connect(
+                    lambda idx, gn=group_name: self._update_master_state(gn)
+                )
+                
                 self.facility_combos[fac_name] = combo
                 content_layout.addWidget(row_frame)
             
@@ -468,6 +513,65 @@ class SecurityUI(QWidget):
             columns_layout.addWidget(card, 1)
         
         parent_layout.addLayout(columns_layout, 1)
+
+    def _on_master_changed(self, group_name, index):
+        """When master combo changes, set all sub-combos in this group."""
+        master_combo = self.master_combos.get(group_name)
+        if not master_combo:
+            return
+        level = master_combo.currentData()
+        if level == "mixed":
+            return  # '—' is just a display state, not a user action
+        
+        fac_names = self.group_facility_names.get(group_name, [])
+        for fac_name in fac_names:
+            combo = self.facility_combos.get(fac_name)
+            if not combo:
+                continue
+            idx = combo.findData(level)
+            if idx >= 0:
+                combo.blockSignals(True)
+                combo.setCurrentIndex(idx)
+                combo.blockSignals(False)
+            elif level == "full":
+                # Some combos don't have "Full Access" — set to highest available
+                best = combo.count() - 1
+                combo.blockSignals(True)
+                combo.setCurrentIndex(best)
+                combo.blockSignals(False)
+            elif level == "display":
+                # Some combos don't have "Display" — set to None
+                idx_none = combo.findData("none")
+                if idx_none >= 0:
+                    combo.blockSignals(True)
+                    combo.setCurrentIndex(idx_none)
+                    combo.blockSignals(False)
+
+    def _update_master_state(self, group_name):
+        """Update the master combo to reflect current sub-combo states.
+        Shows '—' (mixed) if sub-combos differ, otherwise shows the common value."""
+        master_combo = self.master_combos.get(group_name)
+        if not master_combo:
+            return
+        fac_names = self.group_facility_names.get(group_name, [])
+        
+        levels = set()
+        for fac_name in fac_names:
+            combo = self.facility_combos.get(fac_name)
+            if combo:
+                levels.add(combo.currentData())
+        
+        master_combo.blockSignals(True)
+        if len(levels) == 1:
+            common = levels.pop()
+            idx = master_combo.findData(common)
+            if idx >= 0:
+                master_combo.setCurrentIndex(idx)
+            else:
+                master_combo.setCurrentIndex(0)  # '—'
+        else:
+            master_combo.setCurrentIndex(0)  # '—' (mixed)
+        master_combo.blockSignals(False)
 
     def _flat_facilities(self):
         """Flatten grouped facilities into a single list for iteration."""
@@ -531,6 +635,7 @@ class SecurityUI(QWidget):
             combo = self.facility_combos.get(fac_name)
             if not combo: continue
             
+            combo.blockSignals(True)
             # Determine state based on keys
             has_view = any(k in perms for k in view_keys) if view_keys else False
             has_edit = any(k in perms for k in edit_keys) if edit_keys else False
@@ -551,6 +656,11 @@ class SecurityUI(QWidget):
                     
             if idx >= 0:
                 combo.setCurrentIndex(idx)
+            combo.blockSignals(False)
+        
+        # Update all master combos to reflect loaded state
+        for group_name in self.master_combos:
+            self._update_master_state(group_name)
 
     def _save_role(self):
         rid = self.role_combo.currentData()
@@ -836,7 +946,7 @@ def _get_catalog_db(company_path):
     if os.path.splitext(company_path)[1]:  # has file extension
         company_path = os.path.dirname(company_path)
     company_name = os.path.basename(company_path)
-    return build_logical_name(company_name, "catalog")
+    return build_logical_name(company_name, company_path=company_path)
 
 def _ensure_crm_table(db, db_name):
     """Ensure the crm_names table exists."""

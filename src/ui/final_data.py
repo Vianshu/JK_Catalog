@@ -10,7 +10,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap, QColor
 # Aapka original processor
 from src.logic.data_processor import DataProcessor
-from src.logic.db_manager import get_db_manager, build_logical_name, DB_SUPER
+from src.logic.db_manager import get_db_manager, build_logical_name, DB_SUPER, build_shared_db_name
 from src.utils.app_logger import get_logger
 
 logger = get_logger(__name__)
@@ -75,7 +75,9 @@ class RefreshWorker(QThread):
 
             # 1. Build super_master group ordering map
             try:
-                s_conn = db.get_connection(DB_SUPER)
+                _data_path = os.path.dirname(getattr(self.ui, '_company_path', ''))
+                _super_db = build_shared_db_name(DB_SUPER, _data_path) if _data_path else DB_SUPER
+                s_conn = db.get_connection(_super_db)
                 if s_conn:
                     s_cursor = s_conn.cursor()
                     for row in s_cursor.execute(
@@ -177,9 +179,10 @@ class FinalDataUI(QWidget):
 
     def set_company_path(self, path):
         self.db_path = os.path.join(path, "final_data.db")  # Legacy path for image sync
+        self._company_path = path  # Store for path-aware DB naming
         company_name = os.path.basename(path)
-        self.final_db_name = build_logical_name(company_name, "final_data")
-        self.row_data_db_name = build_logical_name(company_name, "row_data")
+        self.final_db_name = build_logical_name(company_name, company_path=path)
+        self.row_data_db_name = build_logical_name(company_name, company_path=path)
 
     def setup_ui(self):
         main_layout = QHBoxLayout(self)
@@ -415,7 +418,8 @@ class FinalDataUI(QWidget):
             if final_bool_val == "false":
                 try:
                     catalog_db_name = build_logical_name(
-                        os.path.basename(os.path.dirname(self.db_path)), "catalog"
+                        os.path.basename(os.path.dirname(self.db_path)),
+                        company_path=getattr(self, '_company_path', None)
                     )
                     pname_item = self.table.item(row, self.col_index("Product Name"))
                     product_name = pname_item.text().strip().lower() if pname_item else ""
@@ -582,6 +586,65 @@ class FinalDataUI(QWidget):
             import traceback
             traceback.print_exc()
 
+    def remap_from_super_master(self, folder_path=None):
+        """Quick re-map: update MG_SN/Group/SG_SN in catalog from current Super Master data.
+        
+        Called after Super Master edits — much faster than a full Tally sync
+        because it only updates the group columns, not all product data.
+        """
+        if not folder_path:
+            folder_path = getattr(self, 'company_path', '') or getattr(self, 'folder_path', '')
+        if not folder_path:
+            return 0
+        
+        db = get_db_manager()
+        company_name = os.path.basename(folder_path)
+        final_db = build_logical_name(company_name, company_path=folder_path)
+        _data_path = os.path.dirname(folder_path)
+        _super_db = build_shared_db_name(DB_SUPER, _data_path) if _data_path else DB_SUPER
+        
+        try:
+            # Read Super Master mapping
+            s_conn = db.get_connection(_super_db)
+            if not s_conn:
+                return 0
+            s_cursor = s_conn.cursor()
+            s_cursor.execute("SELECT Sub_Group, MG_SN, Group_Name, SG_SN FROM super_master")
+            super_mapping = {}
+            for r in s_cursor.fetchall():
+                super_mapping[r[0]] = (r[1], r[2], r[3])
+            
+            if not super_mapping:
+                return 0
+            
+            # Batch update catalog: set MG_SN/Group/SG_SN based on Sub_Group
+            final_conn = db.get_connection(final_db)
+            if not final_conn:
+                return 0
+            cur = final_conn.cursor()
+            
+            updated = 0
+            for sub_group, (mg_sn, group_name, sg_sn) in super_mapping.items():
+                cur.execute("""
+                    UPDATE catalog SET MG_SN=?, [Group]=?, SG_SN=?, Update_date=?
+                    WHERE Sub_Group=? AND (
+                        ISNULL(MG_SN,'') != ? OR ISNULL([Group],'') != ? OR ISNULL(SG_SN,'') != ?
+                    )
+                """, (mg_sn, group_name, sg_sn, self.current_datetime(),
+                      sub_group, str(mg_sn), str(group_name), str(sg_sn)))
+                updated += cur.rowcount
+            
+            final_conn.commit()
+            logger.info(f"Re-mapped {updated} items from Super Master")
+            
+            if updated > 0:
+                self._last_data_hash = None  # Invalidate cache
+            
+            return updated
+        except Exception as e:
+            logger.error(f"remap_from_super_master error: {e}", exc_info=True)
+            return 0
+
     def _run_sync_pipeline(self, folder_path, company_name, progress_signal):
         """Heavy sync work — runs in background thread. No widget access allowed.
         Returns the sync label text string."""
@@ -594,10 +657,10 @@ class FinalDataUI(QWidget):
         emit("Creating database tables...")
         # Ensure final_data DB exists
         company_name_from_path = os.path.basename(folder_path)
-        final_db = build_logical_name(company_name_from_path, "final_data")
-        row_db = build_logical_name(company_name_from_path, "row_data")
+        final_db = build_logical_name(company_name_from_path, company_path=folder_path)
+        row_db = build_logical_name(company_name_from_path, company_path=folder_path)
         db = get_db_manager()
-        db.ensure_database_exists(final_db, folder_path)
+        db.ensure_database_exists(final_db, folder_path, company_name=company_name_from_path)
         
         # Ensure catalog table
         col_defs = ', '.join([f'[{h}] NVARCHAR(MAX)' for h in self.headers])
@@ -630,7 +693,9 @@ class FinalDataUI(QWidget):
         emit("Reading Super Master data...")
         super_mapping = {}
         try:
-            s_conn = db.get_connection(DB_SUPER)
+            _data_path = os.path.dirname(folder_path)
+            _super_db = build_shared_db_name(DB_SUPER, _data_path) if _data_path else DB_SUPER
+            s_conn = db.get_connection(_super_db)
             if s_conn:
                 s_cursor = s_conn.cursor()
                 s_cursor.execute("SELECT Sub_Group, MG_SN, Group_Name, SG_SN FROM super_master")
@@ -707,8 +772,12 @@ class FinalDataUI(QWidget):
         insert_cols = ', '.join([f"[{h}]" for h in self.headers])
         insert_query = f"INSERT INTO catalog ({insert_cols}) VALUES ({insert_placeholders})"
 
-        # Main sync loop
+        # Main sync loop — batch UPDATE and INSERT for speed
         emit(f"Syncing {len(rows)} items...")
+        update_rows = []  # (Item_Name, Alias, Part_No, Category, Unit, MRP, Stock, MG_SN, Group, SG_SN, Sub_Group, Update_date, GUID)
+        insert_rows = []  # full row tuples
+        price_list_resets = []  # GUIDs to reset True/False
+        
         for r in rows:
             guid = r[0]
             sub_group_name = r[6]
@@ -722,19 +791,13 @@ class FinalDataUI(QWidget):
                 s_data[0], s_data[1], s_data[2],
                 r[6],
             ))
-            old_row_norm = tuple("" if v is None else str(v) for v in old_row_db) if old_row_db else None
-            data_changed = old_row_norm != new_row
 
             if old_row_db:
-                if data_changed:
-                    query = """UPDATE catalog SET
-                        Item_Name=?, Alias=?, Part_No=?, Category=?, Unit=?,
-                        MRP=?, Stock=?, MG_SN=?, [Group]=?, SG_SN=?, Sub_Group=?,
-                        Update_date=?
-                        WHERE GUID=?"""
-                    cur.execute(query, (*new_row, now, guid))
+                old_row_norm = tuple("" if v is None else str(v) for v in old_row_db)
+                if old_row_norm != new_row:
+                    update_rows.append((*new_row, now, guid))
                     
-                    # Fix: If reverting from Price List or MG_SN >= 90 back to normal, reset True/False
+                    # Check if reverting from Price List / MG_SN >= 90
                     old_group = str(old_row_db[8]).lower().strip() if old_row_db[8] else ""
                     new_group = str(s_data[1]).lower().strip() if s_data[1] else ""
                     try: old_mg = int(str(old_row_db[7]).strip())
@@ -742,13 +805,10 @@ class FinalDataUI(QWidget):
                     try: new_mg = int(str(s_data[0]).strip())
                     except (ValueError, TypeError): new_mg = 0
                     
-                    was_excluded = old_group == "price list" or old_mg >= 90
-                    is_now_included = new_group != "price list" and new_mg < 90
-                    
-                    if was_excluded and is_now_included:
-                        cur.execute("UPDATE catalog SET [True/False]='' WHERE GUID=?", (guid,))
+                    if (old_group == "price list" or old_mg >= 90) and (new_group != "price list" and new_mg < 90):
+                        price_list_resets.append((guid,))
             else:
-                # New item — Insert
+                # New item — build INSERT row
                 f_row = [None] * len(self.headers)
                 f_row[self.col_index("GUID")] = guid
                 f_row[self.col_index("Item_Name")] = r[1]
@@ -764,7 +824,27 @@ class FinalDataUI(QWidget):
                 f_row[self.col_index("Sub_Group")] = r[6]
                 f_row[self.col_index("Lenth")] = "1"
                 f_row[self.col_index("Update_date")] = now
-                cur.execute(insert_query, f_row)
+                insert_rows.append(f_row)
+
+        # Batch execute — ~2 round trips instead of ~2000
+        if hasattr(cur, 'fast_executemany'):
+            cur.fast_executemany = True
+        
+        if update_rows:
+            emit(f"Updating {len(update_rows)} changed items...")
+            update_query = """UPDATE catalog SET
+                Item_Name=?, Alias=?, Part_No=?, Category=?, Unit=?,
+                MRP=?, Stock=?, MG_SN=?, [Group]=?, SG_SN=?, Sub_Group=?,
+                Update_date=?
+                WHERE GUID=?"""
+            cur.executemany(update_query, update_rows)
+        
+        if insert_rows:
+            emit(f"Inserting {len(insert_rows)} new items...")
+            cur.executemany(insert_query, insert_rows)
+        
+        if price_list_resets:
+            cur.executemany("UPDATE catalog SET [True/False]='' WHERE GUID=?", price_list_resets)
 
         final_conn.commit()
 

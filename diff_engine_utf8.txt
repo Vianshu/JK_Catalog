@@ -1,0 +1,109 @@
+﻿diff --git a/src/logic/catalog_logic.py b/src/logic/catalog_logic.py
+index 7fa4847..6ca3eac 100644
+--- a/src/logic/catalog_logic.py
++++ b/src/logic/catalog_logic.py
+@@ -57,6 +57,8 @@ class CatalogLogic:
+         self.calendar_db_path = None
+         self._layout_cache = {}
+         self._product_lookup_cache = {}
++        self._last_clean_check_time = None  # Timestamp guard for detect_changed_pages
++        self._db_ensured = set()  # Track which DBs we've already verified exist
+ 
+     def set_paths(self, catalog_db, final_db, super_db=None):
+         """Update database paths and derive logical names.
+@@ -117,10 +119,10 @@ class CatalogLogic:
+ 
+     def _get_catalog_conn(self):
+         """Get connection to the catalog database, creating it if needed."""
+-        if self.catalog_db_name:
+-            # Use db_path (company folder) directly ΓÇö catalog_db_path may be a legacy .db path
++        if self.catalog_db_name and self.catalog_db_name not in self._db_ensured:
+             company_folder = self.db_path
+             self.db.ensure_database_exists(self.catalog_db_name, company_folder)
++            self._db_ensured.add(self.catalog_db_name)
+         return self._get_conn(_DB_CATALOG)
+ 
+     def _close_all_connections(self):
+@@ -350,24 +352,35 @@ class CatalogLogic:
+             return []
+ 
+     def rebuild_serial_numbers(self):
++        """Rebuild serial_no and page_no using a single batched SQL UPDATE."""
+         conn = self._get_catalog_conn()
+         if not conn:
+             return
+         try:
+             cursor = conn.cursor()
++            # Batch approach: single CTE-based UPDATE replaces N individual UPDATEs
+             cursor.execute("""
+-                SELECT id, group_name, sg_sn FROM catalog_pages
+-                ORDER BY CAST(mg_sn AS INTEGER), CAST(sg_sn AS INTEGER), CAST(page_no AS INTEGER)
+-            """)
+-            rows = cursor.fetchall()
+-            sg_page_counters = {}
+-            for idx, (rid, group_name, sg_sn) in enumerate(rows, 1):
+-                key = (group_name, sg_sn)
+-                sg_page_counters[key] = sg_page_counters.get(key, 0) + 1
+-                cursor.execute(
+-                    "UPDATE catalog_pages SET serial_no=?, page_no=? WHERE id=?",
+-                    (idx, sg_page_counters[key], rid)
++                WITH numbered AS (
++                    SELECT id,
++                           ROW_NUMBER() OVER (
++                               ORDER BY CAST(mg_sn AS INTEGER),
++                                        CAST(sg_sn AS INTEGER),
++                                        CAST(page_no AS INTEGER)
++                           ) AS new_serial,
++                           ROW_NUMBER() OVER (
++                               PARTITION BY group_name, sg_sn
++                               ORDER BY CAST(page_no AS INTEGER)
++                           ) AS new_page_no
++                    FROM catalog_pages
+                 )
++                UPDATE catalog_pages
++                SET serial_no = numbered.new_serial,
++                    page_no   = numbered.new_page_no
++                FROM catalog_pages
++                INNER JOIN numbered ON catalog_pages.id = numbered.id
++                WHERE catalog_pages.serial_no != numbered.new_serial
++                   OR catalog_pages.page_no   != numbered.new_page_no
++            """)
+             conn.commit()
+         except Exception as e:
+             logger.error(f"rebuild_serial_numbers error: {e}")
+@@ -1581,6 +1594,26 @@ class CatalogLogic:
+         conn = self._get_catalog_conn()
+         if not conn:
+             return set()
++        
++        # FAST PATH: check if ANY product data changed since last clean check
++        # This reduces the common "no changes" case from ~300 queries to 1 query
++        # NOTE: 'catalog' table lives in the FINAL_DATA db, not the catalog db
++        if self._last_clean_check_time:
++            try:
++                final_conn = self._get_conn(_DB_FINAL)
++                if final_conn:
++                    fc = final_conn.cursor()
++                    fc.execute(
++                        "SELECT COUNT(*) FROM catalog WHERE Update_date > ?",
++                        (self._last_clean_check_time,)
++                    )
++                    row = fc.fetchone()
++                    if row and row[0] == 0:
++                        logger.info("Timestamp guard: no data changes since last clean check")
++                        return set()
++            except Exception:
++                pass  # Fall through to full hash check if timestamp guard fails
++        
+         changed = set()
+         try:
+             cursor = conn.cursor()
+@@ -1703,6 +1736,8 @@ class CatalogLogic:
+         sort_serials = snapshot_changed | crm_pending | unassigned_serials
+ 
+         if not sort_serials:
++            # Record clean check time for timestamp guard optimization
++            self._last_clean_check_time = datetime.now().strftime('%d-%m-%Y %H:%M:%S')
+             logger.info("Engine: no dirty pages detected ΓÇö nothing to do")
+             return {"dirty_count": 0, "dirty_serials": [], "pages_created": 0}
+ 

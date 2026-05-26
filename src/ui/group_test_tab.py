@@ -26,7 +26,7 @@ class GroupPreviewWorker(QThread):
         try:
             db = get_db_manager()
             company_name = os.path.basename(self.company_path)
-            catalog_db = build_logical_name(company_name, "catalog")
+            catalog_db = build_logical_name(company_name, company_path=self.company_path)
             
             if not db.database_exists(catalog_db):
                 self.finished_signal.emit("Catalog DB not found.")

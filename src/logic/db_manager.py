@@ -63,27 +63,114 @@ def sanitize_db_name(name):
     return safe.strip('_')
 
 
-def build_logical_name(company_name, db_type=None):
+def build_logical_name(company_name=None, db_type=None, company_path=None):
     """Build a SQL Server logical database name.
     
-    One database per company — all tables (stock_items, catalog, cheques,
-    godown_stock, ledger, etc.) live in the same database.
+    One database per company per location — all tables (stock_items, catalog,
+    cheques, godown_stock, ledger, etc.) live in the same database.
     
     Args:
-        company_name: Company display name (e.g., 'HW Divison 082083')
+        company_name: Company display name (e.g., 'HW Divison 082083').
+                      If not provided, extracted from company_path.
         db_type: Ignored (kept for backward compatibility).
+        company_path: Full path to the company folder. When provided,
+                      a short hash is appended to make the DB name unique
+                      per location (so copies get separate databases).
     
     Returns:
-        str: e.g., 'JK_HW_Divison_082083'
+        str: e.g., 'JK_HW_Divison_082083_a3f2b1c0'
     """
-    return f"JK_{sanitize_db_name(company_name)}"
+    import hashlib
+    
+    # Extract company name from path if not provided
+    if not company_name and company_path:
+        company_name = os.path.basename(os.path.normpath(company_path))
+    
+    base = f"JK_{sanitize_db_name(company_name)}"
+    
+    if company_path:
+        # Normalize path for consistent hashing across runs
+        norm_path = os.path.normpath(company_path).lower()
+        path_hash = hashlib.md5(norm_path.encode()).hexdigest()[:8]
+        return f"{base}_{path_hash}"
+    
+    # Fallback: no path provided → old-style name (shared DBs like JK_Security)
+    return base
 
+
+# ─── ORIGIN TRACKING ─────────────────────────────────────────────────────────
+
+ORIGIN_FILE = ".jk_origin.json"
+
+def check_data_origin(data_path):
+    """Check if the data folder was copied from a different location.
+    
+    Reads .jk_origin.json from the data folder. If the stored path
+    differs from the current path, the data was copied.
+    
+    Returns:
+        dict with keys:
+            'is_copy': bool — True if this is a copied data folder
+            'original_path': str — the original path (empty if first time)
+            'current_path': str — the current path
+    """
+    origin_file = os.path.join(data_path, ORIGIN_FILE)
+    current = os.path.normpath(data_path)
+    
+    if not os.path.exists(origin_file):
+        # First time — not a copy
+        return {"is_copy": False, "original_path": "", "current_path": current}
+    
+    try:
+        with open(origin_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        stored = os.path.normpath(data.get("data_path", ""))
+        if stored.lower() == current.lower():
+            return {"is_copy": False, "original_path": stored, "current_path": current}
+        else:
+            return {"is_copy": True, "original_path": stored, "current_path": current}
+    except Exception:
+        return {"is_copy": False, "original_path": "", "current_path": current}
+
+
+def save_data_origin(data_path):
+    """Save the current path as the origin in .jk_origin.json.
+    
+    Called after first-time setup or after the user acknowledges a copy.
+    """
+    origin_file = os.path.join(data_path, ORIGIN_FILE)
+    try:
+        data = {"data_path": os.path.normpath(data_path)}
+        with open(origin_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+        logger.info(f"Saved data origin: {data_path}")
+    except Exception as e:
+        logger.warning(f"Could not save origin file: {e}")
 
 # ─── SHARED (ROOT-LEVEL) DATABASE NAMES ──────────────────────────────────────
 
+# Default names (used only as fallback before data_path is known)
 DB_SECURITY    = "JK_Security"
 DB_SUPER       = "JK_SuperMaster"
 DB_CALENDAR    = "JK_CalendarData"
+
+
+def build_shared_db_name(base_name, data_path):
+    """Build a path-aware shared DB name (Security, SuperMaster, Calendar).
+    
+    Each data path folder gets its own isolated set of shared databases.
+    
+    Args:
+        base_name: e.g., 'JK_Security'
+        data_path: Root data path (parent of company folders)
+    
+    Returns:
+        str: e.g., 'JK_Security_a3f2b1c0'
+    """
+    import hashlib
+    norm_path = os.path.normpath(data_path).lower()
+    path_hash = hashlib.md5(norm_path.encode()).hexdigest()[:8]
+    return f"{base_name}_{path_hash}"
 
 
 # ─── CORE MANAGER ────────────────────────────────────────────────────────────
@@ -312,19 +399,24 @@ class DBManager:
 
     # ─── DATABASE CREATION ────────────────────────────────────────────────────
 
-    def ensure_database_exists(self, logical_name, mdf_folder):
+    def ensure_database_exists(self, logical_name, mdf_folder, company_name=None):
         """Create a SQL Server database if it doesn't already exist.
         
         The MDF and LDF files will be placed in `mdf_folder`, matching
         the existing folder structure used by SQLite.
         
         Args:
-            logical_name: e.g., 'JK_CompanyA_Catalog'
+            logical_name: e.g., 'JK_CompanyA_Catalog_a3f2b1c0'
             mdf_folder: e.g., 'D:\\SharedData\\CompanyA\\'
+            company_name: If provided, attempts to migrate old-style DB first.
         
         Returns:
             bool: True if database exists or was created successfully.
         """
+        # Try migrating old-style DB name if applicable
+        if company_name:
+            self.migrate_old_db_name(logical_name, company_name)
+        
         if self.database_exists(logical_name):
             return True
 
@@ -344,6 +436,43 @@ class DBManager:
             return row and row.dbid is not None
         except Exception as e:
             logger.error(f"database_exists check failed for '{logical_name}': {e}")
+            return False
+        finally:
+            conn.close()
+
+    def migrate_old_db_name(self, new_name, company_name):
+        """Migrate an old-style DB (without path hash) to the new name.
+        
+        If the new-style DB doesn't exist but the old-style one does,
+        rename it. This provides seamless backward compatibility.
+        
+        Args:
+            new_name: New-style DB name (e.g., 'JK_HW_Divison_082083_a3f2b1c0')
+            company_name: Company folder name (e.g., 'HW Divison 082083')
+        
+        Returns:
+            bool: True if migration happened or wasn't needed.
+        """
+        if self.database_exists(new_name):
+            return True  # New-style already exists, nothing to do
+        
+        old_name = f"JK_{sanitize_db_name(company_name)}"
+        if not self.database_exists(old_name):
+            return True  # Neither exists, fresh install
+        
+        # Old exists, new doesn't → rename
+        conn = self.get_master_connection()
+        if not conn:
+            return False
+        try:
+            _, old_b = self._safe_sql_ident(old_name)
+            _, new_b = self._safe_sql_ident(new_name)
+            cursor = conn.cursor()
+            cursor.execute(f"ALTER DATABASE [{old_b}] MODIFY NAME = [{new_b}];")
+            logger.info(f"Migrated database '{old_name}' → '{new_name}'")
+            return True
+        except Exception as e:
+            logger.warning(f"Could not migrate DB '{old_name}' → '{new_name}': {e}")
             return False
         finally:
             conn.close()

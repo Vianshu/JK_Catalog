@@ -442,7 +442,7 @@ class FullCatalogUI(QWidget):
         self.total_lbl.setText(f"/{len(self.all_pages_data)}")
 
         # Set header
-        self.renderer.set_header_data(group_name, serial_no)
+        self.renderer.set_header_data(group_name, serial_no if serial_no is not None else "")
 
         # Load products
         products = self.logic.get_items_for_page_dynamic(group_name, sg_sn, page_no)

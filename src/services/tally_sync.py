@@ -59,7 +59,7 @@ class TallyService:
     def _ensure_row_data_db(self, company_path):
         """Ensure the RowData database exists on SQL Server, returning the logical name."""
         company_name = os.path.basename(company_path)
-        db_name = build_logical_name(company_name, "row_data")
+        db_name = build_logical_name(company_name, company_path=company_path)
         self.db.ensure_database_exists(db_name, company_path)
         return db_name
 
@@ -375,7 +375,7 @@ def fetch_tally_ledger_data(company_path=None):
 
         # Save to SQL Server LedgerData DB
         company_name = os.path.basename(company_path) if company_path else "default"
-        db_name = build_logical_name(company_name, "ledger_data")
+        db_name = build_logical_name(company_name, company_path=company_path) if company_path else build_logical_name(company_name)
         service.db.ensure_database_exists(db_name, company_path or service.app_path)
 
         conn = service.db.get_connection(db_name)

@@ -562,8 +562,8 @@ class ChequeListUI(QWidget):
         self.company_path = path
         self.db_path = os.path.join(path, "chq_list.db")  # Legacy
         company_name = os.path.basename(path)
-        self.cheque_db_name = build_logical_name(company_name, "cheque")
-        self.ledger_db_name = build_logical_name(company_name, "ledger_data")
+        self.cheque_db_name = build_logical_name(company_name, company_path=path)
+        self.ledger_db_name = build_logical_name(company_name, company_path=path)
         
         # 1. Load CRM Data
         from src.ui.settings import load_crm_list

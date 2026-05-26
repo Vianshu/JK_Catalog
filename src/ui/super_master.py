@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QHeaderView, QMessageBox, QLabel, QLineEdit, QFrame
 )
 from PyQt6.QtCore import Qt, QEvent
-from src.logic.db_manager import get_db_manager, DB_SUPER, build_logical_name
+from src.logic.db_manager import get_db_manager, DB_SUPER, build_logical_name, build_shared_db_name
 from src.utils.app_logger import get_logger
 
 logger = get_logger(__name__)
@@ -18,12 +18,14 @@ class SuperMasterUI(QWidget):
         self.db = get_db_manager()
         self.data_path = ""  # Set when company is loaded
         self.company_path = ""
+        self._super_db = ""  # Set by setup_db() with path-aware name
         self.init_ui()
 
     def setup_db(self):
         """Create super_master table in SQL Server."""
-        self.db.ensure_database_exists(DB_SUPER, self.data_path)
-        self.db.ensure_table(DB_SUPER, "super_master", """
+        self._super_db = build_shared_db_name(DB_SUPER, self.data_path) if self.data_path else DB_SUPER
+        self.db.ensure_database_exists(self._super_db, self.data_path)
+        self.db.ensure_table(self._super_db, "super_master", """
             CREATE TABLE super_master (
                 id NVARCHAR(50),
                 MG_SN NVARCHAR(50),
@@ -98,8 +100,7 @@ class SuperMasterUI(QWidget):
         self.summary_table.setColumnWidth(2, 55)
 
         right_side.addWidget(QLabel("<b>Summary</b>"))
-        right_side.addWidget(self.summary_table)
-        right_side.addStretch()
+        right_side.addWidget(self.summary_table, 1)  # stretch=1 fills vertical space
         main_layout.addLayout(right_side, 1)
 
     # --- बाकी फंक्शन जो आपने दिए थे (अपरिवर्तित) ---
@@ -129,8 +130,10 @@ class SuperMasterUI(QWidget):
 
     def sync_all_to_db(self):
         """Sync all table rows to SQL Server using MERGE (upsert)."""
+        if not self._super_db:
+            return  # setup_db hasn't run yet
         try:
-            conn = self.db.get_connection(DB_SUPER)
+            conn = self.db.get_connection(self._super_db)
             if not conn:
                 return
             cursor = conn.cursor()
@@ -160,7 +163,7 @@ class SuperMasterUI(QWidget):
     def save_single_row_to_db(self, row):
         """Save a single row to SQL Server using MERGE (upsert)."""
         try:
-            conn = self.db.get_connection(DB_SUPER)
+            conn = self.db.get_connection(self._super_db)
             if not conn:
                 return
             cursor = conn.cursor()
@@ -217,11 +220,11 @@ class SuperMasterUI(QWidget):
             self.data_path = os.path.dirname(company_path)
             self.company_path = company_path
             self.setup_db()  # Ensure DB and table exist on SQL Server
-            logger.info(f"[SuperMaster] Using SQL Server DB: {DB_SUPER}")
+            logger.info(f"[SuperMaster] Using SQL Server DB: {self._super_db}")
 
             # Read unique subgroups from row_data (per-company DB)
             company_name = os.path.basename(company_path)
-            row_data_db = build_logical_name(company_name, "row_data")
+            row_data_db = build_logical_name(company_name, company_path=company_path)
             unique_subs = []
             
             if self.db.database_exists(row_data_db):
@@ -232,7 +235,7 @@ class SuperMasterUI(QWidget):
                 unique_subs = [r[0] for r in rows] if rows else []
 
             # Read saved super_master data
-            saved_rows = self.db.execute_query(DB_SUPER, "SELECT * FROM super_master")
+            saved_rows = self.db.execute_query(self._super_db, "SELECT * FROM super_master")
             saved = {r[4]: r for r in saved_rows} if saved_rows else {}
 
             self.table.blockSignals(True)

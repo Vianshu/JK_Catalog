@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTableWidget, QTableWidgetIte
                              QPushButton, QLabel, QHeaderView, QMessageBox, QHBoxLayout)
 from PyQt6.QtCore import Qt
 
-from src.logic.db_manager import get_db_manager, DB_CALENDAR
+from src.logic.db_manager import get_db_manager, DB_CALENDAR, build_shared_db_name
 from src.utils.app_logger import get_logger
 
 logger = get_logger(__name__)
@@ -44,8 +44,9 @@ class CalendarMappingUI(QWidget):
 
     def init_db(self):
         """Create calendar table in SQL Server."""
-        self.db.ensure_database_exists(DB_CALENDAR, self.data_path)
-        self.db.ensure_table(DB_CALENDAR, "calendar", """
+        self._cal_db = build_shared_db_name(DB_CALENDAR, self.data_path) if self.data_path else DB_CALENDAR
+        self.db.ensure_database_exists(self._cal_db, self.data_path)
+        self.db.ensure_table(self._cal_db, "calendar", """
             CREATE TABLE calendar (
                 ad_date NVARCHAR(20) PRIMARY KEY,
                 bs_date NVARCHAR(20),
@@ -68,7 +69,7 @@ class CalendarMappingUI(QWidget):
             QMessageBox.critical(self, "Error", "nepali-datetime package is missing. Please run: pip install nepali-datetime")
             return
 
-        conn = self.db.get_connection(DB_CALENDAR)
+        conn = self.db.get_connection(self._cal_db)
         if not conn:
             QMessageBox.critical(self, "Error", "Could not connect to Calendar database.")
             return
@@ -125,7 +126,7 @@ class CalendarMappingUI(QWidget):
         QMessageBox.information(self, "Success", "Calendar successfully extended by 5 years!")
 
     def load_data(self):
-        rows = self.db.execute_query(DB_CALENDAR, "SELECT * FROM calendar")
+        rows = self.db.execute_query(self._cal_db, "SELECT * FROM calendar")
         if not rows:
             self.table.setRowCount(0)
             return
@@ -145,7 +146,7 @@ class CalendarMappingUI(QWidget):
                 self.table.setItem(r, c, QTableWidgetItem(str(val) if val else ""))
 
     def save_manual_edits(self):
-        conn = self.db.get_connection(DB_CALENDAR)
+        conn = self.db.get_connection(self._cal_db)
         if not conn:
             QMessageBox.critical(self, "Error", "Could not connect to Calendar database.")
             return

@@ -16,7 +16,10 @@ import os
 from datetime import datetime, timedelta
 import bcrypt
 import pyodbc
-from src.logic.db_manager import get_db_manager, DB_SECURITY, DB_SUPER, DB_CALENDAR
+from src.logic.db_manager import (
+    get_db_manager, DB_SECURITY, DB_SUPER, DB_CALENDAR, build_shared_db_name,
+    check_data_origin, save_data_origin
+)
 from src.logic.session import UserSession, DEFAULT_ROLES
 from src.utils.app_logger import get_logger
 
@@ -27,7 +30,31 @@ class SecurityManager:
     def __init__(self, data_path=""):
         self.data_path = data_path
         self.db = get_db_manager()
+        self.is_copy = False  # True if data was copied from another location
+        self._original_path = ""
+        
+        # Check if this data was copied from somewhere else
+        if data_path and os.path.isdir(data_path):
+            origin = check_data_origin(data_path)
+            self.is_copy = origin["is_copy"]
+            self._original_path = origin.get("original_path", "")
+            if self.is_copy:
+                logger.info(f"Data copy detected! Original: {self._original_path} → Current: {data_path}")
+        
+        # Path-aware shared DB names (isolated per data path)
+        if data_path and os.path.isdir(data_path):
+            self._db_security = build_shared_db_name(DB_SECURITY, data_path)
+            self._db_super = build_shared_db_name(DB_SUPER, data_path)
+            self._db_calendar = build_shared_db_name(DB_CALENDAR, data_path)
+        else:
+            self._db_security = DB_SECURITY
+            self._db_super = DB_SUPER
+            self._db_calendar = DB_CALENDAR
         self._init_schema()
+        
+        # Save origin after successful init (first time or after copy)
+        if data_path and os.path.isdir(data_path):
+            save_data_origin(data_path)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # SCHEMA INITIALIZATION
@@ -40,12 +67,12 @@ class SecurityManager:
             return
         mdf_folder = self.data_path
         try:
-            self.db.ensure_database_exists(DB_SECURITY, mdf_folder)
+            self.db.ensure_database_exists(self._db_security, mdf_folder)
         except Exception as e:
             logger.warning(f"Could not ensure security DB: {e}")
             return
 
-        self.db.ensure_table(DB_SECURITY, "companies", """
+        self.db.ensure_table(self._db_security, "companies", """
             CREATE TABLE companies (
                 id INT IDENTITY(1,1) PRIMARY KEY,
                 display_name NVARCHAR(255) NOT NULL,
@@ -57,7 +84,7 @@ class SecurityManager:
             )
         """)
 
-        self.db.ensure_table(DB_SECURITY, "roles", """
+        self.db.ensure_table(self._db_security, "roles", """
             CREATE TABLE roles (
                 id INT IDENTITY(1,1) PRIMARY KEY,
                 company_id INT NOT NULL,
@@ -70,7 +97,7 @@ class SecurityManager:
             )
         """)
 
-        self.db.ensure_table(DB_SECURITY, "role_permissions", """
+        self.db.ensure_table(self._db_security, "role_permissions", """
             CREATE TABLE role_permissions (
                 id INT IDENTITY(1,1) PRIMARY KEY,
                 role_id INT NOT NULL,
@@ -80,7 +107,7 @@ class SecurityManager:
             )
         """)
 
-        self.db.ensure_table(DB_SECURITY, "users", """
+        self.db.ensure_table(self._db_security, "users", """
             CREATE TABLE users (
                 id INT IDENTITY(1,1) PRIMARY KEY,
                 company_id INT NOT NULL,
@@ -99,7 +126,7 @@ class SecurityManager:
             )
         """)
 
-        self.db.ensure_table(DB_SECURITY, "audit_log", """
+        self.db.ensure_table(self._db_security, "audit_log", """
             CREATE TABLE audit_log (
                 id BIGINT IDENTITY(1,1) PRIMARY KEY,
                 timestamp DATETIME DEFAULT GETDATE(),
@@ -114,8 +141,8 @@ class SecurityManager:
 
         # Ensure shared databases exist
         try:
-            self.db.ensure_database_exists(DB_SUPER, mdf_folder)
-            self.db.ensure_database_exists(DB_CALENDAR, mdf_folder)
+            self.db.ensure_database_exists(self._db_super, mdf_folder)
+            self.db.ensure_database_exists(self._db_calendar, mdf_folder)
         except Exception as e:
             logger.warning(f"Could not ensure shared DBs: {e}")
 
@@ -147,7 +174,7 @@ class SecurityManager:
         """
         folder_path = os.path.normpath(os.path.abspath(folder_path))
 
-        conn = self.db.get_connection(DB_SECURITY)
+        conn = self.db.get_connection(self._db_security)
         if not conn:
             logger.error("Cannot connect to Security DB")
             return None
@@ -237,7 +264,7 @@ class SecurityManager:
         Centralised helper — replaces duplicated _get_company_id() in dialogs.
         Returns company_id (int) or None.
         """
-        conn = self.db.get_connection(DB_SECURITY)
+        conn = self.db.get_connection(self._db_security)
         if not conn:
             return None
         try:
@@ -256,7 +283,7 @@ class SecurityManager:
         lookup for login (survives folder copy/move).
         Returns company_id (int) or None.
         """
-        conn = self.db.get_connection(DB_SECURITY)
+        conn = self.db.get_connection(self._db_security)
         if not conn:
             return None
         try:
@@ -282,7 +309,7 @@ class SecurityManager:
         if not session or session.is_admin:
             return False  # Admins bypass everything, nothing to refresh
 
-        conn = self.db.get_connection(DB_SECURITY)
+        conn = self.db.get_connection(self._db_security)
         if not conn:
             return False
 
@@ -349,7 +376,7 @@ class SecurityManager:
         This design survives folder copy/move since display_name is portable.
         Returns UserSession on success, None on failure.
         """
-        conn = self.db.get_connection(DB_SECURITY)
+        conn = self.db.get_connection(self._db_security)
         if not conn:
             return None
 
@@ -468,7 +495,7 @@ class SecurityManager:
     def add_user(self, folder_path, username, password, role_id=None):
         """Add a user to a company. Returns True on success."""
         folder_path = os.path.normpath(os.path.abspath(folder_path))
-        conn = self.db.get_connection(DB_SECURITY)
+        conn = self.db.get_connection(self._db_security)
         if not conn:
             return False
         try:
@@ -500,7 +527,7 @@ class SecurityManager:
     def get_users_for_company(self, folder_path):
         """List all users for a company with role info."""
         folder_path = os.path.normpath(os.path.abspath(folder_path))
-        conn = self.db.get_connection(DB_SECURITY)
+        conn = self.db.get_connection(self._db_security)
         if not conn:
             return []
         try:
@@ -525,7 +552,7 @@ class SecurityManager:
 
     def update_user(self, user_id, username=None, password=None, role_id=None, is_active=None):
         """Update user fields. Only non-None values are changed."""
-        conn = self.db.get_connection(DB_SECURITY)
+        conn = self.db.get_connection(self._db_security)
         if not conn:
             return False
         try:
@@ -552,7 +579,7 @@ class SecurityManager:
 
     def delete_user(self, user_id):
         """Delete a user (cannot delete admins)."""
-        conn = self.db.get_connection(DB_SECURITY)
+        conn = self.db.get_connection(self._db_security)
         if not conn:
             return False
         try:
@@ -576,7 +603,7 @@ class SecurityManager:
 
     def get_roles_for_company(self, company_id):
         """Get all roles for a company."""
-        conn = self.db.get_connection(DB_SECURITY)
+        conn = self.db.get_connection(self._db_security)
         if not conn:
             return []
         try:
@@ -595,7 +622,7 @@ class SecurityManager:
 
     def create_role(self, company_id, role_name, description, permission_keys):
         """Create a custom role with permissions. Returns role_id."""
-        conn = self.db.get_connection(DB_SECURITY)
+        conn = self.db.get_connection(self._db_security)
         if not conn:
             return None
         try:
@@ -625,7 +652,7 @@ class SecurityManager:
 
     def update_role(self, role_id, role_name=None, description=None, permission_keys=None):
         """Update role name/description and/or replace permissions."""
-        conn = self.db.get_connection(DB_SECURITY)
+        conn = self.db.get_connection(self._db_security)
         if not conn:
             return False
         try:
@@ -655,7 +682,7 @@ class SecurityManager:
 
     def delete_role(self, role_id):
         """Delete a role (cannot delete system roles)."""
-        conn = self.db.get_connection(DB_SECURITY)
+        conn = self.db.get_connection(self._db_security)
         if not conn:
             return False
         try:
@@ -676,7 +703,7 @@ class SecurityManager:
 
     def get_role_permissions(self, role_id):
         """Get permission keys for a role."""
-        conn = self.db.get_connection(DB_SECURITY)
+        conn = self.db.get_connection(self._db_security)
         if not conn:
             return set()
         try:
@@ -708,7 +735,7 @@ class SecurityManager:
 
     def log_action(self, session, action, module=None, detail=None):
         """Public audit logger — used by UI code after login."""
-        conn = self.db.get_connection(DB_SECURITY)
+        conn = self.db.get_connection(self._db_security)
         if not conn:
             return
         try:

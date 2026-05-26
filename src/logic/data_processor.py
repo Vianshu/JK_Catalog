@@ -460,6 +460,7 @@ class DataProcessor:
                     combined_groups[key] = []
                 combined_groups[key].append(r)
             
+            id_updates = []  # Collect all (ID, GUID) pairs
             for key, items in combined_groups.items():
                 mg_sn, sg_sn = key.split('-')
                 
@@ -490,13 +491,19 @@ class DataProcessor:
                     
                     for ii, nname in enumerate(item_order, start=1):
                         variants = item_groups[nname]
-                        # Variants are already sorted by price from the cluster sort
                         for vi, item in enumerate(variants, start=1):
                             final_id = f"{mg_sn}_{sg_sn}_{ci:02d}_{ii:02d}_{vi:02d}"
-                            cursor.execute(
-                                "UPDATE catalog SET ID = ? WHERE GUID = ?",
-                                (final_id, item["GUID"])
-                            )
+                            id_updates.append((final_id, item["GUID"]))
+            
+            # Batch write all IDs in one call
+            if id_updates:
+                if hasattr(cursor, 'fast_executemany'):
+                    cursor.fast_executemany = True
+                cursor.executemany(
+                    "UPDATE catalog SET ID = ? WHERE GUID = ?",
+                    id_updates
+                )
+                logger.info(f"Complex IDs: {len(id_updates)} rows updated (batch)")
             
             conn.commit()
             return True

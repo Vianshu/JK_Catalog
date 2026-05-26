@@ -417,6 +417,20 @@ class MainWindow(QWidget):
 
     def on_main_stack_change(self, idx):
         """Handle main tab changes -> Auto-build Catalog only on relevant tabs."""
+        # When leaving Super Master (6), re-map Final Data group assignments
+        prev_idx = getattr(self, '_prev_stack_idx', -1)
+        self._prev_stack_idx = idx
+        if prev_idx == 6 and idx != 6 and hasattr(self, 'final_data_page'):
+            updated = self.final_data_page.remap_from_super_master(
+                getattr(self, 'current_company_path', '')
+            )
+            if updated > 0:
+                logger.info(f"Re-mapped {updated} items after Super Master edit")
+                # Invalidate catalog cache so it picks up new group assignments
+                if hasattr(self, 'full_catalog_page') and hasattr(self.full_catalog_page, 'logic'):
+                    self.full_catalog_page.logic.invalidate_cache()
+                    self.full_catalog_page.logic._last_clean_check_time = None
+
         # Silent catalog build ONLY on Catalog (2) and Reports (7) tabs
         # Other tabs have zero dependency on catalog build output
         if idx in (2, 7) and hasattr(self, 'full_catalog_page'):

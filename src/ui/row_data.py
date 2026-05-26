@@ -47,7 +47,7 @@ class RowDataUI(QWidget):
                 return
 
             company_name = os.path.basename(company_path)
-            db_name = build_logical_name(company_name, "row_data")
+            db_name = build_logical_name(company_name, company_path=company_path)
 
             if not self.db.database_exists(db_name):
                 self.show_error(f"No database found: {db_name}\nPlease Sync Data from Tally.")

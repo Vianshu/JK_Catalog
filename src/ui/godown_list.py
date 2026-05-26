@@ -30,8 +30,8 @@ class GodownListUI(QWidget):
         if not company_path: return
         self.company_path = company_path
         company_name = os.path.basename(company_path)
-        self.godown_db_name = build_logical_name(company_name, "godown_stock")
-        self.final_db_name = build_logical_name(company_name, "final_data")
+        self.godown_db_name = build_logical_name(company_name, company_path=company_path)
+        self.final_db_name = build_logical_name(company_name, company_path=company_path)
         self.db_path = os.path.join(company_path, "godown_stock.db")  # Legacy for export
         
         # Load product data from final_data DB for autocomplete
