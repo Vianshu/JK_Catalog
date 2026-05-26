@@ -80,21 +80,57 @@ def build_logical_name(company_name=None, db_type=None, company_path=None):
     Returns:
         str: e.g., 'JK_HW_Divison_082083_a3f2b1c0'
     """
+def get_folder_hash(folder_path):
+    """Get or create a persistent hash for a folder to bind it to SQL Server databases.
+    If the folder is copied/moved, the hash travels with it via .jk_db_id.json."""
+    if not folder_path or not os.path.isdir(folder_path):
+        return ""
+        
+    id_file = os.path.join(folder_path, ".jk_db_id.json")
+    if os.path.exists(id_file):
+        try:
+            with open(id_file, 'r', encoding='utf-8') as f:
+                return json.load(f).get("db_id", "")
+        except:
+            pass
+            
+    # For backward compatibility, check old origin file
+    path_to_hash = folder_path
+    origin_file = os.path.join(folder_path, ".jk_origin.json")
+    if os.path.exists(origin_file):
+        try:
+            with open(origin_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if data.get("data_path"):
+                    path_to_hash = data["data_path"]
+        except:
+            pass
+            
     import hashlib
+    norm_path = os.path.normpath(path_to_hash).lower()
+    path_hash = hashlib.md5(norm_path.encode()).hexdigest()[:8]
     
-    # Extract company name from path if not provided
+    try:
+        with open(id_file, 'w', encoding='utf-8') as f:
+            json.dump({"db_id": path_hash}, f)
+    except:
+        pass
+        
+    return path_hash
+
+
+def build_logical_name(company_name=None, db_type=None, company_path=None):
+    """Build a path-aware database name for a specific company."""
     if not company_name and company_path:
         company_name = os.path.basename(os.path.normpath(company_path))
     
     base = f"JK_{sanitize_db_name(company_name)}"
     
     if company_path:
-        # Normalize path for consistent hashing across runs
-        norm_path = os.path.normpath(company_path).lower()
-        path_hash = hashlib.md5(norm_path.encode()).hexdigest()[:8]
-        return f"{base}_{path_hash}"
+        path_hash = get_folder_hash(company_path)
+        if path_hash:
+            return f"{base}_{path_hash}"
     
-    # Fallback: no path provided → old-style name (shared DBs like JK_Security)
     return base
 
 
@@ -157,20 +193,11 @@ DB_CALENDAR    = "JK_CalendarData"
 
 def build_shared_db_name(base_name, data_path):
     """Build a path-aware shared DB name (Security, SuperMaster, Calendar).
-    
-    Each data path folder gets its own isolated set of shared databases.
-    
-    Args:
-        base_name: e.g., 'JK_Security'
-        data_path: Root data path (parent of company folders)
-    
-    Returns:
-        str: e.g., 'JK_Security_a3f2b1c0'
-    """
-    import hashlib
-    norm_path = os.path.normpath(data_path).lower()
-    path_hash = hashlib.md5(norm_path.encode()).hexdigest()[:8]
-    return f"{base_name}_{path_hash}"
+    Each data path folder gets its own isolated set of shared databases."""
+    path_hash = get_folder_hash(data_path)
+    if path_hash:
+        return f"{base_name}_{path_hash}"
+    return base_name
 
 
 # ─── CORE MANAGER ────────────────────────────────────────────────────────────
