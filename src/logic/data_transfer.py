@@ -15,6 +15,7 @@ import os
 import json
 import shutil
 import zipfile
+import tempfile
 from src.logic.db_manager import (
     get_db_manager, DB_SECURITY, DB_SUPER, DB_CALENDAR,
     build_shared_db_name, build_logical_name, save_data_origin
@@ -44,11 +45,8 @@ def export_data_path(data_path, output_file, progress_cb=None):
     if not os.path.isdir(data_path):
         return False, f"Data path does not exist: {data_path}"
     
-    # Create a temp directory INSIDE the data path (SQL Server already has permissions here)
-    temp_dir = os.path.join(data_path, ".jk_export_temp")
-    if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir, ignore_errors=True)
-    os.makedirs(temp_dir, exist_ok=True)
+    # Create a unique temp directory INSIDE the data path (SQL Server already has permissions here)
+    temp_dir = tempfile.mkdtemp(prefix=".jk_export_", dir=data_path)
     
     try:
         manifest = {
@@ -194,11 +192,8 @@ def import_data_path(backup_file, target_data_path, progress_cb=None):
     
     os.makedirs(target_data_path, exist_ok=True)
     
-    # Extract to temp directory INSIDE target path (SQL Server needs read access)
-    temp_dir = os.path.join(target_data_path, ".jk_import_temp")
-    if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir, ignore_errors=True)
-    os.makedirs(temp_dir, exist_ok=True)
+    # Extract to a unique temp directory INSIDE target path (SQL Server needs read access)
+    temp_dir = tempfile.mkdtemp(prefix=".jk_import_", dir=target_data_path)
     
     # Grant SQL Server read access to the temp dir
     db._grant_sql_server_permissions(temp_dir)
