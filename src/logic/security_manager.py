@@ -997,8 +997,11 @@ class SecurityManager:
             # 1. Drop all company databases
             if os.path.isdir(data_path):
                 for entry in os.listdir(data_path):
+                    if entry.startswith('.jk_'):
+                        continue
                     company_path = os.path.join(data_path, entry)
-                    if os.path.isdir(company_path):
+                    info_file = os.path.join(company_path, "company_info.json")
+                    if os.path.isdir(company_path) and os.path.exists(info_file):
                         logical_name = build_logical_name(company_path=company_path)
                         if self.db.database_exists(logical_name):
                             if not self.db.drop_database(logical_name):

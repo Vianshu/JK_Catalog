@@ -15,7 +15,6 @@ import os
 import json
 import shutil
 import zipfile
-import tempfile
 from src.logic.db_manager import (
     get_db_manager, DB_SECURITY, DB_SUPER, DB_CALENDAR,
     build_shared_db_name, build_logical_name, save_data_origin

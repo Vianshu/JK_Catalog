@@ -926,10 +926,11 @@ class DBManager:
         
         try:
             _, safe_b = self._safe_sql_ident(logical_name)
+            safe_backup_path = backup_path.replace("'", "''")
             cursor = conn.cursor()
             cursor.execute(f"""
                 BACKUP DATABASE [{safe_b}]
-                TO DISK = N'{backup_path}'
+                TO DISK = N'{safe_backup_path}'
                 WITH FORMAT, INIT,
                      NAME = N'{safe_b}_Backup'
             """)
@@ -969,7 +970,8 @@ class DBManager:
         
         try:
             cursor = conn.cursor()
-            cursor.execute(f"RESTORE FILELISTONLY FROM DISK = N'{backup_path}'")
+            safe_backup_path = backup_path.replace("'", "''")
+            cursor.execute(f"RESTORE FILELISTONLY FROM DISK = N'{safe_backup_path}'")
             rows = cursor.fetchall()
             result = []
             for row in rows:
@@ -1028,13 +1030,15 @@ class DBManager:
         if not conn:
             return False
         
+        _, safe_b = self._safe_sql_ident(logical_name)
+        safe_backup_path = backup_path.replace("'", "''")
+        move_sql = ", ".join(move_clauses)
+        
         try:
-            _, safe_b = self._safe_sql_ident(logical_name)
-            move_sql = ", ".join(move_clauses)
             cursor = conn.cursor()
             cursor.execute(f"""
                 RESTORE DATABASE [{safe_b}]
-                FROM DISK = N'{backup_path}'
+                FROM DISK = N'{safe_backup_path}'
                 WITH {move_sql}, REPLACE
             """)
             # RESTORE produces informational result sets — consume them all
