@@ -17,6 +17,7 @@ Usage:
 import os
 import re
 import json
+import glob
 import time
 import threading
 import getpass
@@ -80,57 +81,21 @@ def build_logical_name(company_name=None, db_type=None, company_path=None):
     Returns:
         str: e.g., 'JK_HW_Divison_082083_a3f2b1c0'
     """
-def get_folder_hash(folder_path):
-    """Get or create a persistent hash for a folder to bind it to SQL Server databases.
-    If the folder is copied/moved, the hash travels with it via .jk_db_id.json."""
-    if not folder_path or not os.path.isdir(folder_path):
-        return ""
-        
-    id_file = os.path.join(folder_path, ".jk_db_id.json")
-    if os.path.exists(id_file):
-        try:
-            with open(id_file, 'r', encoding='utf-8') as f:
-                return json.load(f).get("db_id", "")
-        except:
-            pass
-            
-    # For backward compatibility, check old origin file
-    path_to_hash = folder_path
-    origin_file = os.path.join(folder_path, ".jk_origin.json")
-    if os.path.exists(origin_file):
-        try:
-            with open(origin_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                if data.get("data_path"):
-                    path_to_hash = data["data_path"]
-        except:
-            pass
-            
     import hashlib
-    norm_path = os.path.normpath(path_to_hash).lower()
-    path_hash = hashlib.md5(norm_path.encode()).hexdigest()[:8]
     
-    try:
-        with open(id_file, 'w', encoding='utf-8') as f:
-            json.dump({"db_id": path_hash}, f)
-    except:
-        pass
-        
-    return path_hash
-
-
-def build_logical_name(company_name=None, db_type=None, company_path=None):
-    """Build a path-aware database name for a specific company."""
+    # Extract company name from path if not provided
     if not company_name and company_path:
         company_name = os.path.basename(os.path.normpath(company_path))
     
     base = f"JK_{sanitize_db_name(company_name)}"
     
     if company_path:
-        path_hash = get_folder_hash(company_path)
-        if path_hash:
-            return f"{base}_{path_hash}"
+        # Normalize path for consistent hashing across runs
+        norm_path = os.path.normpath(company_path).lower()
+        path_hash = hashlib.md5(norm_path.encode()).hexdigest()[:8]
+        return f"{base}_{path_hash}"
     
+    # Fallback: no path provided → old-style name (shared DBs like JK_Security)
     return base
 
 
@@ -193,11 +158,20 @@ DB_CALENDAR    = "JK_CalendarData"
 
 def build_shared_db_name(base_name, data_path):
     """Build a path-aware shared DB name (Security, SuperMaster, Calendar).
-    Each data path folder gets its own isolated set of shared databases."""
-    path_hash = get_folder_hash(data_path)
-    if path_hash:
-        return f"{base_name}_{path_hash}"
-    return base_name
+    
+    Each data path folder gets its own isolated set of shared databases.
+    
+    Args:
+        base_name: e.g., 'JK_Security'
+        data_path: Root data path (parent of company folders)
+    
+    Returns:
+        str: e.g., 'JK_Security_a3f2b1c0'
+    """
+    import hashlib
+    norm_path = os.path.normpath(data_path).lower()
+    path_hash = hashlib.md5(norm_path.encode()).hexdigest()[:8]
+    return f"{base_name}_{path_hash}"
 
 
 # ─── CORE MANAGER ────────────────────────────────────────────────────────────
@@ -390,6 +364,15 @@ class DBManager:
                 self._connections[cache_key] = conn
                 return conn
             except pyodbc.Error as e:
+                # Connection failed — try fixing permissions from master and retry
+                if self._try_fix_db_permissions(logical_name):
+                    try:
+                        conn = pyodbc.connect(conn_str, autocommit=False)
+                        self._connections[cache_key] = conn
+                        logger.info(f"Connected to '{logical_name}' after permission fix")
+                        return conn
+                    except pyodbc.Error:
+                        pass
                 logger.error(f"Failed to connect to '{logical_name}': {e}")
                 return None
 
@@ -496,10 +479,10 @@ class DBManager:
             _, new_b = self._safe_sql_ident(new_name)
             cursor = conn.cursor()
             cursor.execute(f"ALTER DATABASE [{old_b}] MODIFY NAME = [{new_b}];")
-            logger.info(f"Migrated database '{old_name}' → '{new_name}'")
+            logger.info(f"Migrated database '{old_name}' -> '{new_name}'")
             return True
         except Exception as e:
-            logger.warning(f"Could not migrate DB '{old_name}' → '{new_name}': {e}")
+            logger.warning(f"Could not migrate DB '{old_name}' -> '{new_name}': {e}")
             return False
         finally:
             conn.close()
@@ -556,6 +539,31 @@ class DBManager:
         # If MDF already exists on disk (copied/moved from another machine), ATTACH it
         if os.path.exists(mdf_path):
             return self._attach_database(logical_name, mdf_path, ldf_path)
+        
+        # Check for old-hash MDF files (data folder was copied to a new location)
+        # e.g., logical_name = 'JK_HW_Divison_082083_newHash'
+        #        old file    = 'JK_HW_Divison_082083_oldHash.mdf'
+        # Extract the base prefix (everything before the last _hash segment)
+        parts = logical_name.rsplit("_", 1)
+        if len(parts) == 2 and len(parts[1]) == 8:
+            prefix = parts[0]  # e.g., 'JK_HW_Divison_082083'
+            pattern = os.path.join(mdf_folder, f"{prefix}_*.mdf")
+            old_mdfs = glob.glob(pattern)
+            for old_mdf in old_mdfs:
+                old_basename = os.path.splitext(os.path.basename(old_mdf))[0]
+                if old_basename == logical_name:
+                    continue  # Already checked above
+                old_ldf = os.path.join(mdf_folder, f"{old_basename}_log.ldf")
+                try:
+                    # Just rename — do NOT detach old DB (it belongs to the original location)
+                    os.rename(old_mdf, mdf_path)
+                    logger.info(f"Renamed MDF: {os.path.basename(old_mdf)} -> {os.path.basename(mdf_path)}")
+                    if os.path.exists(old_ldf):
+                        os.rename(old_ldf, ldf_path)
+                    
+                    return self._attach_database(logical_name, mdf_path, ldf_path)
+                except Exception as re:
+                    logger.warning(f"Could not rename old MDF '{old_basename}': {re}")
 
         conn = self.get_master_connection()
         if not conn:
@@ -636,11 +644,53 @@ class DBManager:
         except Exception as e:
             logger.warning(f"Could not grant BUILTIN\\Users on '{logical_name}': {e}")
 
+    def _try_fix_db_permissions(self, logical_name):
+        """Fix permissions on a database we can't connect to.
+        
+        Called by get_connection when the initial connection fails. Uses the
+        master connection (which is always accessible) to set the current
+        Windows user as the DB owner via ALTER AUTHORIZATION, then grants
+        BUILTIN\\Users access.
+        
+        Returns:
+            bool: True if permissions were fixed, False otherwise.
+        """
+        if not self.database_exists(logical_name):
+            return False
+        
+        conn = self.get_master_connection()
+        if not conn:
+            return False
+        
+        try:
+            _, safe_b = self._safe_sql_ident(logical_name)
+            win_login = f"{os.environ.get('USERDOMAIN', '')}\\{getpass.getuser()}"
+            _, login_b = self._safe_sql_ident(win_login)
+            cursor = conn.cursor()
+            
+            # Set current user as DB owner (runs from master, no USE needed)
+            cursor.execute(f"ALTER AUTHORIZATION ON DATABASE::[{safe_b}] TO [{login_b}];")
+            logger.info(f"Fixed DB owner: '{win_login}' on '{logical_name}'")
+            
+            # Now grant BUILTIN\Users too
+            self._grant_db_owner(cursor, logical_name)
+            return True
+        except Exception as e:
+            logger.warning(f"Could not fix permissions on '{logical_name}': {e}")
+            return False
+        finally:
+            conn.close()
+
     def _attach_database(self, logical_name, mdf_path, ldf_path):
         """Attach an existing MDF file as a database.
         
         Used when data folders are copied/moved from another machine.
         The MDF file exists on disk but isn't registered with this SQL Server instance.
+        
+        After attaching, we must fix permissions because the DB's internal dbo
+        is mapped to a login from the original machine that doesn't exist here.
+        We use ALTER AUTHORIZATION (runs from master, no USE needed) to set the
+        current login as DB owner, then grant BUILTIN\\Users.
         """
         conn = self.get_master_connection()
         if not conn:
@@ -668,7 +718,17 @@ class DBManager:
             cursor.execute(sql)
             logger.info(f"Attached database '{logical_name}' from MDF: {mdf_path}")
 
-            # Grant db_owner to current user on the attached database
+            # Fix ownership: the old dbo is orphaned (mapped to original machine's login).
+            # ALTER AUTHORIZATION runs from master context — no USE needed.
+            try:
+                win_login = f"{os.environ.get('USERDOMAIN', '')}\\{getpass.getuser()}"
+                _, login_b = self._safe_sql_ident(win_login)
+                cursor.execute(f"ALTER AUTHORIZATION ON DATABASE::[{safe_b}] TO [{login_b}];")
+                logger.info(f"Set DB owner to '{win_login}' on attached '{logical_name}'")
+            except Exception as e:
+                logger.warning(f"ALTER AUTHORIZATION failed on '{logical_name}': {e}")
+
+            # Now grant db_owner to current user and BUILTIN\Users
             self._grant_db_owner(cursor, logical_name)
 
             return True
@@ -797,3 +857,219 @@ class DBManager:
             (table_name,)
         )
         return [r[0] for r in rows] if rows else []
+
+    # ─── DATA MANAGEMENT ─────────────────────────────────────────────────────
+
+    def drop_database(self, logical_name):
+        """Safely drop a SQL Server database.
+        
+        Kicks out all active connections first, then drops the database.
+        Also deletes the MDF/LDF files from disk (SQL Server does this
+        automatically when dropping a database it created).
+        
+        Returns:
+            bool: True if dropped successfully, False otherwise.
+        """
+        # Close any cached connections to this DB first
+        self.close_connection(logical_name)
+        
+        conn = self.get_master_connection()
+        if not conn:
+            return False
+        
+        try:
+            _, safe_b = self._safe_sql_ident(logical_name)
+            cursor = conn.cursor()
+            
+            # Try normal: force disconnect all users, then drop
+            try:
+                cursor.execute(f"""
+                    IF EXISTS (SELECT name FROM sys.databases WHERE name = N'{safe_b}')
+                    BEGIN
+                        ALTER DATABASE [{safe_b}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+                        DROP DATABASE [{safe_b}];
+                    END
+                """)
+            except pyodbc.Error:
+                # Fallback: DB may be in Restoring/Offline state where ALTER is blocked
+                # but direct DROP still works
+                cursor.execute(f"""
+                    IF EXISTS (SELECT name FROM sys.databases WHERE name = N'{safe_b}')
+                        DROP DATABASE [{safe_b}];
+                """)
+            logger.info(f"Dropped database '{logical_name}'")
+            return True
+        except pyodbc.Error as e:
+            logger.error(f"Failed to drop database '{logical_name}': {e}")
+            return False
+        finally:
+            conn.close()
+
+    def backup_database(self, logical_name, backup_path):
+        """Backup a SQL Server database to a .bak file.
+        
+        Args:
+            logical_name: Database name (e.g., 'JK_Security_abc123')
+            backup_path: Full path for the .bak file
+        
+        Returns:
+            bool: True if backup succeeded.
+        """
+        # Ensure backup folder exists and SQL Server can write to it
+        backup_dir = os.path.dirname(backup_path)
+        os.makedirs(backup_dir, exist_ok=True)
+        self._grant_sql_server_permissions(backup_dir)
+        
+        conn = self.get_master_connection()
+        if not conn:
+            return False
+        
+        try:
+            _, safe_b = self._safe_sql_ident(logical_name)
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                BACKUP DATABASE [{safe_b}]
+                TO DISK = N'{backup_path}'
+                WITH FORMAT, INIT,
+                     NAME = N'{safe_b}_Backup'
+            """)
+            # BACKUP produces informational result sets — consume them all
+            while cursor.nextset():
+                pass
+            logger.info(f"Backed up '{logical_name}' -> {backup_path}")
+            return True
+        except pyodbc.Error as e:
+            logger.error(f"Failed to backup '{logical_name}': {e}")
+            return False
+        finally:
+            conn.close()
+            # Grant current user read access to the .bak file
+            # (SQL Server service account owns it)
+            if os.path.exists(backup_path):
+                import subprocess
+                try:
+                    subprocess.run(
+                        ['icacls', backup_path, '/grant',
+                         f'{os.environ.get("USERDOMAIN", "BUILTIN")}\\Users:(R)'],
+                        capture_output=True, timeout=10
+                    )
+                except Exception:
+                    pass
+
+    def get_backup_file_list(self, backup_path):
+        """Get the logical file names from a .bak backup file.
+        
+        Returns:
+            list of tuples: [(logical_name, physical_name, type), ...]
+            type is 'D' for data (MDF) or 'L' for log (LDF)
+        """
+        conn = self.get_master_connection()
+        if not conn:
+            return []
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute(f"RESTORE FILELISTONLY FROM DISK = N'{backup_path}'")
+            rows = cursor.fetchall()
+            result = []
+            for row in rows:
+                result.append((row[0], row[1], row[2]))  # LogicalName, PhysicalName, Type
+            return result
+        except pyodbc.Error as e:
+            logger.error(f"Failed to read backup file list from '{backup_path}': {e}")
+            return []
+        finally:
+            conn.close()
+
+    def restore_database(self, logical_name, backup_path, mdf_folder):
+        """Restore a SQL Server database from a .bak file.
+        
+        Uses WITH MOVE to place MDF/LDF files in the specified folder
+        with the correct logical name. This handles path changes
+        (different data path on a different machine).
+        
+        Args:
+            logical_name: New database name (e.g., 'JK_Security_newHash')
+            backup_path: Path to the .bak file
+            mdf_folder: Where to place the restored MDF/LDF files
+        
+        Returns:
+            bool: True if restore succeeded.
+        """
+        os.makedirs(mdf_folder, exist_ok=True)
+        self._grant_sql_server_permissions(mdf_folder)
+        
+        # Get logical file names from the backup
+        file_list = self.get_backup_file_list(backup_path)
+        if not file_list:
+            logger.error(f"No file list in backup: {backup_path}")
+            return False
+        
+        # Build MOVE clauses
+        mdf_path = os.path.join(mdf_folder, f"{logical_name}.mdf")
+        ldf_path = os.path.join(mdf_folder, f"{logical_name}_log.ldf")
+        
+        move_clauses = []
+        for logical_file, _, file_type in file_list:
+            if file_type == 'D':
+                move_clauses.append(f"MOVE N'{logical_file}' TO N'{mdf_path}'")
+            elif file_type == 'L':
+                move_clauses.append(f"MOVE N'{logical_file}' TO N'{ldf_path}'")
+        
+        if not move_clauses:
+            logger.error(f"Could not build MOVE clauses for restore")
+            return False
+        
+        # Drop existing DB with same name if it exists
+        if self.database_exists(logical_name):
+            self.drop_database(logical_name)
+        
+        conn = self.get_master_connection()
+        if not conn:
+            return False
+        
+        try:
+            _, safe_b = self._safe_sql_ident(logical_name)
+            move_sql = ", ".join(move_clauses)
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                RESTORE DATABASE [{safe_b}]
+                FROM DISK = N'{backup_path}'
+                WITH {move_sql}, REPLACE
+            """)
+            # RESTORE produces informational result sets — consume them all
+            while cursor.nextset():
+                pass
+            logger.info(f"Restored '{logical_name}' from {backup_path} -> {mdf_folder}")
+        except pyodbc.Error as e:
+            logger.error(f"Failed to restore '{logical_name}': {e}")
+            return False
+        finally:
+            conn.close()
+        
+        # Use a FRESH master connection for permission grants
+        # (the old connection may have stale state after RESTORE)
+        import time
+        time.sleep(1)  # Brief pause to let SQL Server finish recovery
+        
+        conn2 = self.get_master_connection()
+        if conn2:
+            try:
+                cursor2 = conn2.cursor()
+                # Fix permissions for current user
+                try:
+                    win_login = f"{os.environ.get('USERDOMAIN', '')}\\{getpass.getuser()}"
+                    _, login_b = self._safe_sql_ident(win_login)
+                    cursor2.execute(f"ALTER AUTHORIZATION ON DATABASE::[{safe_b}] TO [{login_b}];")
+                except Exception as e:
+                    logger.warning(f"ALTER AUTHORIZATION after restore failed: {e}")
+                
+                # Grant BUILTIN\Users
+                self._grant_db_owner(cursor2, logical_name)
+            except Exception as e:
+                logger.warning(f"Post-restore permission grants failed: {e}")
+            finally:
+                conn2.close()
+        
+        return True
+

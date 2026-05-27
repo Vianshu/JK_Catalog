@@ -13,12 +13,15 @@ All data lives in the shared JK_Security database.
 """
 
 import os
+import json
+import glob
+import shutil
 from datetime import datetime, timedelta
 import bcrypt
 import pyodbc
 from src.logic.db_manager import (
     get_db_manager, DB_SECURITY, DB_SUPER, DB_CALENDAR, build_shared_db_name,
-    check_data_origin, save_data_origin
+    build_logical_name, check_data_origin, save_data_origin
 )
 from src.logic.session import UserSession, DEFAULT_ROLES
 from src.utils.app_logger import get_logger
@@ -30,31 +33,93 @@ class SecurityManager:
     def __init__(self, data_path=""):
         self.data_path = data_path
         self.db = get_db_manager()
-        self.is_copy = False  # True if data was copied from another location
+        self.is_copy = False
         self._original_path = ""
         
-        # Check if this data was copied from somewhere else
-        if data_path and os.path.isdir(data_path):
+        has_valid_path = data_path and os.path.isdir(data_path)
+        
+        if has_valid_path:
+            # Check if this data was copied from somewhere else
             origin = check_data_origin(data_path)
             self.is_copy = origin["is_copy"]
             self._original_path = origin.get("original_path", "")
             if self.is_copy:
-                logger.info(f"Data copy detected! Original: {self._original_path} → Current: {data_path}")
-        
-        # Path-aware shared DB names (isolated per data path)
-        if data_path and os.path.isdir(data_path):
+                logger.info(f"Data copy detected! Original: {self._original_path} -> Current: {data_path}")
+            
+            # Path-aware shared DB names (isolated per data path)
             self._db_security = build_shared_db_name(DB_SECURITY, data_path)
             self._db_super = build_shared_db_name(DB_SUPER, data_path)
             self._db_calendar = build_shared_db_name(DB_CALENDAR, data_path)
+            
+            # NOTE: MDF migration and auto-registration are disabled.
+            # Users must use the in-app Import/Export to move data.
+            # self._migrate_mdf_files(data_path)
         else:
             self._db_security = DB_SECURITY
             self._db_super = DB_SUPER
             self._db_calendar = DB_CALENDAR
+        
         self._init_schema()
         
-        # Save origin after successful init (first time or after copy)
-        if data_path and os.path.isdir(data_path):
+        if has_valid_path:
+            # self._auto_register_disk_companies()
             save_data_origin(data_path)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # MDF FILE MIGRATION (for copied data folders)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _migrate_mdf_files(self, data_path):
+        """Rename old-hash MDF/LDF files to match the new path hash.
+        
+        When a data folder is copied to a new location, the MDF/LDF files
+        on disk still have the old path's hash in their filenames. SQL Server
+        can't find them because it looks for the new hash. This renames them
+        so the existing database (with all companies, users, roles) is preserved.
+        
+        NOTE: We do NOT detach the old-hash DB from SQL Server — that DB belongs
+        to the original location. The copied MDF is just a file on disk.
+        """
+
+        
+        # Map: (base_name, new_db_name) for each shared database
+        shared_dbs = [
+            (DB_SECURITY, self._db_security),
+            (DB_SUPER, self._db_super),
+            (DB_CALENDAR, self._db_calendar),
+        ]
+        
+        for base_name, new_name in shared_dbs:
+            new_mdf = os.path.join(data_path, f"{new_name}.mdf")
+            
+            if os.path.exists(new_mdf):
+                continue  # New-hash file already exists, no migration needed
+            
+            # Look for old-hash MDF files: e.g., JK_Security_*.mdf
+            pattern = os.path.join(data_path, f"{base_name}_*.mdf")
+            old_mdfs = glob.glob(pattern)
+            
+            if not old_mdfs:
+                continue  # No old files to migrate
+            
+            # Use the first match (there should only be one per base_name)
+            old_mdf = old_mdfs[0]
+            old_name = os.path.splitext(os.path.basename(old_mdf))[0]
+            old_ldf = os.path.join(data_path, f"{old_name}_log.ldf")
+            new_ldf = os.path.join(data_path, f"{new_name}_log.ldf")
+            
+            try:
+                # Just rename the files — the old DB in SQL Server belongs
+                # to the original location and must NOT be touched
+                os.rename(old_mdf, new_mdf)
+                logger.info(f"Renamed MDF: {os.path.basename(old_mdf)} -> {os.path.basename(new_mdf)}")
+                
+                if os.path.exists(old_ldf):
+                    os.rename(old_ldf, new_ldf)
+                    logger.info(f"Renamed LDF: {os.path.basename(old_ldf)} -> {os.path.basename(new_ldf)}")
+                    
+            except Exception as e:
+                logger.error(f"MDF migration failed for {base_name}: {e}", exc_info=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # SCHEMA INITIALIZATION
@@ -145,6 +210,68 @@ class SecurityManager:
             self.db.ensure_database_exists(self._db_calendar, mdf_folder)
         except Exception as e:
             logger.warning(f"Could not ensure shared DBs: {e}")
+
+    def _auto_register_disk_companies(self):
+        """Fallback: register companies from disk if not already in the security DB.
+        
+        After MDF migration, the old data is normally preserved. This handles
+        the edge case where no old MDF existed (fresh copy without prior DB)
+        by scanning for company folders with company_info.json and registering
+        them with default admin (empty username/password).
+        """
+        if not self.data_path or not os.path.isdir(self.data_path):
+            return
+        
+        conn = self.db.get_connection(self._db_security)
+        if not conn:
+            return
+        
+        try:
+            cursor = conn.cursor()
+            # Get all already-registered company display_names
+            cursor.execute("SELECT display_name FROM companies")
+            registered = {r[0] for r in cursor.fetchall()}
+            
+            # Scan disk for company folders
+            registered_count = 0
+            for d in os.listdir(self.data_path):
+                full = os.path.join(self.data_path, d)
+                if not os.path.isdir(full):
+                    continue
+                info_file = os.path.join(full, "company_info.json")
+                if not os.path.exists(info_file):
+                    continue
+                
+                try:
+
+                    with open(info_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    display_name = data.get("display_name", d)
+                    image_path = data.get("image_path", "")
+                except Exception:
+                    display_name = d
+                    image_path = ""
+                
+                if display_name in registered:
+                    continue  # Already registered
+                
+                # Register with empty admin credentials (default access)
+                cid = self.register_company(
+                    display_name=display_name,
+                    folder_path=full,
+                    image_path=image_path,
+                    admin_user="",
+                    admin_pass=""
+                )
+                if cid:
+                    registered_count += 1
+                    logger.info(f"Auto-registered company from disk: '{display_name}' (id={cid})")
+            
+            if registered_count > 0:
+                logger.info(f"Auto-registered {registered_count} companies from disk")
+                
+        except Exception as e:
+            logger.error(f"_auto_register_disk_companies error: {e}", exc_info=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # PASSWORD HASHING
@@ -745,3 +872,177 @@ class SecurityManager:
             conn.commit()
         except Exception:
             pass
+
+    # ─── SUPER ADMIN ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _admin_config_path():
+        """Path to the super admin config file (next to the EXE)."""
+        from src.utils.path_utils import get_exe_dir
+        return os.path.join(get_exe_dir(), "config", "admin.json")
+
+    @staticmethod
+    def super_admin_exists():
+        """Check if a super admin has been configured."""
+        path = SecurityManager._admin_config_path()
+        return os.path.exists(path)
+
+    @staticmethod
+    def setup_super_admin(username, password):
+        """Create the super admin account (first-time setup).
+        
+        Stored in config/admin.json next to the EXE, NOT in SQL Server.
+        This ensures it works regardless of which data path is active.
+        """
+        path = SecurityManager._admin_config_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        
+        pass_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        data = {
+            "username": username,
+            "password_hash": pass_hash.decode('utf-8')
+        }
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+        logger.info(f"Super admin created: '{username}'")
+
+    @staticmethod
+    def verify_super_admin(username, password):
+        """Verify super admin credentials.
+        
+        Returns:
+            bool: True if credentials match.
+        """
+        path = SecurityManager._admin_config_path()
+        if not os.path.exists(path):
+            return False
+        
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            if data.get('username', '') != username:
+                return False
+            
+            stored_hash = data.get('password_hash', '')
+            return bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8'))
+        except Exception as e:
+            logger.error(f"Super admin verification failed: {e}")
+            return False
+
+    # ─── DELETE OPERATIONS ────────────────────────────────────────────────────
+
+    def delete_company(self, folder_path):
+        """Safely delete a company: drop DB → remove from Security → delete folder.
+        
+        Args:
+            folder_path: Absolute path to the company folder.
+        
+        Returns:
+            tuple: (success: bool, message: str)
+        """
+        folder_path = os.path.normpath(os.path.abspath(folder_path))
+        
+        try:
+            # 1. Get company info from Security DB
+            company_id = self.get_company_id_by_path(folder_path)
+            
+            # 2. Drop the company's SQL Server database
+            logical_name = build_logical_name(company_path=folder_path)
+            if self.db.database_exists(logical_name):
+                self.db.drop_database(logical_name)
+                logger.info(f"Dropped company DB: {logical_name}")
+            
+            # 3. Delete from Security DB (users, roles, permissions, company)
+            if company_id:
+                conn = self.db.get_connection(self._db_security)
+                if conn:
+                    cursor = conn.cursor()
+                    # audit_log has no CASCADE, delete manually
+                    cursor.execute("DELETE FROM audit_log WHERE company_id = ?", (company_id,))
+                    # companies → roles, users, role_permissions all have ON DELETE CASCADE
+                    cursor.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+                    conn.commit()
+                    logger.info(f"Removed company from Security DB: id={company_id}")
+            
+            # 4. Delete the company folder from disk
+            if os.path.exists(folder_path):
+                shutil.rmtree(folder_path, ignore_errors=True)
+                logger.info(f"Deleted company folder: {folder_path}")
+            
+            return True, f"Company deleted successfully."
+        
+        except Exception as e:
+            logger.error(f"delete_company failed for '{folder_path}': {e}")
+            return False, f"Error: {e}"
+
+    def delete_data_path(self, data_path):
+        """Delete ALL databases and folders for a data path.
+        
+        This is a destructive operation that removes:
+        - All company databases
+        - All shared databases (Security, SuperMaster, Calendar)
+        - The entire data path folder
+        
+        Args:
+            data_path: Root data path to delete.
+        
+        Returns:
+            tuple: (success: bool, message: str)
+        """
+        data_path = os.path.normpath(os.path.abspath(data_path))
+        errors = []
+        
+        try:
+            # 1. Drop all company databases
+            if os.path.isdir(data_path):
+                for entry in os.listdir(data_path):
+                    company_path = os.path.join(data_path, entry)
+                    if os.path.isdir(company_path):
+                        logical_name = build_logical_name(company_path=company_path)
+                        if self.db.database_exists(logical_name):
+                            if not self.db.drop_database(logical_name):
+                                errors.append(f"Failed to drop: {logical_name}")
+            
+            # 2. Drop shared databases (Security, SuperMaster, Calendar)
+            for base in [DB_SECURITY, DB_SUPER, DB_CALENDAR]:
+                shared_name = build_shared_db_name(base, data_path)
+                if self.db.database_exists(shared_name):
+                    if not self.db.drop_database(shared_name):
+                        errors.append(f"Failed to drop: {shared_name}")
+            
+            # 3. Delete the entire data path folder
+            if os.path.exists(data_path):
+                shutil.rmtree(data_path, ignore_errors=True)
+                logger.info(f"Deleted data path folder: {data_path}")
+            
+            if errors:
+                return False, f"Partial deletion. Errors: {'; '.join(errors)}"
+            
+            return True, "Data path deleted successfully."
+        
+        except Exception as e:
+            logger.error(f"delete_data_path failed for '{data_path}': {e}")
+            return False, f"Error: {e}"
+
+    def get_companies_list(self):
+        """Get all companies for the current data path.
+        
+        Returns:
+            list of dicts: [{id, display_name, folder_path, image_path}, ...]
+        """
+        conn = self.db.get_connection(self._db_security)
+        if not conn:
+            return []
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, display_name, folder_path, image_path FROM companies ORDER BY display_name")
+            rows = cursor.fetchall()
+            return [
+                {"id": r[0], "display_name": r[1], "folder_path": r[2], "image_path": r[3]}
+                for r in rows
+            ]
+        except Exception as e:
+            logger.error(f"get_companies_list failed: {e}")
+            return []

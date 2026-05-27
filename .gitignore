@@ -15,3 +15,8 @@ test_*.pdf
 test_*.py
 simulate_*.py
 JK_Catalog_WPF/
+config/admin.json
+company_history.json
+*.jkbackup
+.jk_export_temp/
+.jk_import_temp/

@@ -13,6 +13,15 @@ from src.utils.app_logger import get_logger
 
 logger = get_logger(__name__)
 
+# Check for first-run super admin setup
+def _check_first_run_setup(parent=None):
+    """If no super admin exists, prompt for first-time setup."""
+    from src.logic.security_manager import SecurityManager
+    if not SecurityManager.super_admin_exists():
+        from src.ui.admin_panel import SuperAdminSetupDialog
+        dlg = SuperAdminSetupDialog(parent)
+        dlg.exec()
+
 # ================= 1. SET DATA PATH DIALOG =================
 class PathDialog(QDialog):
     def __init__(self, current_path, parent=None):
@@ -385,6 +394,10 @@ class CompanyLoginUI(QWidget):
         self.stack.addWidget(self.form_screen)
 
         self.load_main_list()
+        
+        # First-run: prompt for super admin setup (deferred so splash can finish)
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(500, lambda: _check_first_run_setup(self))
 
     def _init_security(self, data_path):
         """Initialize SecurityManager for the given data path.
@@ -394,18 +407,6 @@ class CompanyLoginUI(QWidget):
             self.security = SecurityManager(data_path)
             if hasattr(self, 'form_screen'):
                 self.form_screen.security = self.security
-            
-            # Notify user if this is a copied data folder
-            if self.security.is_copy:
-                from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.information(
-                    self, "Data Copy Detected",
-                    f"This data folder appears to have been copied from:\n\n"
-                    f"  Original: {self.security._original_path}\n"
-                    f"  Current:  {data_path}\n\n"
-                    f"New separate databases have been created for this copy.\n"
-                    f"Both locations will work independently."
-                )
         except Exception as e:
             logger.error(f"SecurityManager init failed for '{data_path}': {e}")
             self.security = None
@@ -481,6 +482,9 @@ class CompanyLoginUI(QWidget):
         # User Requested Layout: Create and Path as Items
         self.add_item("➕ Create New Company", align_right=True, role="create")
         self.add_item("📂 Change Data Path", align_right=True, role="set_path")
+        self.add_item("🔒 Admin Panel", align_right=True, role="admin")
+        self.add_item("📤 Export Data", align_right=True, role="export")
+        self.add_item("📥 Import Data", align_right=True, role="import")
         
         line = QListWidgetItem()
         line.setFlags(Qt.ItemFlag.NoItemFlags)
@@ -549,6 +553,12 @@ class CompanyLoginUI(QWidget):
             self.create_new_company()
         elif role == "set_path":
             self.change_path()
+        elif role == "admin":
+            self.open_admin_panel()
+        elif role == "export":
+            self.export_data()
+        elif role == "import":
+            self.import_data()
         elif role == "login": 
             path = item.data(Qt.ItemDataRole.UserRole + 1)
             self.handle_login(path)
@@ -564,6 +574,129 @@ class CompanyLoginUI(QWidget):
             self.stack.setCurrentIndex(1)
         else:
             QMessageBox.warning(self, "No Data Path", "Please set a valid Data Path first using 'Change Data Path'.")
+
+    def open_admin_panel(self):
+        """Open the admin panel (requires super admin login)."""
+        from src.logic.security_manager import SecurityManager
+        if not SecurityManager.super_admin_exists():
+            QMessageBox.warning(self, "No Super Admin",
+                                "Super admin has not been set up.\nPlease restart the application.")
+            return
+        
+        from src.ui.admin_panel import SuperAdminLoginDialog, AdminPanelDialog
+        login_dlg = SuperAdminLoginDialog(self)
+        if login_dlg.exec() and login_dlg.authenticated:
+            if not self.security:
+                QMessageBox.warning(self, "No Data Path", "Please set a data path first.")
+                return
+            panel = AdminPanelDialog(self.security, self.current_data_path, self)
+            panel.exec()
+            if panel.data_changed:
+                self._init_security(self.current_data_path)
+                self.load_main_list()
+
+    def export_data(self):
+        """Export the current data path to a .jkbackup file."""
+        if not self.current_data_path or not os.path.isdir(self.current_data_path):
+            QMessageBox.warning(self, "No Data Path", "Please set a valid data path first.")
+            return
+        
+        output_file, _ = QFileDialog.getSaveFileName(
+            self, "Export Data Path",
+            os.path.expanduser("~/Desktop/JK_Backup.jkbackup"),
+            "JK Backup Files (*.jkbackup)"
+        )
+        if not output_file:
+            return
+        
+        from PyQt6.QtWidgets import QProgressDialog
+        from PyQt6.QtCore import QCoreApplication
+        
+        progress = QProgressDialog("Starting export...", "Cancel", 0, 100, self)
+        progress.setWindowTitle("Exporting Data")
+        progress.setMinimumDuration(0)
+        progress.show()
+        
+        def on_progress(text, current, total):
+            if progress.wasCanceled():
+                return
+            progress.setLabelText(text)
+            progress.setMaximum(total)
+            progress.setValue(current)
+            QCoreApplication.processEvents()
+        
+        from src.logic.data_transfer import export_data_path
+        success, msg = export_data_path(self.current_data_path, output_file, on_progress)
+        progress.close()
+        
+        if success:
+            QMessageBox.information(self, "Export Complete", msg)
+        else:
+            QMessageBox.critical(self, "Export Failed", msg)
+
+    def import_data(self):
+        """Import data from a .jkbackup file."""
+        backup_file, _ = QFileDialog.getOpenFileName(
+            self, "Select Backup File",
+            os.path.expanduser("~/Desktop"),
+            "JK Backup Files (*.jkbackup)"
+        )
+        if not backup_file:
+            return
+        
+        # Ask for target data path
+        target_path = QFileDialog.getExistingDirectory(
+            self, "Select Destination Folder for Import"
+        )
+        if not target_path:
+            return
+        
+        reply = QMessageBox.question(
+            self, "Confirm Import",
+            f"Import data from:\n  {os.path.basename(backup_file)}\n\n"
+            f"Into folder:\n  {target_path}\n\n"
+            f"Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        from PyQt6.QtWidgets import QProgressDialog
+        from PyQt6.QtCore import QCoreApplication
+        
+        progress = QProgressDialog("Starting import...", "Cancel", 0, 100, self)
+        progress.setWindowTitle("Importing Data")
+        progress.setMinimumDuration(0)
+        progress.show()
+        
+        def on_progress(text, current, total):
+            if progress.wasCanceled():
+                return
+            progress.setLabelText(text)
+            progress.setMaximum(total)
+            progress.setValue(current)
+            QCoreApplication.processEvents()
+        
+        from src.logic.data_transfer import import_data_path
+        success, msg = import_data_path(backup_file, target_path, on_progress)
+        progress.close()
+        
+        if success:
+            QMessageBox.information(self, "Import Complete", msg)
+            # Switch to the imported data path
+            self.current_data_path = target_path
+            # Save to config
+            try:
+                config_data = {"default_path": target_path}
+                os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
+                with open(self.config_file, 'w') as f:
+                    json.dump(config_data, f)
+            except Exception:
+                pass
+            self._init_security(target_path)
+            self.load_main_list()
+        else:
+            QMessageBox.critical(self, "Import Failed", msg)
             
     def change_path(self):
         dlg = PathDialog(self.current_data_path, self)

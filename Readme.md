@@ -44,6 +44,7 @@
 
 **Reference**
 27. [Key Invariants & Edge Cases](#27-key-invariants-edge-cases)
+28. [Data Transfer & Super Admin](#28-data-transfer-super-admin)
 
 ---
 
@@ -55,18 +56,22 @@ backup code/
 ├── JK_Catalog.spec                 # PyInstaller build spec
 ├── config/
 │   ├── catalog_config.json         # Per-company layout overrides
-│   └── cleaning_rules.json         # Regex patterns for product normalization
+│   ├── cleaning_rules.json         # Regex patterns for product normalization
+│   └── admin.json                  # Super admin credentials (gitignored)
 ├── src/
 │   ├── logic/
 │   │   ├── catalog_logic.py        # Core engine (2251 lines) — layout, change detection, CRM
 │   │   ├── data_processor.py       # Regex-based product name/size extraction
 │   │   ├── text_utils.py           # Fuzzy similarity matching and clustering
-│   │   ├── security_manager.py     # RBAC, SHA-256 hashing, company registration
+│   │   ├── db_manager.py           # SQL Server connection manager, BACKUP/RESTORE
+│   │   ├── data_transfer.py        # Import/Export data paths via .jkbackup files
+│   │   ├── security_manager.py     # RBAC, bcrypt hashing, company registration, super admin
 │   │   ├── session_manager.py      # Declarative page initialization on login
 │   │   └── column_constants.py     # Named column indices for final_data table
 │   ├── ui/
 │   │   ├── main_window.py          # Root window, sidebar menus, navigation
-│   │   ├── company_login_ui.py     # Company selection, creation, login dialog
+│   │   ├── company_login_ui.py     # Company selection, creation, login, export/import
+│   │   ├── admin_panel.py          # Super admin login/setup, company/path deletion
 │   │   ├── full_catalog.py         # Catalog viewer, builder, page management
 │   │   ├── final_data.py           # Final data table, cell editing, sync worker
 │   │   ├── reports.py              # CRM performance reports, print/PDF flow
@@ -910,6 +915,81 @@ usable_w = page_w - margins
 Column widths: `usable_w // 4` for each column. Remainder pixels go to the **last column** to prevent sub-pixel gaps.
 
 Row heights: `usable_h // 5` for each row. Remainder pixels go to the **last row**.
+
+---
+
+## 28. Data Transfer & Super Admin
+
+### 28.1 Super Admin System
+
+**Files**: `src/logic/security_manager.py`, `src/ui/admin_panel.py`
+
+A single super admin account controls destructive operations (delete company, delete data path). Credentials are stored in `config/admin.json` with bcrypt-hashed passwords.
+
+**First-run setup**: On the first launch, a modal dialog (`SuperAdminSetupDialog`) prompts the user to create the super admin account. This is deferred via `QTimer.singleShot(500ms)` to avoid blocking the splash screen.
+
+**Authentication flow**:
+1. User clicks the 🔒 button on the login page
+2. `SuperAdminLoginDialog` verifies credentials against `config/admin.json`
+3. On success, `AdminPanelDialog` opens showing all companies for the current data path
+4. Admin can delete individual companies or the entire data path
+
+**Delete company** (`security_manager.delete_company`):
+1. Drop the company's SQL Server database
+2. Delete from Security DB (`ON DELETE CASCADE` handles roles, users, role_permissions)
+3. Delete the company folder from disk
+
+**Delete data path** (`security_manager.delete_data_path`):
+1. Drop all company databases
+2. Drop shared databases (Security, SuperMaster, CalendarData)
+3. Delete the entire data path folder
+
+### 28.2 Data Transfer (Import/Export)
+
+**File**: `src/logic/data_transfer.py`
+
+Portable data migration between machines using SQL Server `BACKUP`/`RESTORE`.
+
+**Export** (`export_data_path`):
+1. Creates a temp dir inside the data path (`.jk_export_temp/`) — SQL Server already has write permissions here
+2. Backs up all databases (shared + per-company) to `.bak` files
+3. Copies company folder contents (excluding MDF/LDF files)
+4. Packages everything into a `.jkbackup` zip with a `manifest.json`
+5. Cleans up the temp dir
+
+**Import** (`import_data_path`):
+1. Creates a temp dir inside the target path (`.jk_import_temp/`)
+2. Grants SQL Server read permissions on the temp dir
+3. Extracts the `.jkbackup` zip
+4. Restores each database using `RESTORE DATABASE ... WITH MOVE` to place MDF/LDF in the correct target folders
+5. Updates `folder_path` entries in the restored Security DB to match the new location
+6. Saves data origin for the new path
+
+**Key design decisions**:
+- Temp dirs are created **inside** the data path, not system temp. SQL Server Express runs as `NT Service\MSSQL$SQLEXPRESS` and cannot access `%TEMP%` by default.
+- `BACKUP`/`RESTORE` produce informational result sets that must be consumed via `cursor.nextset()` before the connection is reusable.
+- After `RESTORE`, permission grants (`ALTER AUTHORIZATION`, `_grant_db_owner`) use a **fresh** master connection with a 1-second pause, because the restored DB may still be in recovery on the old connection.
+- `COMPRESSION` is **not** used in `BACKUP DATABASE` — SQL Server Express does not support it.
+- `drop_database` handles databases stuck in "Restoring" state by falling back to direct `DROP DATABASE` when `ALTER DATABASE SET SINGLE_USER` fails.
+- File-explorer copies of data paths are disabled — `_migrate_mdf_files` and `_auto_register_disk_companies` are no-ops. Users must use the in-app Import/Export.
+
+### 28.3 Manifest Format (`.jkbackup`)
+
+```json
+{
+  "version": 1,
+  "source_path": "C:/Users/HP/Desktop/MyData",
+  "shared_databases": [
+    {"base_name": "JK_Security", "db_name": "JK_Security_abc123", "bak_file": "JK_Security.bak"}
+  ],
+  "company_databases": [
+    {"folder_name": "CompanyA", "display_name": "Company A", "db_name": "JK_CompanyA_def456", "bak_file": "company_CompanyA.bak"}
+  ],
+  "companies": [
+    {"folder_name": "CompanyA", "display_name": "Company A"}
+  ]
+}
+```
 
 When dividing pixels among columns/rows, integer division can leave 1-3 leftover pixels. These go to the last cell so the grid fills the full page without any visible gap at the bottom or right edge.
 
