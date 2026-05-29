@@ -241,8 +241,13 @@ class MainWindow(QWidget):
         # ========== LEFT SIDEBAR ==========
         self.sidebar = QFrame()
         self.sidebar.setObjectName("MainSidebar")
-        self.sidebar.setMinimumWidth(140)
-        self.sidebar.setMaximumWidth(200)
+        
+        # Calculate sidebar width dynamically (12% of screen width, bounded between 140 and 250)
+        from PyQt6.QtWidgets import QApplication
+        screen_rect = QApplication.primaryScreen().availableGeometry()
+        sidebar_width = int(screen_rect.width() * 0.12)
+        sidebar_width = max(140, min(250, sidebar_width))
+        self.sidebar.setFixedWidth(sidebar_width)
         
         sidebar_layout = QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(10, 20, 10, 10)
@@ -327,6 +332,7 @@ class MainWindow(QWidget):
             ("🛡️ User &Roles", self.handle_security, False, None, "settings.manage_roles"),
             ("📋 Audit &Log", self.handle_audit_log, False, None, "settings.manage_roles"),
             ("🔑 Change &Password", self.handle_change_password, False, None, "settings.manage_users"),
+            ("🔒 &Admin Panel", self.handle_admin_panel, False, None, "settings.manage_users"),
             ("📅 Ca&lendar", self.handle_calendar_mapping, False, None, "tab.calendar"),
             ("📤 &Export Data", self.handle_export_data, False, None, "data.export"),
             ("📥 &Import Data", self.handle_import_data, False, None, "data.import")
@@ -956,6 +962,22 @@ class MainWindow(QWidget):
             sm = SecurityManager(os.path.dirname(self.current_company_path) if hasattr(self, 'current_company_path') else "")
         ChangePasswordDialog(self.user_session, sm, parent=self).exec()
     
+    def handle_admin_panel(self):
+        """Open the Admin Panel for managing companies (Super Admin / Admin)."""
+        if not self.user_session or not self.user_session.is_admin:
+            QMessageBox.warning(self, "Access Denied", "Only administrators can access the Admin Panel.")
+            return
+            
+        data_path = os.path.dirname(self.current_company_path) if hasattr(self, 'current_company_path') else ""
+        if not data_path:
+            return
+            
+        from src.ui.admin_panel import AdminPanelDialog
+        dlg = AdminPanelDialog(self._security_mgr, data_path, parent=self)
+        dlg.exec()
+        if dlg.data_changed:
+            self.back_to_login_screen()
+
     def handle_cheque_list(self):
         self.main_stack.setCurrentIndex(15)
     

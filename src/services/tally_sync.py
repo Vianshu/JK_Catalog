@@ -164,7 +164,7 @@ class TallyService:
                 pass
 
             # Bulk insert rows into staging using SQLAlchemy fast_executemany
-            params = urllib.parse.quote_plus(f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER=.\SQLEXPRESS;DATABASE={db_name};Trusted_Connection=yes;")
+            params = urllib.parse.quote_plus(f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER=.\\SQLEXPRESS;DATABASE={db_name};Trusted_Connection=yes;")
             engine = create_engine(f"mssql+pyodbc:///?odbc_connect={params}", fast_executemany=True)
             
             logger.info("Writing stock items to staging via SQLAlchemy (fast_executemany=True)")
@@ -387,7 +387,7 @@ def fetch_tally_ledger_data(company_path=None):
             pass
 
         # Bulk insert rows into staging using SQLAlchemy fast_executemany
-        params = urllib.parse.quote_plus(f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER=.\SQLEXPRESS;DATABASE={db_name};Trusted_Connection=yes;")
+        params = urllib.parse.quote_plus(f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER=.\\SQLEXPRESS;DATABASE={db_name};Trusted_Connection=yes;")
         engine = create_engine(f"mssql+pyodbc:///?odbc_connect={params}", fast_executemany=True)
         
         logger.info("Writing ledger data to staging via SQLAlchemy (fast_executemany=True)")

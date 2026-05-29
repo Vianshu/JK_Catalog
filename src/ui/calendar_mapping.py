@@ -125,12 +125,56 @@ class CalendarMappingUI(QWidget):
         self.load_data()
         QMessageBox.information(self, "Success", "Calendar successfully extended by 5 years!")
 
+    def _generate_calendar_data_silent(self):
+        """Silently generate 5 years of calendar data if DB is empty."""
+        try:
+            import nepali_datetime
+        except ImportError:
+            logger.warning("nepali-datetime package missing, cannot auto-generate calendar")
+            return
+
+        conn = self.db.get_connection(self._cal_db)
+        if not conn:
+            return
+            
+        cursor = conn.cursor()
+        curr_ad = datetime.date(2025, 7, 1)
+        
+        # Generate 5 years (1826 days)
+        for _ in range(1826): 
+            ad_str = curr_ad.strftime("%d-%m-%Y")
+            bs_date = nepali_datetime.date.from_datetime_date(curr_ad)
+            y, m, d = bs_date.year, bs_date.month, bs_date.day
+            bs_str = f"{y:04d}-{m:02d}-{d:02d}"
+            
+            cursor.execute("""
+                MERGE calendar AS target
+                USING (SELECT ? AS ad_date) AS source
+                ON target.ad_date = source.ad_date
+                WHEN NOT MATCHED THEN
+                    INSERT (ad_date, bs_date, year, month, day)
+                    VALUES (?, ?, ?, ?, ?);
+            """, (ad_str, ad_str, bs_str, str(y), str(m), str(d)))
+            
+            curr_ad += datetime.timedelta(days=1)
+        
+        conn.commit()
+        logger.info("Auto-generated 5 years of calendar data.")
+
     def load_data(self):
         rows = self.db.execute_query(self._cal_db, "SELECT * FROM calendar")
         if not rows:
+            # If empty, generate data silently and reload
+            self._generate_calendar_data_silent()
+            rows = self.db.execute_query(self._cal_db, "SELECT * FROM calendar")
+            
+        if not rows:
             self.table.setRowCount(0)
             return
+            
+        self._populate_table(rows)
         
+    def _populate_table(self, rows):
         # Sort rows chronologically by ad_date (index 0) which is in "DD-MM-YYYY" format
         def parse_date(row):
             try:
