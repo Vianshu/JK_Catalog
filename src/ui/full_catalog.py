@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFrame,
     QPushButton, QLineEdit, QLabel, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QScrollArea,
-    QStyle, QGroupBox
+    QStyle, QGroupBox, QApplication
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QColor
@@ -85,6 +85,26 @@ class CatalogBuildWorker(QThread):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# ZOOMABLE SCROLL AREA
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class ZoomableScrollArea(QScrollArea):
+    """QScrollArea that supports Ctrl+Wheel zoom.
+    Emits zoom_changed(factor) when the user scrolls with Ctrl held."""
+    zoom_changed = pyqtSignal(float)
+
+    def wheelEvent(self, event):
+        if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            delta = event.angleDelta().y()
+            if delta != 0:
+                factor = 1.1 if delta > 0 else (1 / 1.1)
+                self.zoom_changed.emit(factor)
+            event.accept()
+        else:
+            super().wheelEvent(event)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # MAIN UI WIDGET
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -103,6 +123,7 @@ class FullCatalogUI(QWidget):
         self._build_worker = None
         self._last_build_time = 0
         self._last_build_no_changes = False
+        self._zoom_factor = 1.0  # Current zoom level (1.0 = 100%)
 
         self._setup_ui()
         self._load_index_data()
@@ -196,10 +217,10 @@ class FullCatalogUI(QWidget):
         parent_layout.addLayout(index_layout)
 
     def _setup_renderer_panel(self, parent_layout):
-        """Create the center panel with A4 page renderer."""
+        """Create the center panel with A4 page renderer inside a zoomable scroll area."""
         center_layout = QVBoxLayout()
 
-        self.scroll_area = QScrollArea()
+        self.scroll_area = ZoomableScrollArea()
         self.scroll_area.setObjectName("CatalogScrollArea")
         self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -220,6 +241,9 @@ class FullCatalogUI(QWidget):
 
         # Navigation
         self._setup_navigation(right_layout)
+
+        # Zoom controls
+        self._setup_zoom_controls(right_layout)
 
         # Action buttons
         self._setup_action_buttons(right_layout)
@@ -281,6 +305,95 @@ class FullCatalogUI(QWidget):
         nav_layout.addLayout(info_row)
 
         parent_layout.addWidget(nav_box)
+
+    def _setup_zoom_controls(self, parent_layout):
+        """Create zoom in/out/fit buttons for the catalog page viewer."""
+        zoom_box = QFrame()
+        zoom_box.setObjectName("CatalogZoomBox")
+        zoom_layout = QVBoxLayout(zoom_box)
+        zoom_layout.setContentsMargins(5, 8, 5, 8)
+        zoom_layout.setSpacing(6)
+
+        zoom_lbl = QLabel("ZOOM")
+        zoom_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        zoom_lbl.setStyleSheet("font-size: 11px; font-weight: bold; color: #6B7280;")
+        zoom_layout.addWidget(zoom_lbl)
+
+        self.btn_zoom_in = QPushButton("🔍 Zoom In")
+        self.btn_zoom_in.setObjectName("CatalogZoomInBtn")
+        self.btn_zoom_in.setToolTip("Zoom In (Ctrl+Scroll Up)")
+        self.btn_zoom_in.setFixedHeight(30)
+        self.btn_zoom_in.clicked.connect(self.zoom_in)
+        zoom_layout.addWidget(self.btn_zoom_in)
+
+        self.btn_zoom_out = QPushButton("🔎 Zoom Out")
+        self.btn_zoom_out.setObjectName("CatalogZoomOutBtn")
+        self.btn_zoom_out.setToolTip("Zoom Out (Ctrl+Scroll Down)")
+        self.btn_zoom_out.setFixedHeight(30)
+        self.btn_zoom_out.clicked.connect(self.zoom_out)
+        zoom_layout.addWidget(self.btn_zoom_out)
+
+        self.btn_fit_page = QPushButton("↔ Fit Page")
+        self.btn_fit_page.setObjectName("CatalogFitPageBtn")
+        self.btn_fit_page.setToolTip("Fit entire page in view")
+        self.btn_fit_page.setFixedHeight(30)
+        self.btn_fit_page.clicked.connect(self.zoom_fit_page)
+        zoom_layout.addWidget(self.btn_fit_page)
+
+        self.zoom_pct_label = QLabel("100%")
+        self.zoom_pct_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.zoom_pct_label.setStyleSheet("font-size: 11px; color: #4A5568; font-weight: 600;")
+        zoom_layout.addWidget(self.zoom_pct_label)
+
+        parent_layout.addWidget(zoom_box)
+
+    # ───────────────────────────────────────────────────────────────────────────
+    # ZOOM HANDLERS
+    # ───────────────────────────────────────────────────────────────────────────
+
+    def _apply_zoom(self, factor):
+        """Apply absolute zoom factor to the renderer widget."""
+        factor = max(0.2, min(3.0, factor))  # Clamp between 20% and 300%
+        self._zoom_factor = factor
+
+        # Scale the renderer widget
+        base_w = self.renderer.page_w
+        base_h = self.renderer.page_h
+        new_w = int(base_w * factor)
+        new_h = int(base_h * factor)
+        self.renderer.setFixedSize(new_w, new_h)
+
+        # Update percentage label
+        pct = int(factor * 100)
+        self.zoom_pct_label.setText(f"{pct}%")
+
+    def _apply_relative_zoom(self, multiplier):
+        """Apply a relative zoom change (e.g. 1.1 = zoom in 10%)."""
+        new_factor = self._zoom_factor * multiplier
+        self._apply_zoom(new_factor)
+
+    def zoom_in(self):
+        """Zoom in by 10%."""
+        self._apply_relative_zoom(1.15)
+
+    def zoom_out(self):
+        """Zoom out by 10%."""
+        self._apply_relative_zoom(1 / 1.15)
+
+    def zoom_fit_page(self):
+        """Auto-zoom so the full A4 page fits in the visible scroll area."""
+        viewport = self.scroll_area.viewport()
+        vp_w = viewport.width() - 20  # Small margin
+        vp_h = viewport.height() - 20
+
+        page_w = self.renderer.page_w  # Base page width at 96 DPI
+        page_h = self.renderer.page_h  # Base page height at 96 DPI
+
+        if page_w <= 0 or page_h <= 0:
+            return
+
+        fit_factor = min(vp_w / page_w, vp_h / page_h)
+        self._apply_zoom(fit_factor)
 
     def _setup_action_buttons(self, parent_layout):
         """Create build, export, print, and reshuffle buttons."""
@@ -358,6 +471,9 @@ class FullCatalogUI(QWidget):
 
         # Length change from context menu
         self.renderer.length_changed.connect(self._handle_length_change)
+
+        # Zoom from Ctrl+Wheel on scroll area
+        self.scroll_area.zoom_changed.connect(self._apply_relative_zoom)
 
     # ───────────────────────────────────────────────────────────────────────────
     # DATA LOADING

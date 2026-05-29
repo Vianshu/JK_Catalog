@@ -424,14 +424,13 @@ class DataProcessor:
     def generate_complex_ids(self):
         """Generate deterministic IDs encoding the full product hierarchy.
         
-        Format: {MG}_{SG}_{cluster}_{item}_{variant}
-        Example: 03_15_01_02_03 = MG 03, SG 15, fuzzy cluster 01, item 02, variant 03
+        Format: {MG}{SG}_{cluster}{item}_{variant}  →  XXXX_XXXX_XX
+        Example: 0315_0102_03 = MG 03 + SG 15, cluster 01 + item 02, variant 03
         
         Hierarchy:
-          - MG/SG: Master Group / Sub Group from super_master
-          - cluster: Fuzzy similarity cluster (via cluster_products)
-          - item: Unique product name within the cluster
-          - variant: Size/price variant within that product name
+          - MG/SG: Master Group / Sub Group from super_master (combined as 4 digits)
+          - cluster/item: Fuzzy cluster + item index (combined as 4 digits)
+          - variant: Size/price variant within that product name (2 digits)
         """
         from src.logic.text_utils import cluster_products, normalize_name
         
@@ -492,7 +491,10 @@ class DataProcessor:
                     for ii, nname in enumerate(item_order, start=1):
                         variants = item_groups[nname]
                         for vi, item in enumerate(variants, start=1):
-                            final_id = f"{mg_sn}_{sg_sn}_{ci:02d}_{ii:02d}_{vi:02d}"
+                            # Format: XXXX_XXXX_XX  (MG+SG _ cluster+item _ variant)
+                            mg_part = str(mg_sn).zfill(2)
+                            sg_part = str(sg_sn).zfill(2)
+                            final_id = f"{mg_part}{sg_part}_{ci:02d}{ii:02d}_{vi:02d}"
                             id_updates.append((final_id, item["GUID"]))
             
             # Batch write all IDs in one call

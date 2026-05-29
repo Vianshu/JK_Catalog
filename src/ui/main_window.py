@@ -71,7 +71,7 @@ class MenuButtonWidget(QFrame):
         self.html_text = self.plain_text
         
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 12, 6, 12)
+        layout.setContentsMargins(6, 8, 6, 8)
         layout.setSpacing(0)
         
         if "&" in text:
@@ -90,7 +90,8 @@ class MenuButtonWidget(QFrame):
         self.lbl.setObjectName("MenuLabel")
         # Direct style on label — required because Fusion style engine overrides
         # QSS child selectors from app-level stylesheet on QFrame children.
-        self.lbl.setStyleSheet("color: #ffffff; font-size: 14px; font-weight: 600; background: transparent; border: none;")
+        self.lbl.setStyleSheet("color: #ffffff; font-size: 13px; font-weight: 600; background: transparent; border: none;")
+        self.lbl.setWordWrap(True)  # Allow text to wrap instead of clipping
         layout.addWidget(self.lbl)
         layout.addStretch()
         
@@ -240,7 +241,8 @@ class MainWindow(QWidget):
         # ========== LEFT SIDEBAR ==========
         self.sidebar = QFrame()
         self.sidebar.setObjectName("MainSidebar")
-        self.sidebar.setFixedWidth(180)
+        self.sidebar.setMinimumWidth(140)
+        self.sidebar.setMaximumWidth(200)
         
         sidebar_layout = QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(10, 20, 10, 10)
@@ -325,7 +327,9 @@ class MainWindow(QWidget):
             ("🛡️ User &Roles", self.handle_security, False, None, "settings.manage_roles"),
             ("📋 Audit &Log", self.handle_audit_log, False, None, "settings.manage_roles"),
             ("🔑 Change &Password", self.handle_change_password, False, None, "settings.manage_users"),
-            ("📅 Ca&lendar", self.handle_calendar_mapping, False, None, "tab.calendar")
+            ("📅 Ca&lendar", self.handle_calendar_mapping, False, None, "tab.calendar"),
+            ("📤 &Export Data", self.handle_export_data, False, None, "data.export"),
+            ("📥 &Import Data", self.handle_import_data, False, None, "data.import")
         ])
         self.nav_stack.addWidget(m_settings)
 
@@ -961,6 +965,113 @@ class MainWindow(QWidget):
     def handle_manage_users(self):
         if self.current_company and hasattr(self, 'current_company_path'):
             UserManagerDialog(self.current_company, self.current_company_path, parent=self).exec()
+
+    def handle_export_data(self):
+        """Export the current data path to a .jkbackup file (RBAC-protected)."""
+        if not self._check_permission("data.export", "Export Data"):
+            return
+        if not hasattr(self, 'current_company_path') or not self.current_company_path:
+            QMessageBox.warning(self, "No Company", "No company is currently loaded.")
+            return
+
+        data_path = os.path.dirname(self.current_company_path)
+        if not data_path or not os.path.isdir(data_path):
+            QMessageBox.warning(self, "No Data Path", "Data path not found.")
+            return
+
+        from PyQt6.QtWidgets import QFileDialog
+        output_file, _ = QFileDialog.getSaveFileName(
+            self, "Export Data Path",
+            os.path.expanduser("~/Desktop/JK_Backup.jkbackup"),
+            "JK Backup Files (*.jkbackup)"
+        )
+        if not output_file:
+            return
+
+        from PyQt6.QtCore import QCoreApplication
+        progress = QProgressDialog("Starting export...", "Cancel", 0, 100, self)
+        progress.setWindowTitle("Exporting Data")
+        progress.setMinimumDuration(0)
+        progress.show()
+
+        def on_progress(text, current, total):
+            if progress.wasCanceled():
+                return
+            progress.setLabelText(text)
+            progress.setMaximum(total)
+            progress.setValue(current)
+            QCoreApplication.processEvents()
+
+        from src.logic.data_transfer import export_data_path
+        success, msg = export_data_path(data_path, output_file, on_progress)
+        progress.close()
+
+        if success:
+            QMessageBox.information(self, "Export Complete", msg)
+            # Audit log
+            if self._security_mgr and self.user_session:
+                self._security_mgr.log_action(self.user_session, "data_export",
+                    module="settings", detail=f"Exported to: {os.path.basename(output_file)}")
+        else:
+            QMessageBox.critical(self, "Export Failed", msg)
+
+    def handle_import_data(self):
+        """Import data from a .jkbackup file (RBAC-protected)."""
+        if not self._check_permission("data.import", "Import Data"):
+            return
+
+        from PyQt6.QtWidgets import QFileDialog
+        backup_file, _ = QFileDialog.getOpenFileName(
+            self, "Select Backup File",
+            os.path.expanduser("~/Desktop"),
+            "JK Backup Files (*.jkbackup)"
+        )
+        if not backup_file:
+            return
+
+        target_path = QFileDialog.getExistingDirectory(
+            self, "Select Destination Folder for Import"
+        )
+        if not target_path:
+            return
+
+        reply = QMessageBox.question(
+            self, "Confirm Import",
+            f"Import data from:\n  {os.path.basename(backup_file)}\n\n"
+            f"Into folder:\n  {target_path}\n\n"
+            f"Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        from PyQt6.QtCore import QCoreApplication
+        progress = QProgressDialog("Starting import...", "Cancel", 0, 100, self)
+        progress.setWindowTitle("Importing Data")
+        progress.setMinimumDuration(0)
+        progress.show()
+
+        def on_progress(text, current, total):
+            if progress.wasCanceled():
+                return
+            progress.setLabelText(text)
+            progress.setMaximum(total)
+            progress.setValue(current)
+            QCoreApplication.processEvents()
+
+        from src.logic.data_transfer import import_data_path
+        success, msg = import_data_path(backup_file, target_path, on_progress)
+        progress.close()
+
+        if success:
+            QMessageBox.information(self, "Import Complete",
+                f"{msg}\n\nPlease switch company or restart to use imported data.")
+            # Audit log
+            if self._security_mgr and self.user_session:
+                self._security_mgr.log_action(self.user_session, "data_import",
+                    module="settings", detail=f"Imported from: {os.path.basename(backup_file)} to {target_path}")
+        else:
+            QMessageBox.critical(self, "Import Failed", msg)
 
     def back_to_login_screen(self):
         logger.info(f"User logged out")

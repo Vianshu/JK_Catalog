@@ -77,6 +77,10 @@ PERMISSION_REGISTRY = {
     "settings.manage_crm":      "Create/alter CRM names",
     "settings.change_path":     "Change data path",
     "settings.company_config":  "Edit company configuration",
+
+    # ── Data Transfer ──
+    "data.export":              "Export data backup (.jkbackup)",
+    "data.import":              "Import data backup (.jkbackup)",
 }
 
 

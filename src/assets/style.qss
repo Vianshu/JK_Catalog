@@ -181,9 +181,9 @@ QPushButton#CompanyDisplayBtn:hover {
     color: #ffffff;
     font-size: 13px;
     font-weight: 500;
-    padding: 10px 16px;
+    padding: 8px 12px;
     border-radius: 6px;
-    margin: 2px 8px;
+    margin: 2px 6px;
     border: none;
 }
 
@@ -212,7 +212,7 @@ QPushButton#CompanyDisplayBtn:hover {
 #MenuButtonWidget {
     background: transparent;
     border-radius: 6px;
-    margin: 2px 4px;
+    margin: 1px 4px;
     border-left: 3px solid transparent;
 }
 #MenuButtonWidget:hover {
@@ -228,7 +228,7 @@ QPushButton#CompanyDisplayBtn:hover {
 }
 #MenuButtonWidget QLabel, #MenuLabel {
     color: #ffffff;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     background: transparent;
     border: none;
