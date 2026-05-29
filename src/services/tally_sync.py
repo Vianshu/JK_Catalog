@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pandas as pd
 import pyodbc
+import urllib.parse
+from sqlalchemy import create_engine
 from src.logic.db_manager import get_db_manager, build_logical_name
 from src.utils.app_logger import get_logger
 
@@ -161,22 +163,14 @@ class TallyService:
             except Exception:
                 pass
 
-            # Build CREATE TABLE from DataFrame columns
-            col_defs = ", ".join([f"[{col}] NVARCHAR(MAX)" for col in export_df.columns])
-            cursor.execute(f"CREATE TABLE [{staging_table}] ({col_defs})")
-            conn.commit()
-
-            # Bulk insert rows into staging
-            placeholders = ", ".join(["?" for _ in export_df.columns])
-            insert_sql = f"INSERT INTO [{staging_table}] VALUES ({placeholders})"
-            values_list = [tuple(str(v) if pd.notna(v) else None for v in row) for row in export_df.itertuples(index=False, name=None)]
-            if hasattr(cursor, 'fast_executemany'):
-                cursor.fast_executemany = True
-                logger.info("fast_executemany: ENABLED for stock_items")
-            else:
-                logger.warning("fast_executemany: NOT AVAILABLE — bulk insert will be slow")
-            cursor.executemany(insert_sql, values_list)
-            conn.commit()
+            # Bulk insert rows into staging using SQLAlchemy fast_executemany
+            params = urllib.parse.quote_plus(f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER=.\SQLEXPRESS;DATABASE={db_name};Trusted_Connection=yes;")
+            engine = create_engine(f"mssql+pyodbc:///?odbc_connect={params}", fast_executemany=True)
+            
+            logger.info("Writing stock items to staging via SQLAlchemy (fast_executemany=True)")
+            # to_sql with if_exists="replace" automatically creates the table efficiently
+            export_df.to_sql(staging_table, con=engine, if_exists="replace", index=False)
+            engine.dispose()
 
             # Verify staging has data before swapping
             cursor.execute(f"SELECT COUNT(*) FROM [{staging_table}]")
@@ -392,20 +386,13 @@ def fetch_tally_ledger_data(company_path=None):
         except Exception:
             pass
 
-        col_defs = ", ".join([f"[{col}] NVARCHAR(MAX)" for col in ledger_df.columns])
-        cursor.execute(f"CREATE TABLE [{staging_table}] ({col_defs})")
-        conn.commit()
-
-        placeholders = ", ".join(["?" for _ in ledger_df.columns])
-        insert_sql = f"INSERT INTO [{staging_table}] VALUES ({placeholders})"
-        values_list = [tuple(str(v) if pd.notna(v) else None for v in row) for row in ledger_df.itertuples(index=False, name=None)]
-        if hasattr(cursor, 'fast_executemany'):
-            cursor.fast_executemany = True
-            logger.info("fast_executemany: ENABLED for ledger_data")
-        else:
-            logger.warning("fast_executemany: NOT AVAILABLE — bulk insert will be slow")
-        cursor.executemany(insert_sql, values_list)
-        conn.commit()
+        # Bulk insert rows into staging using SQLAlchemy fast_executemany
+        params = urllib.parse.quote_plus(f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER=.\SQLEXPRESS;DATABASE={db_name};Trusted_Connection=yes;")
+        engine = create_engine(f"mssql+pyodbc:///?odbc_connect={params}", fast_executemany=True)
+        
+        logger.info("Writing ledger data to staging via SQLAlchemy (fast_executemany=True)")
+        ledger_df.to_sql(staging_table, con=engine, if_exists="replace", index=False)
+        engine.dispose()
 
         # Verify staging before swap
         cursor.execute(f"SELECT COUNT(*) FROM [{staging_table}]")
