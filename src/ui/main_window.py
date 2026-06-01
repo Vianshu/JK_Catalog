@@ -313,6 +313,7 @@ class MainWindow(QWidget):
             ("⚙️ &Tally Internal", self.show_tally_internal_submenu),
             ("⚙️ &Settings", self.show_settings_submenu)
         ])
+        m_main.layout().setSpacing(5)  # Slightly more breathing room for main nav
         self.nav_stack.addWidget(m_main)
 
         # Index 2: Catalog Menu (permission keys for access control)
