@@ -268,7 +268,11 @@ class MainWindow(QWidget):
         nav_scroll.setFrameShape(QFrame.Shape.NoFrame)
         nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         nav_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Make scroll area + viewport fully transparent to blend with teal sidebar
         nav_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        nav_scroll.viewport().setStyleSheet("background: transparent;")
+        nav_scroll.viewport().setAutoFillBackground(False)
+        self.nav_stack.setStyleSheet("background: transparent;")
         
         sidebar_layout.addWidget(nav_scroll, 1)  # stretch factor 1 to fill space
 
