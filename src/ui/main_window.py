@@ -71,7 +71,7 @@ class MenuButtonWidget(QFrame):
         self.html_text = self.plain_text
         
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 8, 6, 8)
+        layout.setContentsMargins(10, 12, 10, 12)
         layout.setSpacing(0)
         
         if "&" in text:
@@ -90,8 +90,7 @@ class MenuButtonWidget(QFrame):
         self.lbl.setObjectName("MenuLabel")
         # Direct style on label — required because Fusion style engine overrides
         # QSS child selectors from app-level stylesheet on QFrame children.
-        self.lbl.setStyleSheet("color: #ffffff; font-size: 13px; font-weight: 600; background: transparent; border: none;")
-        self.lbl.setWordWrap(True)  # Allow text to wrap instead of clipping
+        self.lbl.setStyleSheet("color: #ffffff; font-size: 14px; font-weight: 600; background: transparent; border: none;")
         layout.addWidget(self.lbl)
         layout.addStretch()
         
@@ -241,9 +240,7 @@ class MainWindow(QWidget):
         # ========== LEFT SIDEBAR ==========
         self.sidebar = QFrame()
         self.sidebar.setObjectName("MainSidebar")
-        
-        # User requested a fixed, slightly larger size rather than dynamic squishing
-        self.sidebar.setFixedWidth(220)
+        self.sidebar.setFixedWidth(180)
         
         sidebar_layout = QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(10, 20, 10, 10)
@@ -256,15 +253,24 @@ class MainWindow(QWidget):
         self.company_btn.hide()
         sidebar_layout.addWidget(self.company_btn)
 
-        # Menu Navigation Stack
+        # Menu Navigation Stack — wrapped in invisible scrollbar
         self.nav_stack = QStackedWidget()
         self.nav_stack.setObjectName("NavStack")
         
         # 0: Empty, 1: Main, 2: Catalog, 3: Settings, 4: Tally, 5: Vat, 6: Branch
         self.init_nav_menus()
         
-        sidebar_layout.addWidget(self.nav_stack)
-        sidebar_layout.addStretch()
+        # Wrap nav_stack in a QScrollArea so menus scroll instead of clipping
+        from PyQt6.QtWidgets import QScrollArea
+        nav_scroll = QScrollArea()
+        nav_scroll.setWidget(self.nav_stack)
+        nav_scroll.setWidgetResizable(True)
+        nav_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        nav_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        nav_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        
+        sidebar_layout.addWidget(nav_scroll, 1)  # stretch factor 1 to fill space
 
         # Quit Hint
         quit_lbl = QLabel("Press Ctrl+Q to Quit")
@@ -498,14 +504,7 @@ class MainWindow(QWidget):
         self.main_stack.addWidget(self.security_page) # Index 18
     # --- Helper UI Functions ---
     def create_menu_widget(self, buttons_data):
-        from PyQt6.QtWidgets import QScrollArea
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setStyleSheet("QScrollArea { background: transparent; } QScrollBar:vertical { width: 4px; }")
-
         widget = QWidget()
-        widget.setStyleSheet("background: transparent;")
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(5, 10, 5, 10)
         layout.setSpacing(10)
@@ -544,8 +543,7 @@ class MainWindow(QWidget):
             layout.addWidget(btn)
         
         layout.addStretch()
-        scroll.setWidget(widget)
-        return scroll
+        return widget
 
     def safe_trigger_menu(self, parent_widget, btn):
         """Global trigger for main menu hotkeys (Context Sensitive)"""
