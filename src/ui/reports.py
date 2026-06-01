@@ -176,6 +176,10 @@ class ReportsUI(QWidget):
         path = QFileDialog.getExistingDirectory(self, "Select Download Folder")
         if path:
             self.download_path = path
+            # Sync download path to catalog page so PDF export uses same location
+            main_win = self.window()
+            if hasattr(main_win, 'full_catalog_page'):
+                main_win.full_catalog_page.download_path = path
             logger.info(f"Report download location set: '{path}'")
             QMessageBox.information(self, "Success", f"Download location set to:\n{path}")
 

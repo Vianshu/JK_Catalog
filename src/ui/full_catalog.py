@@ -117,6 +117,7 @@ class FullCatalogUI(QWidget):
         self.logic = CatalogLogic(db_path)
 
         self.company_path = None
+        self.download_path = ""  # Shared with Reports — auto-save PDFs here
         self.expanded_groups = {}
         self.current_page_index = 0
         self.all_pages_data = []
