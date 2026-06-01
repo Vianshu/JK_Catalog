@@ -511,7 +511,7 @@ class MainWindow(QWidget):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(5, 10, 5, 10)
-        layout.setSpacing(10)
+        layout.setSpacing(4)
         
         for data in buttons_data:
             text = data[0]
