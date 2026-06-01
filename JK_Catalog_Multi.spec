@@ -63,23 +63,31 @@ splash = Splash(
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     splash,
     splash.binaries,
     [],
+    exclude_binaries=True,
     name='JK_Catalog_Multi',
     icon='JK_Icon.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,                              # Compress with UPX for smaller EXE
-    upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,                          # No console window (GUI app)
     disable_windowed_traceback=False,       # Keep traceback in windowed mode
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='JK_Catalog_Multi'
 )

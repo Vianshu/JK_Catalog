@@ -85,8 +85,8 @@ FinishedLabel=Setup has completed installing {#MyAppName} on your computer.%n%nT
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
-; --- Main Executable ---
-Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; --- Main Executable and all dependencies (One-Dir mode) ---
+Source: "dist\JK_Catalog_Multi\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; --- Application Icon ---
 Source: "JK_Icon.ico"; DestDir: "{app}"; Flags: ignoreversion
