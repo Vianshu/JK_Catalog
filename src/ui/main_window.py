@@ -71,7 +71,7 @@ class MenuButtonWidget(QFrame):
         self.html_text = self.plain_text
         
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 12, 10, 12)
+        layout.setContentsMargins(4, 12, 10, 12)
         layout.setSpacing(0)
         
         if "&" in text:
