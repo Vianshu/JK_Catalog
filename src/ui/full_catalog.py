@@ -19,10 +19,11 @@ from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFrame,
     QPushButton, QLineEdit, QLabel, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QScrollArea,
-    QStyle, QGroupBox, QApplication
+    QStyle, QGroupBox, QApplication,
+    QGraphicsView, QGraphicsScene, QGraphicsProxyWidget
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtGui import QFont, QColor, QTransform
 
 from src.logic.catalog_logic import CatalogLogic
 from src.ui.a4_renderer import A4PageRenderer
@@ -85,13 +86,24 @@ class CatalogBuildWorker(QThread):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ZOOMABLE SCROLL AREA
+# ZOOMABLE GRAPHICS VIEW
 # ═══════════════════════════════════════════════════════════════════════════════
 
-class ZoomableScrollArea(QScrollArea):
-    """QScrollArea that supports Ctrl+Wheel zoom.
-    Emits zoom_changed(factor) when the user scrolls with Ctrl held."""
+class ZoomableGraphicsView(QGraphicsView):
+    """QGraphicsView with Ctrl+Wheel smooth zoom.
+    Uses QTransform to visually scale the embedded widget — no clipping."""
     zoom_changed = pyqtSignal(float)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setRenderHints(
+            self.renderHints()
+            | self.RenderHint.Antialiasing
+            | self.RenderHint.SmoothPixmapTransform
+        )
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
 
     def wheelEvent(self, event):
         if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
@@ -218,17 +230,21 @@ class FullCatalogUI(QWidget):
         parent_layout.addLayout(index_layout)
 
     def _setup_renderer_panel(self, parent_layout):
-        """Create the center panel with A4 page renderer inside a zoomable scroll area."""
+        """Create the center panel with A4 page renderer inside a zoomable graphics view."""
         center_layout = QVBoxLayout()
 
-        self.scroll_area = ZoomableScrollArea()
-        self.scroll_area.setObjectName("CatalogScrollArea")
-        self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
+        # Use QGraphicsView for true visual scaling (no clipping)
         self.renderer = A4PageRenderer()
         self.renderer.set_target_dpi(96)
 
-        self.scroll_area.setWidget(self.renderer)
+        self._gfx_scene = QGraphicsScene(self)
+        self._gfx_proxy = self._gfx_scene.addWidget(self.renderer)
+
+        self.scroll_area = ZoomableGraphicsView()
+        self.scroll_area.setObjectName("CatalogScrollArea")
+        self.scroll_area.setScene(self._gfx_scene)
+        self.scroll_area.setBackgroundBrush(QColor("#F0F0F0"))
+
         center_layout.addWidget(self.scroll_area)
         parent_layout.addLayout(center_layout)
 
@@ -353,16 +369,12 @@ class FullCatalogUI(QWidget):
     # ───────────────────────────────────────────────────────────────────────────
 
     def _apply_zoom(self, factor):
-        """Apply absolute zoom factor to the renderer widget."""
+        """Apply absolute zoom factor via QGraphicsView transform (no clipping)."""
         factor = max(0.2, min(3.0, factor))  # Clamp between 20% and 300%
         self._zoom_factor = factor
 
-        # Scale the renderer widget
-        base_w = self.renderer.page_w
-        base_h = self.renderer.page_h
-        new_w = int(base_w * factor)
-        new_h = int(base_h * factor)
-        self.renderer.setFixedSize(new_w, new_h)
+        # Use QTransform for smooth, true visual scaling
+        self.scroll_area.setTransform(QTransform.fromScale(factor, factor))
 
         # Update percentage label
         pct = int(factor * 100)
@@ -374,18 +386,18 @@ class FullCatalogUI(QWidget):
         self._apply_zoom(new_factor)
 
     def zoom_in(self):
-        """Zoom in by 10%."""
+        """Zoom in by 15%."""
         self._apply_relative_zoom(1.15)
 
     def zoom_out(self):
-        """Zoom out by 10%."""
+        """Zoom out by 15%."""
         self._apply_relative_zoom(1 / 1.15)
 
     def zoom_fit_page(self):
-        """Auto-zoom so the full A4 page fits in the visible scroll area."""
-        viewport = self.scroll_area.viewport()
-        vp_w = viewport.width() - 20  # Small margin
-        vp_h = viewport.height() - 20
+        """Auto-zoom so the full A4 page fits in the visible viewport."""
+        vp = self.scroll_area.viewport()
+        vp_w = vp.width() - 20  # Small margin
+        vp_h = vp.height() - 20
 
         page_w = self.renderer.page_w  # Base page width at 96 DPI
         page_h = self.renderer.page_h  # Base page height at 96 DPI
@@ -1056,6 +1068,9 @@ class FullCatalogUI(QWidget):
                 logger.error(f"showEvent engine_run error: {e}")
 
         self.refresh_catalog_data()
+        # Auto-fit catalog to viewport on first show so it's never cut off
+        if self._zoom_factor == 1.0 and self.renderer.page_w > 0:
+            self.zoom_fit_page()
         super().showEvent(event)
 
     def _handle_print_preview_paint(self, printer):

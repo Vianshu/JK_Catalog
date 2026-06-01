@@ -7,6 +7,7 @@ import pandas as pd
 import pyodbc
 import urllib.parse
 from sqlalchemy import create_engine
+from sqlalchemy.types import NVARCHAR
 from src.logic.db_manager import get_db_manager, build_logical_name
 from src.utils.app_logger import get_logger
 
@@ -168,8 +169,9 @@ class TallyService:
             engine = create_engine(f"mssql+pyodbc:///?odbc_connect={params}", fast_executemany=True)
             
             logger.info("Writing stock items to staging via SQLAlchemy (fast_executemany=True)")
-            # to_sql with if_exists="replace" automatically creates the table efficiently
-            export_df.to_sql(staging_table, con=engine, if_exists="replace", index=False)
+            # Force NVARCHAR for all string columns so Hindi/Unicode text is preserved
+            nvarchar_dtype = {col: NVARCHAR(length=None) for col in export_df.select_dtypes(include=['object']).columns}
+            export_df.to_sql(staging_table, con=engine, if_exists="replace", index=False, dtype=nvarchar_dtype)
             engine.dispose()
 
             # Verify staging has data before swapping
@@ -391,7 +393,9 @@ def fetch_tally_ledger_data(company_path=None):
         engine = create_engine(f"mssql+pyodbc:///?odbc_connect={params}", fast_executemany=True)
         
         logger.info("Writing ledger data to staging via SQLAlchemy (fast_executemany=True)")
-        ledger_df.to_sql(staging_table, con=engine, if_exists="replace", index=False)
+        # Force NVARCHAR for all string columns so Hindi/Unicode text is preserved
+        nvarchar_dtype = {col: NVARCHAR(length=None) for col in ledger_df.select_dtypes(include=['object']).columns}
+        ledger_df.to_sql(staging_table, con=engine, if_exists="replace", index=False, dtype=nvarchar_dtype)
         engine.dispose()
 
         # Verify staging before swap
