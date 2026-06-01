@@ -90,7 +90,7 @@ class MenuButtonWidget(QFrame):
         self.lbl.setObjectName("MenuLabel")
         # Direct style on label — required because Fusion style engine overrides
         # QSS child selectors from app-level stylesheet on QFrame children.
-        self.lbl.setStyleSheet("color: #ffffff; font-size: 14px; font-weight: 600; background: transparent; border: none;")
+        self.lbl.setStyleSheet("color: #ffffff; font-size: 15px; font-weight: 600; background: transparent; border: none;")
         layout.addWidget(self.lbl)
         layout.addStretch()
         
