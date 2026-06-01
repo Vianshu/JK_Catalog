@@ -242,12 +242,8 @@ class MainWindow(QWidget):
         self.sidebar = QFrame()
         self.sidebar.setObjectName("MainSidebar")
         
-        # Calculate sidebar width dynamically (12% of screen width, bounded between 140 and 250)
-        from PyQt6.QtWidgets import QApplication
-        screen_rect = QApplication.primaryScreen().availableGeometry()
-        sidebar_width = int(screen_rect.width() * 0.12)
-        sidebar_width = max(140, min(250, sidebar_width))
-        self.sidebar.setFixedWidth(sidebar_width)
+        # User requested a fixed, slightly larger size rather than dynamic squishing
+        self.sidebar.setFixedWidth(220)
         
         sidebar_layout = QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(10, 20, 10, 10)
@@ -502,7 +498,14 @@ class MainWindow(QWidget):
         self.main_stack.addWidget(self.security_page) # Index 18
     # --- Helper UI Functions ---
     def create_menu_widget(self, buttons_data):
+        from PyQt6.QtWidgets import QScrollArea
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; } QScrollBar:vertical { width: 4px; }")
+
         widget = QWidget()
+        widget.setStyleSheet("background: transparent;")
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(5, 10, 5, 10)
         layout.setSpacing(10)
@@ -541,7 +544,8 @@ class MainWindow(QWidget):
             layout.addWidget(btn)
         
         layout.addStretch()
-        return widget
+        scroll.setWidget(widget)
+        return scroll
 
     def safe_trigger_menu(self, parent_widget, btn):
         """Global trigger for main menu hotkeys (Context Sensitive)"""
