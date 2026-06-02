@@ -949,13 +949,24 @@ def _get_catalog_db(company_path):
     return build_logical_name(company_name, company_path=company_path)
 
 def _ensure_crm_table(db, db_name):
-    """Ensure the crm_names table exists."""
+    """Ensure the crm_names table exists, seeded with 'Office' for new companies."""
     db.ensure_table(db_name, "crm_names", """
         CREATE TABLE crm_names (
             id INT IDENTITY(1,1) PRIMARY KEY,
             crm_name NVARCHAR(255) NOT NULL UNIQUE
         )
     """)
+    # Seed default "Office" CRM for new companies
+    try:
+        conn = db.get_connection(db_name)
+        if conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM crm_names")
+            if cursor.fetchone()[0] == 0:
+                cursor.execute("INSERT INTO crm_names (crm_name) VALUES (?)", "Office")
+                conn.commit()
+    except Exception:
+        pass
 
 def _ensure_report_table(db, db_name):
     """Ensure the report_data table exists."""

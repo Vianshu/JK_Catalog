@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QGraphicsView, QGraphicsScene, QGraphicsProxyWidget
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QFont, QColor, QTransform
+from PyQt6.QtGui import QFont, QColor, QTransform, QPainter
 
 from src.logic.catalog_logic import CatalogLogic
 from src.ui.a4_renderer import A4PageRenderer
@@ -98,8 +98,8 @@ class ZoomableGraphicsView(QGraphicsView):
         super().__init__(parent)
         self.setRenderHints(
             self.renderHints()
-            | self.RenderHint.Antialiasing
-            | self.RenderHint.SmoothPixmapTransform
+            | QPainter.RenderHint.Antialiasing
+            | QPainter.RenderHint.SmoothPixmapTransform
         )
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
@@ -580,7 +580,7 @@ class FullCatalogUI(QWidget):
         # Footer
         from src.utils.date_utils import get_footer_date
         footer_date = get_footer_date(products, self.logic)
-        self.renderer.set_footer_data("CRM_NAME", footer_date)
+        self.renderer.set_footer_data("Office", footer_date)
 
     # ───────────────────────────────────────────────────────────────────────────
     # NAVIGATION

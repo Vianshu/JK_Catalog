@@ -41,7 +41,7 @@ from src.ui.settings import (
     AuditLogDialog, ChangePasswordDialog,
     load_crm_list, save_crm_to_json, update_crm_in_json
 )
-from src.services.tally_sync import fetch_tally_data, fetch_tally_ledger_data
+from src.services.tally_sync import fetch_tally_data, fetch_tally_ledger_data, TallyService
 
 class AltKeyFilter(QObject):
     def __init__(self, main_window):
@@ -876,50 +876,94 @@ class MainWindow(QWidget):
     def on_sync_tally_clicked(self):
         if not self.current_company: return
         if not self._check_permission("final_data.sync", "Tally Sync"): return
+
+        # Prevent concurrent syncs
+        if hasattr(self, '_tally_worker') and self._tally_worker and self._tally_worker.isRunning():
+            return
+
         logger.info(f"Tally sync started")
-        progress = QProgressDialog("Syncing Tally Data...", None, 0, 0, self)
-        progress.setWindowTitle("Please Wait")
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
-        progress.show()
-        QApplication.processEvents()
-        
-        try:
-            df, error = fetch_tally_data(company_name=self.current_company, company_path=self.current_company_path)
-            progress.close()
-            
-            if not error and not df.empty:
-                self.row_data_page.load_data(self.current_company_path)
-                
-                # Chain: Final Data sync (async) → catalog build → success message
-                row_count = len(df)
-                logger.info(f"Tally sync received: {row_count} rows")
-                def _after_sync():
-                    self.final_data_page.sync_complete.disconnect(_after_sync)
-                    # Trigger a silent catalog build
-                    if hasattr(self, 'full_catalog_page'):
-                        if hasattr(self.full_catalog_page, 'logic'):
-                            self.full_catalog_page.logic.invalidate_cache()
-                        self.full_catalog_page.build_catalog(silent=True)
-                    QMessageBox.information(self, "Sync Complete", f"Data Synced Successfully!\nLoaded {row_count} rows.\n\nClick OK to close.")
-                    # L-6: Audit log for Tally sync
-                    if self._security_mgr and self.user_session:
-                        self._security_mgr.log_action(self.user_session, "tally_sync",
-                            module="final_data", detail=f"Synced {row_count} rows")
-                
-                if hasattr(self, 'final_data_page'):
-                    self.final_data_page.sync_complete.connect(_after_sync)
-                    self.final_data_page.load_and_sync_data(self.current_company, self.current_company_path)
-                else:
-                    QMessageBox.information(self, "Sync Complete", f"Data Synced Successfully!\nLoaded {row_count} rows.")
+
+        # Create a shared TallyService so we can cancel it
+        self._tally_service = TallyService()
+
+        self._tally_progress = QProgressDialog("Syncing Tally Data...", "Cancel", 0, 0, self)
+        self._tally_progress.setWindowTitle("Please Wait")
+        self._tally_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._tally_progress.setMinimumDuration(0)
+        self._tally_progress.canceled.connect(self._on_tally_cancel)
+        self._tally_progress.show()
+
+        # Run in background thread
+        from PyQt6.QtCore import QThread, pyqtSignal
+        class _TallyWorker(QThread):
+            finished = pyqtSignal(object, str)  # (df_or_None, error)
+            def __init__(self, service, company_name, company_path):
+                super().__init__()
+                self.service = service
+                self.company_name = company_name
+                self.company_path = company_path
+            def run(self):
+                try:
+                    df, error = fetch_tally_data(
+                        company_name=self.company_name,
+                        company_path=self.company_path,
+                        service=self.service
+                    )
+                    self.finished.emit(df, error)
+                except Exception as e:
+                    self.finished.emit(None, str(e))
+
+        self._tally_worker = _TallyWorker(
+            self._tally_service,
+            self.current_company,
+            self.current_company_path
+        )
+        self._tally_worker.finished.connect(self._on_tally_sync_done)
+        self._tally_worker.start()
+
+    def _on_tally_cancel(self):
+        """Handle cancel button click — signal the TallyService to stop."""
+        logger.info("Tally sync cancelled by user")
+        if hasattr(self, '_tally_service') and self._tally_service:
+            self._tally_service.cancel()
+
+    def _on_tally_sync_done(self, df, error):
+        """Handle Tally sync completion (runs on main thread)."""
+        if hasattr(self, '_tally_progress') and self._tally_progress:
+            self._tally_progress.close()
+
+        if error == "cancelled":
+            QMessageBox.information(self, "Cancelled", "Tally sync was cancelled.\nExisting data is preserved.")
+            return
+
+        if not error and df is not None and not df.empty:
+            self.row_data_page.load_data(self.current_company_path)
+
+            # Chain: Final Data sync (async) → catalog build → success message
+            row_count = len(df)
+            logger.info(f"Tally sync received: {row_count} rows")
+            def _after_sync():
+                self.final_data_page.sync_complete.disconnect(_after_sync)
+                # Trigger a silent catalog build
+                if hasattr(self, 'full_catalog_page'):
+                    if hasattr(self.full_catalog_page, 'logic'):
+                        self.full_catalog_page.logic.invalidate_cache()
+                    self.full_catalog_page.build_catalog(silent=True)
+                QMessageBox.information(self, "Sync Complete", f"Data Synced Successfully!\nLoaded {row_count} rows.\n\nClick OK to close.")
+                # L-6: Audit log for Tally sync
+                if self._security_mgr and self.user_session:
+                    self._security_mgr.log_action(self.user_session, "tally_sync",
+                        module="final_data", detail=f"Synced {row_count} rows")
+
+            if hasattr(self, 'final_data_page'):
+                self.final_data_page.sync_complete.connect(_after_sync)
+                self.final_data_page.load_and_sync_data(self.current_company, self.current_company_path)
             else:
-                msg = error if error else "No data received from Tally. Check connection."
-                logger.warning(f"Tally sync issue: {msg}")
-                QMessageBox.warning(self, "Sync Issue", f"{msg}\n\nClick OK to close.")
-        except Exception as e:
-            progress.close()
-            logger.error(f"Tally sync failed: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Sync Failed: {str(e)}")
+                QMessageBox.information(self, "Sync Complete", f"Data Synced Successfully!\nLoaded {row_count} rows.")
+        else:
+            msg = error if error else "No data received from Tally. Check connection."
+            logger.warning(f"Tally sync issue: {msg}")
+            QMessageBox.warning(self, "Sync Issue", f"{msg}\n\nClick OK to close.")
 
     def on_row_data_clicked(self):
         if self.current_company and hasattr(self, 'current_company_path'):
