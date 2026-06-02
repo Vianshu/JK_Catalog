@@ -912,7 +912,7 @@ class A4PageRenderer(QWidget):
         current_val = str(prod.get("length", "")).strip()
         if not current_val: current_val = "1|0"
         
-        dlg = ProductSizeDialog(current_val, prod, self)
+        dlg = ProductSizeDialog(current_val, prod, self.window())
         if dlg.exec():
             new_val = dlg.result_str
             if new_val != current_val:
