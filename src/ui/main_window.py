@@ -66,6 +66,9 @@ class MenuButtonWidget(QFrame):
         self.setProperty("active", False)
         self.hotkey_char = None 
         
+        if is_back:
+            self.setProperty("is_back", True)
+
         # Prepare content
         self.plain_text = text.replace("&", "")
         self.html_text = self.plain_text
@@ -308,9 +311,9 @@ class MainWindow(QWidget):
 
         # Index 1: Main Menu
         m_main = self.create_menu_widget([
-            ("📁 &Catalog", self.show_catalog_submenu),
-            ("📊 &Vat Working", self.show_vat_submenu),
-            ("⚙️ &Tally Internal", self.show_tally_internal_submenu),
+            ("📁 &Catalog", self.show_catalog_submenu, False, None, "tab.catalog"),
+            ("📊 &Vat Working", self.show_vat_submenu, False, None, "tab.vat_balance"),
+            ("⚙️ &Tally Internal", self.show_tally_internal_submenu, False, None, "tab.ledger"),
             ("⚙️ &Settings", self.show_settings_submenu)
         ])
         m_main.layout().setSpacing(5)  # Slightly more breathing room for main nav
@@ -451,7 +454,9 @@ class MainWindow(QWidget):
         # Silent catalog build ONLY on Catalog (2) and Reports (7) tabs
         # Other tabs have zero dependency on catalog build output
         if idx in (2, 7) and hasattr(self, 'full_catalog_page'):
-            self.full_catalog_page.build_catalog(silent=True)
+            # Only auto-build if user has catalog.build_auto permission
+            if not self.user_session or self.user_session.can("catalog.build_auto"):
+                self.full_catalog_page.build_catalog(silent=True)
             
         # If entering Reports tab, check if it's currently building
         if idx == 7 and hasattr(self, 'reports_page'):
@@ -689,18 +694,63 @@ class MainWindow(QWidget):
         s = self.user_session  # shorthand
         
         # ── Layer 1: Menu Buttons ──
+        # Build set of denied parent tabs so children inherit denial
+        # e.g. if tab.catalog is denied, catalog.build and catalog.print are also denied
+        _TAB_TO_PREFIX = {
+            "tab.final_data": "final_data.",
+            "tab.super_master": "super_master.",
+            "tab.catalog": "catalog.",
+            "tab.reports": "reports.",
+            "tab.cheque_list": "cheque_list.",
+            "tab.calendar": "calendar.",
+            "tab.godown": "godown.",
+            "tab.ledger": "ledger.",
+        }
+        denied_prefixes = set()
+        for tab_key, prefix in _TAB_TO_PREFIX.items():
+            if not s.can(tab_key):
+                denied_prefixes.add(prefix)
+        
         for menu_widget in [self.nav_stack.widget(i) for i in range(self.nav_stack.count())]:
             if not menu_widget:
                 continue
             for btn in menu_widget.findChildren(MenuButtonWidget):
                 perm_key = btn.property("permission_key")
                 if perm_key and isinstance(perm_key, str):
-                    allowed = s.can(perm_key)
+                    # Check if this subtab's parent tab is denied
+                    parent_denied = any(perm_key.startswith(p) for p in denied_prefixes)
+                    allowed = (not parent_denied) and s.can(perm_key)
                     btn.setEnabled(allowed)
                     if not allowed:
                         btn.setToolTip(f"🔒 Access denied — requires '{perm_key}' permission")
                     else:
                         btn.setToolTip("")
+        
+        # ── Layer 1b: Block parent menu buttons if ALL children are disabled ──
+        _PARENT_TO_SUBMENU = {
+            "Catalog": 2,
+            "Settings": 3,
+            "Tally Internal": 4,
+            "Vat Working": 5,
+        }
+        
+        main_menu = self.nav_stack.widget(1)
+        if main_menu:
+            for btn in main_menu.findChildren(MenuButtonWidget):
+                btn_text = btn.lbl.text() if hasattr(btn, 'lbl') else btn.toolTip()
+                for parent_name, submenu_idx in _PARENT_TO_SUBMENU.items():
+                    if parent_name in btn_text:
+                        submenu = self.nav_stack.widget(submenu_idx)
+                        if submenu:
+                            child_btns = [
+                                b for b in submenu.findChildren(MenuButtonWidget)
+                                if not b.property("is_back")
+                            ]
+                            all_disabled = child_btns and all(not b.isEnabled() for b in child_btns)
+                            if all_disabled:
+                                btn.setEnabled(False)
+                                btn.setToolTip(f"🔒 No accessible items in {parent_name}")
+                        break
         
         # ── Layer 2: Inside-Tab Controls ──
         
@@ -725,11 +775,11 @@ class MainWindow(QWidget):
             if hasattr(page, 'btn_export'):
                 page.btn_export.setEnabled(s.can("catalog.print"))
             if hasattr(page, 'btn_reshuffle'):
-                page.btn_reshuffle.setEnabled(s.can("catalog.edit_assignment"))
+                page.btn_reshuffle.setEnabled(s.can("catalog.reshuffle"))
             if hasattr(page, 'btn_add_page'):
-                page.btn_add_page.setEnabled(s.can("catalog.edit_assignment"))
+                page.btn_add_page.setEnabled(s.can("catalog.page_management"))
             if hasattr(page, 'btn_remove_page'):
-                page.btn_remove_page.setEnabled(s.can("catalog.edit_assignment"))
+                page.btn_remove_page.setEnabled(s.can("catalog.page_management"))
         
         # Reports — print and mark done
         if hasattr(self, 'reports_page'):

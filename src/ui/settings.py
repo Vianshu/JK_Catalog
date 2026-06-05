@@ -358,7 +358,12 @@ class SecurityUI(QWidget):
                 ("Sync Tally",          ["tab.final_data"],     ["final_data.sync"]),
                 ("Super Master",        ["tab.super_master"],   ["super_master.edit"]),
                 ("Final Data",          ["tab.final_data"],     ["final_data.edit", "final_data.export"]),
-                ("Full Catalog",        ["tab.catalog"],        ["catalog.build", "catalog.print", "catalog.edit_assignment"]),
+                ("Full Catalog (Tab)",  ["tab.catalog"],        []),
+                (" ↳ Build Button",     [],                     ["catalog.build"]),
+                (" ↳ Auto Build",       [],                     ["catalog.build_auto"]),
+                (" ↳ Print/Export",     [],                     ["catalog.print"]),
+                (" ↳ Reshuffle",        [],                     ["catalog.reshuffle"]),
+                (" ↳ Page Manage",      [],                     ["catalog.page_management"]),
                 ("Reports",             ["tab.reports"],        ["reports.print", "reports.mark_done"]),
                 ("Catalog Price List",  ["tab.cat_price_list"], []),
             ]),
@@ -503,6 +508,10 @@ class SecurityUI(QWidget):
                     lambda idx, gn=group_name: self._update_master_state(gn)
                 )
                 
+                # Special logic: If this is the "Full Catalog (Tab)", auto-deny sub-items when set to None
+                if fac_name == "Full Catalog (Tab)":
+                    combo.currentIndexChanged.connect(self._on_catalog_tab_changed)
+                
                 self.facility_combos[fac_name] = combo
                 content_layout.addWidget(row_frame)
             
@@ -546,6 +555,24 @@ class SecurityUI(QWidget):
                     combo.blockSignals(True)
                     combo.setCurrentIndex(idx_none)
                     combo.blockSignals(False)
+
+    def _on_catalog_tab_changed(self, index):
+        """If Full Catalog (Tab) is set to None, auto-set all its sub-buttons to None."""
+        tab_combo = self.facility_combos.get("Full Catalog (Tab)")
+        if not tab_combo or tab_combo.currentData() != "none":
+            return
+            
+        sub_items = [" ↳ Build Button", " ↳ Auto Build", " ↳ Print/Export", " ↳ Reshuffle", " ↳ Page Manage"]
+        for sub in sub_items:
+            combo = self.facility_combos.get(sub)
+            if combo:
+                idx = combo.findData("none")
+                if idx >= 0:
+                    combo.blockSignals(True)
+                    combo.setCurrentIndex(idx)
+                    combo.blockSignals(False)
+                    # Trigger visual update if needed
+                    combo.repaint()
 
     def _update_master_state(self, group_name):
         """Update the master combo to reflect current sub-combo states.

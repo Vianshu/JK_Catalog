@@ -51,9 +51,11 @@ PERMISSION_REGISTRY = {
     "super_master.edit":    "Edit/add/delete super master entries",
 
     # ── Catalog ──
-    "catalog.build":        "Press Build Catalog button",
-    "catalog.print":        "Print catalog pages",
-    "catalog.edit_assignment": "Drag/reassign products to pages",
+    "catalog.build":            "Build catalog via button click",
+    "catalog.build_auto":       "Auto-build catalog on tab switch",
+    "catalog.print":            "Print catalog pages",
+    "catalog.reshuffle":        "Reshuffle product assignments",
+    "catalog.page_management":  "Add/remove catalog pages",
 
     # ── Godown ──
     # (View only, controlled by tab.godown)
@@ -109,6 +111,7 @@ DEFAULT_ROLES = {
         "permissions": [
             "tab.catalog", "catalog.print",
             "tab.reports", "reports.print",
+            "catalog.build", "catalog.build_auto",
         ],
     },
     "Accountant": {
@@ -141,7 +144,7 @@ class UserSession:
         self.company_id = company_id
         self.company_name = company_name
         self.company_path = company_path
-        self.role_name = role_name or ("Admin" if is_admin else "No Role")
+        self.role_name = "Admin (Owner)" if is_admin else (role_name or "No Role")
         self.permissions = set(permissions) if permissions else set()
         self.login_time = datetime.now()
 
