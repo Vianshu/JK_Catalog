@@ -53,7 +53,6 @@ PERMISSION_REGISTRY = {
     # ── Catalog ──
     "catalog.build":            "Build catalog via button click",
     "catalog.build_auto":       "Auto-build catalog on tab switch",
-    "catalog.print":            "Print catalog pages",
     "catalog.reshuffle":        "Reshuffle product assignments",
     "catalog.page_management":  "Add/remove catalog pages",
 
@@ -109,7 +108,7 @@ DEFAULT_ROLES = {
         "description": "Can view and print catalog and reports",
         "is_system": False,
         "permissions": [
-            "tab.catalog", "catalog.print",
+            "tab.catalog", 
             "tab.reports", "reports.print",
             "catalog.build", "catalog.build_auto",
         ],

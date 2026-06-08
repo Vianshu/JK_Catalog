@@ -92,8 +92,10 @@ class MenuButtonWidget(QFrame):
         self.lbl = QLabel(self.plain_text)
         self.lbl.setObjectName("MenuLabel")
         # Direct style on label — required because Fusion style engine overrides
-        # QSS child selectors from app-level stylesheet on QFrame children.
-        self.lbl.setStyleSheet("color: #ffffff; font-size: 15px; font-weight: 600; background: transparent; border: none;")
+        self.lbl.setStyleSheet("""
+            QLabel { color: #ffffff; font-size: 15px; font-weight: 600; background: transparent; border: none; }
+            QLabel:disabled { color: rgba(255,255,255,0.35); }
+        """)
         layout.addWidget(self.lbl)
         layout.addStretch()
         
@@ -452,12 +454,14 @@ class MainWindow(QWidget):
                     self.full_catalog_page.logic._last_clean_check_time = None
 
         # Silent catalog build ONLY on Catalog (2) and Reports (7) tabs
-        # Other tabs have zero dependency on catalog build output
+        # Skip if user explicitly has catalog.build_auto set to None
         if idx in (2, 7) and hasattr(self, 'full_catalog_page'):
-            # Only auto-build if user has catalog.build_auto permission
-            if not self.user_session or self.user_session.can("catalog.build_auto"):
+            session = self.user_session
+            # Allow when no session (admin/owner) or when permission is explicitly granted
+            can_auto_build = (session is None) or session.can("catalog.build_auto")
+            if can_auto_build:
                 self.full_catalog_page.build_catalog(silent=True)
-            
+
         # If entering Reports tab, check if it's currently building
         if idx == 7 and hasattr(self, 'reports_page'):
             is_running = hasattr(self.full_catalog_page, '_build_worker') and self.full_catalog_page._build_worker is not None and self.full_catalog_page._build_worker.isRunning()
@@ -770,16 +774,14 @@ class MainWindow(QWidget):
             page = self.full_catalog_page
             if hasattr(page, 'btn_build'):
                 page.btn_build.setEnabled(s.can("catalog.build"))
-            if hasattr(page, 'btn_print'):
-                page.btn_print.setEnabled(s.can("catalog.print"))
-            if hasattr(page, 'btn_export'):
-                page.btn_export.setEnabled(s.can("catalog.print"))
             if hasattr(page, 'btn_reshuffle'):
                 page.btn_reshuffle.setEnabled(s.can("catalog.reshuffle"))
             if hasattr(page, 'btn_add_page'):
                 page.btn_add_page.setEnabled(s.can("catalog.page_management"))
             if hasattr(page, 'btn_remove_page'):
                 page.btn_remove_page.setEnabled(s.can("catalog.page_management"))
+            if hasattr(page, 'btn_check_empty'):
+                page.btn_check_empty.setEnabled(s.can("catalog.page_management"))
         
         # Reports — print and mark done
         if hasattr(self, 'reports_page'):
@@ -826,7 +828,72 @@ class MainWindow(QWidget):
                         page.table.EditTrigger.CurrentChanged | page.table.EditTrigger.EditKeyPressed)
                 else:
                     page.table.setEditTriggers(page.table.EditTrigger.NoEditTriggers)
-        
+
+        # Vat Balance — editable Excel sheet
+        vat_balance = self.main_stack.widget(13)
+        if vat_balance and hasattr(vat_balance, 'tabs'):
+            can_edit = s.can("vat_balance.edit")
+            for i in range(vat_balance.tabs.count()):
+                sheet = vat_balance.tabs.widget(i)
+                if sheet:
+                    if can_edit:
+                        sheet.setEditTriggers(
+                            sheet.EditTrigger.CurrentChanged | sheet.EditTrigger.EditKeyPressed)
+                    else:
+                        sheet.setEditTriggers(sheet.EditTrigger.NoEditTriggers)
+
+        # Vat Stock — editable Excel sheet
+        vat_stock = self.main_stack.widget(14)
+        if vat_stock and hasattr(vat_stock, 'tabs'):
+            can_edit = s.can("vat_stock.edit")
+            for i in range(vat_stock.tabs.count()):
+                sheet = vat_stock.tabs.widget(i)
+                if sheet:
+                    if can_edit:
+                        sheet.setEditTriggers(
+                            sheet.EditTrigger.CurrentChanged | sheet.EditTrigger.EditKeyPressed)
+                    else:
+                        sheet.setEditTriggers(sheet.EditTrigger.NoEditTriggers)
+
+        # Sales Chat — editable Excel sheet
+        sales_chat = self.main_stack.widget(11)
+        if sales_chat and hasattr(sales_chat, 'tabs'):
+            can_edit = s.can("sales_chat.edit")
+            for i in range(sales_chat.tabs.count()):
+                sheet = sales_chat.tabs.widget(i)
+                if sheet:
+                    if can_edit:
+                        sheet.setEditTriggers(
+                            sheet.EditTrigger.CurrentChanged | sheet.EditTrigger.EditKeyPressed)
+                    else:
+                        sheet.setEditTriggers(sheet.EditTrigger.NoEditTriggers)
+
+        # Supplier Payment — editable Excel sheet
+        supp_payment = self.main_stack.widget(12)
+        if supp_payment and hasattr(supp_payment, 'tabs'):
+            can_edit = s.can("supp_payment.edit")
+            for i in range(supp_payment.tabs.count()):
+                sheet = supp_payment.tabs.widget(i)
+                if sheet:
+                    if can_edit:
+                        sheet.setEditTriggers(
+                            sheet.EditTrigger.CurrentChanged | sheet.EditTrigger.EditKeyPressed)
+                    else:
+                        sheet.setEditTriggers(sheet.EditTrigger.NoEditTriggers)
+
+        # Price List — editable Excel sheet
+        price_list = self.main_stack.widget(8)
+        if price_list and hasattr(price_list, 'tabs'):
+            can_edit = s.can("price_list.edit")
+            for i in range(price_list.tabs.count()):
+                sheet = price_list.tabs.widget(i)
+                if sheet:
+                    if can_edit:
+                        sheet.setEditTriggers(
+                            sheet.EditTrigger.CurrentChanged | sheet.EditTrigger.EditKeyPressed)
+                    else:
+                        sheet.setEditTriggers(sheet.EditTrigger.NoEditTriggers)
+
         logger.info(f"Permissions applied: user='{s.username}', "
                      f"role='{s.role_name}', admin={s.is_admin}")
 
@@ -994,8 +1061,10 @@ class MainWindow(QWidget):
             logger.info(f"Tally sync received: {row_count} rows")
             def _after_sync():
                 self.final_data_page.sync_complete.disconnect(_after_sync)
-                # Trigger a silent catalog build
-                if hasattr(self, 'full_catalog_page'):
+                # Trigger a silent catalog build only if user has auto-build permission
+                session = self.user_session
+                can_auto_build = (session is None) or session.can("catalog.build_auto")
+                if hasattr(self, 'full_catalog_page') and can_auto_build:
                     if hasattr(self.full_catalog_page, 'logic'):
                         self.full_catalog_page.logic.invalidate_cache()
                     self.full_catalog_page.build_catalog(silent=True)

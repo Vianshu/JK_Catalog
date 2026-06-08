@@ -398,6 +398,20 @@ class CompanyLoginUI(QWidget):
         # First-run: prompt for super admin setup (deferred so splash can finish)
         from PyQt6.QtCore import QTimer
         QTimer.singleShot(500, lambda: _check_first_run_setup(self))
+        
+        # Auto-focus the company list so arrow keys work immediately
+        QTimer.singleShot(100, self._auto_focus_list)
+    
+    def _auto_focus_list(self):
+        """Give keyboard focus to the company list and select the first navigable item."""
+        self.list.setFocus()
+        if self.list.count() > 0:
+            # Skip to first actual company item (skip Create, Path, separator, path label)
+            for i in range(self.list.count()):
+                item = self.list.item(i)
+                if item and item.flags() & Qt.ItemFlag.ItemIsSelectable:
+                    self.list.setCurrentRow(i)
+                    break
 
     def _init_security(self, data_path):
         """Initialize SecurityManager for the given data path.

@@ -186,9 +186,12 @@ class InteractiveProductFrame(QFrame):
         self.double_click_callback = double_click_callback
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.RightButton and self.double_click_callback:
-            self.double_click_callback()
-        super().mousePressEvent(event)
+        try:
+            if event.button() == Qt.MouseButton.RightButton and self.double_click_callback:
+                self.double_click_callback()
+            super().mousePressEvent(event)
+        except RuntimeError:
+            pass  # C++ object already deleted during catalog rebuild
 
 
 class ProductSizeDialog(QDialog):
@@ -200,7 +203,7 @@ class ProductSizeDialog(QDialog):
             | Qt.WindowType.WindowCloseButtonHint
             | Qt.WindowType.WindowTitleHint
         )
-        self.setFixedSize(400, 300)
+        self.setFixedWidth(380)
         self.result_str = current_str
         self.prod_data = prod_data
         
@@ -284,9 +287,10 @@ class ProductSizeDialog(QDialog):
             
         layout.addLayout(layout_form)
         
-        # Hidden Total Label to keep intact update_total logic
-        self.lbl_total = QLabel() 
-        self.lbl_total.hide()
+        # Total / summary label
+        self.lbl_total = QLabel()
+        self.lbl_total.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self.lbl_total)
         
         # Update Total Calc
         self.spin_img.valueChanged.connect(self.update_total)
@@ -302,7 +306,6 @@ class ProductSizeDialog(QDialog):
         QTimer.singleShot(0, self._focus_and_select_img)
 
         # Buttons
-        layout.addStretch()
         btns = QHBoxLayout()
         ok = QPushButton("Apply")
         ok.setObjectName("BtnApplyGreen")
@@ -912,7 +915,7 @@ class A4PageRenderer(QWidget):
         current_val = str(prod.get("length", "")).strip()
         if not current_val: current_val = "1|0"
         
-        dlg = ProductSizeDialog(current_val, prod, self.window())
+        dlg = ProductSizeDialog(current_val, prod, None)
         if dlg.exec():
             new_val = dlg.result_str
             if new_val != current_val:

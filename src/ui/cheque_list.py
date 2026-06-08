@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
     QTableWidgetItem, QLineEdit, QLabel, QHeaderView,
     QPushButton, QCompleter, QMessageBox, QFileDialog,
-    QRadioButton, QButtonGroup, QAbstractItemView
+    QRadioButton, QButtonGroup, QAbstractItemView, QStyledItemDelegate, QSplitter
 )
 
 from PyQt6.QtGui import QTextDocument, QPageSize, QPageLayout, QFont, QPainter, QPen, QColor, QFontMetrics
@@ -20,6 +20,142 @@ class NumericTableWidgetItem(QTableWidgetItem):
         except:
             return super().__lt__(other)
         
+class AutocompleteDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.main_ui = parent
+
+    def createEditor(self, parent, option, index):
+        col = index.column()
+        if col in (2, 3, 5):
+            editor = QLineEdit(parent)
+            editor.setFrame(False)
+            
+            data_list = []
+            if col == 2:
+                data_list = list(self.main_ui.party_mapping.keys())
+            elif col == 3:
+                data_list = self.main_ui.bank_list_data
+            elif col == 5:
+                data_list = self.main_ui.crm_list_data
+
+            if data_list:
+                completer = QCompleter(data_list)
+                completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+                completer.setFilterMode(Qt.MatchFlag.MatchContains)
+                completer.setMaxVisibleItems(10)
+                editor.setCompleter(completer)
+                
+            editor.installEventFilter(self)
+            return editor
+        return super().createEditor(parent, option, index)
+
+    def eventFilter(self, editor, event):
+        if event.type() == QEvent.Type.KeyPress and isinstance(editor, QLineEdit):
+            key = event.key()
+            
+            # Smart Excel Option A: Up/Down moves to next cell, UNLESS dropdown is visible
+            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                completer = getattr(editor, 'completer', lambda: None)()
+                if completer and completer.popup() and completer.popup().isVisible():
+                    return False # Let the dropdown handle the arrow key
+                
+                # Dropdown is hidden: Commit and move like Excel
+                self.commitData.emit(editor)
+                self.closeEditor.emit(editor, QStyledItemDelegate.EndEditHint.NoHint)
+                
+                table = self.main_ui.table
+                r = table.currentRow()
+                c = table.currentColumn()
+                if key == Qt.Key.Key_Up and r > 0:
+                    table.setCurrentCell(r - 1, c)
+                elif key == Qt.Key.Key_Down and r < table.rowCount() - 1:
+                    table.setCurrentCell(r + 1, c)
+                return True
+                
+            # Smart Excel Left/Right: 
+            # If double-clicked (Edit Mode), Left/Right moves text cursor (default QLineEdit behavior).
+            # If typed (Overwrite Mode), Left/Right commits and moves to adjacent cell.
+            elif key in (Qt.Key.Key_Left, Qt.Key.Key_Right) and not self.main_ui._is_double_click:
+                self.commitData.emit(editor)
+                self.closeEditor.emit(editor, QStyledItemDelegate.EndEditHint.NoHint)
+                
+                table = self.main_ui.table
+                r = table.currentRow()
+                c = table.currentColumn()
+                if key == Qt.Key.Key_Left and c > 0:
+                    table.setCurrentCell(r, c - 1)
+                elif key == Qt.Key.Key_Right and c < table.columnCount() - 1:
+                    table.setCurrentCell(r, c + 1)
+                return True
+                
+            # Excel: Enter commits and moves down
+            elif key in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
+                completer = getattr(editor, 'completer', lambda: None)()
+                if completer and completer.popup() and completer.popup().isVisible():
+                    return False # Let completer handle selection
+                    
+                self.commitData.emit(editor)
+                self.closeEditor.emit(editor, QStyledItemDelegate.EndEditHint.NoHint)
+                
+                table = self.main_ui.table
+                r = table.currentRow()
+                c = table.currentColumn()
+                if r < table.rowCount() - 1:
+                    table.setCurrentCell(r + 1, c)
+                return True
+                
+        return super().eventFilter(editor, event)
+
+    def setModelData(self, editor, model, index):
+        col = index.column()
+        if col in (2, 5):
+            val = editor.text().strip()
+            if not val:
+                model.setData(index, "", Qt.ItemDataRole.EditRole)
+                return
+
+            data_list = []
+            if col == 2:
+                data_list = list(self.main_ui.party_mapping.keys())
+            elif col == 5:
+                data_list = self.main_ui.crm_list_data
+                
+            if data_list:
+                val_lower = val.lower()
+                exact_match = False
+                for item in data_list:
+                    if val_lower == str(item).lower():
+                        val = item
+                        exact_match = True
+                        break
+                        
+                if not exact_match:
+                    contains_match = False
+                    for item in sorted(str(x) for x in data_list):
+                        if val_lower in item.lower():
+                            val = item
+                            contains_match = True
+                            break
+                    if not contains_match:
+                        # Reject the edit, value is completely invalid
+                        return
+                        
+            if col == 2:
+                val_lower = val.lower()
+                for alias, name in self.main_ui.party_mapping.items():
+                    if alias.lower() == val_lower:
+                        val = name
+                        break
+                        
+            model.setData(index, val, Qt.ItemDataRole.EditRole)
+        else:
+            super().setModelData(editor, model, index)
+
+    def destroyEditor(self, editor, index):
+        self.main_ui._is_double_click = False
+        super().destroyEditor(editor, index)
+
 class ChequeListUI(QWidget):
     def __init__(self, company_path=None):
         super().__init__()
@@ -35,49 +171,50 @@ class ChequeListUI(QWidget):
         self.bank_list_data = []
         self.crm_list_data = []
         self.party_mapping = {}
+        self._is_double_click = False  # Track Edit mode vs Overwrite mode
         self.columns = [
             "S.N", "Date", "Party Name", "Bank",
             "Chq No.", "CRM", "Amount", "Cash/Bank", "Clear Date", "Narration"
         ]
 
         # ================= MAIN LAYOUT =================
-        main_layout = QHBoxLayout(self)
+        # Top bar is OUTSIDE the splitter so it always spans the full width.
+        # Only the table area and bank list panel live inside the splitter.
+        main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(6)
+        main_layout.setSpacing(0)
 
-        # ================= LEFT =================
-        left_container = QWidget()
-        left_layout = QVBoxLayout(left_container)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(6)
+        # ---------- TOP BAR (full-width, fixed) ----------
+        top_bar_widget = QWidget()
+        top_bar_widget.setContentsMargins(0, 0, 0, 0)
+        top_bar = QHBoxLayout(top_bar_widget)
+        top_bar.setContentsMargins(4, 4, 4, 4)
+        top_bar.setSpacing(6)
 
-        # ---------- TOP BAR ----------
-        top_bar = QHBoxLayout()
-        
-        # 1. Left Side: Clear Button
+        # 1. Left Side: Clear Button + Search
         self.btn_clear = QPushButton("✅ Clear Chq Unhide")
         self.btn_clear.setObjectName("BtnClearChq")
         self.btn_clear.clicked.connect(self.toggle_clear_visibility)
-        
+
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("🔍 Search")
         self.search_box.setFixedWidth(220)
         self.search_box.textChanged.connect(self.apply_filter)
-        
+
         top_bar.addWidget(self.btn_clear)
         top_bar.addWidget(self.search_box)
-        
+
         # 2. Middle: Summary Labels
         top_bar.addStretch()
-        
+
         self.lbl_count = QLabel("Total No. of Chq.: 0")
         self.lbl_total = QLabel("Amount: 0.00")
         self.lbl_count.setObjectName("ChqSummaryLabel")
         self.lbl_total.setObjectName("ChqSummaryLabel")
-        
+
         top_bar.addWidget(self.lbl_count)
         top_bar.addWidget(self.lbl_total)
-        
+
         top_bar.addStretch()
 
         # 3. Right Side: Utility Buttons
@@ -88,57 +225,65 @@ class ChequeListUI(QWidget):
         self.btn_print = QPushButton("🖨️ Print")
         self.btn_print.setObjectName("BtnBlue")
         self.btn_print.clicked.connect(self.print_table)
-        
+
         self.btn_bank_list = QPushButton("🏦 Bank List")
         self.btn_bank_list.setCheckable(True)
         self.btn_bank_list.setObjectName("BtnBlue")
         self.btn_bank_list.clicked.connect(self.toggle_bank_list)
-        
+
         self.btn_export = QPushButton("Excel")
         self.btn_export.setObjectName("BtnBlue")
         self.btn_export.clicked.connect(self.export_to_excel)
-        
+
         top_bar.addWidget(self.btn_set_location)
         top_bar.addWidget(self.btn_print)
         top_bar.addWidget(self.btn_bank_list)
         top_bar.addWidget(self.btn_export)
 
-        left_layout.addLayout(top_bar)
-        
-        # ---------- MAIN TABLE ----------
+        main_layout.addWidget(top_bar_widget)
+
+        # ---------- SPLITTER (table | bank list) ----------
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_layout.addWidget(self.splitter, 1)   # stretch=1 fills remaining height
+
+        # ---------- LEFT: MAIN TABLE ONLY ----------
         self.table = QTableWidget()
         self.table.setColumnCount(len(self.columns))
         self.table.setHorizontalHeaderLabels(self.columns)
         self.table.verticalHeader().hide()
-        
-        # Header settings: Sirf utni width jitna data hai
+
+        # Header settings
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents) 
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         header.setCascadingSectionResizes(True)
-        
-        # Header click handle karne ke liye
+        header.setSectionResizeMode(9, QHeaderView.ResizeMode.Stretch)  # Narration fills remaining
+
         self.table.horizontalHeader().sectionClicked.connect(self.sort_table_safe)
         self.table.itemChanged.connect(self.on_item_changed)
         self.table.installEventFilter(self)
-        
+
         table_container = QWidget()
         table_layout = QVBoxLayout(table_container)
-        table_layout.setContentsMargins(8, 0, 0, 0)  # 👈 LEFT GAP
+        table_layout.setContentsMargins(8, 0, 0, 0)
         table_layout.addWidget(self.table)
-        
-        left_layout.addWidget(table_container, 1)
+        table_container.setMinimumWidth(300)
 
-        main_layout.addWidget(left_container, 75)
-        
+        self.splitter.addWidget(table_container)
+
         # Table Events
-        self.table.cellDoubleClicked.connect(self.start_cell_search)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.CurrentChanged | QAbstractItemView.EditTrigger.EditKeyPressed)
+        self.table.setItemDelegate(AutocompleteDelegate(self))
+        self.table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked |
+            QAbstractItemView.EditTrigger.EditKeyPressed
+        )
+        self.table.cellDoubleClicked.connect(self._handle_double_click)
+        self.table.currentCellChanged.connect(self._reset_edit_mode)
 
         # ================= RIGHT (BANK LIST) =================
         self.right_container = QWidget()
         right_layout = QVBoxLayout(self.right_container)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(6)
+        right_layout.setContentsMargins(4, 0, 0, 0)
+        right_layout.setSpacing(4)
 
         right_layout.addWidget(QLabel("<b>Bank Name List</b>"))
 
@@ -147,13 +292,23 @@ class ChequeListUI(QWidget):
         self.bank_table.setHorizontalHeaderLabels(["SN", "Bank Name", "Count"])
         self.bank_table.verticalHeader().hide()
         self.bank_table.setColumnWidth(0, 40)
-        self.bank_table.setColumnWidth(2, 50)
         self.bank_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.bank_table.setColumnWidth(2, 60)
         self.bank_table.itemChanged.connect(self.handle_bank_change)
 
         right_layout.addWidget(self.bank_table)
 
-        main_layout.addWidget(self.right_container, 25)
+        self.splitter.addWidget(self.right_container)
+        self.right_container.setMinimumWidth(200)
+
+        self.splitter.setSizes([800, 320])
+        self.splitter.setStretchFactor(0, 1)    # Table grows with window
+        self.splitter.setStretchFactor(1, 0)    # Bank list holds its size
+        self.splitter.setCollapsible(0, False)
+        self.splitter.setCollapsible(1, True)
+
+        # Initial loading and connections
+        self.load_all_data()
         self.right_container.setVisible(False)
     
     def toggle_bank_list(self):
@@ -330,61 +485,6 @@ class ChequeListUI(QWidget):
         conn.commit()
 
         self.ensure_bank_row_capacity()
-    
-    def start_cell_search(self, row, col):
-        if col not in (2, 3, 5): return
-
-        current = self.table.item(row, col)
-        text = current.text() if current else ""
-
-        editor = QLineEdit(text)
-        editor.setFrame(False)
-        
-        data_list = []
-        if col == 2:
-            data_list = list(self.party_mapping.keys())
-        elif col == 3:
-            data_list = self.bank_list_data
-        elif col == 5:
-            data_list = self.crm_list_data
-
-        if data_list:
-            completer = QCompleter(data_list)
-            completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-            completer.setFilterMode(Qt.MatchFlag.MatchContains)
-            editor.setCompleter(completer)
-
-        self.table.setCellWidget(row, col, editor)
-        editor.selectAll()
-        editor.setFocus()
-        
-        editor.returnPressed.connect(lambda: self.handle_editor_enter(row, col, editor))
-        
-    def handle_editor_enter(self, row, col, editor):
-        val = editor.text().strip()
-        
-        if col == 2:
-            val_lower = val.lower()
-            for alias, name in self.party_mapping.items():
-                if alias.lower() == val_lower:
-                    val = name
-                    break
-
-        self.table.removeCellWidget(row, col)
-        
-        item = QTableWidgetItem(val)
-        if col == 6: item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        elif col == 7: item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.table.setItem(row, col, item) 
-        
-        self.table.resizeColumnToContents(col)
-        
-        if col == 2: self.table.setCurrentCell(row, 3)
-        elif col == 3: self.table.setCurrentCell(row, 4)
-        elif col == 5: self.table.setCurrentCell(row, 6)
-        
-        self.table.setFocus()
-        self.save_cheques_to_db()
 
     # ================= SUMMARY =================
     def update_summary(self):
@@ -564,23 +664,6 @@ class ChequeListUI(QWidget):
         company_name = os.path.basename(path)
         self.cheque_db_name = build_logical_name(company_name, company_path=path)
         self.ledger_db_name = build_logical_name(company_name, company_path=path)
-        
-        # 1. Load CRM Data
-        from src.ui.settings import load_crm_list
-        self.crm_list_data = load_crm_list(path)
-
-        # 2. Load Party Mapping
-        self.party_mapping = {}
-        try:
-            l_conn = self.db.get_connection(self.ledger_db_name)
-            if l_conn:
-                l_cursor = l_conn.cursor()
-                l_cursor.execute("SELECT Alias, Name FROM row_leger_data WHERE [Group] LIKE '%Sundry Debtors%'")
-                for alias, name in l_cursor.fetchall():
-                    if alias and str(alias).strip():
-                        self.party_mapping[str(alias).strip()] = str(name).strip() if name else ""
-        except Exception as e:
-            print("Error loading ledger:", e)
 
         # 3. Setup Cheque DB
         self.db.ensure_database_exists(self.cheque_db_name, path)
@@ -667,7 +750,45 @@ class ChequeListUI(QWidget):
     
     def showEvent(self, event):
         super().showEvent(event)
-        self.update_summary() # Tab switch par trigger
+        self._reload_dropdown_data()
+        self.update_summary()
+    
+    def _reload_dropdown_data(self):
+        """Refresh party names, CRM, and bank list from SQL Server.
+        Called every time the tab becomes visible."""
+        if not self.ledger_db_name:
+            return
+        
+        # 1. CRM Data
+        from src.ui.settings import load_crm_list
+        self.crm_list_data = load_crm_list(self.company_path)
+        
+        # 2. Party Mapping (Sundry Debtors: Alias + Name searchable)
+        self.party_mapping = {}
+        try:
+            l_conn = self.db.get_connection(self.ledger_db_name)
+            if l_conn:
+                l_cursor = l_conn.cursor()
+                l_cursor.execute("SELECT Alias, Name FROM row_ledger_data WHERE [Group] LIKE '%Sundry Debtors%'")
+                for alias, name in l_cursor.fetchall():
+                    name_str = str(name).strip() if name and str(name).strip().lower() != "none" else ""
+                    alias_str = str(alias).strip() if alias and str(alias).strip().lower() != "none" else ""
+                    if alias_str:
+                        self.party_mapping[alias_str] = name_str
+                    if name_str:
+                        self.party_mapping[name_str] = name_str
+        except Exception as e:
+            print("[CHEQUE] Error loading ledger:", e)
+        
+        # 3. Bank list refresh
+        try:
+            conn = self.db.get_connection(self.cheque_db_name)
+            if conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT bank_name FROM bank_list")
+                self.bank_list_data = [r[0] for r in cursor.fetchall() if r[0]]
+        except Exception:
+            pass
     
     def apply_initial_hide(self):
         """App start logic to hide cleared rows"""
@@ -885,40 +1006,36 @@ class ChequeListUI(QWidget):
 
     def eventFilter(self, source, event):
         if source == self.table and event.type() == QEvent.Type.KeyPress:
+            key = event.key()
             row = self.table.currentRow()
             col = self.table.currentColumn()
-            key = event.key()
-            text = event.text()
 
-            if col == 0: return super().eventFilter(source, event)
-
-            # Cell Search logic for columns 2, 3, 5
-            if col in (2, 3, 5):
-                if key == Qt.Key.Key_F2 or (text and text.isprintable()):
-                    self.start_cell_search(row, col)
-                    if text and text.isprintable() and key != Qt.Key.Key_F2:
-                        editor = self.table.cellWidget(row, col)
-                        if isinstance(editor, QLineEdit): editor.setText(text)
-                    return True
-
-            # Baki Columns
-            elif col != 0:
-                item = self.table.item(row, col)
-                if not item:
-                    item = QTableWidgetItem("")
-                    self.table.setItem(row, col, item)
+            # Explicit Table Navigation (Fixes the Alt-key / instant-edit bug)
+            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right):
+                new_row, new_col = row, col
+                if key == Qt.Key.Key_Up and row > 0:
+                    new_row = row - 1
+                elif key == Qt.Key.Key_Down and row < self.table.rowCount() - 1:
+                    new_row = row + 1
+                elif key == Qt.Key.Key_Left and col > 0:
+                    new_col = col - 1
+                elif key == Qt.Key.Key_Right and col < self.table.columnCount() - 1:
+                    new_col = col + 1
                 
-                if key == Qt.Key.Key_F2:
-                    self.table.editItem(item)
-                    return True
-
-                if text and text.isprintable():
-                    if item.text().strip() == "":
-                        self.table.editItem(item)
-                        editor = self.table.findChild(QLineEdit)
-                        if editor: editor.setText(text)
-                        return True
-                    else:
-                        return True
+                if new_row != row or new_col != col:
+                    self.table.setCurrentCell(new_row, new_col)
+                return True
+                
+            # Table Enter: Move down like Excel
+            elif key in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
+                if row < self.table.rowCount() - 1:
+                    self.table.setCurrentCell(row + 1, col)
+                return True
 
         return super().eventFilter(source, event)
+
+    def _handle_double_click(self, row, col):
+        self._is_double_click = True
+
+    def _reset_edit_mode(self, cr, cc, pr, pc):
+        self._is_double_click = False

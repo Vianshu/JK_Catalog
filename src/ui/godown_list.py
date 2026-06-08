@@ -16,6 +16,7 @@ class GodownListUI(QWidget):
         self.db = get_db_manager()
         self.godown_db_name = ""
         self.final_db_name = ""
+        self._active_editor = None  # Track (row, editor) for cleanup
         
         # Debounced save timer — saves 1 second after last edit instead of on every keystroke
         self._save_timer = QTimer(self)
@@ -48,7 +49,7 @@ class GodownListUI(QWidget):
 
     # ---------------- LOAD PRODUCT DATA ----------------
     def load_final_data_from_db(self, company_path):
-        """Load Alias, Item_Name, Unit, Part_No from final_data DB for autocomplete.
+        """Load FirstAlias, Item_Name, Unit, Part_No from stock_items (Row Data) for autocomplete.
         Uses a plain dict instead of Pandas for O(1) lookups."""
         try:
             conn = self.db.get_connection(self.final_db_name)
@@ -57,26 +58,37 @@ class GodownListUI(QWidget):
                 self._alias_lookup = {}
                 return
             cursor = conn.cursor()
-            cursor.execute("SELECT [Alias], [Item_Name], [Unit], [Part_No] FROM catalog")
+            cursor.execute("SELECT [FirstAlias], [Item_Name], [Unit], [Part_No] FROM stock_items")
             rows = cursor.fetchall()
             
             self._alias_lookup = {}
             alias_list = []
             for row in rows:
                 alias = str(row[0]).strip() if row[0] else ""
+                item_name = str(row[1]).strip() if row[1] else ""
+                data = {
+                    "Item_Name": item_name,
+                    "Unit": row[2] or "",
+                    "Part_No": row[3] or ""
+                }
+                
+                # Add Alias → data mapping
                 if alias and alias.lower() != 'none':
-                    self._alias_lookup[alias.lower()] = {
-                        "Item_Name": row[1] or "",
-                        "Unit": row[2] or "",
-                        "Part_No": row[3] or ""
-                    }
+                    self._alias_lookup[alias.lower()] = data
                     alias_list.append(alias)
+                
+                # Also add Item_Name → data so Item_Name is directly searchable
+                if item_name and item_name.lower() != 'none':
+                    if item_name.lower() not in self._alias_lookup:
+                        self._alias_lookup[item_name.lower()] = data
+                    if item_name not in alias_list:
+                        alias_list.append(item_name)
             
             self.final_data = alias_list  # Keep list for completer
-            print(f"[GODOWN] Loaded {len(rows)} rows from final_data DB")
-            print(f"[GODOWN] Completer created with {len(alias_list)} aliases")
+            print(f"[GODOWN] Loaded {len(rows)} rows from stock_items")
+            print(f"[GODOWN] Completer created with {len(alias_list)} entries (alias + item names)")
         except Exception as e:
-            print(f"[GODOWN] Failed to load final_data: {e}")
+            print(f"[GODOWN] Failed to load stock_items: {e}")
             self.final_data = None
             self._alias_lookup = {}
 
@@ -136,8 +148,7 @@ class GodownListUI(QWidget):
         self.table.setColumnWidth(6, 80)
         
         self.table.setEditTriggers(
-            QAbstractItemView.EditTrigger.CurrentChanged | 
-            QAbstractItemView.EditTrigger.AnyKeyPressed | 
+            QAbstractItemView.EditTrigger.DoubleClicked | 
             QAbstractItemView.EditTrigger.EditKeyPressed
         )
         
@@ -147,20 +158,44 @@ class GodownListUI(QWidget):
         
         layout.addWidget(self.table)
 
+    # ---------------- SHOW EVENT ----------------
+    def showEvent(self, event):
+        """Reload stock_items data every time the tab becomes visible."""
+        super().showEvent(event)
+        if self.company_path:
+            self.load_final_data_from_db(self.company_path)
+            self.update_completer()
+
     # ---------------- EVENT FILTER ----------------
     def eventFilter(self, source, event):
         if source == self.table and event.type() == QEvent.Type.KeyPress:
             row = self.table.currentRow()
             col = self.table.currentColumn()
+            key = event.key()
+
+            # Arrow keys: clean up any active editor, then navigate (Excel-like)
+            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right):
+                self._cleanup_active_editor()
+                new_row, new_col = row, col
+                if key == Qt.Key.Key_Up and row > 0:
+                    new_row = row - 1
+                elif key == Qt.Key.Key_Down and row < self.table.rowCount() - 1:
+                    new_row = row + 1
+                elif key == Qt.Key.Key_Left and col > 0:
+                    new_col = col - 1
+                elif key == Qt.Key.Key_Right and col < self.table.columnCount() - 1:
+                    new_col = col + 1
+                self.table.setCurrentCell(new_row, new_col)
+                return True
 
             # F2 or typing in Alias col (0)
             if col == 0:
                 text = event.text()
-                if event.key() == Qt.Key.Key_F2 or (text and text.isprintable()):
+                if key == Qt.Key.Key_F2 or (text and text.isprintable()):
                     self.start_Alias_search(row, col)
-                    if text and text.isprintable() and event.key() != Qt.Key.Key_F2:
-                        editor = self.table.cellWidget(row, col)
-                        if isinstance(editor, QLineEdit): editor.setText(text)
+                    if text and text.isprintable() and key != Qt.Key.Key_F2:
+                        editor = self._active_editor[1] if self._active_editor else None
+                        if editor: editor.setText(text)
                     return True
 
             # Block non-numeric input for column 1 (प्रति कार्टुन)
@@ -172,7 +207,8 @@ class GodownListUI(QWidget):
                         return True  # Block the key
 
             # Enter Navigation
-            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self._cleanup_active_editor()
                 next_row = row
                 next_col = col + 1
 
@@ -182,12 +218,37 @@ class GodownListUI(QWidget):
                 
                 if next_row < self.table.rowCount():
                     self.table.setCurrentCell(next_row, next_col)
-                    self.table.editItem(self.table.currentItem())
                 
                 return True
 
+            # Printable characters on other columns: start editing
+            if col > 0:
+                text = event.text()
+                if text and text.isprintable():
+                    item = self.table.item(row, col)
+                    if item and (item.flags() & Qt.ItemFlag.ItemIsEditable):
+                        self.table.editItem(item)
+                        editor = self.table.findChild(QLineEdit)
+                        if editor: editor.setText(text)
+                        return True
+
         return super().eventFilter(source, event)
     
+    def _cleanup_active_editor(self):
+        """Remove any lingering cell editor and save its text."""
+        if not self._active_editor:
+            return
+        old_row, old_editor = self._active_editor
+        self._active_editor = None
+        w = self.table.cellWidget(old_row, 0)
+        if w and isinstance(w, QLineEdit):
+            val = w.text().strip()
+            self.table.removeCellWidget(old_row, 0)
+            item = QTableWidgetItem(val)
+            self.table.blockSignals(True)
+            self.table.setItem(old_row, 0, item)
+            self.table.blockSignals(False)
+
     def create_table_item(self, text, alignment=Qt.AlignmentFlag.AlignLeft, locked=False):
         """Create a new table item with alignment and lock properties"""
         item = QTableWidgetItem(str(text))
@@ -202,17 +263,35 @@ class GodownListUI(QWidget):
     
     def start_Alias_search(self, row, col):
         if col != 0: return
+
+        # Clean up any previous editor
+        self._cleanup_active_editor()
+
         current = self.table.item(row, col)
         text = current.text() if current else ""
         editor = QLineEdit(text)
-        if self.completer:
-            editor.setCompleter(self.completer)
+        if self.final_data:
+            # Create a NEW completer per editor to avoid stacking signal connections
+            local_completer = QCompleter(self.final_data)
+            local_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            local_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+            local_completer.setMaxVisibleItems(10)
+            editor.setCompleter(local_completer)
+            local_completer.activated.connect(lambda val: self._commit_alias_search(row, editor))
+            
         self.table.setCellWidget(row, col, editor)
         editor.selectAll()
         editor.setFocus()
-        editor.returnPressed.connect(lambda: self.handle_editor_enter(row, editor))
         
-    def handle_editor_enter(self, row, editor):
+        # Track this editor
+        self._active_editor = (row, editor)
+        
+        editor.returnPressed.connect(lambda: self._commit_alias_search(row, editor))
+        
+    def _commit_alias_search(self, row, editor):
+        if not editor or not editor.parent():
+            return  # Already committed
+            
         Alias = editor.text().strip()
         self.table.removeCellWidget(row, 0)
         

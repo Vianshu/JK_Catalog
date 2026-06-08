@@ -159,7 +159,7 @@ QPushButton#CompanyDisplayBtn {
     padding: 10px 8px;
     border: none;
     border-bottom: 1px solid rgba(255,255,255,0.2);
-    margin-bottom: 8px;
+    margin-bottom: 2px;
     border-radius: 0px;
 }
 QPushButton#CompanyDisplayBtn:hover {
@@ -920,6 +920,10 @@ QProgressBar::chunk {
 }
 #CatalogReshuffleBtn:pressed {
     background-color: #7d3c98;
+}
+#CatalogReshuffleBtn:disabled {
+    background-color: #D1D5DB;
+    color: #9CA3AF;
 }
 
 /* --- 29. Final Data Side Panel (final_data.py) --- */

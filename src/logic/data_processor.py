@@ -250,7 +250,7 @@ class DataProcessor:
 # ============================================================================
 # MAIN PROCESSING UNIT
 # ============================================================================
-    def process_and_save_final_data(self):
+    def process_and_save_final_data(self, auto_commit=True):
         try:
             now_time = datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')
             conn = self.db.get_connection(self.db_name)
@@ -414,14 +414,15 @@ class DataProcessor:
                 """, updates)
                 logger.info(f"Processor: {len(updates)} of {len(row_data_list)} rows updated (batch)")
 
-            conn.commit()
+            if auto_commit:
+                conn.commit()
             return True
         except Exception as e:
             logger.error(f"Processor Error: {e}", exc_info=True)
             return False
     
 
-    def generate_complex_ids(self):
+    def generate_complex_ids(self, auto_commit=True):
         """Generate deterministic IDs encoding the full product hierarchy.
         
         Format: {MG}{SG}_{cluster}{item}_{variant}  →  XXXX_XXXX_XX
@@ -507,7 +508,8 @@ class DataProcessor:
                 )
                 logger.info(f"Complex IDs: {len(id_updates)} rows updated (batch)")
             
-            conn.commit()
+            if auto_commit:
+                conn.commit()
             return True
         except Exception as e:
             logger.error(f"Error generating IDs: {e}", exc_info=True)

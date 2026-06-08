@@ -99,6 +99,15 @@ class LedgerRowDataUI(QWidget):
 
             self.table.resizeColumnsToContents()
             
+            # Hide GUID column if present
+            guid_col = None
+            for i, h in enumerate(db_headers):
+                if h.upper() == "GUID":
+                    guid_col = i
+                    break
+            if guid_col is not None:
+                self.table.setColumnHidden(guid_col, True)
+            
         except Exception as e:
             self.show_error(f"Database Error: {str(e)}")
 

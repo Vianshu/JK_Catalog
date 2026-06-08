@@ -144,6 +144,7 @@ class SuperMasterUI(QWidget):
                 if not sub_group:
                     continue
                 # MERGE = SQL Server's upsert (replaces INSERT OR REPLACE)
+                cursor.setinputsizes([(pyodbc.SQL_WVARCHAR, 255)] * 10)
                 cursor.execute("""
                     MERGE super_master AS target
                     USING (SELECT ? AS Sub_Group) AS source
@@ -171,6 +172,7 @@ class SuperMasterUI(QWidget):
             sub_group = data[4]
             if not sub_group:
                 return
+            cursor.setinputsizes([(pyodbc.SQL_WVARCHAR, 255)] * 10)
             cursor.execute("""
                 MERGE super_master AS target
                 USING (SELECT ? AS Sub_Group) AS source
@@ -235,7 +237,7 @@ class SuperMasterUI(QWidget):
                 unique_subs = [r[0] for r in rows] if rows else []
 
             # Read saved super_master data
-            saved_rows = self.db.execute_query(self._super_db, "SELECT * FROM super_master")
+            saved_rows = self.db.execute_query(self._super_db, "SELECT id, MG_SN, Group_Name, SG_SN, Sub_Group FROM super_master")
             saved = {r[4]: r for r in saved_rows} if saved_rows else {}
 
             self.table.blockSignals(True)

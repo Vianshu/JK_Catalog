@@ -16,6 +16,11 @@ from src.utils.app_logger import get_logger
 logger = get_logger(__name__)
 
 
+class _SyncCancelled(Exception):
+    """Raised when user cancels the Final Data sync pipeline."""
+    pass
+
+
 class FinalDataSyncWorker(QThread):
     """Background worker for Final Data sync operations.
     Runs DB sync, processor, and image sync off the main thread."""
@@ -28,18 +33,45 @@ class FinalDataSyncWorker(QThread):
         self.ui = ui_ref
         self.folder_path = folder_path
         self.company_name = company_name
+        self._cancelled = False
+
+    def cancel(self):
+        """Signal the worker to stop at the next checkpoint."""
+        self._cancelled = True
+
+    def is_cancelled(self):
+        return self._cancelled
 
     def run(self):
         try:
             sync_label = self.ui._run_sync_pipeline(
-                self.folder_path, self.company_name, self.progress
+                self.folder_path, self.company_name, self.progress,
+                cancel_check=self.is_cancelled
             )
             self.finished.emit(sync_label)
+        except _SyncCancelled:
+            logger.info("Final Data sync pipeline cancelled — rolling back all changes")
+            self._rollback_connection()
+            self.finished.emit("cancelled")
         except Exception as e:
             logger.error(f"Sync Worker Error: {e}", exc_info=True)
+            self._rollback_connection()
             import traceback
             traceback.print_exc()
             self.error.emit(str(e))
+
+    def _rollback_connection(self):
+        """Rollback all uncommitted changes on the shared connection."""
+        try:
+            db = get_db_manager()
+            company_name = os.path.basename(self.folder_path)
+            final_db = build_logical_name(company_name, company_path=self.folder_path)
+            conn = db.get_connection(final_db)
+            if conn:
+                conn.rollback()
+                logger.info(f"Transaction rolled back for {final_db}")
+        except Exception as e:
+            logger.error(f"Rollback failed: {e}", exc_info=True)
 
 
 class RefreshWorker(QThread):
@@ -561,12 +593,11 @@ class FinalDataUI(QWidget):
             self.super_master_path = os.path.join(os.path.dirname(folder_path), "super_master.db")
 
             # 2. Show progress dialog and start background worker
-            self._sync_progress = QProgressDialog("Syncing Final Data...", None, 0, 0, self)
+            self._sync_progress = QProgressDialog("Syncing Final Data...", "Cancel", 0, 0, self)
             self._sync_progress.setWindowTitle("Processing")
             self._sync_progress.setWindowModality(Qt.WindowModality.WindowModal)
             self._sync_progress.setMinimumDuration(0)
             self._sync_progress.setMinimumWidth(320)
-            self._sync_progress.setCancelButton(None)
             self._sync_progress.show()
             QApplication.processEvents()
 
@@ -579,6 +610,7 @@ class FinalDataUI(QWidget):
             self._sync_worker.progress.connect(self._on_sync_progress)
             self._sync_worker.finished.connect(self._on_sync_finished)
             self._sync_worker.error.connect(self._on_sync_error)
+            self._sync_progress.canceled.connect(self._on_final_sync_cancel)
             self._sync_worker.start()
 
         except Exception as e:
@@ -645,15 +677,26 @@ class FinalDataUI(QWidget):
             logger.error(f"remap_from_super_master error: {e}", exc_info=True)
             return 0
 
-    def _run_sync_pipeline(self, folder_path, company_name, progress_signal):
+    def _on_final_sync_cancel(self):
+        """Handle cancel button click on Final Data sync progress."""
+        logger.info("Final Data sync cancelled by user")
+        if self._sync_worker:
+            self._sync_worker.cancel()
+
+    def _run_sync_pipeline(self, folder_path, company_name, progress_signal, cancel_check=None):
         """Heavy sync work — runs in background thread. No widget access allowed.
         Returns the sync label text string."""
         def emit(msg):
             if progress_signal:
                 progress_signal.emit(msg)
 
+        def check_cancelled():
+            if cancel_check and cancel_check():
+                raise _SyncCancelled()
+
         row_db_path = os.path.join(folder_path, "row_data.db")
 
+        check_cancelled()
         emit("Creating database tables...")
         # Ensure final_data DB exists
         company_name_from_path = os.path.basename(folder_path)
@@ -690,6 +733,7 @@ class FinalDataUI(QWidget):
         cur = final_conn.cursor()
 
         # Super Master Mapping
+        check_cancelled()
         emit("Reading Super Master data...")
         super_mapping = {}
         try:
@@ -705,6 +749,7 @@ class FinalDataUI(QWidget):
             logger.error(f"Super Master Read Error: {e}", exc_info=True)
 
         # Tally Data Fetch
+        check_cancelled()
         emit("Reading Tally data...")
         row_conn = db.get_connection(row_db)
         if not row_conn:
@@ -739,6 +784,7 @@ class FinalDataUI(QWidget):
         rows = row_cursor.execute(f"SELECT {select_cols} FROM stock_items").fetchall()
 
         # Delete items removed from Tally
+        check_cancelled()
         emit("Cleaning removed items...")
         tally_guids_set = {r[0] for r in rows}
         cur.execute("SELECT GUID FROM catalog")
@@ -773,6 +819,7 @@ class FinalDataUI(QWidget):
         insert_query = f"INSERT INTO catalog ({insert_cols}) VALUES ({insert_placeholders})"
 
         # Main sync loop — batch UPDATE and INSERT for speed
+        check_cancelled()
         emit(f"Syncing {len(rows)} items...")
         update_rows = []  # (Item_Name, Alias, Part_No, Category, Unit, MRP, Stock, MG_SN, Group, SG_SN, Sub_Group, Update_date, GUID)
         insert_rows = []  # full row tuples
@@ -846,18 +893,28 @@ class FinalDataUI(QWidget):
         if price_list_resets:
             cur.executemany("UPDATE catalog SET [True/False]='' WHERE GUID=?", price_list_resets)
 
-        final_conn.commit()
-
-        # Processor
+        # Processor — run WITHOUT auto-commit (shares same connection)
+        check_cancelled()
         emit("Processing product names...")
         processor = DataProcessor(final_db)
-        processor.process_and_save_final_data()
+        processor.process_and_save_final_data(auto_commit=False)
         emit("Generating complex IDs...")
-        processor.generate_complex_ids()
+        check_cancelled()
+        processor.generate_complex_ids(auto_commit=False)
 
         # Image Sync
+        check_cancelled()
         emit("Syncing images...")
         self.sync_images_after_processing()
+
+        # === SINGLE ATOMIC COMMIT ===
+        # Everything above runs in one uncommitted transaction.
+        # This single commit makes ALL changes visible at once.
+        # If cancelled at any checkpoint above, _SyncCancelled is raised
+        # and the except block in the worker does rollback().
+        check_cancelled()
+        final_conn.commit()
+        emit("Sync complete!")
 
         return sync_label
 
@@ -870,6 +927,13 @@ class FinalDataUI(QWidget):
         """Called on main thread when background sync completes."""
         if hasattr(self, '_sync_progress') and self._sync_progress:
             self._sync_progress.close()
+
+        # Handle cancellation
+        if sync_label == "cancelled":
+            logger.info("Final Data sync was cancelled — existing data preserved")
+            self._sync_worker = None
+            self.sync_complete.emit()
+            return
 
         self.sync_lbl.setText(sync_label)
 

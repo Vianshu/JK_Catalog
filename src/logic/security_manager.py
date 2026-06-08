@@ -828,6 +828,27 @@ class SecurityManager:
             conn.rollback()
             return False
 
+    def get_users_assigned_to_role(self, role_id):
+        """Return list of usernames assigned to this role.
+
+        Used before deletion so the admin can be warned exactly which
+        users will lose all permissions.
+        Returns list of username strings (empty list if none or error).
+        """
+        conn = self.db.get_connection(self._db_security)
+        if not conn:
+            return []
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT username FROM users WHERE role_id = ? AND is_active = 1",
+                (role_id,)
+            )
+            return [r[0] for r in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"get_users_assigned_to_role error: {e}")
+            return []
+
     def get_role_permissions(self, role_id):
         """Get permission keys for a role."""
         conn = self.db.get_connection(self._db_security)

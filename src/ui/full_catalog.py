@@ -102,8 +102,11 @@ class ZoomableGraphicsView(QGraphicsView):
             | QPainter.RenderHint.SmoothPixmapTransform
         )
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.setFrameShape(QFrame.Shape.NoFrame)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
     def wheelEvent(self, event):
         if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
@@ -1060,8 +1063,12 @@ class FullCatalogUI(QWidget):
         self.expanded_groups = {}
         self._load_index_data()
 
-        # Run engine silently on tab switch (detect changes + sort dirty ranges)
-        if self.logic.catalog_db_path:
+        # Run engine silently on tab switch — only if user has auto-build permission
+        # (falls back to allow when no session is set, i.e. admin/developer mode)
+        session = getattr(self, '_user_session', None)
+        can_auto_build = (session is None) or session.can("catalog.build_auto")
+
+        if self.logic.catalog_db_path and can_auto_build:
             try:
                 self.logic.engine_run(self.company_path)
             except Exception as e:
@@ -1072,6 +1079,7 @@ class FullCatalogUI(QWidget):
         if self._zoom_factor == 1.0 and self.renderer.page_w > 0:
             self.zoom_fit_page()
         super().showEvent(event)
+
 
     def _handle_print_preview_paint(self, printer):
         """Deprecated — handled by PrintExportDialog."""

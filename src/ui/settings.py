@@ -1,10 +1,11 @@
 import json
 import os
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QTableWidget, QTableWidgetItem, QMessageBox,
     QWidget, QFrame, QInputDialog, QScrollArea, QCheckBox, QGridLayout, QGroupBox
 )
+from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QColor
 
 class EmptyPagesDialog(QDialog):
@@ -303,235 +304,545 @@ class UserManagerDialog(QDialog):
 
 
 # --- Role / Security Manager Dialog ---
+# ─────────────────────────────────────────────────────────────────────────────
+# QComboBox that ignores scroll-wheel events (value only changes on click)
+# ─────────────────────────────────────────────────────────────────────────────
+from PyQt6.QtGui import QWheelEvent
+
+class NoScrollComboBox(QComboBox):
+    """QComboBox that ignores mouse-wheel events so accidental scrolling never
+    changes the selected permission.  Only explicit clicks work."""
+    def wheelEvent(self, event: QWheelEvent):
+        event.ignore()  # pass the scroll up to the parent scroll area
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main SecurityUI widget
+# ─────────────────────────────────────────────────────────────────────────────
 class SecurityUI(QWidget):
-    """Manage roles and permissions with a 4-column card layout (one per main tab)."""
+    """Role & permission manager — clean redesigned UI."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.mw = parent  # MainWindow reference
+
+        self.mw = parent
         self.company_name = getattr(parent, 'current_company', "") if parent else ""
         self.company_path = getattr(parent, 'current_company_path', "") if parent else ""
         self.roles = []
-        
         self.security = None
         self.setObjectName("SecurityUI")
-        
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(10)
-        
-        # --- Title ---
-        title = QLabel(f"<h3>🛡️ Security Roles — {self.company_name}</h3>")
-        title.setObjectName("SecurityTitle")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(title)
-        
-        # --- Role Selector Bar ---
-        details_frame = QFrame()
-        details_frame.setObjectName("SecurityDetailsFrame")
-        details_layout = QHBoxLayout(details_frame)
-        details_layout.setContentsMargins(12, 8, 12, 8)
-        
-        details_layout.addWidget(QLabel("Security Level:"))
-        
-        self.role_combo = QComboBox()
+
+        # Debounce timer for auto-save (300 ms after last change)
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.timeout.connect(self._do_auto_save)
+
+        # Status-clear timer
+        self._clear_timer = QTimer(self)
+        self._clear_timer.setSingleShot(True)
+        self._clear_timer.timeout.connect(self._clear_status)
+
+        # ── Root layout
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── Top header — page title only, clean white surface
+        header_frame = QFrame()
+        header_frame.setObjectName("SecurityHeaderBanner")
+        header_frame.setStyleSheet("""
+            #SecurityHeaderBanner {
+                background: #ffffff;
+                border-bottom: 1px solid #e2e8f0;
+                min-height: 60px; max-height: 60px;
+            }
+        """)
+        hdr_lay = QHBoxLayout(header_frame)
+        hdr_lay.setContentsMargins(24, 0, 24, 0)
+        hdr_lay.setSpacing(0)
+
+        title_block = QVBoxLayout()
+        title_block.setSpacing(2)
+        self._title_lbl = QLabel("Security & Permissions")
+        self._title_lbl.setObjectName("SecurityTitle")
+        self._title_lbl.setStyleSheet(
+            "color: #0f172a; font-size: 17px; font-weight: 700;"
+        )
+        self._sub_lbl = QLabel(self.company_name or "No company loaded")
+        self._sub_lbl.setStyleSheet(
+            "color: #94a3b8; font-size: 11px; font-weight: 400;"
+        )
+        title_block.addWidget(self._title_lbl)
+        title_block.addWidget(self._sub_lbl)
+        hdr_lay.addLayout(title_block)
+        hdr_lay.addStretch()
+
+        root.addWidget(header_frame)
+
+        # ── Role management bar — selector + actions in one grouped section
+        role_bar = QFrame()
+        role_bar.setObjectName("SecurityRoleBar")
+        role_bar.setStyleSheet("""
+            #SecurityRoleBar {
+                background: #f8fafc;
+                border-bottom: 1px solid #e2e8f0;
+                min-height: 56px; max-height: 56px;
+            }
+        """)
+        role_bar_lay = QHBoxLayout(role_bar)
+        role_bar_lay.setContentsMargins(24, 0, 24, 0)
+        role_bar_lay.setSpacing(10)
+
+        editing_lbl = QLabel("Editing role")
+        editing_lbl.setStyleSheet(
+            "color: #64748b; font-size: 12px; font-weight: 500;"
+        )
+        role_bar_lay.addWidget(editing_lbl)
+
+        self.role_combo = NoScrollComboBox()
+        self.role_combo.setObjectName("SecurityRoleCombo")
         self.role_combo.setMinimumWidth(200)
+        self.role_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.role_combo.setStyleSheet("""
+            QComboBox#SecurityRoleCombo {
+                background: #ffffff;
+                color: #0f172a;
+                border: 1.5px solid #cbd5e1;
+                border-radius: 6px;
+                padding: 5px 32px 5px 12px;
+                font-size: 13px;
+                font-weight: 600;
+                min-height: 32px;
+            }
+            QComboBox#SecurityRoleCombo:hover { border-color: #2563eb; }
+            QComboBox#SecurityRoleCombo::drop-down { border: none; width: 28px; }
+            QComboBox#SecurityRoleCombo::down-arrow {
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 5px solid #64748b;
+                width: 0; height: 0;
+                margin-right: 8px;
+            }
+            QComboBox#SecurityRoleCombo QAbstractItemView {
+                background: #ffffff; color: #0f172a;
+                border: 1px solid #e2e8f0;
+                padding: 4px;
+                selection-background-color: #eff6ff;
+                selection-color: #1d4ed8;
+                outline: none;
+            }
+        """)
         self.role_combo.currentIndexChanged.connect(self._on_role_selected)
-        details_layout.addWidget(self.role_combo)
-        
-        self.btn_new = QPushButton("➕ New")
+        role_bar_lay.addWidget(self.role_combo)
+
+        # Divider
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setStyleSheet("color: #e2e8f0;")
+        sep.setFixedHeight(24)
+        role_bar_lay.addWidget(sep)
+
+        self.btn_new = QPushButton("+ New Role")
         self.btn_new.setObjectName("SecurityNewBtn")
+        self.btn_new.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_new.setStyleSheet("""
+            QPushButton {
+                background: #2563eb; color: white; border: none;
+                border-radius: 6px; padding: 7px 16px;
+                font-size: 12px; font-weight: 600;
+                min-height: 32px;
+            }
+            QPushButton:hover { background: #1d4ed8; }
+            QPushButton:pressed { background: #1e40af; }
+        """)
         self.btn_new.clicked.connect(self._create_role)
-        details_layout.addWidget(self.btn_new)
-        
-        self.btn_del = QPushButton("🗑 Delete")
+        role_bar_lay.addWidget(self.btn_new)
+
+        self.btn_del = QPushButton("Delete Role")
         self.btn_del.setObjectName("SecurityDelBtn")
+        self.btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_del.setStyleSheet("""
+            QPushButton {
+                background: transparent; color: #ef4444;
+                border: 1px solid #fca5a5; border-radius: 6px;
+                padding: 7px 14px; font-size: 12px; font-weight: 500;
+                min-height: 32px;
+            }
+            QPushButton:hover { background: #fef2f2; border-color: #ef4444; }
+            QPushButton:pressed { background: #fee2e2; }
+            QPushButton:disabled { color: #94a3b8; border-color: #e2e8f0; }
+        """)
         self.btn_del.clicked.connect(self._delete_role)
-        details_layout.addWidget(self.btn_del)
-        
-        details_layout.addStretch()
-        layout.addWidget(details_frame)
-        
-        # --- Facility Groups (data — unchanged) ---
+        role_bar_lay.addWidget(self.btn_del)
+
+        role_bar_lay.addStretch()
+
+        # Auto-save status indicator — right side of role bar
+        self._status_lbl = QLabel("")
+        self._status_lbl.setObjectName("SecurityStatusLbl")
+        self._status_lbl.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        role_bar_lay.addWidget(self._status_lbl)
+
+        root.addWidget(role_bar)
+
+        # ── Facility groups data
         self.facility_combos = {}
         self.facility_groups = [
-            ("📁 Catalog", [
+            ("Catalog", [
                 ("Sync Tally",          ["tab.final_data"],     ["final_data.sync"]),
                 ("Super Master",        ["tab.super_master"],   ["super_master.edit"]),
                 ("Final Data",          ["tab.final_data"],     ["final_data.edit", "final_data.export"]),
                 ("Full Catalog (Tab)",  ["tab.catalog"],        []),
-                (" ↳ Build Button",     [],                     ["catalog.build"]),
-                (" ↳ Auto Build",       [],                     ["catalog.build_auto"]),
-                (" ↳ Print/Export",     [],                     ["catalog.print"]),
-                (" ↳ Reshuffle",        [],                     ["catalog.reshuffle"]),
-                (" ↳ Page Manage",      [],                     ["catalog.page_management"]),
+                (" \u21b3 Build Button",     [],                     ["catalog.build"]),
+                (" \u21b3 Auto Build",       [],                     ["catalog.build_auto"]),
+                (" \u21b3 Print / Export",   [],                     ["catalog.print"]),
+                (" \u21b3 Reshuffle",        [],                     ["catalog.reshuffle"]),
+                (" \u21b3 Page Manage",      [],                     ["catalog.page_management"]),
                 ("Reports",             ["tab.reports"],        ["reports.print", "reports.mark_done"]),
                 ("Catalog Price List",  ["tab.cat_price_list"], []),
             ]),
-            ("📊 Vat Working", [
-                ("Vat Balance",         ["tab.vat_balance"],    []),
-                ("Vat Stock",           ["tab.vat_stock"],      []),
+            ("Vat Working", [
+                ("Vat Balance",         ["tab.vat_balance"],    ["vat_balance.edit"]),
+                ("Vat Stock",           ["tab.vat_stock"],      ["vat_stock.edit"]),
             ]),
-            ("⚙️ Tally Internal", [
+            ("Tally Internal", [
                 ("Sync Ledger",         ["tab.ledger"],         ["ledger.sync"]),
                 ("Ledger Rows",         ["tab.ledger"],         []),
                 ("Row Data",            ["tab.row_data"],       []),
                 ("On Account",          ["tab.payment_list"],   []),
                 ("Cheque List",         ["tab.cheque_list"],    ["cheque_list.edit"]),
                 ("Godown List",         ["tab.godown"],         []),
-                ("Sales Chat",          ["tab.sales_chat"],     []),
-                ("Supplier Payment",    ["tab.supp_payment"],   []),
-                ("Price List",          ["tab.price_list"],     []),
+                ("Sales Chat",          ["tab.sales_chat"],     ["sales_chat.edit"]),
+                ("Supplier Payment",    ["tab.supp_payment"],   ["supp_payment.edit"]),
+                ("Price List",          ["tab.price_list"],     ["price_list.edit"]),
                 ("Purchase Import",     ["tab.pur_import"],     []),
                 ("Internal Cost Sheet", ["tab.int_cost_sheet"], []),
                 ("For Branch",          ["tab.for_branch"],     []),
             ]),
-            ("⚙️ Settings", [
+            ("Settings", [
                 ("Calendar",            ["tab.calendar"],       ["calendar.edit"]),
                 ("Admin / Users",       [],                     ["settings.manage_users", "settings.manage_roles",
                                                                  "settings.manage_crm", "settings.company_config",
                                                                  "settings.change_path"]),
             ]),
         ]
-        
-        # --- 4-Column Card Layout ---
-        self._build_perm_grid(layout)
-        
-        # --- Bottom Button Bar ---
-        btn_bar = QHBoxLayout()
-        btn_bar.addStretch()
-        save_btn = QPushButton("💾 Save Permissions")
-        save_btn.setObjectName("PrimaryActionButton")
-        save_btn.clicked.connect(self._save_role)
-        btn_bar.addWidget(save_btn)
-        close_btn = QPushButton("Cancel")
-        close_btn.setObjectName("SecondaryButton")
-        close_btn.clicked.connect(self._go_back)
-        btn_bar.addWidget(close_btn)
-        layout.addLayout(btn_bar)
-        
+
+        # ── Permission grid
+        self._build_perm_grid(root)
         self._load_roles()
 
+
     def _build_perm_grid(self, parent_layout):
-        """Build 4-column card layout — one column per main tab.
-        Each column has a master selector that sets all sub-facilities at once."""
-        from PyQt6.QtWidgets import QScrollArea
-        
-        columns_layout = QHBoxLayout()
-        columns_layout.setSpacing(10)
-        
-        # Track master combos per group for bulk set
-        self.master_combos = {}  # group_name → QComboBox
-        self.group_facility_names = {}  # group_name → [fac_name, ...]
-        
+        """Build 4 section cards side-by-side with clean, modern styling."""
+
+        self.master_combos = {}        # group_name → NoScrollComboBox
+        self.group_facility_names = {} # group_name → [fac_name, ...]
+
+        # ── Shared dropdown style: white bg, explicit affordance cues
+        combo_style = """
+            QComboBox {
+                background: #ffffff;
+                color: #1e293b;
+                border: 1px solid #e2e8f0;
+                border-radius: 5px;
+                padding: 4px 28px 4px 10px;
+                font-size: 12px;
+                font-weight: 500;
+                min-height: 28px;
+                min-width: 90px;
+            }
+            QComboBox:hover {
+                border-color: #2563eb;
+                background: #f8fafc;
+            }
+            QComboBox:focus {
+                border-color: #2563eb;
+                border-width: 1.5px;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 26px;
+                subcontrol-position: right center;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 5px solid #94a3b8;
+                width: 0; height: 0;
+            }
+            QComboBox QAbstractItemView {
+                background: #ffffff;
+                color: #1e293b;
+                border: 1px solid #e2e8f0;
+                border-radius: 6px;
+                padding: 4px 0;
+                selection-background-color: #eff6ff;
+                selection-color: #1d4ed8;
+                font-size: 12px;
+                outline: none;
+            }
+        """
+
+        master_combo_style = """
+            QComboBox {
+                background: #f1f5f9;
+                color: #374151;
+                border: 1px solid #e2e8f0;
+                border-radius: 5px;
+                padding: 4px 28px 4px 10px;
+                font-size: 11px;
+                font-weight: 600;
+                min-height: 28px;
+                min-width: 90px;
+            }
+            QComboBox:hover {
+                border-color: #2563eb;
+                background: #e8f0fe;
+            }
+            QComboBox::drop-down { border: none; width: 26px; }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 5px solid #94a3b8;
+                width: 0; height: 0;
+            }
+            QComboBox QAbstractItemView {
+                background: #ffffff;
+                color: #1e293b;
+                border: 1px solid #e2e8f0;
+                padding: 4px 0;
+                selection-background-color: #eff6ff;
+                selection-color: #1d4ed8;
+                font-size: 12px;
+                outline: none;
+            }
+        """
+
+        # ── Outer scroll area — light neutral canvas
+        outer_scroll = QScrollArea()
+        outer_scroll.setWidgetResizable(True)
+        outer_scroll.setObjectName("SecurityOuterScroll")
+        outer_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        outer_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        outer_scroll.setStyleSheet("""
+            QScrollArea#SecurityOuterScroll { background: #f1f5f9; border: none; }
+            QScrollBar:vertical {
+                background: transparent; width: 6px; margin: 4px 0;
+            }
+            QScrollBar::handle:vertical {
+                background: #cbd5e1; border-radius: 3px; min-height: 28px;
+            }
+            QScrollBar::handle:vertical:hover { background: #94a3b8; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        """)
+
+        outer_widget = QWidget()
+        outer_widget.setObjectName("SecurityOuterWidget")
+        outer_widget.setStyleSheet("#SecurityOuterWidget { background: #f1f5f9; }")
+        outer_lay = QHBoxLayout(outer_widget)
+        outer_lay.setContentsMargins(20, 20, 20, 20)
+        outer_lay.setSpacing(16)
+
         for group_name, items in self.facility_groups:
-            # --- Column Card Frame ---
+
+            # ── Card: white surface, subtle border, no heavy drop-shadow
             card = QFrame()
-            card.setObjectName("SecurityColumn")
-            card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(0, 0, 0, 0)
-            card_layout.setSpacing(0)
-            
-            # Header
-            header = QLabel(group_name)
-            header.setObjectName("SecurityColumnHeader")
-            header.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            card_layout.addWidget(header)
-            
-            # ── Master Selector ──
-            master_frame = QFrame()
-            master_frame.setObjectName("SecurityMasterRow")
-            master_frame.setStyleSheet("""
-                #SecurityMasterRow {
-                    background: #e8f0fe; border: 1px solid #c0d0e8;
-                    border-radius: 4px; margin: 4px 6px;
+            card.setObjectName("SecurityCard")
+            card.setStyleSheet("""
+                QFrame#SecurityCard {
+                    background: #ffffff;
+                    border-radius: 8px;
+                    border: 1px solid #e2e8f0;
                 }
             """)
-            master_lay = QHBoxLayout(master_frame)
-            master_lay.setContentsMargins(8, 4, 8, 4)
-            master_lay.setSpacing(6)
-            master_lbl = QLabel("🔒 Set All:")
-            master_lbl.setStyleSheet("font-weight: 600; font-size: 11px;")
-            master_lay.addWidget(master_lbl)
-            
-            master_combo = QComboBox()
-            master_combo.addItem("—", "mixed")
-            master_combo.addItem("None", "none")
-            master_combo.addItem("Display", "display")
-            master_combo.addItem("Full Access", "full")
-            master_combo.setObjectName("SecurityMasterCombo")
-            master_combo.setStyleSheet("font-weight: 600;")
-            master_lay.addWidget(master_combo, 1)
-            card_layout.addWidget(master_frame)
-            
-            self.master_combos[group_name] = master_combo
+            card_lay = QVBoxLayout(card)
+            card_lay.setContentsMargins(0, 0, 0, 0)
+            card_lay.setSpacing(0)
+
+            # ── Section header: light, with strong title and demoted count
+            header_frame = QFrame()
+            header_frame.setObjectName("SecurityCardHeader")
+            header_frame.setStyleSheet("""
+                QFrame#SecurityCardHeader {
+                    background: #f8fafc;
+                    border-radius: 8px 8px 0 0;
+                    border-bottom: 1px solid #e2e8f0;
+                    min-height: 48px; max-height: 48px;
+                }
+            """)
+            hdr_inner = QHBoxLayout(header_frame)
+            hdr_inner.setContentsMargins(16, 0, 12, 0)
+            hdr_inner.setSpacing(8)
+
+            # Left accent line for visual column separation
+            accent = QFrame()
+            accent.setFixedWidth(3)
+            accent.setFixedHeight(22)
+            accent.setStyleSheet(
+                "background: #2563eb; border-radius: 2px;"
+            )
+            hdr_inner.addWidget(accent)
+
+            # Group title — primary visual element
+            hdr_title = QLabel(group_name)
+            hdr_title.setStyleSheet(
+                "color: #0f172a; font-size: 13px; font-weight: 700;"
+            )
+            hdr_inner.addWidget(hdr_title)
+            hdr_inner.addStretch()
+
+            # Item count — secondary, subtle
+            count_lbl = QLabel(f"{len(items)} items")
+            count_lbl.setStyleSheet(
+                "color: #94a3b8; font-size: 10px; font-weight: 500;"
+            )
+            hdr_inner.addWidget(count_lbl)
+
+            card_lay.addWidget(header_frame)
+
+            # ── "Set All" master row — distinct from content rows
+            master_wrap = QFrame()
+            master_wrap.setObjectName("SecurityMasterWrap")
+            master_wrap.setStyleSheet("""
+                QFrame#SecurityMasterWrap {
+                    background: #f1f5f9;
+                    border-bottom: 1px solid #e2e8f0;
+                }
+            """)
+            master_inner = QHBoxLayout(master_wrap)
+            master_inner.setContentsMargins(16, 8, 12, 8)
+            master_inner.setSpacing(8)
+
+            set_all_lbl = QLabel("Set all to")
+            set_all_lbl.setStyleSheet(
+                "color: #64748b; font-size: 11px; font-weight: 500;"
+            )
+            master_inner.addWidget(set_all_lbl)
+            master_inner.addStretch()
+
+            master_cb = NoScrollComboBox()
+            master_cb.addItem("— Mixed", "mixed")
+            master_cb.addItem("None",    "none")
+            master_cb.addItem("Display", "display")
+            master_cb.addItem("Full",    "full")
+            master_cb.setStyleSheet(master_combo_style)
+            master_cb.setCursor(Qt.CursorShape.PointingHandCursor)
+            master_inner.addWidget(master_cb)
+            card_lay.addWidget(master_wrap)
+
+            self.master_combos[group_name] = master_cb
             fac_names_in_group = [fac_name for fac_name, _, _ in items]
             self.group_facility_names[group_name] = fac_names_in_group
-            
-            # Connect master combo — use closure to capture group_name
-            master_combo.currentIndexChanged.connect(
+
+            master_cb.currentIndexChanged.connect(
                 lambda idx, gn=group_name: self._on_master_changed(gn, idx)
             )
-            
-            # Scrollable content area for permission rows
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setObjectName("SecurityColumnScroll")
-            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            
-            content = QWidget()
-            content_layout = QVBoxLayout(content)
-            content_layout.setContentsMargins(10, 8, 10, 8)
-            content_layout.setSpacing(6)
-            
-            for fac_name, view_keys, edit_keys in items:
-                row_frame = QFrame()
-                row_frame.setObjectName("SecurityPermRow")
-                row_layout = QVBoxLayout(row_frame)
-                row_layout.setContentsMargins(8, 6, 8, 6)
-                row_layout.setSpacing(4)
-                
-                lbl = QLabel(fac_name)
-                lbl.setObjectName("SecurityPermLabel")
-                row_layout.addWidget(lbl)
-                
-                combo = QComboBox()
-                combo.addItem("None", "none")
+
+            # ── Permission rows
+            rows_widget = QWidget()
+            rows_widget.setObjectName("SecurityRowsWidget")
+            rows_widget.setStyleSheet(
+                "QWidget#SecurityRowsWidget { background: #ffffff; }"
+            )
+            rows_lay = QVBoxLayout(rows_widget)
+            rows_lay.setContentsMargins(0, 4, 0, 8)
+            rows_lay.setSpacing(0)
+
+            for idx_item, (fac_name, view_keys, edit_keys) in enumerate(items):
+                is_sub = fac_name.startswith(" ↳")
+                display_name = fac_name.strip()
+
+                row = QFrame()
+                row.setObjectName("SecurityPermRow")
+                # Alternating rows inside the white card
+                row_bg = "#f8fafc" if idx_item % 2 == 0 else "#ffffff"
+                row.setStyleSheet(f"""
+                    QFrame#SecurityPermRow {{
+                        background: {row_bg};
+                        border-bottom: 1px solid #f1f5f9;
+                    }}
+                    QFrame#SecurityPermRow:hover {{
+                        background: #eff6ff;
+                    }}
+                """)
+
+                row_inner = QHBoxLayout(row)
+                # Sub-rows get extra indentation
+                left_pad = 28 if is_sub else 16
+                row_inner.setContentsMargins(left_pad, 7, 12, 7)
+                row_inner.setSpacing(8)
+
+                # Sub-item indent indicator
+                if is_sub:
+                    pipe = QLabel("┊")
+                    pipe.setStyleSheet(
+                        "color: #cbd5e1; font-size: 14px; font-weight: 300;"
+                    )
+                    pipe.setFixedWidth(8)
+                    row_inner.addWidget(pipe)
+
+                # Permission label — clear hierarchy between parent and sub
+                name_lbl = QLabel(display_name)
+                if is_sub:
+                    name_lbl.setStyleSheet(
+                        "color: #64748b; font-size: 11.5px; font-weight: 400;"
+                    )
+                else:
+                    name_lbl.setStyleSheet(
+                        "color: #1e293b; font-size: 12px; font-weight: 600;"
+                    )
+                row_inner.addWidget(name_lbl)
+                row_inner.addStretch()
+
+                # Permission dropdown — consistent background with row
+                combo = NoScrollComboBox()
+                combo.addItem("None",    "none")
                 if view_keys:
                     combo.addItem("Display", "display")
                 if edit_keys:
-                    combo.addItem("Full Access", "full")
+                    combo.addItem("Full",    "full")
+                combo.setCursor(Qt.CursorShape.PointingHandCursor)
+                # Use same bg as row so there's no background clash
+                row_combo_style = combo_style.replace(
+                    "background: #ffffff;",
+                    f"background: {row_bg};"
+                )
+                combo.setStyleSheet(row_combo_style)
                 combo.setObjectName("SecurityPermCombo")
-                row_layout.addWidget(combo)
-                
-                # When sub-combo changes, update the master combo state
+
                 combo.currentIndexChanged.connect(
                     lambda idx, gn=group_name: self._update_master_state(gn)
                 )
-                
-                # Special logic: If this is the "Full Catalog (Tab)", auto-deny sub-items when set to None
+                combo.currentIndexChanged.connect(
+                    lambda idx: self._auto_save()
+                )
                 if fac_name == "Full Catalog (Tab)":
                     combo.currentIndexChanged.connect(self._on_catalog_tab_changed)
-                
+
                 self.facility_combos[fac_name] = combo
-                content_layout.addWidget(row_frame)
-            
-            content_layout.addStretch()
-            scroll.setWidget(content)
-            card_layout.addWidget(scroll, 1)
-            
-            columns_layout.addWidget(card, 1)
-        
-        parent_layout.addLayout(columns_layout, 1)
+                row_inner.addWidget(combo)
+                rows_lay.addWidget(row)
+
+            rows_lay.addStretch()
+            card_lay.addWidget(rows_widget, 1)
+            outer_lay.addWidget(card, 1)
+
+        outer_scroll.setWidget(outer_widget)
+        parent_layout.addWidget(outer_scroll, 1)
+
 
     def _on_master_changed(self, group_name, index):
-        """When master combo changes, set all sub-combos in this group."""
-        master_combo = self.master_combos.get(group_name)
-        if not master_combo:
+        """When 'Set All' master dropdown changes, apply to all rows then auto-save."""
+        master_cb = self.master_combos.get(group_name)
+        if not master_cb:
             return
-        level = master_combo.currentData()
+        level = master_cb.currentData()
         if level == "mixed":
-            return  # '—' is just a display state, not a user action
-        
+            return  # not a user action
         fac_names = self.group_facility_names.get(group_name, [])
         for fac_name in fac_names:
             combo = self.facility_combos.get(fac_name)
@@ -543,26 +854,24 @@ class SecurityUI(QWidget):
                 combo.setCurrentIndex(idx)
                 combo.blockSignals(False)
             elif level == "full":
-                # Some combos don't have "Full Access" — set to highest available
-                best = combo.count() - 1
                 combo.blockSignals(True)
-                combo.setCurrentIndex(best)
+                combo.setCurrentIndex(combo.count() - 1)
                 combo.blockSignals(False)
             elif level == "display":
-                # Some combos don't have "Display" — set to None
                 idx_none = combo.findData("none")
                 if idx_none >= 0:
                     combo.blockSignals(True)
                     combo.setCurrentIndex(idx_none)
                     combo.blockSignals(False)
+        self._auto_save()
 
     def _on_catalog_tab_changed(self, index):
-        """If Full Catalog (Tab) is set to None, auto-set all its sub-buttons to None."""
+        """If Full Catalog (Tab) is set to None, cascade to sub-items."""
         tab_combo = self.facility_combos.get("Full Catalog (Tab)")
         if not tab_combo or tab_combo.currentData() != "none":
             return
-            
-        sub_items = [" ↳ Build Button", " ↳ Auto Build", " ↳ Print/Export", " ↳ Reshuffle", " ↳ Page Manage"]
+        sub_items = [" \u21b3 Build Button", " \u21b3 Auto Build",
+                     " \u21b3 Print / Export", " \u21b3 Reshuffle", " \u21b3 Page Manage"]
         for sub in sub_items:
             combo = self.facility_combos.get(sub)
             if combo:
@@ -571,34 +880,28 @@ class SecurityUI(QWidget):
                     combo.blockSignals(True)
                     combo.setCurrentIndex(idx)
                     combo.blockSignals(False)
-                    # Trigger visual update if needed
-                    combo.repaint()
 
     def _update_master_state(self, group_name):
-        """Update the master combo to reflect current sub-combo states.
-        Shows '—' (mixed) if sub-combos differ, otherwise shows the common value."""
-        master_combo = self.master_combos.get(group_name)
-        if not master_combo:
+        """Reflect current sub-row states back onto the 'Set All' master dropdown."""
+        master_cb = self.master_combos.get(group_name)
+        if not master_cb:
             return
         fac_names = self.group_facility_names.get(group_name, [])
-        
+
         levels = set()
         for fac_name in fac_names:
             combo = self.facility_combos.get(fac_name)
             if combo:
                 levels.add(combo.currentData())
-        
-        master_combo.blockSignals(True)
+
+        master_cb.blockSignals(True)
         if len(levels) == 1:
-            common = levels.pop()
-            idx = master_combo.findData(common)
-            if idx >= 0:
-                master_combo.setCurrentIndex(idx)
-            else:
-                master_combo.setCurrentIndex(0)  # '—'
+            idx = master_cb.findData(levels.pop())
+            master_cb.setCurrentIndex(idx if idx >= 0 else 0)
         else:
-            master_combo.setCurrentIndex(0)  # '—' (mixed)
-        master_combo.blockSignals(False)
+            master_cb.setCurrentIndex(0)  # — Mixed
+        master_cb.blockSignals(False)
+
 
     def _flat_facilities(self):
         """Flatten grouped facilities into a single list for iteration."""
@@ -612,19 +915,18 @@ class SecurityUI(QWidget):
         if not self.mw: return
         self.company_name = getattr(self.mw, 'current_company', "")
         self.company_path = getattr(self.mw, 'current_company_path', "")
-        
+
         from src.logic.security_manager import SecurityManager
         data_path = os.path.dirname(self.company_path) if self.company_path else ""
         try:
             self.security = SecurityManager(data_path)
         except Exception:
             self.security = None
-            
-        # Update title
-        title_lbl = self.findChild(QLabel, "SecurityTitle")
-        if title_lbl:
-            title_lbl.setText(f"<h3>🛡️ Security Roles — {self.company_name}</h3>")
-            
+
+        # Update subtitle label
+        if hasattr(self, '_sub_lbl'):
+            self._sub_lbl.setText(self.company_name or "No company loaded")
+
         self._load_roles()
 
     def _go_back(self):
@@ -659,62 +961,92 @@ class SecurityUI(QWidget):
         perms = self.security.get_role_permissions(rid)
         
         for fac_name, view_keys, edit_keys in self._flat_facilities():
-            combo = self.facility_combos.get(fac_name)
-            if not combo: continue
-            
-            combo.blockSignals(True)
-            # Determine state based on keys
+            sel = self.facility_combos.get(fac_name)
+            if not sel: continue
+
             has_view = any(k in perms for k in view_keys) if view_keys else False
             has_edit = any(k in perms for k in edit_keys) if edit_keys else False
-            
-            # Edge case for Settings / Admin (no view keys)
+
             if not view_keys:
-                if has_edit:
-                    idx = combo.findData("full")
-                else:
-                    idx = combo.findData("none")
+                value = "full" if has_edit else "none"
             else:
                 if has_edit and has_view:
-                    idx = combo.findData("full")
+                    value = "full"
                 elif has_view:
-                    idx = combo.findData("display")
+                    value = "display"
                 else:
-                    idx = combo.findData("none")
-                    
+                    value = "none"
+
+            idx = sel.findData(value)
             if idx >= 0:
-                combo.setCurrentIndex(idx)
-            combo.blockSignals(False)
-        
-        # Update all master combos to reflect loaded state
+                sel.blockSignals(True)
+                sel.setCurrentIndex(idx)
+                sel.blockSignals(False)
+
         for group_name in self.master_combos:
             self._update_master_state(group_name)
 
+
     def _save_role(self):
+        """Direct save — also used as the auto-save backend."""
         rid = self.role_combo.currentData()
-        if not rid:
-            return
+        if not rid or not self.security:
+            return False
         selected = []
         for fac_name, view_keys, edit_keys in self._flat_facilities():
             combo = self.facility_combos.get(fac_name)
             if not combo: continue
-            
             level = combo.currentData()
             if level == "display":
                 selected.extend(view_keys)
             elif level == "full":
                 selected.extend(view_keys)
                 selected.extend(edit_keys)
-                
-        # Remove duplicates
         selected = list(set(selected))
-        
-        desc = "" # Description removed from UI
-        if self.security.update_role(rid, description=desc, permission_keys=selected):
-            if hasattr(self.mw, "refresh_user_permissions"):
-                self.mw.refresh_user_permissions()
-            QMessageBox.information(self, "Saved", f"Updated with {len(selected)} permissions.")
-        else:
-            QMessageBox.warning(self, "Error", "Save failed.")
+        desc = ""
+        ok = self.security.update_role(rid, description=desc, permission_keys=selected)
+        if ok and hasattr(self.mw, "refresh_user_permissions"):
+            self.mw.refresh_user_permissions()
+        return ok
+
+    # ── Auto-save machinery ─────────────────────────────────────────────────
+
+    def _auto_save(self):
+        """Schedule a save 300 ms after the last change (debounced)."""
+        self._save_timer.stop()
+        self._set_save_status("saving")
+        self._save_timer.start(300)
+
+    def _do_auto_save(self):
+        """Execute the actual save and update the status indicator."""
+        ok = self._save_role()
+        self._set_save_status("saved" if ok else "error")
+
+    def _set_save_status(self, state: str):
+        """Update the inline status label in the role bar."""
+        self._clear_timer.stop()
+        if state == "saving":
+            self._status_lbl.setText("Saving\u2026")
+            self._status_lbl.setStyleSheet(
+                "color: #94a3b8; font-size: 11px;"
+            )
+        elif state == "saved":
+            self._status_lbl.setText("\u2713 Saved just now")
+            self._status_lbl.setStyleSheet(
+                "color: #16a34a; font-size: 11px; font-weight: 500;"
+            )
+            self._clear_timer.start(2500)
+        elif state == "error":
+            self._status_lbl.setText("\u2715 Failed to save")
+            self._status_lbl.setStyleSheet(
+                "color: #dc2626; font-size: 11px; font-weight: 500;"
+            )
+            self._clear_timer.start(4000)
+
+    def _clear_status(self):
+        self._status_lbl.setText("")
+
+
 
     def _create_role(self):
         name, ok = QInputDialog.getText(self, "New Role", "Role name:")
@@ -734,8 +1066,37 @@ class SecurityUI(QWidget):
     def _delete_role(self):
         rid = self.role_combo.currentData()
         rname = self.role_combo.currentText()
-        if rid and QMessageBox.question(self, "Delete", f"Delete '{rname}'?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+        if not rid or not self.security:
+            return
+
+        # Check which active users are assigned to this role
+        affected = self.security.get_users_assigned_to_role(rid)
+
+        if affected:
+            user_list = "\n".join(f"  • {u}" for u in affected)
+            msg = (
+                f"The role '{rname}' is currently assigned to "
+                f"{len(affected)} user(s):\n\n"
+                f"{user_list}\n\n"
+                f"Deleting this role will remove all their permissions immediately.\n"
+                f"They will lose access to all tabs until a new role is assigned.\n\n"
+                f"Are you sure you want to delete '{rname}'?"
+            )
+            btn = QMessageBox.warning(
+                self, "Delete Role — Users Affected",
+                msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,   # default to No (safer)
+            )
+        else:
+            btn = QMessageBox.question(
+                self, "Delete Role",
+                f"Delete '{rname}'? This cannot be undone.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+
+        if btn == QMessageBox.StandardButton.Yes:
             if self.security.delete_role(rid):
                 self._load_roles()
             else:
