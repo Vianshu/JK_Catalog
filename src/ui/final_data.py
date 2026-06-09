@@ -25,7 +25,7 @@ class FinalDataSyncWorker(QThread):
     """Background worker for Final Data sync operations.
     Runs DB sync, processor, and image sync off the main thread."""
     progress = pyqtSignal(str)
-    finished = pyqtSignal(str)  # sync_label text
+    finished = pyqtSignal(str, object)  # (sync_label, dup_map)
     error = pyqtSignal(str)
 
     def __init__(self, ui_ref, folder_path, company_name):
@@ -44,15 +44,15 @@ class FinalDataSyncWorker(QThread):
 
     def run(self):
         try:
-            sync_label = self.ui._run_sync_pipeline(
+            sync_label, dup_map = self.ui._run_sync_pipeline(
                 self.folder_path, self.company_name, self.progress,
                 cancel_check=self.is_cancelled
             )
-            self.finished.emit(sync_label)
+            self.finished.emit(sync_label, dup_map)
         except _SyncCancelled:
             logger.info("Final Data sync pipeline cancelled — rolling back all changes")
             self._rollback_connection()
-            self.finished.emit("cancelled")
+            self.finished.emit("cancelled", {})
         except Exception as e:
             logger.error(f"Sync Worker Error: {e}", exc_info=True)
             self._rollback_connection()
@@ -95,6 +95,16 @@ class RefreshWorker(QThread):
                 self.error.emit("Cannot connect to DB")
                 return
             cursor = conn.cursor()
+
+            # Guard: catalog table may not exist if Tally sync has never been run
+            cursor.execute(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'catalog'"
+            )
+            if cursor.fetchone()[0] == 0:
+                # No data yet — emit empty result, not an error
+                self.finished.emit([], [], [])
+                return
+
             cursor.execute("SELECT * FROM catalog")
             data = cursor.fetchall()
 
@@ -755,6 +765,14 @@ class FinalDataUI(QWidget):
         if not row_conn:
             return "Last Sync: Error - Cannot connect to RowData DB"
         row_cursor = row_conn.cursor()
+
+        # Guard: stock_items table may not exist if Tally sync has never been run
+        row_cursor.execute(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'stock_items'"
+        )
+        if row_cursor.fetchone()[0] == 0:
+            return "Last Sync: No Tally data yet — run \"Sync Tally\" first"
+
         # Detect actual column names using INFORMATION_SCHEMA
         row_cursor.execute("""
             SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
@@ -905,7 +923,7 @@ class FinalDataUI(QWidget):
         # Image Sync
         check_cancelled()
         emit("Syncing images...")
-        self.sync_images_after_processing()
+        dup_map = self.sync_images_after_processing()
 
         # === SINGLE ATOMIC COMMIT ===
         # Everything above runs in one uncommitted transaction.
@@ -916,14 +934,14 @@ class FinalDataUI(QWidget):
         final_conn.commit()
         emit("Sync complete!")
 
-        return sync_label
+        return sync_label, (dup_map or {})
 
     def _on_sync_progress(self, msg):
         """Update progress dialog label from worker signal."""
         if hasattr(self, '_sync_progress') and self._sync_progress:
             self._sync_progress.setLabelText(msg)
 
-    def _on_sync_finished(self, sync_label):
+    def _on_sync_finished(self, sync_label, dup_map):
         """Called on main thread when background sync completes."""
         if hasattr(self, '_sync_progress') and self._sync_progress:
             self._sync_progress.close()
@@ -934,6 +952,9 @@ class FinalDataUI(QWidget):
             self._sync_worker = None
             self.sync_complete.emit()
             return
+
+        # Set duplicate image map on main thread (safe for show_preview to read)
+        self._duplicate_images = dup_map
 
         self.sync_lbl.setText(sync_label)
 
@@ -957,13 +978,17 @@ class FinalDataUI(QWidget):
         self.sync_complete.emit()
             
     def sync_images_after_processing(self):
-        # Processor ke kaam ke baad image paths update karne ke liye
+        """Syncs image paths to catalog after processing.
+        Returns dup_map so the caller can set self._duplicate_images
+        on the main thread (avoids cross-thread write to a UI attribute)."""
         try:
             conn = self.db.get_connection(self.final_db_name)
             if not conn:
-                return
+                return {}
             img_map, dup_map = self.get_image_mapping()
-            self._duplicate_images = dup_map  # Store for UI warnings
+            # NOTE: Do NOT write self._duplicate_images here — this method
+            # is called from the background thread. The caller (_on_sync_finished)
+            # sets self._duplicate_images on the main thread using the returned value.
             cursor = conn.cursor()
             cursor.execute("SELECT GUID, Image_Name FROM catalog")
             for rid, img_name in cursor.fetchall():
@@ -981,8 +1006,10 @@ class FinalDataUI(QWidget):
             
             # After image sync, update True/False values
             self.sync_true_false_values()
+            return dup_map
         except Exception as e:
             logger.error(f"Image Sync Error: {e}", exc_info=True)
+            return {}
     
     def sync_true_false_values(self):
         """
@@ -1103,10 +1130,20 @@ class FinalDataUI(QWidget):
     def _on_refresh_data_ready(self, final_display_data, right_align_indices, col_indices):
         """Populate table from pre-sorted data (runs on main thread, fast)."""
         try:
+            # No Tally data yet — table doesn't exist, show empty grid cleanly
+            if not col_indices:
+                self.table.setRowCount(0)
+                self.table.blockSignals(False)
+                self.table.setSortingEnabled(True)
+                self._refresh_worker = None
+                self.sync_lbl.setText("Last Sync: No data — run Sync Tally first")
+                return
+
             grp_idx, path_idx = col_indices
 
             # Pre-allocate all rows at once (single layout recalc instead of N)
             self.table.setRowCount(len(final_display_data))
+
 
             for r_idx, r_val in enumerate(final_display_data):
                 

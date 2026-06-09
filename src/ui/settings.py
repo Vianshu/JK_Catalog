@@ -523,6 +523,8 @@ class SecurityUI(QWidget):
             ]),
             ("Settings", [
                 ("Calendar",            ["tab.calendar"],       ["calendar.edit"]),
+                ("Export Data",         [],                     ["data.export"]),
+                ("Import Data",         [],                     ["data.import"]),
                 ("Admin / Users",       [],                     ["settings.manage_users", "settings.manage_roles",
                                                                  "settings.manage_crm", "settings.company_config",
                                                                  "settings.change_path"]),
@@ -1179,7 +1181,10 @@ class AuditLogDialog(QDialog):
         if not cid:
             return
         
-        conn = self.security.db.get_connection('JK_Security')
+        from src.logic.db_manager import build_shared_db_name, DB_SECURITY
+        data_path = os.path.dirname(self.company_path) if self.company_path else ""
+        sec_db = build_shared_db_name(DB_SECURITY, data_path) if data_path else DB_SECURITY
+        conn = self.security.db.get_connection(sec_db)
         if not conn:
             return
         try:

@@ -169,7 +169,47 @@ class MainWindow(QWidget):
         """Update window boundaries if user changes taskbar settings mid-session."""
         if not self.isMinimized():
             self.maximize_window()
-    
+
+    def showEvent(self, event):
+        """Called once when the window is first shown — set a sensible minimum size
+        based on the actual available screen geometry so the app never starts
+        partially off-screen on small / low-resolution displays."""
+        super().showEvent(event)
+        screen = QApplication.primaryScreen()
+        if screen:
+            avail = screen.availableGeometry()
+            # Minimum: 70% of available width × 65% of available height, floored
+            # at a safe baseline (800 × 550) so tiny VM screens are also fine.
+            min_w = max(800, int(avail.width() * 0.70))
+            min_h = max(550, int(avail.height() * 0.65))
+            self.setMinimumSize(min_w, min_h)
+
+    def changeEvent(self, event):
+        """Detect when the window moves to a different monitor and update the
+        sidebar width to match the new screen's DPI."""
+        from PyQt6.QtCore import QEvent as _QEvent
+        super().changeEvent(event)
+        if event.type() == _QEvent.Type.WindowStateChange:
+            return
+        # WindowScreenChange fires when the window is dragged to another monitor
+        try:
+            from PyQt6.QtGui import QScreen  # noqa: F401
+            if event.type() == _QEvent.Type.ScreenChangeInternal:
+                self._recalc_sidebar_width()
+        except Exception:
+            pass  # Non-critical — only affects multi-monitor DPI scenarios
+
+    def _recalc_sidebar_width(self):
+        """Recalculate and apply a DPI-aware sidebar width for the current screen."""
+        if not hasattr(self, 'sidebar'):
+            return
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen:
+            dpi = screen.logicalDotsPerInch()
+            new_width = max(170, int(185 * dpi / 96))
+            new_width = min(new_width, 260)
+            self.sidebar.setFixedWidth(new_width)
+
     def toggle_hotkey_hints(self, visible):
         """Show/Hide hotkey highlights on current menu."""
         current_page = self.nav_stack.currentWidget()
@@ -245,7 +285,18 @@ class MainWindow(QWidget):
         # ========== LEFT SIDEBAR ==========
         self.sidebar = QFrame()
         self.sidebar.setObjectName("MainSidebar")
-        self.sidebar.setFixedWidth(180)
+        
+        # --- DPI-aware sidebar width ---
+        # Use the primary screen's logical DPI to scale the sidebar width.
+        # At 96 dpi (100% scale) → 185px; at 120 dpi (125%) → ~231px, etc.
+        screen = QApplication.primaryScreen()
+        base_width = 185
+        if screen:
+            dpi = screen.logicalDotsPerInch()
+            base_width = max(170, int(185 * dpi / 96))
+            # Cap at 260 so it never eats too much space on 4K displays
+            base_width = min(base_width, 260)
+        self.sidebar.setFixedWidth(base_width)
         
         sidebar_layout = QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(10, 20, 10, 10)
@@ -258,28 +309,18 @@ class MainWindow(QWidget):
         self.company_btn.hide()
         sidebar_layout.addWidget(self.company_btn)
 
-        # Menu Navigation Stack — wrapped in invisible scrollbar
+        # Menu Navigation Stack — each page manages its own scrollbar
         self.nav_stack = QStackedWidget()
         self.nav_stack.setObjectName("NavStack")
-        
-        # 0: Empty, 1: Main, 2: Catalog, 3: Settings, 4: Tally, 5: Vat, 6: Branch
-        self.init_nav_menus()
-        
-        # Wrap nav_stack in a QScrollArea so menus scroll instead of clipping
-        from PyQt6.QtWidgets import QScrollArea
-        nav_scroll = QScrollArea()
-        nav_scroll.setWidget(self.nav_stack)
-        nav_scroll.setWidgetResizable(True)
-        nav_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        nav_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # Make scroll area + viewport fully transparent to blend with teal sidebar
-        nav_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-        nav_scroll.viewport().setStyleSheet("background: transparent;")
-        nav_scroll.viewport().setAutoFillBackground(False)
         self.nav_stack.setStyleSheet("background: transparent;")
         
-        sidebar_layout.addWidget(nav_scroll, 1)  # stretch factor 1 to fill space
+        # 0: Empty, 1: Main, 2: Catalog, 3: Settings, 4: Tally, 5: Vat, 6: Branch
+        # NOTE: create_menu_widget wraps each page in its own QScrollArea so that
+        # only the overflowing menu (e.g. Tally Internal) shows a scrollbar.
+        self.init_nav_menus()
+        
+        # Add nav_stack directly — no outer scroll wrapper needed
+        sidebar_layout.addWidget(self.nav_stack, 1)  # stretch factor 1 to fill space
 
         # Quit Hint
         quit_lbl = QLabel("Press Ctrl+Q to Quit")
@@ -318,7 +359,7 @@ class MainWindow(QWidget):
             ("⚙️ &Tally Internal", self.show_tally_internal_submenu, False, None, "tab.ledger"),
             ("⚙️ &Settings", self.show_settings_submenu)
         ])
-        m_main.layout().setSpacing(5)  # Slightly more breathing room for main nav
+        m_main.setObjectName("MainMenuScroll")  # Slightly more breathing room for main nav
         self.nav_stack.addWidget(m_main)
 
         # Index 2: Catalog Menu (permission keys for access control)
@@ -517,47 +558,98 @@ class MainWindow(QWidget):
         self.security_page = SecurityUI(self)
         self.main_stack.addWidget(self.security_page) # Index 18
     # --- Helper UI Functions ---
+
+    # Shared teal-themed scrollbar style for all per-menu QScrollAreas
+    _SIDEBAR_SCROLL_STYLE = """
+        QScrollArea { background: transparent; border: none; }
+        QScrollArea > QWidget > QScrollBar:vertical {
+            background: rgba(255,255,255,0.08);
+            width: 6px;
+            border: none;
+            border-radius: 3px;
+            margin: 0px;
+        }
+        QScrollArea > QWidget > QScrollBar::handle:vertical {
+            background: rgba(255,255,255,0.45);
+            min-height: 24px;
+            border-radius: 3px;
+        }
+        QScrollArea > QWidget > QScrollBar::handle:vertical:hover {
+            background: rgba(255,255,255,0.70);
+        }
+        QScrollArea > QWidget > QScrollBar::add-line:vertical,
+        QScrollArea > QWidget > QScrollBar::sub-line:vertical { height: 0; }
+        QScrollArea > QWidget > QScrollBar::add-page:vertical,
+        QScrollArea > QWidget > QScrollBar::sub-page:vertical { background: none; }
+    """
+
     def create_menu_widget(self, buttons_data):
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
+        """Build a menu page and wrap it in its own QScrollArea.
+
+        Each page has an independent scroll area so the scrollbar appears
+        ONLY on the specific menu that overflows the sidebar height (e.g.
+        Tally Internal with 12 entries). Short menus (Main, Vat) never
+        show a scrollbar because their content fits comfortably.
+        """
+        from PyQt6.QtWidgets import QScrollArea
+
+        # Inner widget holds the actual buttons
+        inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(inner)
         layout.setContentsMargins(5, 10, 5, 10)
         layout.setSpacing(4)
-        
+
         for data in buttons_data:
             text = data[0]
             func = data[1]
             is_back = data[2] if len(data) > 2 else False
             custom_key = data[3] if len(data) > 3 else None
             perm_key = data[4] if len(data) > 4 else None
-            
+
             # --- Shortcut Logic (Custom Keys only) ---
             sc = None
             if custom_key:
-                 sc = QShortcut(QKeySequence(custom_key), self)
-                 
+                sc = QShortcut(QKeySequence(custom_key), self)
+
             # --- Create Custom Menu Widget ---
-            # Append custom key to text for display
             display_text = text
-            if custom_key: 
-                 display_text = f"{text} ({custom_key})"
-                 
+            if custom_key:
+                display_text = f"{text} ({custom_key})"
+
             btn = MenuButtonWidget(display_text, is_back)
-            
+
             # Store permission key on the button for later enforcement
             if perm_key:
                 btn.setProperty("permission_key", perm_key)
-            
+
             if func:
                 btn.clicked.connect(lambda checked=False, b=btn: self.set_active_menu_btn(b))
                 btn.clicked.connect(func)
-                
+
             if sc:
-                 sc.activated.connect(lambda w=widget, b=btn: self.safe_trigger_menu(w, b))
+                sc.activated.connect(lambda w=inner, b=btn: self.safe_trigger_menu(w, b))
 
             layout.addWidget(btn)
-        
+
         layout.addStretch()
-        return widget
+
+        # Wrap the inner widget in a per-page QScrollArea.
+        # ScrollBarAsNeeded means the scrollbar is invisible when all items
+        # fit, and appears automatically only when they overflow.
+        scroll = QScrollArea()
+        scroll.setWidget(inner)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setStyleSheet(self._SIDEBAR_SCROLL_STYLE)
+        scroll.viewport().setStyleSheet("background: transparent;")
+        scroll.viewport().setAutoFillBackground(False)
+
+        # Expose the inner widget so findChildren(MenuButtonWidget) still works
+        # on the scroll area (Qt searches child widgets recursively).
+        return scroll
 
     def safe_trigger_menu(self, parent_widget, btn):
         """Global trigger for main menu hotkeys (Context Sensitive)"""
