@@ -250,7 +250,7 @@ class DataProcessor:
 # ============================================================================
 # MAIN PROCESSING UNIT
 # ============================================================================
-    def process_and_save_final_data(self, auto_commit=True):
+    def process_and_save_final_data(self, auto_commit=True, cancel_check=None):
         try:
             now_time = datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')
             conn = self.db.get_connection(self.db_name)
@@ -260,15 +260,18 @@ class DataProcessor:
             cursor = conn.cursor()
             
             # Sabse pehle processing ke liye data uthayein
-            cursor.execute('SELECT GUID, Alias, Unit, Item_Name, [Product Name], Product_Size FROM catalog ORDER BY MG_SN ASC, SG_SN ASC, GUID ASC')
+            cursor.execute('SELECT GUID, Alias, Unit, Item_Name, [Product Name], Product_Size, Image_Name, MOQ, M_Packing FROM catalog ORDER BY MG_SN ASC, SG_SN ASC, GUID ASC')
             rows = cursor.fetchall()
+            
+            if cancel_check and cancel_check():
+                raise InterruptedError("Cancelled during process_and_save")
             
             row_data_list = []
             base_names_for_counting = []
             suffix_tracker = {} 
 
             # --- स्टेप 1: डेटा कलेक्ट करना और सफ़िक्स ग्रुपिंग ---
-            for row_id, alias, unit, item_name, p_name_db, p_size_db in rows:
+            for row_id, alias, unit, item_name, p_name_db, p_size_db, img_db, moq_db, pack_db in rows:
                 safe_alias = alias if alias else ""
                 original_text = safe_alias if safe_alias.strip() else item_name
                 
@@ -300,7 +303,8 @@ class DataProcessor:
                     'product_size': p_size,
                     'core_name': core_name,
                     'suffix': suffix,
-                    'original_text': original_text
+                    'original_text': original_text,
+                    'old_values': (str(p_name_db), str(p_size_db), str(img_db), str(moq_db), str(pack_db))
                 })
                 
                 if base_name:
@@ -379,18 +383,14 @@ class DataProcessor:
                 info['moq'] = moq
                 info['m_packing'] = m_packing
 
-            # --- Batch read: fetch ALL existing values in one query ---
-            cursor.execute('SELECT GUID, [Product Name], Product_Size, Image_Name, MOQ, M_Packing FROM catalog')
-            old_data_map = {}
-            for row in cursor.fetchall():
-                old_data_map[row[0]] = (str(row[1]), str(row[2]), str(row[3]), str(row[4]), str(row[5]))
-
             # --- Diff in memory and collect updates ---
+            if cancel_check and cancel_check():
+                raise InterruptedError("Cancelled during process_and_save")
             updates = []
             for info in row_data_list:
                 new_v = (str(info['product_name']), str(info['product_size']),
                          str(info['image_name']), str(info['moq']), str(info['m_packing']))
-                old_v = old_data_map.get(info['row_id'])
+                old_v = info['old_values']
 
                 if new_v != old_v:
                     updates.append((
@@ -422,7 +422,7 @@ class DataProcessor:
             return False
     
 
-    def generate_complex_ids(self, auto_commit=True):
+    def generate_complex_ids(self, auto_commit=True, cancel_check=None):
         """Generate deterministic IDs encoding the full product hierarchy.
         
         Format: {MG}{SG}_{cluster}{item}_{variant}  →  XXXX_XXXX_XX
@@ -449,6 +449,9 @@ class DataProcessor:
             columns = [desc[0] for desc in cursor.description]
             raw_rows = cursor.fetchall()
             rows = [dict(zip(columns, r)) for r in raw_rows]
+            
+            if cancel_check and cancel_check():
+                raise InterruptedError("Cancelled during generate_complex_ids")
             
             # Group by (MG_SN, SG_SN)
             combined_groups = {}

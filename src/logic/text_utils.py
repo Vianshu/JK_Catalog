@@ -137,7 +137,7 @@ def cluster_products(items, get_name_fn=None, get_price_fn=None, get_size_fn=Non
                 return x.get("sort_price", 0)
             try:
                 return float(str(x[4]).replace(",", "").strip()) if len(x) > 4 else 0
-            except:
+            except Exception as e:
                 return 0
 
     if get_size_fn is None:
@@ -150,8 +150,7 @@ def cluster_products(items, get_name_fn=None, get_price_fn=None, get_size_fn=Non
             else:
                 try:
                     sz = str(x[5]) if len(x) > 5 else ""
-                except:
-                    pass
+                except Exception as e: pass
             import re
             m = re.search(r'\d+(\.\d+)?', str(sz))
             return float(m.group()) if m else 0.0
@@ -162,7 +161,7 @@ def cluster_products(items, get_name_fn=None, get_price_fn=None, get_size_fn=Non
                 return x.get("min_id", "ZZZZZZ")
             try:
                 return str(x[11]) if len(x) > 11 and x[11] else "ZZZZZZ"
-            except:
+            except Exception as e:
                 return "ZZZZZZ"
 
     clusters = []
@@ -228,7 +227,7 @@ def cluster_and_sort(items, get_name_fn=None, get_price_fn=None, get_size_fn=Non
                 return x.get("sort_price", 0)
             try:
                 return float(str(x[4]).replace(",", "").strip()) if len(x) > 4 else 0
-            except:
+            except Exception as e:
                 return 0
 
     if get_size_fn is None:
@@ -241,8 +240,7 @@ def cluster_and_sort(items, get_name_fn=None, get_price_fn=None, get_size_fn=Non
             else:
                 try:
                     sz = str(x[5]) if len(x) > 5 else ""
-                except:
-                    pass
+                except Exception as e: pass
             import re
             m = re.search(r'\d+(\.\d+)?', str(sz))
             return float(m.group()) if m else 0.0

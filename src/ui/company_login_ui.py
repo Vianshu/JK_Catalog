@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QSize, pyqtSignal 
 from PyQt6.QtGui import QFont, QKeySequence, QShortcut, QColor
 from pathlib import Path
-from src.ui.settings import save_report_json
+from src.logic.report_store import save_report_json
 from src.utils.app_logger import get_logger
 
 logger = get_logger(__name__)

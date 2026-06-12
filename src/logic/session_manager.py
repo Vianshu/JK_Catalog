@@ -79,13 +79,14 @@ class SessionManager:
         """
         self._registrations.append(PageRegistration(name, page_widget, setup_fn))
     
-    def activate(self, company_name: str, company_path: str) -> dict:
+    def activate(self, company_name: str, company_path: str, progress_cb: Optional[Callable] = None) -> dict:
         """
         Activate a company session, initializing all registered pages.
         
         Args:
             company_name: Display name of the company.
             company_path: Full path to the company data directory.
+            progress_cb: Optional callback(current, total, text)
             
         Returns:
             dict with keys: success (bool), errors (list of (page_name, error_msg))
@@ -101,7 +102,11 @@ class SessionManager:
         
         errors = []
         
-        for reg in self._registrations:
+        for i, reg in enumerate(self._registrations):
+            if progress_cb:
+                progress_cb(i, len(self._registrations), f"Loading {reg.name}...")
+            
+            
             try:
                 reg.setup_fn(reg.page_widget, company_path)
             except Exception as e:

@@ -673,7 +673,7 @@ class A4PageRenderer(QWidget):
             try:
                 self.grid_layout.removeWidget(s)
                 s.deleteLater()
-            except: pass
+            except Exception as e: pass
         self._struts = []
 
         for c, w in enumerate(self.col_widths):
@@ -702,7 +702,7 @@ class A4PageRenderer(QWidget):
             try:
                 self.grid_layout.removeWidget(w)
                 w.deleteLater()
-            except: pass
+            except Exception as e: pass
         self._widgets = []
 
     def fill_products(self, placeditems):
@@ -752,7 +752,7 @@ class A4PageRenderer(QWidget):
                             # Always Priority Image (User Request)
                             H = total - 1
                             D = 1 
-                    except: pass
+                    except Exception as e: pass
             
             # Fallback / Safety
             H = max(1, H)
@@ -848,7 +848,7 @@ class A4PageRenderer(QWidget):
                 img_w = w_part
             
             return f"Image Width: {img_w}\nData Width: {data_w}\nHeight (Rows): {h_part}"
-        except:
+        except Exception as e:
             return raw_str
 
     def _img_block(self, w: int, h: int, prod: dict, draw_right: bool) -> QFrame:
@@ -1088,7 +1088,7 @@ class A4PageRenderer(QWidget):
                 import re
                 clean_m = re.sub(r"[^\d\.]", "", str(m))
                 p_val = float(clean_m) if clean_m else 0.0
-            except:
+            except Exception as e:
                 p_val = 0.0
                 
             combined.append((p_val, s, m, q))
@@ -1154,5 +1154,5 @@ class A4PageRenderer(QWidget):
             if x.is_integer():
                 return str(int(x))
             return f"{x:.2f}"
-        except:
+        except Exception as e:
             return str(v)

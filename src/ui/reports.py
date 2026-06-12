@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QMarginsF
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter, QPrintPreviewDialog
 from PyQt6.QtGui import QPainter, QPageSize, QPageLayout
-from src.ui.settings import load_crm_list, load_report_json, save_report_json
+from src.logic.report_store import load_crm_list, load_report_json, save_report_json
 from src.logic.catalog_logic import CatalogLogic
 from src.ui.a4_renderer import A4PageRenderer
 from src.ui.print_export import PrintExportDialog # Import the shared dialog
@@ -81,7 +81,7 @@ class CRMSelectDialog(QDialog):
         if pending:
             try:
                 pending.sort(key=lambda x: int(x) if str(x).isdigit() else float('inf'))
-            except:
+            except Exception as e:
                 pending.sort()
         self.pages_list.addItems(pending)
 
@@ -217,7 +217,7 @@ class ReportsUI(QWidget):
         # Sort pages
         try:
             pending_serials = sorted(pending_serials, key=lambda x: int(x) if str(x).isdigit() else float('inf'))
-        except:
+        except Exception as e:
             pending_serials = sorted(pending_serials)
 
         # 2. Open Print/Export Dialog
@@ -316,7 +316,7 @@ class ReportsUI(QWidget):
             p_list = data["pending"]
             if p_list:
                 try: p_list.sort(key=lambda x: int(x) if str(x).isdigit() else float('inf'))
-                except: p_list.sort()
+                except Exception as e: p_list.sort()
             
             p_pages = ", ".join(p_list) if p_list else "Completed"
             self.table.setItem(row, 1, QTableWidgetItem(p_pages))

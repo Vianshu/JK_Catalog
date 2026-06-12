@@ -49,7 +49,7 @@ class FinalDataSyncWorker(QThread):
                 cancel_check=self.is_cancelled
             )
             self.finished.emit(sync_label, dup_map)
-        except _SyncCancelled:
+        except (_SyncCancelled, InterruptedError):
             logger.info("Final Data sync pipeline cancelled — rolling back all changes")
             self._rollback_connection()
             self.finished.emit("cancelled", {})
@@ -59,6 +59,12 @@ class FinalDataSyncWorker(QThread):
             import traceback
             traceback.print_exc()
             self.error.emit(str(e))
+        finally:
+            # Clean up all DB connections owned by this worker thread
+            try:
+                get_db_manager().close_thread_connections()
+            except Exception:
+                pass
 
     def _rollback_connection(self):
         """Rollback all uncommitted changes on the shared connection."""
@@ -114,20 +120,6 @@ class RefreshWorker(QThread):
             sg_sn_idx = self.ui.col_index("SG_SN")
             product_name_idx = self.ui.col_index("Product Name")
             mrp_idx = self.ui.col_index("MRP")
-
-            # 1. Build super_master group ordering map
-            try:
-                _data_path = os.path.dirname(getattr(self.ui, '_company_path', ''))
-                _super_db = build_shared_db_name(DB_SUPER, _data_path) if _data_path else DB_SUPER
-                s_conn = db.get_connection(_super_db)
-                if s_conn:
-                    s_cursor = s_conn.cursor()
-                    for row in s_cursor.execute(
-                        "SELECT MG_SN, SG_SN FROM super_master ORDER BY CAST(MG_SN AS INTEGER), CAST(SG_SN AS INTEGER)"
-                    ).fetchall():
-                        pass  # Just validates ordering exists
-            except Exception:
-                pass
 
             # 2. Group rows by (MG_SN, SG_SN)
             grouped_rows = {}
@@ -197,7 +189,8 @@ class NumericTableWidgetItem(QTableWidgetItem):
             return super().__lt__(other)
         
 class FinalDataUI(QWidget):
-    sync_complete = pyqtSignal()  # Emitted when background sync finishes
+    sync_complete = pyqtSignal()  # Emitted when background sync finishes successfully
+    sync_cancelled = pyqtSignal()  # Emitted when background sync is cancelled
 
     def __init__(self):
         super().__init__()
@@ -247,75 +240,86 @@ class FinalDataUI(QWidget):
         self.table.cellClicked.connect(self.show_preview)
         self.table.cellDoubleClicked.connect(self.show_path_popup)
         
-        main_layout.addWidget(self.table, 1)
-
         # Side Panel Logic (Aapke backup se same)
         main_layout.addWidget(self.table, 4) # Table gets 4 parts weight
 
-        # --- RIGHT SIDE PANEL (Updated Layout) ---
+        # --- RIGHT SIDE PANEL ---
         side_panel = QWidget()
         side_layout = QVBoxLayout(side_panel)
-        side_layout.setContentsMargins(5, 5, 5, 5)
-        side_layout.setSpacing(8)
+        side_layout.setContentsMargins(5, 4, 5, 4)
+        side_layout.setSpacing(4)  # Was 8 — tighter so widgets don't balloon at 125% DPI
 
-        # 1. Sync Time (Top)
+        # 1. Sync Time — compact single-line info bar
         self.sync_lbl = QLabel("Last Sync: N/A")
         self.sync_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.sync_lbl.setObjectName("SyncLabel")
+        self.sync_lbl.setFixedHeight(22)  # Prevents it from growing with DPI
+        self.sync_lbl.setStyleSheet("font-size: 11px; color: #6B7280;")
         side_layout.addWidget(self.sync_lbl)
 
         # 2. Search Bar
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search Item Name...")
+        self.search_input.setFixedHeight(28)
         self.search_input.textChanged.connect(self.filter_table)
         side_layout.addWidget(self.search_input)
 
-        # 3. Image Preview (NOW ON TOP)
+        # 3. Image Preview — fixed logical height, never expands
         from PyQt6.QtWidgets import QFrame, QGridLayout, QSizePolicy
         img_container = QFrame()
         img_container.setObjectName("ImgContainer")
         img_container_layout = QVBoxLayout(img_container)
-        img_container_layout.setContentsMargins(5, 5, 5, 5)
-        
+        img_container_layout.setContentsMargins(4, 4, 4, 4)
+        img_container_layout.setSpacing(3)
+
         img_title = QLabel("🖼️ Image Preview")
         img_title.setObjectName("ImgTitle")
         img_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        img_title.setFixedHeight(18)
+        img_title.setStyleSheet("font-size: 11px; font-weight: 600; color: #4A5568;")
         img_container_layout.addWidget(img_title)
-        
+
         self.img_preview = QLabel("NO IMAGE")
         self.img_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.img_preview.setObjectName("ImgPreview")
-        self.img_preview.setMinimumSize(200, 150)
-        self.img_preview.setMaximumSize(400, 300)
+        from PyQt6.QtWidgets import QApplication
+        _dpr = QApplication.primaryScreen().devicePixelRatio() if QApplication.primaryScreen() else 1.0
+        _preview_physical_h = 350  # physical px — constant across all DPI settings
+        self._img_preview_logical_h = max(80, int(_preview_physical_h / _dpr))
+        self.img_preview.setFixedHeight(self._img_preview_logical_h)
         self.img_preview.setSizePolicy(
             QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Expanding
+            QSizePolicy.Policy.Fixed
         )
-        img_container_layout.addWidget(self.img_preview, 1)
-        
-        # Duplicate image warning label (hidden by default)
+        img_container_layout.addWidget(self.img_preview)
+
+        # Duplicate image warning (hidden by default, compact when shown)
         self._dup_warning_lbl = QLabel()
         self._dup_warning_lbl.setWordWrap(True)
         self._dup_warning_lbl.setObjectName("DupWarningLabel")
+        self._dup_warning_lbl.setStyleSheet("font-size: 10px;")
         self._dup_warning_lbl.setVisible(False)
         img_container_layout.addWidget(self._dup_warning_lbl)
         self._duplicate_images = {}  # populated by sync_images_after_processing
-        
-        side_layout.addWidget(img_container, 1) # Takes available space
 
-        # 4. Summary Statistics Panel (BELOW IMAGE)
+        side_layout.addWidget(img_container)
+
+        # 4. Summary Statistics Panel
         summary_frame = QFrame()
         summary_frame.setObjectName("SummaryFrame")
         summary_grid = QGridLayout(summary_frame)
-        summary_grid.setSpacing(5)
-        
+        summary_grid.setSpacing(3)
+        summary_grid.setContentsMargins(6, 6, 6, 6)
+
         # Summary Title
         summary_title = QLabel("📊 Summary")
         summary_title.setObjectName("SummaryTitle")
         summary_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        summary_title.setFixedHeight(20)
+        summary_title.setStyleSheet("font-size: 11px; font-weight: 700; color: #1A2035;")
         summary_grid.addWidget(summary_title, 0, 0, 1, 2)
-        
-        # Catalog Total Items (True/False = 1)
+
+        # Catalog Total Items
         self.lbl_catalog_total = QLabel("Catalog Total:")
         self.lbl_catalog_total.setObjectName("SummaryLabel")
         self.lbl_catalog_total_val = QLabel("0")
@@ -323,8 +327,8 @@ class FinalDataUI(QWidget):
         self.lbl_catalog_total_val.setAlignment(Qt.AlignmentFlag.AlignRight)
         summary_grid.addWidget(self.lbl_catalog_total, 1, 0)
         summary_grid.addWidget(self.lbl_catalog_total_val, 1, 1)
-        
-        # Excluded by Stock (Empty TF + 0 Stock)
+
+        # Excluded by Stock
         self.lbl_out_stock = QLabel("Excluded (Stock):")
         self.lbl_out_stock.setObjectName("SummaryLabel")
         self.lbl_out_stock_val = QLabel("0")
@@ -332,7 +336,7 @@ class FinalDataUI(QWidget):
         self.lbl_out_stock_val.setAlignment(Qt.AlignmentFlag.AlignRight)
         summary_grid.addWidget(self.lbl_out_stock, 2, 0)
         summary_grid.addWidget(self.lbl_out_stock_val, 2, 1)
-        
+
         # Manual False Items
         self.lbl_false = QLabel("Manual False:")
         self.lbl_false.setObjectName("SummaryLabel")
@@ -341,13 +345,14 @@ class FinalDataUI(QWidget):
         self.lbl_false_val.setAlignment(Qt.AlignmentFlag.AlignRight)
         summary_grid.addWidget(self.lbl_false, 3, 0)
         summary_grid.addWidget(self.lbl_false_val, 3, 1)
-        
+
         # Separator
         sep_line = QLabel("─" * 20)
         sep_line.setObjectName("SummarySeparator")
         sep_line.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sep_line.setFixedHeight(14)
         summary_grid.addWidget(sep_line, 4, 0, 1, 2)
-        
+
         # Final Data Total
         self.lbl_final_total = QLabel("Final Data Total:")
         self.lbl_final_total.setObjectName("SummaryLabel")
@@ -356,7 +361,7 @@ class FinalDataUI(QWidget):
         self.lbl_final_total_val.setAlignment(Qt.AlignmentFlag.AlignRight)
         summary_grid.addWidget(self.lbl_final_total, 5, 0)
         summary_grid.addWidget(self.lbl_final_total_val, 5, 1)
-        
+
         # Item Mismatch
         self.lbl_mismatch = QLabel("Item Mismatch:")
         self.lbl_mismatch.setObjectName("SummaryLabel")
@@ -365,14 +370,13 @@ class FinalDataUI(QWidget):
         self.lbl_mismatch_val.setAlignment(Qt.AlignmentFlag.AlignRight)
         summary_grid.addWidget(self.lbl_mismatch, 6, 0)
         summary_grid.addWidget(self.lbl_mismatch_val, 6, 1)
-        
+
         side_layout.addWidget(summary_frame)
 
-        # 5. Status Label
-        # 5. Status Label (MOVED TO SUMMARY GROUP)
-        # self.status_lbl = QLabel("Ready") ... REMOVED
+        # Push all widgets to the top — prevents them from distributing vertically
+        side_layout.addStretch(1)
 
-        main_layout.addWidget(side_panel, 1) # Side panel gets 1 part weight
+        main_layout.addWidget(side_panel, 1)  # Side panel gets 1 part weight
         
         # Connect Selection Change for Arrow Keys
         self.table.selectionModel().currentRowChanged.connect(self.on_row_changed)
@@ -394,7 +398,7 @@ class FinalDataUI(QWidget):
             pass
         return ""
 
-    # --- HELPER: Calc Length ---
+    # --- HELPER: Calc Lenth ---
     def calc_length_from_size(self, size_str):
         # Always default to "1|0" (Auto Height)
         # 1 = One extra column (total 2 cols)
@@ -476,15 +480,15 @@ class FinalDataUI(QWidget):
 
             self.update_summary_stats() # Update counts on change
 
-        # --- NAYA: Auto-Update Length if Product_Size changes ---
+        # --- NAYA: Auto-Update Lenth if Product_Size changes ---
         if col_name == "Product_Size":
-             # Recalculate Length
+             # Recalculate Lenth
              new_len = self.calc_length_from_size(new_val)
              
-             # Setup Update for Length too
-             # We need to update DB for Length AND Product_Size
-             # Doing separate update for Length to keep simple logic or combine?
-             # Simple: Update Product_Size first (below), then Update Length.
+             # Setup Update for Lenth too
+             # We need to update DB for Lenth AND Product_Size
+             # Doing separate update for Lenth to keep simple logic or combine?
+             # Simple: Update Product_Size first (below), then Update Lenth.
              pass 
 
         # Check if actual change happened (after normalization)
@@ -496,7 +500,7 @@ class FinalDataUI(QWidget):
         trigger_cols = [
             "Product Name", "Product_Size", "Category", "Unit", "MOQ", 
             "M_Packing", "MRP", "MG_SN", "Group", "SG_SN", "Sub_Group", 
-            "Image_Path", "Length", "Image_Date", "True/False"
+            "Image_Path", "Lenth", "Image_Date", "True/False"
         ]
         
         should_update_date = col_name in trigger_cols
@@ -530,6 +534,20 @@ class FinalDataUI(QWidget):
                         tf_item.setText("false")
                     self.table.blockSignals(False)
                 
+            # --- Post-Update Logic: Update Lenth if Size Changed ---
+            if col_name == "Product_Size":
+                 new_len = self.calc_length_from_size(new_val)
+                 cur.execute("UPDATE catalog SET Lenth=? WHERE GUID=?", (new_len, guid))
+                 
+                 # UI Update
+                 len_col = self.col_index("Lenth")
+                 self.table.blockSignals(True)
+                 self.table.setItem(row, len_col, QTableWidgetItem(new_len))
+                 self.table.blockSignals(False)
+                 if hasattr(self, 'status_lbl') and self.status_lbl:
+                     self.status_lbl.setText(f"Updated: Size & Lenth ({new_len})")
+
+            # Single atomic commit for main column + any post-update changes
             conn.commit()
 
             item.setData(Qt.ItemDataRole.UserRole, new_val) # Update memory
@@ -540,25 +558,9 @@ class FinalDataUI(QWidget):
                 self.table.blockSignals(False)
             
             if hasattr(self, 'status_lbl') and self.status_lbl:
-                self.status_lbl.setText(f"Updated: {col_name}" + (f" & Date at {now}" if should_update_date else ""))
+                if col_name != "Product_Size":  # Size already set a specific label above
+                    self.status_lbl.setText(f"Updated: {col_name}" + (f" & Date at {now}" if should_update_date else ""))
             
-            # --- Post-Update Logic: Update Length if Size Changed ---
-            if col_name == "Product_Size":
-                 new_len = self.calc_length_from_size(new_val)
-                 conn2 = self.db.get_connection(self.final_db_name)
-                 if conn2:
-                     cursor2 = conn2.cursor()
-                     cursor2.execute("UPDATE catalog SET Lenth=? WHERE GUID=?", (new_len, guid))
-                     conn2.commit()
-                 
-                 # UI Update
-                 len_col = self.col_index("Lenth")
-                 self.table.blockSignals(True)
-                 self.table.setItem(row, len_col, QTableWidgetItem(new_len))
-                 self.table.blockSignals(False)
-                 if hasattr(self, 'status_lbl') and self.status_lbl:
-                     self.status_lbl.setText(f"Updated: Size & Lenth ({new_len})")
-
             # Refresh stats if needed
             # print("DEBUG: Cell Save - Updating Summary Stats")
             self.update_summary_stats()
@@ -576,16 +578,6 @@ class FinalDataUI(QWidget):
             folder_path = company_path
             self.image_folder = ""
             
-            if not folder_path:
-                # Vault Fallback (For legacy compatibility)
-                vault_path = os.path.join(base_dir, "company_vault.json")
-                if os.path.exists(vault_path):
-                    with open(vault_path, 'r', encoding='utf-8') as f:
-                        vault = json.load(f)
-                    if company_name in vault:
-                        folder_path = vault[company_name]['path']
-                        self.image_folder = vault[company_name].get('image_path', "")
-
             if not folder_path or not os.path.exists(folder_path):
                  logger.error(f"Invalid Company Path: {folder_path}")
                  return
@@ -801,19 +793,13 @@ class FinalDataUI(QWidget):
         ])
         rows = row_cursor.execute(f"SELECT {select_cols} FROM stock_items").fetchall()
 
-        # Delete items removed from Tally
+        # Identify items removed from Tally (delete AFTER inserts/updates for safety)
         check_cancelled()
-        emit("Cleaning removed items...")
+        emit("Checking for removed items...")
         tally_guids_set = {r[0] for r in rows}
         cur.execute("SELECT GUID FROM catalog")
         catalog_guids = [row[0] for row in cur.fetchall()]
         guids_to_delete = [g for g in catalog_guids if g not in tally_guids_set]
-        if guids_to_delete:
-            # Batch delete in chunks of 500 to avoid query size limits
-            for i in range(0, len(guids_to_delete), 500):
-                chunk = guids_to_delete[i:i+500]
-                placeholders = ','.join(['?'] * len(chunk))
-                cur.execute(f"DELETE FROM catalog WHERE GUID IN ({placeholders})", chunk)
 
         now = self.current_datetime()
 
@@ -911,14 +897,25 @@ class FinalDataUI(QWidget):
         if price_list_resets:
             cur.executemany("UPDATE catalog SET [True/False]='' WHERE GUID=?", price_list_resets)
 
+        # Delete removed items AFTER successful inserts/updates
+        # This order ensures a crash mid-sync never loses items permanently
+        if guids_to_delete:
+            emit(f"Removing {len(guids_to_delete)} deleted items...")
+            for i in range(0, len(guids_to_delete), 500):
+                chunk = guids_to_delete[i:i+500]
+                placeholders = ','.join(['?'] * len(chunk))
+                cur.execute(f"DELETE FROM catalog WHERE GUID IN ({placeholders})", chunk)
+
         # Processor — run WITHOUT auto-commit (shares same connection)
         check_cancelled()
         emit("Processing product names...")
         processor = DataProcessor(final_db)
-        processor.process_and_save_final_data(auto_commit=False)
-        emit("Generating complex IDs...")
+        # Pass cancel_check so processor can bail out between internal phases
+        _cancel_fn = cancel_check if cancel_check else None
+        processor.process_and_save_final_data(auto_commit=False, cancel_check=_cancel_fn)
         check_cancelled()
-        processor.generate_complex_ids(auto_commit=False)
+        emit("Generating complex IDs...")
+        processor.generate_complex_ids(auto_commit=False, cancel_check=_cancel_fn)
 
         # Image Sync
         check_cancelled()
@@ -950,7 +947,7 @@ class FinalDataUI(QWidget):
         if sync_label == "cancelled":
             logger.info("Final Data sync was cancelled — existing data preserved")
             self._sync_worker = None
-            self.sync_complete.emit()
+            self.sync_cancelled.emit()  # NOT sync_complete — so "Sync Done" popup is skipped
             return
 
         # Set duplicate image map on main thread (safe for show_preview to read)
@@ -1096,6 +1093,19 @@ class FinalDataUI(QWidget):
         # Prevent concurrent refreshes
         if self._refresh_worker and self._refresh_worker.isRunning():
             return
+        
+        # --- Restore last sync label from DB on startup (so it's never "N/A" if data exists) ---
+        if self.sync_lbl.text() == "Last Sync: N/A":
+            try:
+                conn = self.db.get_connection(self.final_db_name)
+                if conn:
+                    row = conn.cursor().execute(
+                        "SELECT MAX(Update_date) FROM catalog"
+                    ).fetchone()
+                    if row and row[0]:
+                        self.sync_lbl.setText(f"Last Sync: {row[0]}")
+            except Exception:
+                pass
         
         # --- CACHE CHECK: skip if data unchanged ---
         if not force and self._last_data_hash is not None and self.table.rowCount() > 0:
@@ -1364,11 +1374,10 @@ class FinalDataUI(QWidget):
             p = it.data(Qt.ItemDataRole.UserRole)
             if p and os.path.exists(p):
                 pix = QPixmap(p)
-                # Scale to fit within the image preview container (max 350x350)
-                preview_size = self.img_preview.size()
-                max_w = min(preview_size.width() - 10, 260)
-                max_h = min(preview_size.height() - 10, 260)
-                scaled = pix.scaled(max_w, max_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                # Scale image to the DPI-independent logical height of the preview widget.
+                preview_w = max(self.img_preview.width() - 10, 150)
+                preview_h = getattr(self, '_img_preview_logical_h', 200) - 10
+                scaled = pix.scaled(preview_w, preview_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                 self.img_preview.setPixmap(scaled)
 
                 # Show duplicate warning if applicable

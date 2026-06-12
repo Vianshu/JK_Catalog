@@ -17,7 +17,7 @@ class NumericTableWidgetItem(QTableWidgetItem):
     def __lt__(self, other):
         try:
             return float(self.text()) < float(other.text())
-        except:
+        except Exception as e:
             return super().__lt__(other)
         
 class AutocompleteDelegate(QStyledItemDelegate):
@@ -502,8 +502,7 @@ class ChequeListUI(QWidget):
                 count += 1
             try:
                 total += float(amt.text().replace(",", "")) if amt and amt.text() else 0
-            except:
-                pass
+            except Exception as e: pass
         
         self.lbl_count.setText(f"Total No. of Chq.: {count}")
         self.lbl_total.setText(f"Amount: {total:,.2f}")
@@ -729,7 +728,7 @@ class ChequeListUI(QWidget):
                 if c == 0:
                     try:
                         val = f"{int(val):03d}"
-                    except:
+                    except Exception as e:
                         val = f"{r + 1:03d}"
                 
                 item = QTableWidgetItem(val)

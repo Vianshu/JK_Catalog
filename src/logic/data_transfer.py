@@ -200,6 +200,11 @@ def import_data_path(backup_file, target_data_path, progress_cb=None):
     
     try:
         with zipfile.ZipFile(backup_file, 'r') as zf:
+            # Zip-slip validation
+            for member in zf.namelist():
+                target = os.path.abspath(os.path.join(temp_dir, member))
+                if not target.startswith(os.path.abspath(temp_dir)):
+                    return False, "Invalid backup file: path traversal detected."
             zf.extractall(temp_dir)
         
         # Read manifest

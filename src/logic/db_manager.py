@@ -185,11 +185,12 @@ class DBManager:
 
     def __init__(self):
         self._server_name = ""
-        self._connections = {}  # {logical_name: pyodbc.Connection}
+        self._local = threading.local()  # Per-thread connection storage
         self._health_timestamps = {}  # {cache_key: last_healthy_epoch}
         self._HEALTH_TTL = 30  # seconds — skip SELECT 1 if verified recently
-        self._lock = threading.Lock()  # Protects _connections dict mutations
-        self._db_locks = {}  # {cache_key: Lock} — per-database locks reduce contention
+        self._lock = threading.Lock()  # Protects shared dict mutations
+        self._db_locks = {}  # {db_name: Lock} — per-database locks reduce contention
+        self._all_connections = {}  # {cache_key: conn} — global registry for close_all()
         self._load_server_config()
         self._ensure_login()
 
@@ -315,11 +316,17 @@ class DBManager:
 
     # ─── CONNECTION MANAGEMENT ────────────────────────────────────────────────
 
+    def _get_thread_cache(self):
+        """Get the per-thread connection dict (auto-created on first access)."""
+        if not hasattr(self._local, 'connections'):
+            self._local.connections = {}
+        return self._local.connections
+
     def get_connection(self, logical_name):
         """Get a connection to a SQL Server database by its logical name.
         
-        Thread-safe: each thread gets its own cached connection to avoid
-        pyodbc cross-thread issues.
+        Thread-safe: each thread gets its own cached connection via
+        threading.local() — automatically cleaned up when the thread exits.
         
         Args:
             logical_name: e.g., 'JK_Security', 'JK_CompanyA_Catalog'
@@ -327,20 +334,20 @@ class DBManager:
         Returns:
             pyodbc.Connection or None if connection fails.
         """
-        # Per-thread cache key
+        # Get or create a per-database lock (avoids global contention)
+        with self._lock:
+            if logical_name not in self._db_locks:
+                self._db_locks[logical_name] = threading.Lock()
+            db_lock = self._db_locks[logical_name]
+        
+        thread_cache = self._get_thread_cache()
         tid = threading.current_thread().ident
         cache_key = f"{logical_name}_{tid}"
         
-        # Get or create a per-database lock (avoids global contention)
-        with self._lock:
-            if cache_key not in self._db_locks:
-                self._db_locks[cache_key] = threading.Lock()
-            db_lock = self._db_locks[cache_key]
-        
         with db_lock:
             # Return cached connection if still alive
-            if cache_key in self._connections:
-                conn = self._connections[cache_key]
+            if logical_name in thread_cache:
+                conn = thread_cache[logical_name]
                 # Skip health check if verified recently (saves ~5ms per call)
                 last_healthy = self._health_timestamps.get(cache_key, 0)
                 if time.time() - last_healthy < self._HEALTH_TTL:
@@ -354,21 +361,27 @@ class DBManager:
                         conn.close()
                     except Exception:
                         pass
-                    self._connections.pop(cache_key, None)
+                    thread_cache.pop(logical_name, None)
                     self._health_timestamps.pop(cache_key, None)
+                    with self._lock:
+                        self._all_connections.pop(cache_key, None)
 
             # Create new connection
             try:
                 conn_str = self._build_connection_string(logical_name)
                 conn = pyodbc.connect(conn_str, autocommit=False)
-                self._connections[cache_key] = conn
+                thread_cache[logical_name] = conn
+                with self._lock:
+                    self._all_connections[cache_key] = conn
                 return conn
             except pyodbc.Error as e:
                 # Connection failed — try fixing permissions from master and retry
                 if self._try_fix_db_permissions(logical_name):
                     try:
                         conn = pyodbc.connect(conn_str, autocommit=False)
-                        self._connections[cache_key] = conn
+                        thread_cache[logical_name] = conn
+                        with self._lock:
+                            self._all_connections[cache_key] = conn
                         logger.info(f"Connected to '{logical_name}' after permission fix")
                         return conn
                     except pyodbc.Error:
@@ -387,25 +400,57 @@ class DBManager:
             return None
 
     def close_connection(self, logical_name):
-        """Close and remove a specific connection from the cache."""
+        """Close and remove the current thread's connection for a database."""
+        thread_cache = self._get_thread_cache()
+        tid = threading.current_thread().ident
+        cache_key = f"{logical_name}_{tid}"
+        
+        if logical_name in thread_cache:
+            try:
+                thread_cache[logical_name].close()
+            except Exception:
+                pass
+            del thread_cache[logical_name]
+        
         with self._lock:
-            if logical_name in self._connections:
-                try:
-                    self._connections[logical_name].close()
-                except Exception:
-                    pass
-                del self._connections[logical_name]
+            self._all_connections.pop(cache_key, None)
+            self._health_timestamps.pop(cache_key, None)
+
+    def close_thread_connections(self):
+        """Close ALL connections owned by the current thread.
+        
+        Call this in QThread.run() finally blocks to prevent leaks.
+        """
+        thread_cache = self._get_thread_cache()
+        tid = threading.current_thread().ident
+        
+        for logical_name, conn in list(thread_cache.items()):
+            cache_key = f"{logical_name}_{tid}"
+            try:
+                conn.close()
+            except Exception:
+                pass
+            with self._lock:
+                self._all_connections.pop(cache_key, None)
+                self._health_timestamps.pop(cache_key, None)
+        
+        thread_cache.clear()
 
     def close_all(self):
-        """Close all cached connections."""
+        """Close all cached connections across all threads."""
         with self._lock:
-            for name, conn in list(self._connections.items()):
+            for name, conn in list(self._all_connections.items()):
                 try:
                     conn.close()
                 except Exception:
                     pass
-            self._connections.clear()
+            self._all_connections.clear()
             self._health_timestamps.clear()
+        # Clear current thread's local cache too
+        try:
+            self._get_thread_cache().clear()
+        except Exception:
+            pass
 
     # ─── DATABASE CREATION ────────────────────────────────────────────────────
 

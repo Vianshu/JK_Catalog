@@ -23,6 +23,8 @@ logger = get_logger(__name__)
 GRID_ROWS = 5
 GRID_COLS = 4
 
+MAX_MG_SN = 90  # Groups >= 90 are internal/system groups
+
 _DB_SUPER = "super"
 _DB_CATALOG = "catalog"
 _DB_FINAL = "final"
@@ -222,6 +224,9 @@ class CatalogLogic:
     # ─── SUPER MASTER QUERIES ─────────────────────────────────────────────────
 
     def _get_master_table_name(self):
+        if getattr(self, "_cached_master_table", None) is not None:
+            return self._cached_master_table
+            
         conn = self._get_conn(_DB_SUPER)
         if not conn:
             return None
@@ -234,6 +239,7 @@ class CatalogLogic:
             for (tbl,) in cursor.fetchall():
                 cols = self.db.get_table_columns(self.super_db_name, tbl)
                 if "MG_SN" in cols or "mg_sn" in cols:
+                    self._cached_master_table = tbl
                     return tbl
         except Exception as e:
             logger.error(f"_get_master_table_name error: {e}")
@@ -252,7 +258,7 @@ class CatalogLogic:
                 SELECT [MG_SN], [Group_Name] FROM {table}
                 WHERE [MG_SN] IS NOT NULL
                   AND LTRIM(RTRIM(CAST([MG_SN] AS NVARCHAR(50)))) NOT IN ('', '0', '00')
-                  AND CAST([MG_SN] AS INTEGER) < 90
+                  AND CAST([MG_SN] AS INTEGER) < {MAX_MG_SN}
                   AND TRIM(ISNULL([Group_Name], '')) != ''
                 GROUP BY [MG_SN], [Group_Name]
                 ORDER BY CAST([MG_SN] AS INTEGER)
@@ -276,7 +282,7 @@ class CatalogLogic:
                 (group_name.strip(),)
             )
             mg_row = cursor.fetchone()
-            if mg_row and mg_row[0] is not None and mg_row[0] >= 90:
+            if mg_row and mg_row[0] is not None and mg_row[0] >= MAX_MG_SN:
                 return []
             cursor.execute(f"""
                 SELECT [SG_SN], [Sub_Group] FROM {table}
@@ -302,7 +308,7 @@ class CatalogLogic:
             cursor.execute(f"""
                 SELECT [MG_SN], [Group_Name], [SG_SN] FROM {table}
                 WHERE [Group_Name] IS NOT NULL AND [SG_SN] IS NOT NULL
-                  AND CAST([MG_SN] AS INTEGER) < 90
+                  AND CAST([MG_SN] AS INTEGER) < {MAX_MG_SN}
                 GROUP BY [MG_SN], [Group_Name], [SG_SN]
                 ORDER BY CAST([MG_SN] AS INTEGER), CAST([SG_SN] AS INTEGER)
             """)
@@ -508,13 +514,13 @@ class CatalogLogic:
     @staticmethod
     def _read_report_data(company_path):
         """Read report data from SQL Server via settings module."""
-        from src.ui.settings import load_report_json
+        from src.logic.report_store import load_report_json
         return load_report_json(company_path)
 
     @staticmethod
     def _write_report_data(company_path, data):
         """Write report data to SQL Server via settings module."""
-        from src.ui.settings import save_report_json
+        from src.logic.report_store import save_report_json
         save_report_json(data, company_path)
 
     def _get_all_dirty_serials(self, company_path):

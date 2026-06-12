@@ -485,7 +485,7 @@ class FullCatalogUI(QWidget):
         self.btn_print.clicked.connect(self.handle_direct_print)
         self.btn_reshuffle.clicked.connect(self.reshuffle_catalog)
 
-        # Length change from context menu
+        # Lenth change from context menu
         self.renderer.length_changed.connect(self._handle_length_change)
 
         # Zoom from Ctrl+Wheel on scroll area
@@ -1049,7 +1049,7 @@ class FullCatalogUI(QWidget):
                             self.company_path, dirty_serials
                         )
                         logger.info(
-                            f"Length change: added serials {dirty_serials} to CRM "
+                            f"Lenth change: added serials {dirty_serials} to CRM "
                             f"(page {page_no} + {len(modified_pages)-1} overflow)"
                         )
 

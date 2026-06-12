@@ -475,8 +475,7 @@ class PrintExportDialog(QDialog):
                         if info_data and "display_name" in info_data and info_data["display_name"].strip():
                             name = info_data["display_name"].strip()
                             prefix = name[:3].upper() if len(name) >= 3 else name.upper()
-                except:
-                    pass
+                except Exception as e: pass
             renderer._company_prefix = prefix
             
         return renderer
@@ -644,7 +643,7 @@ class PrintExportDialog(QDialog):
             if not ok:
                 try:
                     if os.path.exists(temp_pdf): os.remove(temp_pdf)
-                except: pass
+                except Exception as e: pass
                 self.reject()
                 return
                 
@@ -655,7 +654,7 @@ class PrintExportDialog(QDialog):
             # Clean up when closed
             try:
                 if os.path.exists(temp_pdf): os.remove(temp_pdf)
-            except: pass
+            except Exception as e: pass
             
             self.accept()
             
@@ -710,7 +709,7 @@ class PrintExportDialog(QDialog):
         try:
             folder = os.path.dirname(file_path)
             self.settings.setValue("last_export_dir", folder)
-        except: pass
+        except Exception as e: pass
         
         # Ensure .pdf extension
         if not file_path.lower().endswith('.pdf'):
@@ -727,7 +726,7 @@ class PrintExportDialog(QDialog):
                 # Cancelled
                 try:
                     if os.path.exists(file_path): os.remove(file_path)
-                except: pass
+                except Exception as e: pass
                 self.reject()
                 return
             

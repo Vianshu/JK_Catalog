@@ -42,6 +42,87 @@ from src.ui.settings import (
     load_crm_list, save_crm_to_json, update_crm_in_json
 )
 from src.services.tally_sync import fetch_tally_data, fetch_tally_ledger_data, TallyService
+from PyQt6.QtCore import QThread, pyqtSignal
+
+class _LedgerWorker(QThread):
+    finished = pyqtSignal(int, str)  # row_count, error
+    def __init__(self, path):
+        super().__init__()
+        self.path = path
+    def run(self):
+        try:
+            rc, err = fetch_tally_ledger_data(company_path=self.path)
+            self.finished.emit(rc or 0, err or "")
+        except Exception as e:
+            self.finished.emit(0, str(e))
+
+class _TallyWorker(QThread):
+    finished = pyqtSignal(object, str)  # (df_or_None, error)
+    def __init__(self, service, company_name, company_path):
+        super().__init__()
+        self.service = service
+        self.company_name = company_name
+        self.company_path = company_path
+    def run(self):
+        try:
+            df, error = fetch_tally_data(
+                company_name=self.company_name,
+                company_path=self.company_path,
+                service=self.service
+            )
+            self.finished.emit(df, error)
+        except Exception as e:
+            self.finished.emit(None, str(e))
+
+class _ExportWorker(QThread):
+    progress = pyqtSignal(str, int, int)
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, data_path, output_file):
+        super().__init__()
+        self.data_path = data_path
+        self.output_file = output_file
+        self.is_cancelled = False
+
+    def run(self):
+        from src.logic.data_transfer import export_data_path
+        def on_progress(text, current, total):
+            if self.is_cancelled:
+                raise Exception("cancelled")
+            self.progress.emit(text, current, total)
+        try:
+            success, msg = export_data_path(self.data_path, self.output_file, on_progress)
+            self.finished.emit(success, msg)
+        except Exception as e:
+            if str(e) == "cancelled":
+                self.finished.emit(False, "Export cancelled by user")
+            else:
+                self.finished.emit(False, str(e))
+
+class _ImportWorker(QThread):
+    progress = pyqtSignal(str, int, int)
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, backup_file, target_path):
+        super().__init__()
+        self.backup_file = backup_file
+        self.target_path = target_path
+        self.is_cancelled = False
+
+    def run(self):
+        from src.logic.data_transfer import import_data_path
+        def on_progress(text, current, total):
+            if self.is_cancelled:
+                raise Exception("cancelled")
+            self.progress.emit(text, current, total)
+        try:
+            success, msg = import_data_path(self.backup_file, self.target_path, on_progress)
+            self.finished.emit(success, msg)
+        except Exception as e:
+            if str(e) == "cancelled":
+                self.finished.emit(False, "Import cancelled by user")
+            else:
+                self.finished.emit(False, str(e))
 
 class AltKeyFilter(QObject):
     def __init__(self, main_window):
@@ -86,7 +167,7 @@ class MenuButtonWidget(QFrame):
                     # User requested: "add the letter on the front itself"
                     self.html_text = f"<font color='#ff4d4d'><b>[{char.upper()}]</b></font> {self.plain_text}"
                     self.hotkey_char = char.upper()
-            except: pass
+            except Exception as e: pass
             
         # Default to PLAIN text (Clean state)
         self.lbl = QLabel(self.plain_text)
@@ -116,7 +197,40 @@ class MenuButtonWidget(QFrame):
 
 
 
+
+
+class NavIndex:
+    EMPTY = 0
+    WELCOME = 1
+    CATALOG = 2
+    SETTINGS = 3
+    TALLY = 4
+    VAT = 5
+    BRANCH = 6
+
+class PageIndex:
+    LOGIN = 0
+    WELCOME = 1
+    FULL_CATALOG = 2
+    SYNC_TALLY = 3
+    ROW_DATA = 4
+    FINAL_DATA = 5
+    SUPER_MASTER = 6
+    REPORTS = 7
+    PRICE_LIST = 8
+    ON_ACCOUNT = 9
+    GODOWN = 10
+    SALES_CHAT = 11
+    SUPP_PAYMENT = 12
+    VAT_BALANCE = 13
+    VAT_STOCK = 14
+    CHEQUE_LIST = 15
+    CALENDAR = 16
+    LEDGER_ROW_DATA = 17
+    SECURITY = 18
+
 class MainWindow(QWidget):
+
     def __init__(self):
         super().__init__()
         # Native title bar with minimize/maximize/close buttons
@@ -368,8 +482,8 @@ class MainWindow(QWidget):
             ("🔄 S&ync Tally", self.on_sync_tally_clicked, False, None, "final_data.sync"),
             ("📑 Super &Master", self.handle_super_master, False, None, "tab.super_master"),
             ("✅ &Final Data", self.final_data, False, None, "tab.final_data"),
-            ("📖 Full Catalo&g", lambda: self.main_stack.setCurrentIndex(2), False, None, "tab.catalog"),
-            ("📈 Rep&orts", lambda: self.main_stack.setCurrentIndex(7), False, None, "tab.reports"),
+            ("📖 Full Catalo&g", self.show_full_catalog_page, False, None, "tab.catalog"),
+            ("📈 Rep&orts", self.show_reports_page, False, None, "tab.reports"),
             ("🏷 Cat / &Price List", self.handle_catalog_price_list, False, None, "tab.cat_price_list"),
             ("➕ &Create CRM", self.handle_create_crm, False, None, "settings.manage_crm"),
             ("✏️ &Alter CRM", self.handle_alter_crm, False, None, "settings.manage_crm")
@@ -397,12 +511,12 @@ class MainWindow(QWidget):
             ("⬅️ &Back", self.go_back_to_main, True),
             ("🔄 Sync &Ledger", self.on_sync_ledger_clicked, False, None, "ledger.sync"),
             ("🧪 Ledger &Rows", self.on_ledger_row_data_clicked, False, None, "tab.ledger"),
-            ("💰 &On Account", lambda: self.main_stack.setCurrentIndex(9), False, None, "tab.payment_list"),
+            ("💰 &On Account", lambda: self.main_stack.setCurrentIndex(PageIndex.ON_ACCOUNT), False, None, "tab.payment_list"),
             ("🧾 C&hq. List", self.handle_cheque_list, False, None, "tab.cheque_list"),
-            ("🏠 &Godown List", lambda: self.main_stack.setCurrentIndex(10), False, None, "tab.godown"),
-            ("📈 &Sales Chat", lambda: self.main_stack.setCurrentIndex(11), False, None, "tab.sales_chat"),
-            ("💸 Supp. Pa&yment", lambda: self.main_stack.setCurrentIndex(12), False, None, "tab.supp_payment"),
-            ("🏷 Pri&ce List", lambda: self.main_stack.setCurrentIndex(8), False, None, "tab.price_list"),
+            ("🏠 &Godown List", lambda: self.main_stack.setCurrentIndex(PageIndex.GODOWN), False, None, "tab.godown"),
+            ("📈 &Sales Chat", lambda: self.main_stack.setCurrentIndex(PageIndex.SALES_CHAT), False, None, "tab.sales_chat"),
+            ("💸 Supp. Pa&yment", lambda: self.main_stack.setCurrentIndex(PageIndex.SUPP_PAYMENT), False, None, "tab.supp_payment"),
+            ("🏷 Pri&ce List", lambda: self.main_stack.setCurrentIndex(PageIndex.PRICE_LIST), False, None, "tab.price_list"),
             ("📥 Pur &Import", self.handle_pur_import, False, None, "tab.pur_import"),
             ("📊 Cos&t Sheet", self.handle_int_cost_sheet, False, None, "tab.int_cost_sheet"),
             ("🏢 For &Branch", self.show_branch_submenu, False, None, "tab.for_branch")
@@ -412,8 +526,8 @@ class MainWindow(QWidget):
         # Index 5: Vat Working
         m_vat = self.create_menu_widget([
             ("⬅️ &Back", self.go_back_to_main, True),
-            ("💰 Ba&lance", lambda: self.main_stack.setCurrentIndex(13), False, None, "tab.vat_balance"),
-            ("📦 Stoc&k", lambda: self.main_stack.setCurrentIndex(14), False, None, "tab.vat_stock")
+            ("💰 Ba&lance", lambda: self.main_stack.setCurrentIndex(PageIndex.VAT_BALANCE), False, None, "tab.vat_balance"),
+            ("📦 Stoc&k", lambda: self.main_stack.setCurrentIndex(PageIndex.VAT_STOCK), False, None, "tab.vat_stock")
         ])
         self.nav_stack.addWidget(m_vat)
 
@@ -448,18 +562,7 @@ class MainWindow(QWidget):
         company_path = getattr(self, 'current_company_path', None)
 
         # Run in background thread
-        from PyQt6.QtCore import QThread, pyqtSignal
-        class _LedgerWorker(QThread):
-            finished = pyqtSignal(int, str)  # row_count, error
-            def __init__(self, path):
-                super().__init__()
-                self.path = path
-            def run(self):
-                try:
-                    rc, err = fetch_tally_ledger_data(company_path=self.path)
-                    self.finished.emit(rc or 0, err or "")
-                except Exception as e:
-                    self.finished.emit(0, str(e))
+        # Run in background thread
 
         self._ledger_worker = _LedgerWorker(company_path)
         self._ledger_worker.finished.connect(self._on_ledger_sync_done)
@@ -653,9 +756,16 @@ class MainWindow(QWidget):
 
     def safe_trigger_menu(self, parent_widget, btn):
         """Global trigger for main menu hotkeys (Context Sensitive)"""
-        # Only trigger if the button is actually visible (Context Sensitive)
-        if btn.isVisible():
-            btn.animateClick()
+        # Only trigger if the button is actually visible and enabled
+        if not btn.isVisible() or not btn.isEnabled():
+            return
+            
+        # Defense in depth: Verify permission one last time before simulating click
+        perm_key = btn.property("permission_key")
+        if perm_key and self.user_session and not self.user_session.can(perm_key):
+            return
+            
+        btn.animateClick()
 
     def set_active_menu_btn(self, btn):
         """Highlights the clicked menu button"""
@@ -670,16 +780,24 @@ class MainWindow(QWidget):
             self.style().unpolish(btn)
             self.style().polish(btn)
 
+    def show_full_catalog_page(self):
+        if not self._check_permission("tab.catalog", "Full Catalog"): return
+        self.main_stack.setCurrentIndex(PageIndex.FULL_CATALOG)
+
+    def show_reports_page(self):
+        if not self._check_permission("tab.reports", "Reports"): return
+        self.main_stack.setCurrentIndex(PageIndex.REPORTS)
+
     def go_back_to_main(self):
-        self.nav_stack.setCurrentIndex(1)
-        self.main_stack.setCurrentIndex(1)
+        self.nav_stack.setCurrentIndex(NavIndex.WELCOME)
+        self.main_stack.setCurrentIndex(PageIndex.WELCOME)
 
     # --- Navigation Triggers ---
-    def show_catalog_submenu(self): self.nav_stack.setCurrentIndex(2)
-    def show_settings_submenu(self): self.nav_stack.setCurrentIndex(3)
-    def show_tally_internal_submenu(self): self.nav_stack.setCurrentIndex(4)
-    def show_vat_submenu(self): self.nav_stack.setCurrentIndex(5)
-    def show_branch_submenu(self): self.nav_stack.setCurrentIndex(6)
+    def show_catalog_submenu(self): self.nav_stack.setCurrentIndex(NavIndex.CATALOG)
+    def show_settings_submenu(self): self.nav_stack.setCurrentIndex(NavIndex.SETTINGS)
+    def show_tally_internal_submenu(self): self.nav_stack.setCurrentIndex(NavIndex.TALLY)
+    def show_vat_submenu(self): self.nav_stack.setCurrentIndex(NavIndex.VAT)
+    def show_branch_submenu(self): self.nav_stack.setCurrentIndex(NavIndex.BRANCH)
 
     # --- Business Logic Methods (Login, Sync, CRM etc.) ---
     def handle_login_success(self, comp_name, company_path, user_session=None):
@@ -734,8 +852,21 @@ class MainWindow(QWidget):
             session.register("Ledger Row Data", self.ledger_row_data_page,
                 lambda page, path: page.load_data(path))
             
+            # Create progress dialog for synchronous load
+            progress = QProgressDialog("Loading company data...", None, 0, len(session._registrations), self)
+            progress.setWindowTitle("Please Wait")
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            progress.setAutoClose(True)
+            progress.show()
+
+            def update_progress(current, total, text):
+                progress.setValue(current)
+                progress.setLabelText(text)
+
             # Activate session — all pages get initialized
-            result = session.activate(comp_name, company_path)
+            result = session.activate(comp_name, company_path, progress_cb=update_progress)
+            
+            progress.setValue(len(session._registrations))
             
             if result["errors"]:
                 error_names = [e[0] for e in result["errors"]]
@@ -746,8 +877,8 @@ class MainWindow(QWidget):
             logger.info(f"Session started: company='{comp_name}', path='{company_path}'")
 
             # Navigate to welcome
-            self.nav_stack.setCurrentIndex(1) 
-            self.main_stack.setCurrentIndex(1)
+            self.nav_stack.setCurrentIndex(NavIndex.WELCOME) 
+            self.main_stack.setCurrentIndex(PageIndex.WELCOME)
             
             # Apply RBAC permissions to menu buttons and inside-tab controls
             # Propagate session to pages that need internal permission checks
@@ -1103,24 +1234,7 @@ class MainWindow(QWidget):
         self._tally_progress.show()
 
         # Run in background thread
-        from PyQt6.QtCore import QThread, pyqtSignal
-        class _TallyWorker(QThread):
-            finished = pyqtSignal(object, str)  # (df_or_None, error)
-            def __init__(self, service, company_name, company_path):
-                super().__init__()
-                self.service = service
-                self.company_name = company_name
-                self.company_path = company_path
-            def run(self):
-                try:
-                    df, error = fetch_tally_data(
-                        company_name=self.company_name,
-                        company_path=self.company_path,
-                        service=self.service
-                    )
-                    self.finished.emit(df, error)
-                except Exception as e:
-                    self.finished.emit(None, str(e))
+        # Run in background thread
 
         self._tally_worker = _TallyWorker(
             self._tally_service,
@@ -1153,6 +1267,11 @@ class MainWindow(QWidget):
             logger.info(f"Tally sync received: {row_count} rows")
             def _after_sync():
                 self.final_data_page.sync_complete.disconnect(_after_sync)
+                # Also disconnect cancel handler if still connected
+                try:
+                    self.final_data_page.sync_cancelled.disconnect(_after_sync_cancelled)
+                except (TypeError, RuntimeError):
+                    pass
                 # Trigger a silent catalog build only if user has auto-build permission
                 session = self.user_session
                 can_auto_build = (session is None) or session.can("catalog.build_auto")
@@ -1166,8 +1285,22 @@ class MainWindow(QWidget):
                     self._security_mgr.log_action(self.user_session, "tally_sync",
                         module="final_data", detail=f"Synced {row_count} rows")
 
+            def _after_sync_cancelled():
+                # Disconnect both handlers so they don't fire again
+                try:
+                    self.final_data_page.sync_cancelled.disconnect(_after_sync_cancelled)
+                except (TypeError, RuntimeError):
+                    pass
+                try:
+                    self.final_data_page.sync_complete.disconnect(_after_sync)
+                except (TypeError, RuntimeError):
+                    pass
+                logger.info("Final Data sync cancelled — skipping success popup")
+                QMessageBox.information(self, "Cancelled", "Sync was cancelled.\nExisting data is preserved.")
+
             if hasattr(self, 'final_data_page'):
                 self.final_data_page.sync_complete.connect(_after_sync)
+                self.final_data_page.sync_cancelled.connect(_after_sync_cancelled)
                 self.final_data_page.load_and_sync_data(self.current_company, self.current_company_path)
             else:
                 QMessageBox.information(self, "Sync Complete", f"Data Synced Successfully!\nLoaded {row_count} rows.")
@@ -1179,23 +1312,23 @@ class MainWindow(QWidget):
     def on_row_data_clicked(self):
         if self.current_company and hasattr(self, 'current_company_path'):
             self.row_data_page.load_data(self.current_company_path)
-            self.main_stack.setCurrentIndex(4)
+            self.main_stack.setCurrentIndex(PageIndex.ROW_DATA)
 
     def on_ledger_row_data_clicked(self):
         if self.current_company and hasattr(self, 'current_company_path'):
             self.ledger_row_data_page.load_data(self.current_company_path)
-            self.main_stack.setCurrentIndex(17)
+            self.main_stack.setCurrentIndex(PageIndex.LEDGER_ROW_DATA)
 
     def final_data(self):
         if self.current_company and hasattr(self, 'current_company_path'):
-            self.main_stack.setCurrentIndex(5)
+            self.main_stack.setCurrentIndex(PageIndex.FINAL_DATA)
             # Only refresh the table view, don't re-sync from scratch
             self.final_data_page.refresh_table()
 
     def handle_super_master(self):
         if self.current_company and hasattr(self, 'current_company_path'):
             self.super_master_page.load_super_master_data(self.current_company_path)
-            self.main_stack.setCurrentIndex(6)
+            self.main_stack.setCurrentIndex(PageIndex.SUPER_MASTER)
 
     def handle_catalog_price_list(self): CatalogPriceListUI(self).exec()
     def handle_int_cost_sheet(self): IntCostSheetUI(self).exec()
@@ -1203,7 +1336,7 @@ class MainWindow(QWidget):
     def handle_security(self): 
         if self.current_company and hasattr(self, 'current_company_path'):
             self.security_page.refresh_data()
-            self.main_stack.setCurrentIndex(18)
+            self.main_stack.setCurrentIndex(PageIndex.SECURITY)
     
     def handle_audit_log(self):
         if self.current_company and hasattr(self, 'current_company_path'):
@@ -1241,10 +1374,10 @@ class MainWindow(QWidget):
             self.back_to_login_screen()
 
     def handle_cheque_list(self):
-        self.main_stack.setCurrentIndex(15)
+        self.main_stack.setCurrentIndex(PageIndex.CHEQUE_LIST)
     
     def handle_calendar_mapping(self):
-        self.main_stack.setCurrentIndex(16)
+        self.main_stack.setCurrentIndex(PageIndex.CALENDAR)
     
     def handle_manage_users(self):
         if self.current_company and hasattr(self, 'current_company_path'):
@@ -1272,32 +1405,39 @@ class MainWindow(QWidget):
         if not output_file:
             return
 
-        from PyQt6.QtCore import QCoreApplication
-        progress = QProgressDialog("Starting export...", "Cancel", 0, 100, self)
-        progress.setWindowTitle("Exporting Data")
-        progress.setMinimumDuration(0)
-        progress.show()
+        self._export_progress = QProgressDialog("Starting export...", "Cancel", 0, 100, self)
+        self._export_progress.setWindowTitle("Exporting Data")
+        self._export_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._export_progress.setMinimumDuration(0)
+        self._export_progress.show()
 
-        def on_progress(text, current, total):
-            if progress.wasCanceled():
-                return
-            progress.setLabelText(text)
-            progress.setMaximum(total)
-            progress.setValue(current)
-            QCoreApplication.processEvents()
+        self._export_worker = _ExportWorker(data_path, output_file)
+        
+        def update_progress(text, current, total):
+            self._export_progress.setLabelText(text)
+            self._export_progress.setMaximum(total)
+            self._export_progress.setValue(current)
+            
+        def on_cancel():
+            self._export_worker.is_cancelled = True
+            
+        def on_finished(success, msg):
+            self._export_progress.close()
+            if success:
+                QMessageBox.information(self, "Export Complete", msg)
+                if self._security_mgr and self.user_session:
+                    self._security_mgr.log_action(self.user_session, "data_export",
+                        module="settings", detail=f"Exported to: {os.path.basename(output_file)}")
+            else:
+                if msg != "Export cancelled by user":
+                    QMessageBox.critical(self, "Export Failed", msg)
+                else:
+                    QMessageBox.information(self, "Cancelled", msg)
 
-        from src.logic.data_transfer import export_data_path
-        success, msg = export_data_path(data_path, output_file, on_progress)
-        progress.close()
-
-        if success:
-            QMessageBox.information(self, "Export Complete", msg)
-            # Audit log
-            if self._security_mgr and self.user_session:
-                self._security_mgr.log_action(self.user_session, "data_export",
-                    module="settings", detail=f"Exported to: {os.path.basename(output_file)}")
-        else:
-            QMessageBox.critical(self, "Export Failed", msg)
+        self._export_worker.progress.connect(update_progress)
+        self._export_progress.canceled.connect(on_cancel)
+        self._export_worker.finished.connect(on_finished)
+        self._export_worker.start()
 
     def handle_import_data(self):
         """Import data from a .jkbackup file (RBAC-protected)."""
@@ -1329,33 +1469,40 @@ class MainWindow(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        from PyQt6.QtCore import QCoreApplication
-        progress = QProgressDialog("Starting import...", "Cancel", 0, 100, self)
-        progress.setWindowTitle("Importing Data")
-        progress.setMinimumDuration(0)
-        progress.show()
+        self._import_progress = QProgressDialog("Starting import...", "Cancel", 0, 100, self)
+        self._import_progress.setWindowTitle("Importing Data")
+        self._import_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._import_progress.setMinimumDuration(0)
+        self._import_progress.show()
 
-        def on_progress(text, current, total):
-            if progress.wasCanceled():
-                return
-            progress.setLabelText(text)
-            progress.setMaximum(total)
-            progress.setValue(current)
-            QCoreApplication.processEvents()
+        self._import_worker = _ImportWorker(backup_file, target_path)
+        
+        def update_progress(text, current, total):
+            self._import_progress.setLabelText(text)
+            self._import_progress.setMaximum(total)
+            self._import_progress.setValue(current)
+            
+        def on_cancel():
+            self._import_worker.is_cancelled = True
+            
+        def on_finished(success, msg):
+            self._import_progress.close()
+            if success:
+                QMessageBox.information(self, "Import Complete",
+                    f"{msg}\n\nPlease switch company or restart to use imported data.")
+                if self._security_mgr and self.user_session:
+                    self._security_mgr.log_action(self.user_session, "data_import",
+                        module="settings", detail=f"Imported from: {os.path.basename(backup_file)} to {target_path}")
+            else:
+                if msg != "Import cancelled by user":
+                    QMessageBox.critical(self, "Import Failed", msg)
+                else:
+                    QMessageBox.information(self, "Cancelled", msg)
 
-        from src.logic.data_transfer import import_data_path
-        success, msg = import_data_path(backup_file, target_path, on_progress)
-        progress.close()
-
-        if success:
-            QMessageBox.information(self, "Import Complete",
-                f"{msg}\n\nPlease switch company or restart to use imported data.")
-            # Audit log
-            if self._security_mgr and self.user_session:
-                self._security_mgr.log_action(self.user_session, "data_import",
-                    module="settings", detail=f"Imported from: {os.path.basename(backup_file)} to {target_path}")
-        else:
-            QMessageBox.critical(self, "Import Failed", msg)
+        self._import_worker.progress.connect(update_progress)
+        self._import_progress.canceled.connect(on_cancel)
+        self._import_worker.finished.connect(on_finished)
+        self._import_worker.start()
 
     def back_to_login_screen(self):
         logger.info(f"User logged out")
@@ -1375,8 +1522,8 @@ class MainWindow(QWidget):
                 btn.setEnabled(True)
                 btn.setToolTip("")
         
-        self.nav_stack.setCurrentIndex(0)
-        self.main_stack.setCurrentIndex(0)
+        self.nav_stack.setCurrentIndex(NavIndex.EMPTY)
+        self.main_stack.setCurrentIndex(PageIndex.LOGIN)
         self.company_login.show_list()
 
     def show_company_dropdown(self):
@@ -1390,8 +1537,8 @@ class MainWindow(QWidget):
     def handle_alter_company(self):
         if self.current_company and hasattr(self, 'current_company_path'):
             self.company_login.form_screen.load_for_alter(self.current_company_path)
-            self.main_stack.setCurrentIndex(0)
-            self.company_login.stack.setCurrentIndex(1)
+            self.main_stack.setCurrentIndex(PageIndex.LOGIN)
+            self.company_login.stack.setCurrentIndex(PageIndex.WELCOME)
 
     def handle_create_crm(self):
         # Get company path from full_catalog_page
