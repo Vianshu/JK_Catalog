@@ -848,34 +848,47 @@ class SecurityUI(QWidget):
 
 
     def _on_master_changed(self, group_name, index):
-        """When 'Set All' master dropdown changes, apply to all rows then auto-save."""
+        """When 'Set All' master dropdown changes, cascade to all child rows then auto-save.
+
+        Rules:
+          None    → all children set to None (hard cascade — always works)
+          Display → each child gets 'display' if available, else 'none'
+          Full    → each child gets 'full' if available, else 'display', else 'none'
+        """
         master_cb = self.master_combos.get(group_name)
         if not master_cb:
             return
         level = master_cb.currentData()
         if level == "mixed":
-            return  # not a user action
+            return  # read-only state — not a user action
+
         fac_names = self.group_facility_names.get(group_name, [])
         for fac_name in fac_names:
             combo = self.facility_combos.get(fac_name)
             if not combo:
                 continue
-            idx = combo.findData(level)
-            if idx >= 0:
-                combo.blockSignals(True)
-                combo.setCurrentIndex(idx)
-                combo.blockSignals(False)
-            elif level == "full":
-                combo.blockSignals(True)
-                combo.setCurrentIndex(combo.count() - 1)
-                combo.blockSignals(False)
+            combo.blockSignals(True)
+            if level == "none":
+                # Hard cascade: always available on every row
+                target = combo.findData("none")
             elif level == "display":
-                idx_none = combo.findData("none")
-                if idx_none >= 0:
-                    combo.blockSignals(True)
-                    combo.setCurrentIndex(idx_none)
-                    combo.blockSignals(False)
+                # Best available: display → none
+                target = combo.findData("display")
+                if target < 0:
+                    target = combo.findData("none")
+            else:  # "full"
+                # Best available: full → display → none
+                target = combo.findData("full")
+                if target < 0:
+                    target = combo.findData("display")
+                if target < 0:
+                    target = combo.findData("none")
+            if target >= 0:
+                combo.setCurrentIndex(target)
+            combo.blockSignals(False)
+
         self._auto_save()
+
 
     def _on_catalog_tab_changed(self, index):
         """If Full Catalog (Tab) is set to None, cascade to sub-items."""

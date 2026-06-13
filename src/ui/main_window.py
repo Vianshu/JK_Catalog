@@ -467,10 +467,14 @@ class MainWindow(QWidget):
         self.nav_stack.addWidget(QWidget()) # 0: Blank
 
         # Index 1: Main Menu
+        # NOTE: Submenu trigger buttons (Catalog, Vat Working, Tally Internal) do NOT
+        # have a perm_key. They open the submenu where individual items enforce their
+        # own permissions. Layer 1b in _apply_permissions() hides the parent button
+        # only when ALL its children are denied.
         m_main = self.create_menu_widget([
-            ("📁 &Catalog", self.show_catalog_submenu, False, None, "tab.catalog"),
-            ("📊 &Vat Working", self.show_vat_submenu, False, None, "tab.vat_balance"),
-            ("⚙️ &Tally Internal", self.show_tally_internal_submenu, False, None, "tab.ledger"),
+            ("📁 &Catalog", self.show_catalog_submenu, False),
+            ("📊 &Vat Working", self.show_vat_submenu, False),
+            ("⚙️ &Tally Internal", self.show_tally_internal_submenu, False),
             ("⚙️ &Settings", self.show_settings_submenu)
         ])
         m_main.setObjectName("MainMenuScroll")  # Slightly more breathing room for main nav

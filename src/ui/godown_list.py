@@ -291,52 +291,69 @@ class GodownListUI(QWidget):
     def _commit_alias_search(self, row, editor):
         if not editor or not editor.parent():
             return  # Already committed
-            
+
         Alias = editor.text().strip()
         self.table.removeCellWidget(row, 0)
-        
+
+        # Empty input — clear the row
+        if not Alias:
+            self.table.blockSignals(True)
+            for c in range(1, 7):
+                lock = True if c in (2, 5) else False
+                self.set_item_locked(row, c, "", should_lock=lock)
+            self.table.setItem(row, 0, self.create_table_item(""))
+            self.table.blockSignals(False)
+            self.save_data_to_db()
+            return
+
+        # Exact match first
         data = self._alias_lookup.get(Alias.lower())
+
+        # Contains match fallback (first alphabetical result)
+        if not data and self._alias_lookup:
+            alias_lower = Alias.lower()
+            for key in sorted(self._alias_lookup.keys()):
+                if alias_lower in key:
+                    data = self._alias_lookup[key]
+                    break
+
         if data:
-                
-                # 1. Set Item Name (from Name column, not Alias)
-                self.table.setItem(row, 0, self.create_table_item(data["Item_Name"]))
-                
-                # 2. Unit - auto-fill and lock
-                self.table.setItem(row, 2, self.create_table_item(
-                    data.get("Unit", ""), Qt.AlignmentFlag.AlignCenter, True))
-                
-                # 3. Part No - auto-fill and lock
-                p_no = str(data.get("Part_No", ""))
-                if p_no.lower() == "none": p_no = ""
-                self.table.setItem(row, 5, self.create_table_item(
-                    p_no, Qt.AlignmentFlag.AlignCenter, True))
-                
-                # 4. Set remaining columns as editable (if empty)
-                if not self.table.item(row, 1):
-                    self.set_item_locked(row, 1, "", should_lock=False)
-                if not self.table.item(row, 3):
-                    self.set_item_locked(row, 3, "", should_lock=False)
-                if not self.table.item(row, 4):
-                    self.set_item_locked(row, 4, "", should_lock=False)
-                if not self.table.item(row, 6):
-                    self.set_item_locked(row, 6, "", should_lock=False)
+            # 1. Set Item Name (from Name column, not Alias)
+            self.table.setItem(row, 0, self.create_table_item(data["Item_Name"]))
 
-                # 5. Move cursor to "प्रति कार्टुन" (col 1)
-                self.table.setCurrentCell(row, 1)
-                self.table.setFocus()
-                self.table.editItem(self.table.item(row, 1))
-                
-                self.save_data_to_db()
-                return
+            # 2. Unit - auto-fill and lock
+            self.table.setItem(row, 2, self.create_table_item(
+                data.get("Unit", ""), Qt.AlignmentFlag.AlignCenter, True))
 
-        # If no match found, keep Alias text as Item Name
-        self.table.setItem(row, 0, self.create_table_item(Alias))
-        self.table.setCurrentCell(row, 1)
-        self.table.setFocus()
-        
-        if not self.table.item(row, 1):
-            self.set_item_locked(row, 1, "", should_lock=False)
-        self.table.editItem(self.table.item(row, 1))
+            # 3. Part No - auto-fill and lock
+            p_no = str(data.get("Part_No", ""))
+            if p_no.lower() == "none": p_no = ""
+            self.table.setItem(row, 5, self.create_table_item(
+                p_no, Qt.AlignmentFlag.AlignCenter, True))
+
+            # 4. Set remaining columns as editable (if empty)
+            if not self.table.item(row, 1):
+                self.set_item_locked(row, 1, "", should_lock=False)
+            if not self.table.item(row, 3):
+                self.set_item_locked(row, 3, "", should_lock=False)
+            if not self.table.item(row, 4):
+                self.set_item_locked(row, 4, "", should_lock=False)
+            if not self.table.item(row, 6):
+                self.set_item_locked(row, 6, "", should_lock=False)
+
+            # 5. Move cursor to "प्रति कार्टुन" (col 1)
+            self.table.setCurrentCell(row, 1)
+            self.table.setFocus()
+            self.table.editItem(self.table.item(row, 1))
+
+            self.save_data_to_db()
+            return
+
+        # No match — reject the input, restore previous value and stay on the cell
+        prev_item = self.table.item(row, 0)
+        prev_text = prev_item.text() if prev_item else ""
+        self.table.setItem(row, 0, self.create_table_item(prev_text))
+        self.table.setCurrentCell(row, 0)
     
     def ensure_minimum_rows(self, min_rows=200):
         """Ensure at least min_rows rows exist in the table"""

@@ -109,7 +109,7 @@ class AutocompleteDelegate(QStyledItemDelegate):
 
     def setModelData(self, editor, model, index):
         col = index.column()
-        if col in (2, 5):
+        if col in (2, 3, 5):
             val = editor.text().strip()
             if not val:
                 model.setData(index, "", Qt.ItemDataRole.EditRole)
@@ -118,9 +118,11 @@ class AutocompleteDelegate(QStyledItemDelegate):
             data_list = []
             if col == 2:
                 data_list = list(self.main_ui.party_mapping.keys())
+            elif col == 3:
+                data_list = self.main_ui.bank_list_data
             elif col == 5:
                 data_list = self.main_ui.crm_list_data
-                
+
             if data_list:
                 val_lower = val.lower()
                 exact_match = False
@@ -129,7 +131,7 @@ class AutocompleteDelegate(QStyledItemDelegate):
                         val = item
                         exact_match = True
                         break
-                        
+
                 if not exact_match:
                     contains_match = False
                     for item in sorted(str(x) for x in data_list):
@@ -138,16 +140,16 @@ class AutocompleteDelegate(QStyledItemDelegate):
                             contains_match = True
                             break
                     if not contains_match:
-                        # Reject the edit, value is completely invalid
+                        # Reject the edit — value not in the allowed list
                         return
-                        
+
             if col == 2:
                 val_lower = val.lower()
                 for alias, name in self.main_ui.party_mapping.items():
                     if alias.lower() == val_lower:
                         val = name
                         break
-                        
+
             model.setData(index, val, Qt.ItemDataRole.EditRole)
         else:
             super().setModelData(editor, model, index)
