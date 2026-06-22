@@ -140,50 +140,72 @@ class AltKeyFilter(QObject):
 
 class MenuButtonWidget(QFrame):
     clicked = pyqtSignal()
-    
+
+    _SS_NORMAL = (
+        "QLabel { color: #ffffff; font-size: 15px; font-weight: 600;"
+        " background: transparent; border: none; }"
+        " QLabel:disabled { color: rgba(255,255,255,0.35); }"
+    )
+    _SS_HOVER = (
+        "QLabel { color: #ffffff; font-size: 15px; font-weight: 700;"
+        " background: transparent; border: none; }"
+        " QLabel:disabled { color: rgba(255,255,255,0.35); }"
+    )
+
     def __init__(self, text, is_back=False, parent=None):
         super().__init__(parent)
-        self.setObjectName("MenuButtonWidget") 
+        self.setObjectName("MenuButtonWidget")
         self.setProperty("active", False)
-        self.hotkey_char = None 
-        
+        self.hotkey_char = None
+
         if is_back:
             self.setProperty("is_back", True)
 
         # Prepare content
         self.plain_text = text.replace("&", "")
         self.html_text = self.plain_text
-        
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 12, 10, 12)
         layout.setSpacing(0)
-        
+
         if "&" in text:
             try:
                 idx = text.index("&")
                 if idx < len(text) - 1:
                     char = text[idx+1]
-                    # BADGE STYLE (Front) - High Contrast Red Badge
-                    # User requested: "add the letter on the front itself"
                     self.html_text = f"<font color='#ff4d4d'><b>[{char.upper()}]</b></font> {self.plain_text}"
                     self.hotkey_char = char.upper()
-            except Exception as e: pass
-            
-        # Default to PLAIN text (Clean state)
+            except Exception:
+                pass
+
         self.lbl = QLabel(self.plain_text)
         self.lbl.setObjectName("MenuLabel")
-        # Direct style on label — required because Fusion style engine overrides
-        self.lbl.setStyleSheet("""
-            QLabel { color: #ffffff; font-size: 15px; font-weight: 600; background: transparent; border: none; }
-            QLabel:disabled { color: rgba(255,255,255,0.35); }
-        """)
+        # Inline stylesheet needed — Fusion style engine ignores QSS on child labels.
+        self.lbl.setStyleSheet(self._SS_NORMAL)
+        # Pass hover hit-tests through to the parent frame so enterEvent/leaveEvent fire.
+        self.lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout.addWidget(self.lbl)
         layout.addStretch()
-        
-        # Styling handled by style.qss via #MenuButtonWidget selector
 
+    # ── hover: manually update bg (frame) + weight (label) ──────────────────
+    def enterEvent(self, event):
+        if self.isEnabled():
+            self.setStyleSheet(
+                "#MenuButtonWidget { background-color: rgba(255,255,255,0.2);"
+                " border-radius: 6px; border-left: 3px solid transparent; }"
+            )
+            self.lbl.setStyleSheet(self._SS_HOVER)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.setStyleSheet("")          # let QSS (active / default) take over
+        self.lbl.setStyleSheet(self._SS_NORMAL)
+        super().leaveEvent(event)
+
+    # ────────────────────────────────────────────────────────────────────────
     def set_hotkey_visibility(self, visible):
-        """Toggle between Plain text and HTML Badge."""
+        """Toggle between plain text and hotkey badge."""
         if visible and self.hotkey_char:
             self.lbl.setText(self.html_text)
         else:
@@ -191,9 +213,10 @@ class MenuButtonWidget(QFrame):
 
     def mousePressEvent(self, e):
         self.clicked.emit()
-        
+
     def animateClick(self):
         self.clicked.emit()
+
 
 
 

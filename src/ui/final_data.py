@@ -93,8 +93,6 @@ class RefreshWorker(QThread):
 
     def run(self):
         try:
-            from src.logic.text_utils import cluster_and_sort
-
             db = get_db_manager()
             conn = db.get_connection(self.ui.final_db_name)
             if not conn:
@@ -111,56 +109,26 @@ class RefreshWorker(QThread):
                 self.finished.emit([], [], [])
                 return
 
-            cursor.execute("SELECT * FROM catalog")
+            # Use the pre-computed ID column for ordering instead of
+            # re-running O(n²) cluster_and_sort on every refresh.
+            # generate_complex_ids() bakes the full hierarchy into the ID:
+            #   {MG}{SG}_{cluster}{item}_{variant}
+            # So ORDER BY ID gives us: MG → SG → cluster → item → variant
+            # — exactly the same grouping that clustering would produce.
+            # Rows with NULL ID (pre-first-sync) fall to the end via ISNULL.
+            cursor.execute("""
+                SELECT * FROM catalog
+                ORDER BY ISNULL(ID, 'ZZZZ_ZZZZ_ZZ') ASC
+            """)
             data = cursor.fetchall()
 
             grp_idx = self.ui.col_index("Group")
             path_idx = self.ui.col_index("Image_Path")
-            mg_sn_idx = self.ui.col_index("MG_SN")
-            sg_sn_idx = self.ui.col_index("SG_SN")
-            product_name_idx = self.ui.col_index("Product Name")
-            mrp_idx = self.ui.col_index("MRP")
 
-            # 2. Group rows by (MG_SN, SG_SN)
-            grouped_rows = {}
-            for r in data:
-                mg_raw = str(r[mg_sn_idx]).strip() if r[mg_sn_idx] else ""
-                sg_raw = str(r[sg_sn_idx]).strip() if r[sg_sn_idx] else ""
-                try: mg_int = int(mg_raw)
-                except (ValueError, TypeError): mg_int = 9999
-                try: sg_int = int(sg_raw)
-                except (ValueError, TypeError): sg_int = 9999
-                key = (mg_int, sg_int)
-                if key not in grouped_rows:
-                    grouped_rows[key] = []
-                grouped_rows[key].append(r)
-
-            # 3. Sort group keys
-            sorted_group_keys = sorted(grouped_rows.keys(), key=lambda k: (k[0], k[1]))
-
-            # 4. Within each group, cluster and sort
-            sorted_data = []
-            for gkey in sorted_group_keys:
-                rows_in_group = grouped_rows[gkey]
-                def get_name(row, _idx=product_name_idx):
-                    return str(row[_idx]) if row[_idx] else ""
-                def get_price(row, _idx=mrp_idx):
-                    try:
-                        return float(str(row[_idx]).replace(",", "").strip())
-                    except (ValueError, TypeError):
-                        return 99999999.0
-                if gkey == (9999, 9999):
-                    rows_in_group.sort(key=lambda x: (get_name(x).lower(), get_price(x)))
-                    sorted_data.extend(rows_in_group)
-                else:
-                    sorted_data.extend(cluster_and_sort(
-                        rows_in_group, get_name_fn=get_name, get_price_fn=get_price
-                    ))
-
-            # 5. Split into missing/found images
+            # Split into missing/found images (fast O(n) pass)
             missing_rows = []
             found_rows = []
-            for r in sorted_data:
+            for r in data:
                 grp = str(r[grp_idx]).lower().strip() if r[grp_idx] else ""
                 path = str(r[path_idx]) if r[path_idx] else ""
                 if grp != "price list" and (not path or not os.path.exists(path)):
@@ -688,6 +656,9 @@ class FinalDataUI(QWidget):
     def _run_sync_pipeline(self, folder_path, company_name, progress_signal, cancel_check=None):
         """Heavy sync work — runs in background thread. No widget access allowed.
         Returns the sync label text string."""
+        import time
+        _pipeline_start = time.perf_counter()
+
         def emit(msg):
             if progress_signal:
                 progress_signal.emit(msg)
@@ -696,7 +667,15 @@ class FinalDataUI(QWidget):
             if cancel_check and cancel_check():
                 raise _SyncCancelled()
 
-        row_db_path = os.path.join(folder_path, "row_data.db")
+        def elapsed(label, _ref=[_pipeline_start]):
+            """Log seconds since pipeline start AND since last checkpoint."""
+            now = time.perf_counter()
+            total = now - _pipeline_start
+            since_last = now - _ref[0]
+            _ref[0] = now
+            logger.info(f"[TIMING] {label}: +{since_last:.2f}s (total {total:.2f}s)")
+
+
 
         check_cancelled()
         emit("Creating database tables...")
@@ -728,6 +707,7 @@ class FinalDataUI(QWidget):
                     conn_check.rollback()
         except Exception:
             pass
+        elapsed("DB setup")
         
         final_conn = db.get_connection(final_db)
         if not final_conn:
@@ -749,6 +729,7 @@ class FinalDataUI(QWidget):
                     super_mapping[r[0]] = (r[1], r[2], r[3])
         except Exception as e:
             logger.error(f"Super Master Read Error: {e}", exc_info=True)
+        elapsed("Super Master read")
 
         # Tally Data Fetch
         check_cancelled()
@@ -792,6 +773,7 @@ class FinalDataUI(QWidget):
             col_or_fallback("Closing_Qty", "$_ClosingBalance"),
         ])
         rows = row_cursor.execute(f"SELECT {select_cols} FROM stock_items").fetchall()
+        elapsed(f"stock_items fetch ({len(rows)} rows)")
 
         # Identify items removed from Tally (delete AFTER inserts/updates for safety)
         check_cancelled()
@@ -816,6 +798,7 @@ class FinalDataUI(QWidget):
         existing_rows = {}
         for erow in cur.fetchall():
             existing_rows[erow[0]] = erow[1:]  # GUID → (Item_Name, Alias, ...)
+        elapsed("catalog pre-fetch")
 
         # Pre-build INSERT query once (reused for all new items)
         insert_placeholders = ', '.join(['?'] * len(self.headers))
@@ -876,6 +859,7 @@ class FinalDataUI(QWidget):
                 f_row[self.col_index("Lenth")] = "1"
                 f_row[self.col_index("Update_date")] = now
                 insert_rows.append(f_row)
+        elapsed(f"diff loop ({len(update_rows)} updates, {len(insert_rows)} inserts)")
 
         # Batch execute — ~2 round trips instead of ~2000
         if hasattr(cur, 'fast_executemany'):
@@ -905,6 +889,7 @@ class FinalDataUI(QWidget):
                 chunk = guids_to_delete[i:i+500]
                 placeholders = ','.join(['?'] * len(chunk))
                 cur.execute(f"DELETE FROM catalog WHERE GUID IN ({placeholders})", chunk)
+        elapsed(f"catalog UPSERT/DELETE to SQL Server")
 
         # Processor — run WITHOUT auto-commit (shares same connection)
         check_cancelled()
@@ -913,14 +898,18 @@ class FinalDataUI(QWidget):
         # Pass cancel_check so processor can bail out between internal phases
         _cancel_fn = cancel_check if cancel_check else None
         processor.process_and_save_final_data(auto_commit=False, cancel_check=_cancel_fn)
+        elapsed("DataProcessor.process_and_save_final_data")
+
         check_cancelled()
         emit("Generating complex IDs...")
         processor.generate_complex_ids(auto_commit=False, cancel_check=_cancel_fn)
+        elapsed("DataProcessor.generate_complex_ids")
 
         # Image Sync
         check_cancelled()
         emit("Syncing images...")
         dup_map = self.sync_images_after_processing()
+        elapsed("sync_images_after_processing (incl. True/False sync)")
 
         # === SINGLE ATOMIC COMMIT ===
         # Everything above runs in one uncommitted transaction.
@@ -929,7 +918,9 @@ class FinalDataUI(QWidget):
         # and the except block in the worker does rollback().
         check_cancelled()
         final_conn.commit()
+        elapsed("final commit")
         emit("Sync complete!")
+        logger.info(f"[TIMING] === Full pipeline done in {time.perf_counter() - _pipeline_start:.2f}s ===")
 
         return sync_label, (dup_map or {})
 
@@ -977,7 +968,12 @@ class FinalDataUI(QWidget):
     def sync_images_after_processing(self):
         """Syncs image paths to catalog after processing.
         Returns dup_map so the caller can set self._duplicate_images
-        on the main thread (avoids cross-thread write to a UI attribute)."""
+        on the main thread (avoids cross-thread write to a UI attribute).
+        
+        Optimized: uses batched executemany() instead of per-row round-trips.
+        Image path resolution is done in Python (img_map lookup) and file-date
+        is cached per unique path — avoids redundant os.stat() calls.
+        """
         try:
             conn = self.db.get_connection(self.final_db_name)
             if not conn:
@@ -988,19 +984,45 @@ class FinalDataUI(QWidget):
             # sets self._duplicate_images on the main thread using the returned value.
             cursor = conn.cursor()
             cursor.execute("SELECT GUID, Image_Name FROM catalog")
-            for rid, img_name in cursor.fetchall():
+            rows = cursor.fetchall()
+
+            # Cache file-modify dates per unique path (avoids redundant os.stat calls
+            # when many catalog rows share the same image file)
+            _date_cache = {}
+
+            found_updates = []   # (path, date, guid)
+            missing_updates = [] # (guid,)
+
+            for rid, img_name in rows:
                 clean = img_name.lower().strip() if img_name else ""
-                
-                # Check for "no need" in Image Name
-                # Removed "no_need" check from Image Name as per user request to keep "NO NEED" as display-only for Price List items.
                 if clean in img_map:
                     path = img_map[clean]
-                    date = self.get_file_modify_date(path)
-                    cursor.execute("UPDATE catalog SET Image_Path=?, Image_Date=? WHERE GUID=?", (path, date, rid))
+                    if path not in _date_cache:
+                        _date_cache[path] = self.get_file_modify_date(path)
+                    found_updates.append((path, _date_cache[path], rid))
                 else:
-                    cursor.execute("UPDATE catalog SET Image_Path='', Image_Date='' WHERE GUID=?", (rid,))
-            conn.commit()
-            
+                    missing_updates.append((rid,))
+
+            # Two batched round-trips instead of N individual ones
+            if hasattr(cursor, 'fast_executemany'):
+                cursor.fast_executemany = True
+            if found_updates:
+                cursor.executemany(
+                    "UPDATE catalog SET Image_Path=?, Image_Date=? WHERE GUID=?",
+                    found_updates
+                )
+            if missing_updates:
+                cursor.executemany(
+                    "UPDATE catalog SET Image_Path='', Image_Date='' WHERE GUID=?",
+                    missing_updates
+                )
+            # NOTE: No commit here — the pipeline's final commit handles everything.
+            # This keeps all sync steps in one atomic transaction.
+            logger.info(
+                f"Image sync complete: {len(found_updates)} matched, "
+                f"{len(missing_updates)} cleared"
+            )
+
             # After image sync, update True/False values
             self.sync_true_false_values()
             return dup_map
@@ -1011,74 +1033,56 @@ class FinalDataUI(QWidget):
     def sync_true_false_values(self):
         """
         Update True/False column based on image availability ONLY.
-        Stock-based inclusion is now handled dynamically by the SQL query (Empty + Stock > 0).
-        
+        Stock-based inclusion is handled dynamically by the SQL query (Empty + Stock > 0).
+
         Logic:
-        - If Image_Path contains 'no_need' -> 'false'
-        - If Image_Path is Empty (and not Price List) -> 'false'
-        - Otherwise -> Keep existing value (1, false, or empty)
+        - If Image_Path contains 'no_need' / 'noneed' / 'no need'  -> 'false'
+        - If [Group] = 'price list'                                 -> 'false'
+        - Otherwise                                                 -> keep existing value
+
+        Optimized: pure SET-BASED SQL — no Python row loop, no per-row round-trips.
+        3 SQL statements replace N individual UPDATE calls.
         """
         try:
             if not self.final_db_name:
                 return
-                
+
             conn = self.db.get_connection(self.final_db_name)
             if not conn:
                 return
             cursor = conn.cursor()
-            
-            # Get all rows with relevant columns
+
+            # Rule 1: Image_Path contains a 'no need' variant → force 'false'
             cursor.execute("""
-                SELECT GUID, Stock, Image_Path, [Group], [True/False]
-                FROM catalog
+                UPDATE catalog
+                SET [True/False] = 'false'
+                WHERE (
+                    LOWER(ISNULL(Image_Path, '')) LIKE '%no_need%'
+                    OR LOWER(ISNULL(Image_Path, '')) LIKE '%noneed%'
+                    OR LOWER(ISNULL(Image_Path, '')) LIKE '%no need%'
+                )
+                AND LOWER(LTRIM(RTRIM(ISNULL([True/False], '')))) != 'false'
             """)
-            rows = cursor.fetchall()
-            
-            for row in rows:
-                rid, stock, img_path, group_name, current_tf = row
-                
-                # Normalize current True/False value
-                current_tf_str = str(current_tf).strip().lower() if current_tf else ""
-                current_is_true = current_tf_str in ["1", "true", "yes"]
-                
-                # Determine new True/False value
-                # Default: Keep current value
-                new_tf = current_tf_str
-                
-                # Helper Flags
-                img_path_str = str(img_path).lower().strip() if img_path else ""
-                is_price_list = str(group_name).lower().strip() == "price list" if group_name else False
-                has_no_need = "no_need" in img_path_str or "noneed" in img_path_str or "no need" in img_path_str
-                has_image = bool(img_path_str)
-                
-                # Logic 1: 'no_need' or 'Price List' forces False (Strongest Rule)
-                if has_no_need or is_price_list:
-                    new_tf = "false"
-                
-                # Logic 2: Missing Image check REMOVED.
-                # We do NOT force 'false' just because an image is missing, 
-                # unless it is explicitly 'no_need' (handled above).
-                # This allows items with missing images to remain 'Empty' (Active by Stock) or '1'.
-                pass
 
+            # Rule 2: Price List group → force 'false'
+            cursor.execute("""
+                UPDATE catalog
+                SET [True/False] = 'false'
+                WHERE LOWER(LTRIM(RTRIM(ISNULL([Group], '')))) = 'price list'
+                AND LOWER(LTRIM(RTRIM(ISNULL([True/False], '')))) != 'false'
+            """)
 
-                
-                # Update only if changed
-                if current_tf_str != new_tf and not (current_tf_str == "1" and new_tf == "1"):
-                    cursor.execute("UPDATE catalog SET [True/False]=? WHERE GUID=?", (new_tf, rid))
-            
-            # --- FORCE DEFAULT LENGTH 1|0 ---
-            cursor.execute("UPDATE catalog SET Lenth='1|0' WHERE Lenth IS NULL OR LTRIM(RTRIM(Lenth))=''")
-            # Also fix existing '1' entries to auto-height '1|0'
-            cursor.execute("UPDATE catalog SET Lenth='1|0' WHERE LTRIM(RTRIM(Lenth))='1'")
-            
-            # RESCUE LOGIC REMOVED: Previously this overwrote user-set 'false' 
-            # values back to empty when stock > 0. This prevented manual exclusions
-            # from sticking. Manual 'false' edits are now preserved.
-            
-            conn.commit()
-            logger.debug(f"True/False sync completed for {len(rows)} items")
-            
+            # Fix Lenth column defaults in the same transaction
+            # (was a separate commit before — merged here to save one round-trip)
+            cursor.execute("""
+                UPDATE catalog
+                SET Lenth = '1|0'
+                WHERE LTRIM(RTRIM(ISNULL(Lenth, ''))) IN ('', '1')
+            """)
+
+            # NOTE: No commit here — the pipeline's final commit handles everything.
+            logger.debug("True/False sync completed (set-based SQL)")
+
         except Exception as e:
             logger.error(f"True/False Sync Error: {e}", exc_info=True)
 
@@ -1303,10 +1307,6 @@ class FinalDataUI(QWidget):
 
         except Exception as e:
             logger.error(f"Summary Stats Error: {e}", exc_info=True)
-            import traceback
-            traceback.print_exc()
-            import traceback
-            traceback.print_exc()
 
     # Aapke baaki functions (get_image_mapping, show_preview, show_path_popup, filter_table) 
     # backup code ke jaise hi kaam karenge...

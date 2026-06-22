@@ -165,14 +165,20 @@ def cluster_products(items, get_name_fn=None, get_price_fn=None, get_size_fn=Non
                 return "ZZZZZZ"
 
     clusters = []
+    _clean_cache = {}  # name → cleaned name (avoids redundant regex work)
+
     for item in items:
         name = get_name_fn(item)
-        clean_n = clean_cat_name(name)
+        if name not in _clean_cache:
+            _clean_cache[name] = clean_cat_name(name)
+        clean_n = _clean_cache[name]
 
         added = False
         for cluster in clusters:
             rep_name = get_name_fn(cluster[0])
-            rep_clean = clean_cat_name(rep_name)
+            if rep_name not in _clean_cache:
+                _clean_cache[rep_name] = clean_cat_name(rep_name)
+            rep_clean = _clean_cache[rep_name]
             if is_similar(clean_n, rep_clean):
                 cluster.append(item)
                 added = True

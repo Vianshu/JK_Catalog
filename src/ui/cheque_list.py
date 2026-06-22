@@ -1,4 +1,5 @@
 import os
+from src.ui.table_nav_mixin import ExcelTableMixin
 import pandas as pd
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
@@ -27,6 +28,8 @@ class AutocompleteDelegate(QStyledItemDelegate):
 
     def createEditor(self, parent, option, index):
         col = index.column()
+        if col == 0:  # S.N — never editable
+            return None
         if col in (2, 3, 5):
             editor = QLineEdit(parent)
             editor.setFrame(False)
@@ -43,8 +46,10 @@ class AutocompleteDelegate(QStyledItemDelegate):
                 completer = QCompleter(data_list)
                 completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
                 completer.setFilterMode(Qt.MatchFlag.MatchContains)
-                completer.setMaxVisibleItems(10)
+                completer.setMaxVisibleItems(12)
                 editor.setCompleter(completer)
+                # Make popup wide enough to read long names
+                completer.popup().setMinimumWidth(350)
                 
             editor.installEventFilter(self)
             return editor
@@ -68,26 +73,18 @@ class AutocompleteDelegate(QStyledItemDelegate):
                 r = table.currentRow()
                 c = table.currentColumn()
                 if key == Qt.Key.Key_Up and r > 0:
-                    table.setCurrentCell(r - 1, c)
+                    self.main_ui._nav_set_current(r - 1, c)
                 elif key == Qt.Key.Key_Down and r < table.rowCount() - 1:
-                    table.setCurrentCell(r + 1, c)
+                    self.main_ui._nav_set_current(r + 1, c)
                 return True
                 
-            # Smart Excel Left/Right: 
-            # If double-clicked (Edit Mode), Left/Right moves text cursor (default QLineEdit behavior).
-            # If typed (Overwrite Mode), Left/Right commits and moves to adjacent cell.
-            elif key in (Qt.Key.Key_Left, Qt.Key.Key_Right) and not self.main_ui._is_double_click:
-                self.commitData.emit(editor)
-                self.closeEditor.emit(editor, QStyledItemDelegate.EndEditHint.NoHint)
-                
-                table = self.main_ui.table
-                r = table.currentRow()
-                c = table.currentColumn()
-                if key == Qt.Key.Key_Left and c > 0:
-                    table.setCurrentCell(r, c - 1)
-                elif key == Qt.Key.Key_Right and c < table.columnCount() - 1:
-                    table.setCurrentCell(r, c + 1)
-                return True
+            # Left/Right: per spec, in Edit mode the cursor moves within text.
+            # The delegate eventFilter only fires when a QLineEdit editor IS active,
+            # which IS Edit mode — so Left/Right ALWAYS moves cursor, never navigates.
+            # (Previously gated by _is_double_click which was unreliable due to
+            # _reset_edit_mode firing from currentCellChanged during double-click.)
+            elif key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+                return False  # QLineEdit handles cursor movement natively
                 
             # Excel: Enter commits and moves down
             elif key in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
@@ -102,7 +99,7 @@ class AutocompleteDelegate(QStyledItemDelegate):
                 r = table.currentRow()
                 c = table.currentColumn()
                 if r < table.rowCount() - 1:
-                    table.setCurrentCell(r + 1, c)
+                    self.main_ui._nav_set_current(r + 1, c)
                 return True
                 
         return super().eventFilter(editor, event)
@@ -154,11 +151,22 @@ class AutocompleteDelegate(QStyledItemDelegate):
         else:
             super().setModelData(editor, model, index)
 
+    def setEditorData(self, editor, index):
+        """Prevent auto-select-all on edit open. Qt calls selectAll() inside
+        the editor's focusInEvent, which fires AFTER setEditorData — so
+        deselect() here is immediately overwritten. Use QTimer.singleShot(0)
+        to defer deselection until after the focusIn event completes."""
+        super().setEditorData(editor, index)
+        if isinstance(editor, QLineEdit):
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, editor.deselect)        # Runs after focusInEvent
+            QTimer.singleShot(0, lambda: editor.end(False))  # Cursor at end, no selection
+
     def destroyEditor(self, editor, index):
-        self.main_ui._is_double_click = False
+        self.main_ui._is_edit_mode = False   # Exit Mode 2 when editor closes
         super().destroyEditor(editor, index)
 
-class ChequeListUI(QWidget):
+class ChequeListUI(ExcelTableMixin, QWidget):
     def __init__(self, company_path=None):
         super().__init__()
         
@@ -173,7 +181,7 @@ class ChequeListUI(QWidget):
         self.bank_list_data = []
         self.crm_list_data = []
         self.party_mapping = {}
-        self._is_double_click = False  # Track Edit mode vs Overwrite mode
+        # _is_edit_mode is initialised by ExcelTableMixin._init_excel_table()
         self.columns = [
             "S.N", "Date", "Party Name", "Bank",
             "Chq No.", "CRM", "Amount", "Cash/Bank", "Clear Date", "Narration"
@@ -254,15 +262,19 @@ class ChequeListUI(QWidget):
         self.table.setHorizontalHeaderLabels(self.columns)
         self.table.verticalHeader().hide()
 
-        # Header settings
+        # Header settings — balanced column widths
+        # S.N, Date, Party Name, Bank, Chq No., CRM, Amount, Cash/Bank, Clear Date, Narration
+        _col_widths = [45, 95, 210, 140, 85, 110, 90, 75, 95, 160]
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        header.setCascadingSectionResizes(True)
-        header.setSectionResizeMode(9, QHeaderView.ResizeMode.Stretch)  # Narration fills remaining
+        header.setMinimumSectionSize(40)
+        for i, w in enumerate(_col_widths):
+            header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
+            self.table.setColumnWidth(i, w)
+        header.setSectionResizeMode(9, QHeaderView.ResizeMode.Stretch)  # Narration fills remaining space
 
         self.table.horizontalHeader().sectionClicked.connect(self.sort_table_safe)
         self.table.itemChanged.connect(self.on_item_changed)
-        self.table.installEventFilter(self)
+        # Event filter is installed by _init_excel_table() below — do NOT add another.
 
         table_container = QWidget()
         table_layout = QVBoxLayout(table_container)
@@ -272,14 +284,13 @@ class ChequeListUI(QWidget):
 
         self.splitter.addWidget(table_container)
 
-        # Table Events
+        # Table navigation (Mode 1 / Mode 2) — ExcelTableMixin
+        # _init_excel_table sets: DoubleClicked trigger, SingleSelection, blue
+        # selection style, _NavResetDelegate, installEventFilter, cellDoubleClicked.
+        # We then override the delegate with AutocompleteDelegate for autocomplete cols.
+        self._init_excel_table(self.table)
         self.table.setItemDelegate(AutocompleteDelegate(self))
-        self.table.setEditTriggers(
-            QAbstractItemView.EditTrigger.DoubleClicked |
-            QAbstractItemView.EditTrigger.EditKeyPressed
-        )
-        self.table.cellDoubleClicked.connect(self._handle_double_click)
-        self.table.currentCellChanged.connect(self._reset_edit_mode)
+        # _init_excel_table already connected cellDoubleClicked — no duplicate needed.
 
         # ================= RIGHT (BANK LIST) =================
         self.right_container = QWidget()
@@ -579,6 +590,7 @@ class ChequeListUI(QWidget):
                 item = QTableWidgetItem(val)
                 if c == 0:
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)  # S.N not editable
                 elif c == 6:
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 elif c == 7:
@@ -595,6 +607,7 @@ class ChequeListUI(QWidget):
                     val = f"{idx + 1:03d}"
                     item = QTableWidgetItem(val)
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)  # S.N not editable
                     self.table.setItem(idx, c, item)
                 else:
                     item = QTableWidgetItem("")
@@ -734,9 +747,13 @@ class ChequeListUI(QWidget):
                         val = f"{r + 1:03d}"
                 
                 item = QTableWidgetItem(val)
-                if c == 0: item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                elif c == 6: item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                elif c == 7: item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if c == 0:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)  # S.N not editable
+                elif c == 6:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                elif c == 7:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(r, c, item)
         
         self.table.blockSignals(False)
@@ -747,7 +764,7 @@ class ChequeListUI(QWidget):
         self.update_summary()        # फिर समरी कैलकुलेट करें (ताकि छुपा हुआ डेटा न गिना जाए)
         self.update_bank_counts()    # बैंक काउंट अपडेट करें
         
-        self.table.setColumnWidth(9, 250) # कॉलम विड्थ सेट करें
+        # Column widths already set in setup_ui via balanced _col_widths
     
     def showEvent(self, event):
         super().showEvent(event)
@@ -1005,38 +1022,24 @@ class ChequeListUI(QWidget):
 
         painter.end()
 
-    def eventFilter(self, source, event):
-        if source == self.table and event.type() == QEvent.Type.KeyPress:
-            key = event.key()
-            row = self.table.currentRow()
-            col = self.table.currentColumn()
 
-            # Explicit Table Navigation (Fixes the Alt-key / instant-edit bug)
-            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right):
-                new_row, new_col = row, col
-                if key == Qt.Key.Key_Up and row > 0:
-                    new_row = row - 1
-                elif key == Qt.Key.Key_Down and row < self.table.rowCount() - 1:
-                    new_row = row + 1
-                elif key == Qt.Key.Key_Left and col > 0:
-                    new_col = col - 1
-                elif key == Qt.Key.Key_Right and col < self.table.columnCount() - 1:
-                    new_col = col + 1
-                
-                if new_row != row or new_col != col:
-                    self.table.setCurrentCell(new_row, new_col)
-                return True
-                
-            # Table Enter: Move down like Excel
-            elif key in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
-                if row < self.table.rowCount() - 1:
-                    self.table.setCurrentCell(row + 1, col)
-                return True
+    # ── ExcelTableMixin overrides ────────────────────────────────────────────
 
-        return super().eventFilter(source, event)
+    def _excel_on_double_click(self, row, col):
+        """Col 0 (S.N.) is never editable — skip it; delegate to mixin for all other cols."""
+        if col == 0:
+            return
+        super()._excel_on_double_click(row, col)
 
-    def _handle_double_click(self, row, col):
-        self._is_double_click = True
+    def _excel_on_printable_key(self, row, col, text):
+        """Col 0 (S.N.) is never editable — skip it; delegate to mixin for all other cols."""
+        if col == 0:
+            return False
+        return super()._excel_on_printable_key(row, col, text)
 
-    def _reset_edit_mode(self, cr, cc, pr, pc):
-        self._is_double_click = False
+    # kept for backward-compat with any stale signal connections
+    def _reset_edit_mode(self, cr=None, cc=None, pr=None, pc=None):
+        pass
+    def _on_selection_changed(self):
+        pass
+

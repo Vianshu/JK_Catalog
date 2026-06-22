@@ -4,8 +4,10 @@ from PyQt6.QtCore import *
 from PyQt6.QtGui import *
 from PyQt6.QtPrintSupport import QPrintPreviewDialog, QPrinter
 from src.logic.db_manager import get_db_manager, build_logical_name
+from src.ui.table_nav_mixin import ExcelTableMixin
 
-class GodownListUI(QWidget):
+
+class GodownListUI(ExcelTableMixin, QWidget):
     def __init__(self, data_folder_path, final_data_df=None):
         super().__init__()
         self.settings = QSettings("TallySync", "GodownList")
@@ -17,6 +19,7 @@ class GodownListUI(QWidget):
         self.godown_db_name = ""
         self.final_db_name = ""
         self._active_editor = None  # Track (row, editor) for cleanup
+        # _is_edit_mode is initialised by ExcelTableMixin._init_excel_table()
         
         # Debounced save timer — saves 1 second after last edit instead of on every keystroke
         self._save_timer = QTimer(self)
@@ -147,13 +150,10 @@ class GodownListUI(QWidget):
         self.table.setColumnWidth(5, 100)
         self.table.setColumnWidth(6, 80)
         
-        self.table.setEditTriggers(
-            QAbstractItemView.EditTrigger.DoubleClicked | 
-            QAbstractItemView.EditTrigger.EditKeyPressed
-        )
-        
-        self.table.installEventFilter(self)
-        self.table.cellDoubleClicked.connect(self.start_Alias_search)
+        # Table navigation (Mode 1 / Mode 2) — ExcelTableMixin
+        # _NavResetDelegate (from mixin) resets _is_edit_mode on editor close.
+        # Col 0 (Alias) uses a QLineEdit overlay (setCellWidget), not the delegate.
+        self._init_excel_table(self.table)
         self.table.itemChanged.connect(self.handle_item_changed)
         
         layout.addWidget(self.table)
@@ -166,74 +166,37 @@ class GodownListUI(QWidget):
             self.load_final_data_from_db(self.company_path)
             self.update_completer()
 
-    # ---------------- EVENT FILTER ----------------
-    def eventFilter(self, source, event):
-        if source == self.table and event.type() == QEvent.Type.KeyPress:
-            row = self.table.currentRow()
-            col = self.table.currentColumn()
-            key = event.key()
 
-            # Arrow keys: clean up any active editor, then navigate (Excel-like)
-            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right):
-                self._cleanup_active_editor()
-                new_row, new_col = row, col
-                if key == Qt.Key.Key_Up and row > 0:
-                    new_row = row - 1
-                elif key == Qt.Key.Key_Down and row < self.table.rowCount() - 1:
-                    new_row = row + 1
-                elif key == Qt.Key.Key_Left and col > 0:
-                    new_col = col - 1
-                elif key == Qt.Key.Key_Right and col < self.table.columnCount() - 1:
-                    new_col = col + 1
-                self.table.setCurrentCell(new_row, new_col)
-                return True
+    # ── ExcelTableMixin overrides ────────────────────────────────────────────
 
-            # F2 or typing in Alias col (0)
-            if col == 0:
-                text = event.text()
-                if key == Qt.Key.Key_F2 or (text and text.isprintable()):
-                    self.start_Alias_search(row, col)
-                    if text and text.isprintable() and key != Qt.Key.Key_F2:
-                        editor = self._active_editor[1] if self._active_editor else None
-                        if editor: editor.setText(text)
-                    return True
+    def _excel_on_navigate(self):
+        """Commit the col-0 overlay editor (if open) before moving away."""
+        self._cleanup_active_editor()
 
-            # Block non-numeric input for column 1 (प्रति कार्टुन)
-            if col == 1:
-                text = event.text()
-                if text and text.isprintable():
-                    # Allow digits, dot, comma, minus only
-                    if not text in "0123456789.,-":
-                        return True  # Block the key
+    def _excel_on_double_click(self, row, col):
+        """Col 0: open autocomplete overlay. Col > 0: mixin default (track + cursor)."""
+        if col == 0:
+            self.start_Alias_search(row, col)
+            return
+        super()._excel_on_double_click(row, col)
 
-            # Enter Navigation
-            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                self._cleanup_active_editor()
-                next_row = row
-                next_col = col + 1
+    def _excel_on_printable_key(self, row, col, text):
+        """Col 0: open overlay + type. Col 1: numeric only. Others: mixin default."""
+        if col == 0:
+            self.start_Alias_search(row, col)
+            editor = self._active_editor[1] if self._active_editor else None
+            if editor:
+                editor.clear()
+                editor.setText(text)
+            return True
+        if col == 1 and text not in "0123456789.,-":
+            return True   # block non-numeric
+        return super()._excel_on_printable_key(row, col, text)
 
-                if col == self.table.columnCount() - 1:
-                    next_row = row + 1
-                    next_col = 0
-                
-                if next_row < self.table.rowCount():
-                    self.table.setCurrentCell(next_row, next_col)
-                
-                return True
+    # kept for backward-compat with any stale signal connections
+    def _on_cell_changed(self, cur_row=None, cur_col=None, prev_row=None, prev_col=None):
+        pass
 
-            # Printable characters on other columns: start editing
-            if col > 0:
-                text = event.text()
-                if text and text.isprintable():
-                    item = self.table.item(row, col)
-                    if item and (item.flags() & Qt.ItemFlag.ItemIsEditable):
-                        self.table.editItem(item)
-                        editor = self.table.findChild(QLineEdit)
-                        if editor: editor.setText(text)
-                        return True
-
-        return super().eventFilter(source, event)
-    
     def _cleanup_active_editor(self):
         """Remove any lingering cell editor and save its text."""
         if not self._active_editor:
@@ -280,7 +243,11 @@ class GodownListUI(QWidget):
             local_completer.activated.connect(lambda val: self._commit_alias_search(row, editor))
             
         self.table.setCellWidget(row, col, editor)
-        editor.selectAll()
+        # Use QTimer so deselect/cursor-end runs AFTER focusInEvent fires
+        # (focusInEvent calls selectAll which overwrites any deselect done here)
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, editor.deselect)
+        QTimer.singleShot(0, lambda: editor.end(False))
         editor.setFocus()
         
         # Track this editor
@@ -341,9 +308,10 @@ class GodownListUI(QWidget):
             if not self.table.item(row, 6):
                 self.set_item_locked(row, 6, "", should_lock=False)
 
-            # 5. Move cursor to "प्रति कार्टुन" (col 1)
-            self.table.setCurrentCell(row, 1)
+            # 5. Move cursor to quantity col (col 1) and open editor
+            self._nav_set_current(row, 1)
             self.table.setFocus()
+            self._is_edit_mode = True
             self.table.editItem(self.table.item(row, 1))
 
             self.save_data_to_db()
@@ -353,7 +321,7 @@ class GodownListUI(QWidget):
         prev_item = self.table.item(row, 0)
         prev_text = prev_item.text() if prev_item else ""
         self.table.setItem(row, 0, self.create_table_item(prev_text))
-        self.table.setCurrentCell(row, 0)
+        self._nav_set_current(row, 0)  # stay on col 0, Mode 1
     
     def ensure_minimum_rows(self, min_rows=200):
         """Ensure at least min_rows rows exist in the table"""

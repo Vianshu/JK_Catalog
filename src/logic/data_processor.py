@@ -29,6 +29,10 @@ class DataProcessor:
             # शुरू का 'x' और सारे '.' हटा दें
             text = re.sub(r"^[xX]\.*", "", temp_text)
 
+        # Hand Made Sink → strip size, keep "Hand Made Sink"
+        if "hand made sink" in text.lower():
+            return "Hand Made Sink"
+
         # अगर Sink 18x24 वाला कोई भी केस है, तो उसे यहीं फिक्स कर दें
         if "sink 18x24" in text.lower():
             return "Sink 18x24"
@@ -347,8 +351,10 @@ class DataProcessor:
                 base_name_val = info['base_name']
                 base_name_lower = base_name_val.lower()
                 
-                # 1. NEW: Sink Bypass Condition
-                if "sink 18x24" in base_name_lower:
+                # 1. Sink exceptions (most-specific first)
+                if "hand made sink" in base_name_lower:
+                    image_name_val = "Hand Made Sink"
+                elif "sink 18x24" in base_name_lower:
                     image_name_val = "Sink 18x24"
                 elif "router bit" in base_name_lower:
                     image_name_val = base_name_val # "Router Bit 2 Step" सुरक्षित रहेगा    
