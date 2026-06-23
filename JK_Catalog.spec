@@ -1,20 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_data_files
 # ============================================================
-# JK_Catalog PyInstaller Spec File
+# JK Catalog (Single-User) — PyInstaller Spec File
 # ============================================================
-# Builds a single-file Windows EXE.
+# Builds a ONE-DIR Windows distribution.
+# Wrap with JK_Catalog_Setup.iss to produce JK_Catalog_Setup.exe
 #
 # BUILD COMMAND:
-#   pyinstaller JK_Catalog.spec
+#   pyinstaller JK_Catalog.spec --noconfirm
 #
 # IMPORTANT NOTES:
 # - console=False: No terminal window. Crashes are logged to
-#   data/error.log via main.py's global exception handler.
-# - Data files are bundled INTO the EXE (extracted to _MEIPASS
-#   at runtime). They are READ-ONLY.
-# - Writable data (company DBs, logs) live next to the EXE,
-#   not inside _MEIPASS. See path_utils.py for details.
+#   %APPDATA%/JK_Catalog/error.log via main.py's global handler.
+# - Bundled read-only assets live in _internal/ (sys._MEIPASS).
+# - Writable data (config, logs) go to %APPDATA%/JK_Catalog/
+#   via path_utils.get_app_dir(). Nothing is stored next to the exe.
 # ============================================================
 
 
@@ -23,21 +23,19 @@ a = Analysis(
     pathex=[],
     binaries=[],
     # --- Bundled Data Files ---
-    # These are extracted to sys._MEIPASS at runtime (read-only).
-    # Access via: get_asset_path("style.qss") or get_data_file_path("super_master.db")
+    # Extracted to sys._MEIPASS (_internal/) at runtime — READ-ONLY.
+    # Access via get_asset_path() / get_base_path().
     datas=[
+        ('splash.png', '.'),                          # Splash image for QSplashScreen
         ('src/assets/style.qss', 'src/assets'),       # UI stylesheet
         ('config/cleaning_rules.json', 'config'),      # Product name cleaning rules
-        ('config/catalog_config.json', 'config'),      # Per-company catalog header config
+        ('config/catalog_config.json', 'config'),      # Per-company catalog config
     ] + collect_data_files('nepali_datetime'),
 
-    hiddenimports=['pyodbc'],   # SQL Server driver (auto-detect misses it)
+    hiddenimports=['pyodbc'],   # ODBC driver (auto-detect misses it)
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # --- Excluded Packages ---
-    # These are large packages that PyInstaller might detect as dependencies
-    # but are NOT used by this application. Excluding them reduces EXE size significantly.
     excludes=[
         'torch', 'scipy', 'tensorflow', 'matplotlib',
         'PySide6', 'PySide2', 'PyQt5', 'QtPy',
@@ -60,24 +58,31 @@ splash = Splash(
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     splash,
     splash.binaries,
     [],
+    exclude_binaries=True,          # Binaries go into COLLECT (one-dir)
     name='JK_Catalog',
     icon='JK_Icon.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,                              # Compress with UPX for smaller EXE
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,                          # No console window (GUI app)
-    disable_windowed_traceback=False,       # Keep traceback in windowed mode
+    upx=True,
+    console=False,                  # No console window (GUI app)
+    disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
 )
 
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='JK_Catalog'
+)
