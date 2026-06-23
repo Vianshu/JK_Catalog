@@ -969,10 +969,13 @@ class FinalDataUI(QWidget):
         """Syncs image paths to catalog after processing.
         Returns dup_map so the caller can set self._duplicate_images
         on the main thread (avoids cross-thread write to a UI attribute).
-        
-        Optimized: uses batched executemany() instead of per-row round-trips.
-        Image path resolution is done in Python (img_map lookup) and file-date
-        is cached per unique path — avoids redundant os.stat() calls.
+
+        Optimized:
+        - Batched executemany() instead of per-row round-trips.
+        - File-date cached per unique path (avoids redundant os.stat calls).
+        - Skip-if-unchanged: rows whose Image_Path already matches the
+          resolved path are excluded from both UPDATE batches, cutting
+          DB writes to zero on a sync where nothing changed.
         """
         try:
             conn = self.db.get_connection(self.final_db_name)
@@ -983,24 +986,34 @@ class FinalDataUI(QWidget):
             # is called from the background thread. The caller (_on_sync_finished)
             # sets self._duplicate_images on the main thread using the returned value.
             cursor = conn.cursor()
-            cursor.execute("SELECT GUID, Image_Name FROM catalog")
+            # Fetch current path too so we can skip unchanged rows
+            cursor.execute("SELECT GUID, Image_Name, Image_Path FROM catalog")
             rows = cursor.fetchall()
 
             # Cache file-modify dates per unique path (avoids redundant os.stat calls
             # when many catalog rows share the same image file)
             _date_cache = {}
 
-            found_updates = []   # (path, date, guid)
-            missing_updates = [] # (guid,)
+            found_updates   = []  # (path, date, guid) — path changed or newly matched
+            missing_updates = []  # (guid,)            — no image and path not already empty
+            skipped         = 0
 
-            for rid, img_name in rows:
+            for rid, img_name, current_path in rows:
                 clean = img_name.lower().strip() if img_name else ""
+                current_path = current_path or ""
+
                 if clean in img_map:
                     path = img_map[clean]
+                    if path == current_path:
+                        skipped += 1   # already correct — nothing to write
+                        continue
                     if path not in _date_cache:
                         _date_cache[path] = self.get_file_modify_date(path)
                     found_updates.append((path, _date_cache[path], rid))
                 else:
+                    if current_path == "":
+                        skipped += 1   # already empty — nothing to write
+                        continue
                     missing_updates.append((rid,))
 
             # Two batched round-trips instead of N individual ones
@@ -1019,8 +1032,8 @@ class FinalDataUI(QWidget):
             # NOTE: No commit here — the pipeline's final commit handles everything.
             # This keeps all sync steps in one atomic transaction.
             logger.info(
-                f"Image sync complete: {len(found_updates)} matched, "
-                f"{len(missing_updates)} cleared"
+                f"Image sync: {len(found_updates)} updated, "
+                f"{len(missing_updates)} cleared, {skipped} skipped (unchanged)"
             )
 
             # After image sync, update True/False values
@@ -1312,25 +1325,56 @@ class FinalDataUI(QWidget):
     # backup code ke jaise hi kaam karenge...
     def get_image_mapping(self):
         """Scan image folder and return (image_map, duplicate_map).
-        
+
         image_map: {name_lower: path} — last-seen path wins (legacy behaviour).
         duplicate_map: {name_lower: [path1, path2, ...]} — only names that appear ≥ 2 times.
+
+        Optimized: result is cached by a folder fingerprint
+        (total file count + latest mtime across the folder).  If neither
+        changes between two syncs the expensive os.walk is skipped entirely.
         """
-        image_map = {}
-        all_hits = {}   # name_lower → list of full paths
         if not self.image_folder or not os.path.exists(self.image_folder):
-            return image_map, {}
+            return {}, {}
+
+        # ── build a cheap folder fingerprint ───────────────────────────────
+        total_files = 0
+        max_mtime   = 0.0
+        for root, _, files in os.walk(self.image_folder):
+            for f in files:
+                total_files += 1
+                try:
+                    mt = os.path.getmtime(os.path.join(root, f))
+                    if mt > max_mtime:
+                        max_mtime = mt
+                except OSError:
+                    pass
+        fingerprint = (self.image_folder, total_files, max_mtime)
+
+        # ── return cached result if folder is unchanged ─────────────────────
+        cached = getattr(self, '_img_map_cache', None)
+        if cached and cached[0] == fingerprint:
+            logger.debug("get_image_mapping: folder unchanged — returning cached result")
+            return cached[1], cached[2]
+
+        # ── full scan ───────────────────────────────────────────────────────
+        image_map = {}
+        all_hits  = {}   # name_lower → list of full paths
         for root, _, files in os.walk(self.image_folder):
             for file in files:
                 if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
-                    key = os.path.splitext(file)[0].lower().strip()
+                    key       = os.path.splitext(file)[0].lower().strip()
                     full_path = os.path.join(root, file)
                     image_map[key] = full_path
                     all_hits.setdefault(key, []).append(full_path)
-        # Build duplicate map (only entries with 2+ files)
+
         dup_map = {k: v for k, v in all_hits.items() if len(v) >= 2}
         if dup_map:
-            logger.warning(f"Duplicate image names detected: {len(dup_map)} names have multiple files")
+            logger.warning(
+                f"Duplicate image names detected: {len(dup_map)} names have multiple files"
+            )
+
+        # store cache
+        self._img_map_cache = (fingerprint, image_map, dup_map)
         return image_map, dup_map
 
     def filter_table(self):
