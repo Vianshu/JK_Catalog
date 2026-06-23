@@ -318,12 +318,7 @@ def main():
     window = MainWindow()
     window.maximize_window()
     
-    # Close PyInstaller splash if running from EXE
-    try:
-        import pyi_splash
-        pyi_splash.close()
-    except ImportError:
-        pass
+
 
     # Close PyQt splash screen when window is ready
     splash.finish(window)
