@@ -57,18 +57,26 @@ class VatBaseUI(QWidget):
 
     def insert_sheet(self, name):
         sheet = ExcelSheetBase(self.theme_color)
+        if not getattr(self, '_can_edit', True):
+            sheet.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         idx = self.tabs.addTab(sheet, name)
         self.tabs.setCurrentIndex(idx)
 
     def add_new_sheet(self):
+        if not getattr(self, '_can_edit', True):
+            return
         self.insert_sheet(f"{self.title_prefix} {self.tabs.count() + 1}")
 
     def rename_tab(self, index):
+        if not getattr(self, '_can_edit', True):
+            return
         if index == -1: return
         name, ok = QInputDialog.getText(self, "Rename", "New Name:", text=self.tabs.tabText(index))
         if ok and name: self.tabs.setTabText(index, name)
 
     def show_menu(self, point):
+        if not getattr(self, '_can_edit', True):
+            return
         idx = self.tabs.tabAt(point)
         if idx == -1: return
         menu = QMenu(self)
@@ -76,6 +84,27 @@ class VatBaseUI(QWidget):
         del_act = menu.addAction("❌ Delete")
         if menu.exec(self.tabs.tabBar().mapToGlobal(point)) == del_act and self.tabs.count() > 1:
             self.tabs.removeTab(idx)
+
+    def apply_edit_mode(self, can_edit: bool):
+        """Called by main_window._apply_permissions() to enforce display-only mode."""
+        self._can_edit = can_edit
+
+        for i in range(self.tabs.count()):
+            sheet = self.tabs.widget(i)
+            if sheet:
+                sheet.setEditTriggers(
+                    QTableWidget.EditTrigger.CurrentChanged | QTableWidget.EditTrigger.EditKeyPressed |
+                    QTableWidget.EditTrigger.AnyKeyPressed | QTableWidget.EditTrigger.DoubleClicked
+                    if can_edit else QTableWidget.EditTrigger.NoEditTriggers
+                )
+
+        self.add_btn.setEnabled(can_edit)
+        self.add_btn.setToolTip("" if can_edit else "🔒 Adding sheets disabled — display only")
+        self.tabs.setMovable(can_edit)
+        if can_edit:
+            self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        else:
+            self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
 
 # --- Derived Classes ---
 

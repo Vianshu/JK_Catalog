@@ -8,7 +8,7 @@ from PyQt6.QtGui import QFont
 
 class PriceSheet(QTableWidget):
     def __init__(self):
-        # 100 Rows और 50 Columns
+        # 100 Rows and 50 Columns
         super().__init__(100, 50) 
         self.setObjectName("PriceSheetTable") # QSS: #PriceSheetTable
         
@@ -26,6 +26,7 @@ class PriceSheet(QTableWidget):
 class PriceListUI(QWidget):
     def __init__(self):
         super().__init__()
+        self._can_edit = True  # Default: editing allowed until permissions are applied
         self.init_ui()
 
     def init_ui(self):
@@ -58,7 +59,53 @@ class PriceListUI(QWidget):
         
         self.main_layout.addWidget(self.tabs)
 
+    def apply_edit_mode(self, can_edit: bool):
+        """Called by main_window._apply_permissions() to enforce display-only mode.
+
+        can_edit=True  → Normal editing (all sheets editable, + button enabled)
+        can_edit=False → Read-only: all sheets non-editable, + button disabled,
+                         tab rename/delete context menu disabled.
+        Stored so new sheets created later also respect the current mode.
+        """
+        self._can_edit = can_edit
+
+        # Apply to all existing sheets
+        for i in range(self.tabs.count()):
+            sheet = self.tabs.widget(i)
+            if sheet:
+                if can_edit:
+                    sheet.setEditTriggers(
+                        QTableWidget.EditTrigger.CurrentChanged |
+                        QTableWidget.EditTrigger.EditKeyPressed |
+                        QTableWidget.EditTrigger.AnyKeyPressed |
+                        QTableWidget.EditTrigger.DoubleClicked
+                    )
+                else:
+                    sheet.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+
+        # + New Sheet button
+        self.add_button.setEnabled(can_edit)
+        self.add_button.setToolTip("" if can_edit else "🔒 Adding sheets disabled — display only")
+
+        # Tab movability & context menu
+        self.tabs.setMovable(can_edit)
+        # Disable double-click rename by disconnecting/reconnecting
+        try:
+            self.tabs.tabBar().tabBarDoubleClicked.disconnect(self.rename_tab)
+        except TypeError:
+            pass
+        if can_edit:
+            self.tabs.tabBar().tabBarDoubleClicked.connect(self.rename_tab)
+
+        # Context menu policy: if display only, override to no custom menu
+        if can_edit:
+            self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        else:
+            self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+
     def show_tab_menu(self, point):
+        if not self._can_edit:
+            return
         index = self.tabs.tabBar().tabAt(point)
         if index == -1: return
 
@@ -82,14 +129,21 @@ class PriceListUI(QWidget):
 
     def insert_sheet(self, name):
         new_sheet = PriceSheet()
+        # Apply current edit mode to the new sheet immediately
+        if not self._can_edit:
+            new_sheet.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         index = self.tabs.addTab(new_sheet, name)
         self.tabs.setCurrentIndex(index)
 
     def add_new_sheet(self):
+        if not self._can_edit:
+            return
         count = self.tabs.count() + 1
         self.insert_sheet(f"Price List {count}")
 
     def rename_tab(self, index):
+        if not self._can_edit:
+            return
         if index == -1: return
         old_name = self.tabs.tabText(index)
         new_name, ok = QInputDialog.getText(self, "Rename", "New Name:", text=old_name)

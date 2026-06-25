@@ -120,19 +120,19 @@ class GodownListUI(ExcelTableMixin, QWidget):
         top = QHBoxLayout()
 
         btn_set_location = QPushButton("📂 Set Location")
-        btn_excel = QPushButton("📥 Excel डाउनलोड")
+        self.btn_excel = QPushButton("📥 Excel डाउनलोड")
         btn_print = QPushButton("🖨️ प्रिंट प्रिव्यू")
-        btn_save = QPushButton("💾 Save & Sort")
+        self.btn_save = QPushButton("💾 Save & Sort")
 
         btn_set_location.clicked.connect(self.set_export_location)
-        btn_excel.clicked.connect(self.export_to_excel)
+        self.btn_excel.clicked.connect(self.export_to_excel)
         btn_print.clicked.connect(self.handle_print_preview)
-        btn_save.clicked.connect(self.manual_save_and_sort)
+        self.btn_save.clicked.connect(self.manual_save_and_sort)
 
         top.addWidget(btn_set_location)
-        top.addWidget(btn_excel)
+        top.addWidget(self.btn_excel)
         top.addWidget(btn_print)
-        top.addWidget(btn_save)
+        top.addWidget(self.btn_save)
         top.addStretch()
         layout.addLayout(top)
 
@@ -158,6 +158,32 @@ class GodownListUI(ExcelTableMixin, QWidget):
         
         layout.addWidget(self.table)
 
+    def apply_edit_mode(self, can_edit: bool):
+        """Called by main_window._apply_permissions() to enforce display-only mode.
+
+        can_edit=True  → Normal editing (default behaviour)
+        can_edit=False → Read-only: no typing, no autocomplete overlay on col 0,
+                         Save/Sort and Excel export buttons disabled.
+        """
+        self._can_edit = can_edit
+
+        # Table edit triggers
+        if can_edit:
+            self.table.setEditTriggers(
+                QAbstractItemView.EditTrigger.DoubleClicked |
+                QAbstractItemView.EditTrigger.AnyKeyPressed |
+                QAbstractItemView.EditTrigger.EditKeyPressed
+            )
+        else:
+            self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+
+        # Action buttons
+        self.btn_save.setEnabled(can_edit)
+        self.btn_save.setToolTip("" if can_edit else "🔒 Editing disabled — display only")
+        self.btn_excel.setEnabled(can_edit)
+        self.btn_excel.setToolTip("" if can_edit else "🔒 Export disabled — display only")
+
+
     # ---------------- SHOW EVENT ----------------
     def showEvent(self, event):
         """Reload stock_items data every time the tab becomes visible."""
@@ -175,6 +201,8 @@ class GodownListUI(ExcelTableMixin, QWidget):
 
     def _excel_on_double_click(self, row, col):
         """Col 0: open autocomplete overlay. Col > 0: mixin default (track + cursor)."""
+        if not getattr(self, '_can_edit', True):
+            return  # Display-only mode: block overlay editor
         if col == 0:
             self.start_Alias_search(row, col)
             return
@@ -182,6 +210,8 @@ class GodownListUI(ExcelTableMixin, QWidget):
 
     def _excel_on_printable_key(self, row, col, text):
         """Col 0: open overlay + type. Col 1: numeric only. Others: mixin default."""
+        if not getattr(self, '_can_edit', True):
+            return True  # Display-only mode: swallow key, block overlay
         if col == 0:
             self.start_Alias_search(row, col)
             editor = self._active_editor[1] if self._active_editor else None

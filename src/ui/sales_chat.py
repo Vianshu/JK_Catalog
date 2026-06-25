@@ -55,26 +55,57 @@ class SalesChatUI(QWidget):
         self.add_new_sheet("Sheet 1")
         self.layout.addWidget(self.tabs)
 
+    def apply_edit_mode(self, can_edit: bool):
+        """Called by main_window._apply_permissions() to enforce display-only mode."""
+        self._can_edit = can_edit
+
+        for i in range(self.tabs.count()):
+            sheet = self.tabs.widget(i)
+            if sheet:
+                sheet.setEditTriggers(
+                    QTableWidget.EditTrigger.CurrentChanged | QTableWidget.EditTrigger.EditKeyPressed |
+                    QTableWidget.EditTrigger.AnyKeyPressed | QTableWidget.EditTrigger.DoubleClicked
+                    if can_edit else QTableWidget.EditTrigger.NoEditTriggers
+                )
+
+        self.add_button.setEnabled(can_edit)
+        self.add_button.setToolTip("" if can_edit else "🔒 Adding sheets disabled — display only")
+        self.tabs.setMovable(can_edit)
+        if can_edit:
+            self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        else:
+            self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+
     def add_new_sheet(self, name=None):
+        if not getattr(self, '_can_edit', True):
+            return
         if not name:
             count = self.tabs.count() + 1
             name = f"Sheet {count}"
         
         new_sheet = ExcelSheet()
+        if not getattr(self, '_can_edit', True):
+            new_sheet.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         index = self.tabs.addTab(new_sheet, name) # Adds to the end
         self.tabs.setCurrentIndex(index)
 
     def rename_tab_on_double_click(self, index):
+        if not getattr(self, '_can_edit', True):
+            return
         if index != -1:
             self.rename_sheet(index)
 
     def rename_sheet(self, index):
+        if not getattr(self, '_can_edit', True):
+            return
         old_name = self.tabs.tabText(index)
         new_name, ok = QInputDialog.getText(self, "Rename Sheet", "Enter new name:", text=old_name)
         if ok and new_name.strip():
             self.tabs.setTabText(index, new_name.strip())
 
     def show_tab_menu(self, point):
+        if not getattr(self, '_can_edit', True):
+            return
         index = self.tabs.tabBar().tabAt(point)
         if index == -1: return
 
@@ -94,4 +125,4 @@ class SalesChatUI(QWidget):
                 if confirm == QMessageBox.StandardButton.Yes:
                     self.tabs.removeTab(index)
             else:
-                QMessageBox.warning(self, "Alert", "At least one sheet is required.")
+                QMessageBox.warning(self, "Alert", "At least one sheet is required.")

@@ -1079,70 +1079,36 @@ class MainWindow(QWidget):
                 else:
                     page.table.setEditTriggers(page.table.EditTrigger.NoEditTriggers)
 
+        # Godown — editing, autocomplete search, and action buttons
+        if hasattr(self, 'godown_page'):
+            page = self.godown_page
+            can_edit = s.can("godown.edit")
+            page.apply_edit_mode(can_edit)
+
         # Vat Balance — editable Excel sheet
         vat_balance = self.main_stack.widget(13)
-        if vat_balance and hasattr(vat_balance, 'tabs'):
-            can_edit = s.can("vat_balance.edit")
-            for i in range(vat_balance.tabs.count()):
-                sheet = vat_balance.tabs.widget(i)
-                if sheet:
-                    if can_edit:
-                        sheet.setEditTriggers(
-                            sheet.EditTrigger.CurrentChanged | sheet.EditTrigger.EditKeyPressed)
-                    else:
-                        sheet.setEditTriggers(sheet.EditTrigger.NoEditTriggers)
+        if vat_balance and hasattr(vat_balance, 'apply_edit_mode'):
+            vat_balance.apply_edit_mode(s.can("vat_balance.edit"))
 
         # Vat Stock — editable Excel sheet
         vat_stock = self.main_stack.widget(14)
-        if vat_stock and hasattr(vat_stock, 'tabs'):
-            can_edit = s.can("vat_stock.edit")
-            for i in range(vat_stock.tabs.count()):
-                sheet = vat_stock.tabs.widget(i)
-                if sheet:
-                    if can_edit:
-                        sheet.setEditTriggers(
-                            sheet.EditTrigger.CurrentChanged | sheet.EditTrigger.EditKeyPressed)
-                    else:
-                        sheet.setEditTriggers(sheet.EditTrigger.NoEditTriggers)
+        if vat_stock and hasattr(vat_stock, 'apply_edit_mode'):
+            vat_stock.apply_edit_mode(s.can("vat_stock.edit"))
 
         # Sales Chat — editable Excel sheet
         sales_chat = self.main_stack.widget(11)
-        if sales_chat and hasattr(sales_chat, 'tabs'):
-            can_edit = s.can("sales_chat.edit")
-            for i in range(sales_chat.tabs.count()):
-                sheet = sales_chat.tabs.widget(i)
-                if sheet:
-                    if can_edit:
-                        sheet.setEditTriggers(
-                            sheet.EditTrigger.CurrentChanged | sheet.EditTrigger.EditKeyPressed)
-                    else:
-                        sheet.setEditTriggers(sheet.EditTrigger.NoEditTriggers)
+        if sales_chat and hasattr(sales_chat, 'apply_edit_mode'):
+            sales_chat.apply_edit_mode(s.can("sales_chat.edit"))
 
         # Supplier Payment — editable Excel sheet
         supp_payment = self.main_stack.widget(12)
-        if supp_payment and hasattr(supp_payment, 'tabs'):
-            can_edit = s.can("supp_payment.edit")
-            for i in range(supp_payment.tabs.count()):
-                sheet = supp_payment.tabs.widget(i)
-                if sheet:
-                    if can_edit:
-                        sheet.setEditTriggers(
-                            sheet.EditTrigger.CurrentChanged | sheet.EditTrigger.EditKeyPressed)
-                    else:
-                        sheet.setEditTriggers(sheet.EditTrigger.NoEditTriggers)
+        if supp_payment and hasattr(supp_payment, 'apply_edit_mode'):
+            supp_payment.apply_edit_mode(s.can("supp_payment.edit"))
 
         # Price List — editable Excel sheet
         price_list = self.main_stack.widget(8)
-        if price_list and hasattr(price_list, 'tabs'):
-            can_edit = s.can("price_list.edit")
-            for i in range(price_list.tabs.count()):
-                sheet = price_list.tabs.widget(i)
-                if sheet:
-                    if can_edit:
-                        sheet.setEditTriggers(
-                            sheet.EditTrigger.CurrentChanged | sheet.EditTrigger.EditKeyPressed)
-                    else:
-                        sheet.setEditTriggers(sheet.EditTrigger.NoEditTriggers)
+        if price_list and hasattr(price_list, 'apply_edit_mode'):
+            price_list.apply_edit_mode(s.can("price_list.edit"))
 
         logger.info(f"Permissions applied: user='{s.username}', "
                      f"role='{s.role_name}', admin={s.is_admin}")
@@ -1357,9 +1323,42 @@ class MainWindow(QWidget):
             self.super_master_page.load_super_master_data(self.current_company_path)
             self.main_stack.setCurrentIndex(PageIndex.SUPER_MASTER)
 
-    def handle_catalog_price_list(self): CatalogPriceListUI(self).exec()
-    def handle_int_cost_sheet(self): IntCostSheetUI(self).exec()
-    def handle_pur_import(self): PurImportUI(self).exec()
+    def handle_catalog_price_list(self):
+        if not self._check_permission("tab.cat_price_list", "Catalog Price List"): return
+        dlg = CatalogPriceListUI(self)
+        # Pass edit permission so the dialog can lock itself
+        can_edit = self.user_session.can("cat_price_list.edit") if self.user_session else True
+        if hasattr(dlg, 'apply_edit_mode'):
+            dlg.apply_edit_mode(can_edit)
+        dlg.exec()
+
+    def handle_int_cost_sheet(self):
+        if not self._check_permission("tab.int_cost_sheet", "Internal Cost Sheet"): return
+        dlg = IntCostSheetUI(self)
+        can_edit = self.user_session.can("int_cost_sheet.edit") if self.user_session else True
+        if hasattr(dlg, 'apply_edit_mode'):
+            dlg.apply_edit_mode(can_edit)
+        elif not can_edit:
+            # Fallback: disable save/calculate buttons directly
+            for attr in ['save_btn', 'calc_btn']:
+                if hasattr(dlg, attr):
+                    getattr(dlg, attr).setEnabled(False)
+                    getattr(dlg, attr).setToolTip("🔒 Editing disabled — display only")
+            if hasattr(dlg, 'table'):
+                dlg.table.setEditTriggers(dlg.table.EditTrigger.NoEditTriggers)
+        dlg.exec()
+
+    def handle_pur_import(self):
+        if not self._check_permission("tab.pur_import", "Purchase Import"): return
+        dlg = PurImportUI(self)
+        can_import = self.user_session.can("pur_import.import") if self.user_session else True
+        if not can_import:
+            if hasattr(dlg, 'btn_import'):
+                dlg.btn_import.setEnabled(False)
+                dlg.btn_import.setToolTip("🔒 Import action disabled — display only")
+            if hasattr(dlg, 'btn_select'):
+                dlg.btn_select.setEnabled(False)
+        dlg.exec()
     def handle_security(self): 
         if self.current_company and hasattr(self, 'current_company_path'):
             self.security_page.refresh_data()
