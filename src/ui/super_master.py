@@ -8,10 +8,11 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QEvent
 from src.logic.db_manager import get_db_manager, DB_SUPER, build_logical_name, build_shared_db_name
 from src.utils.app_logger import get_logger
+from src.ui.table_nav_mixin import ExcelTableMixin
 
 logger = get_logger(__name__)
 
-class SuperMasterUI(QWidget):
+class SuperMasterUI(ExcelTableMixin, QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("SuperMasterMain") # QSS: #SuperMasterMain
@@ -77,7 +78,9 @@ class SuperMasterUI(QWidget):
 
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         self.table.itemChanged.connect(self.on_item_changed)
-        self.table.viewport().installEventFilter(self)
+
+        # Excel-like navigation (Mode 1 / Mode 2) — replaces old manual F2 handler
+        self._init_excel_table(self.table)
 
         left_side.addWidget(QLabel("<b>Detailed Mapping</b>"))
         left_side.addWidget(self.filter_container, alignment=Qt.AlignmentFlag.AlignLeft)
@@ -116,13 +119,6 @@ class SuperMasterUI(QWidget):
                     break
             self.table.setRowHidden(i, not show_row)
 
-    def eventFilter(self, source, event):
-        if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_F2:
-            item = self.table.currentItem()
-            if item and item.column() in [1, 2, 3]: 
-                self.table.editItem(item)
-                return True
-        return super().eventFilter(source, event)
 
     def hideEvent(self, event):
         self.sync_all_to_db()

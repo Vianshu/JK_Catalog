@@ -12,6 +12,7 @@ from PyQt6.QtGui import QPixmap, QColor
 from src.logic.data_processor import DataProcessor
 from src.logic.db_manager import get_db_manager, build_logical_name, DB_SUPER, build_shared_db_name
 from src.utils.app_logger import get_logger
+from src.ui.table_nav_mixin import ExcelTableMixin
 
 logger = get_logger(__name__)
 
@@ -156,7 +157,7 @@ class NumericTableWidgetItem(QTableWidgetItem):
         except ValueError:
             return super().__lt__(other)
         
-class FinalDataUI(QWidget):
+class FinalDataUI(ExcelTableMixin, QWidget):
     sync_complete = pyqtSignal()  # Emitted when background sync finishes successfully
     sync_cancelled = pyqtSignal()  # Emitted when background sync is cancelled
 
@@ -207,6 +208,9 @@ class FinalDataUI(QWidget):
         
         self.table.cellClicked.connect(self.show_preview)
         self.table.cellDoubleClicked.connect(self.show_path_popup)
+
+        # Excel-like navigation (Mode 1 / Mode 2)
+        self._init_excel_table(self.table)
         
         # Side Panel Logic (Aapke backup se same)
         main_layout.addWidget(self.table, 4) # Table gets 4 parts weight

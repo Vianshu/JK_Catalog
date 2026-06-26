@@ -145,6 +145,18 @@ class ExcelTableMixin:
                     self._nav_set_current(new_row, new_col)
                 return True
 
+            # F2 → enter edit mode (cursor placed at end, same as double-click)
+            if key == Qt.Key.Key_F2:
+                item = t.item(row, col)
+                if item and (item.flags() & Qt.ItemFlag.ItemIsEditable):
+                    self._is_edit_mode = True
+                    t.editItem(item)
+                    QTimer.singleShot(0, lambda: (
+                        t.focusWidget().end(False)
+                        if isinstance(t.focusWidget(), QLineEdit) else None
+                    ))
+                return True
+
             # Enter / Return → subclass hook
             if key in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
                 return self._excel_on_enter(row, col)
@@ -153,6 +165,7 @@ class ExcelTableMixin:
             text = event.text()
             if text and text.isprintable():
                 return self._excel_on_printable_key(row, col, text)
+
 
         return super().eventFilter(source, event)
 
