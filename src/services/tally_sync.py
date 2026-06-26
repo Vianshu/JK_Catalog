@@ -404,7 +404,7 @@ def fetch_tally_data(company_name=None, company_path=None, service=None):
 warnings.filterwarnings("ignore")
 
 
-def fetch_tally_ledger_data(company_path=None, service=None):
+def fetch_tally_ledger_data(company_name=None, company_path=None, service=None):
     """Fetch Ledger data from Tally and save to company's LedgerData DB on SQL Server.
     
     Args:
@@ -420,8 +420,7 @@ def fetch_tally_ledger_data(company_path=None, service=None):
             return 0, "Could not connect to Tally. Please ensure Tally is running."
 
         # ── Company mismatch check (same as stock sync) ──────────────────────
-        if company_path:
-            company_name = os.path.basename(company_path)
+        if company_name:
             try:
                 comp_df = pd.read_sql("SELECT $Name from Company", service.connection)
                 active_company = comp_df.iloc[0, 0].strip()

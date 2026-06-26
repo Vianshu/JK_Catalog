@@ -46,12 +46,13 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 class _LedgerWorker(QThread):
     finished = pyqtSignal(int, str)  # row_count, error
-    def __init__(self, path):
+    def __init__(self, company_name, path):
         super().__init__()
+        self.company_name = company_name
         self.path = path
     def run(self):
         try:
-            rc, err = fetch_tally_ledger_data(company_path=self.path)
+            rc, err = fetch_tally_ledger_data(company_name=self.company_name, company_path=self.path)
             self.finished.emit(rc or 0, err or "")
         except Exception as e:
             self.finished.emit(0, str(e))
@@ -591,7 +592,7 @@ class MainWindow(QWidget):
         # Run in background thread
         # Run in background thread
 
-        self._ledger_worker = _LedgerWorker(company_path)
+        self._ledger_worker = _LedgerWorker(self.current_company, company_path)
         self._ledger_worker.finished.connect(self._on_ledger_sync_done)
         self._ledger_worker.start()
 
