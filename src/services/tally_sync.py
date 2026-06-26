@@ -419,7 +419,24 @@ def fetch_tally_ledger_data(company_path=None, service=None):
         if not service.connect():
             return 0, "Could not connect to Tally. Please ensure Tally is running."
 
+        # ── Company mismatch check (same as stock sync) ──────────────────────
+        if company_path:
+            company_name = os.path.basename(company_path)
+            try:
+                comp_df = pd.read_sql("SELECT $Name from Company", service.connection)
+                active_company = comp_df.iloc[0, 0].strip()
+                if active_company.lower() != company_name.strip().lower():
+                    if company_name.split("(")[0].strip().lower() not in active_company.lower():
+                        return 0, (
+                            f"Wrong company open in Tally: '{active_company}'\n"
+                            f"Please open '{company_name}' in Tally and try again."
+                        )
+            except Exception as ce:
+                logger.warning(f"Company check failed (proceeding anyway): {ce}")
+        # ─────────────────────────────────────────────────────────────────────
+
         service._check_cancelled("before ledger fetch")
+
 
         ledger_sql = """
             SELECT
