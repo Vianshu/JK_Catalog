@@ -557,7 +557,8 @@ class DBManager:
             subprocess.run(
                 ['icacls', folder_path, '/grant',
                  f'{service_account}:(OI)(CI)F', '/T'],
-                capture_output=True, text=True, timeout=15
+                capture_output=True, text=True, timeout=15,
+                creationflags=subprocess.CREATE_NO_WINDOW
             )
             # CRITICAL: also grant BUILTIN\Users full control with inheritance so that
             # .bak files created by SQL Server can be read back by the Python process
@@ -565,7 +566,8 @@ class DBManager:
             result = subprocess.run(
                 ['icacls', folder_path, '/grant',
                  'BUILTIN\\Users:(OI)(CI)F', '/T'],
-                capture_output=True, text=True, timeout=15
+                capture_output=True, text=True, timeout=15,
+                creationflags=subprocess.CREATE_NO_WINDOW
             )
             if result.returncode == 0:
                 logger.info(f"Granted SQL Server + Users permissions on '{folder_path}'")
@@ -1010,7 +1012,8 @@ class DBManager:
                     subprocess.run(
                         ['icacls', backup_path, '/grant',
                          f'{os.environ.get("USERDOMAIN", "BUILTIN")}\\Users:(R)'],
-                        capture_output=True, timeout=10
+                        capture_output=True, timeout=10,
+                        creationflags=subprocess.CREATE_NO_WINDOW
                     )
                 except Exception:
                     pass
