@@ -45,7 +45,8 @@ def export_data_path(data_path, output_file, progress_cb=None):
     if not os.path.isdir(data_path):
         return False, f"Data path does not exist: {data_path}"
     
-    # Create a unique temp directory INSIDE the data path (SQL Server already has permissions here)
+    # Create a unique temp directory INSIDE the data path.
+    # SQL Server needs write access here — _grant_sql_server_permissions handles that.
     temp_dir = tempfile.mkdtemp(prefix=".jk_export_", dir=data_path)
     
     try:

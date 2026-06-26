@@ -533,10 +533,14 @@ class DBManager:
             conn.close()
 
     def _grant_sql_server_permissions(self, folder_path):
-        """Grant SQL Server service account write access to a folder.
+        """Grant SQL Server service account AND current user write access to a folder.
         
         SQL Server runs as 'NT Service\\MSSQL$<INSTANCE>' and cannot write to
-        user profile folders by default. This runs icacls to grant full control.
+        user profile folders by default. This runs icacls to grant full control
+        to BOTH the service account and BUILTIN\\Users so:
+          - SQL Server can write .bak files into the folder
+          - Python (running as the current user) can read those files back
+            immediately without a second icacls call (which would fail without admin)
         Only needs to succeed once per folder.
         """
         import subprocess
@@ -549,15 +553,24 @@ class DBManager:
         service_account = f"NT Service\\{instance}"
         
         try:
-            result = subprocess.run(
+            # Grant SQL Server service full control with inheritance
+            subprocess.run(
                 ['icacls', folder_path, '/grant',
                  f'{service_account}:(OI)(CI)F', '/T'],
                 capture_output=True, text=True, timeout=15
             )
+            # CRITICAL: also grant BUILTIN\Users full control with inheritance so that
+            # .bak files created by SQL Server can be read back by the Python process
+            # without needing a second icacls call that requires admin rights.
+            result = subprocess.run(
+                ['icacls', folder_path, '/grant',
+                 'BUILTIN\\Users:(OI)(CI)F', '/T'],
+                capture_output=True, text=True, timeout=15
+            )
             if result.returncode == 0:
-                logger.info(f"Granted SQL Server permissions on '{folder_path}' to '{service_account}'")
+                logger.info(f"Granted SQL Server + Users permissions on '{folder_path}'")
             else:
-                logger.warning(f"icacls failed (rc={result.returncode}): {result.stderr.strip()}")
+                logger.warning(f"icacls Users grant failed (rc={result.returncode}): {result.stderr.strip()}")
         except Exception as e:
             logger.warning(f"Could not grant SQL Server folder permissions: {e}")
 
