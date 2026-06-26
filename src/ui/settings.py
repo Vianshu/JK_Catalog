@@ -512,6 +512,7 @@ class SecurityUI(QWidget):
                 (" \u21b3 Page Manage",      [],                     ["catalog.page_management"]),
                 ("Reports",             ["tab.reports"],        ["reports.print", "reports.mark_done"]),
                 ("Catalog Price List",  ["tab.cat_price_list"], ["cat_price_list.edit"]),
+                ("Create / Alter CRM",  [],                     ["settings.manage_crm"]),
             ]),
             ("Vat Working", [
                 ("Vat Balance",         ["tab.vat_balance"],    ["vat_balance.edit"]),
@@ -520,7 +521,6 @@ class SecurityUI(QWidget):
             ("Tally Internal", [
                 ("Sync Ledger",         ["tab.ledger"],         ["ledger.sync"]),
                 ("Ledger Rows",         ["tab.ledger"],         []),
-                ("Row Data",            ["tab.row_data"],       []),
                 ("On Account",          ["tab.payment_list"],   []),
                 ("Cheque List",         ["tab.cheque_list"],    ["cheque_list.edit"]),
                 ("Godown List",         ["tab.godown"],         ["godown.edit"]),
@@ -536,7 +536,7 @@ class SecurityUI(QWidget):
                 ("Export Data",         [],                     ["data.export"]),
                 ("Import Data",         [],                     ["data.import"]),
                 ("Admin / Users",       [],                     ["settings.manage_users", "settings.manage_roles",
-                                                                 "settings.manage_crm", "settings.company_config",
+                                                                 "settings.company_config",
                                                                  "settings.change_path"]),
             ]),
         ]
