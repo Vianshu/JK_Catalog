@@ -1326,38 +1326,28 @@ class MainWindow(QWidget):
     def handle_catalog_price_list(self):
         if not self._check_permission("tab.cat_price_list", "Catalog Price List"): return
         dlg = CatalogPriceListUI(self)
-        # Pass edit permission so the dialog can lock itself
         can_edit = self.user_session.can("cat_price_list.edit") if self.user_session else True
-        if hasattr(dlg, 'apply_edit_mode'):
-            dlg.apply_edit_mode(can_edit)
+        dlg.apply_edit_mode(can_edit)
         dlg.exec()
 
     def handle_int_cost_sheet(self):
         if not self._check_permission("tab.int_cost_sheet", "Internal Cost Sheet"): return
         dlg = IntCostSheetUI(self)
         can_edit = self.user_session.can("int_cost_sheet.edit") if self.user_session else True
-        if hasattr(dlg, 'apply_edit_mode'):
-            dlg.apply_edit_mode(can_edit)
-        elif not can_edit:
-            # Fallback: disable save/calculate buttons directly
-            for attr in ['save_btn', 'calc_btn']:
-                if hasattr(dlg, attr):
-                    getattr(dlg, attr).setEnabled(False)
-                    getattr(dlg, attr).setToolTip("🔒 Editing disabled — display only")
-            if hasattr(dlg, 'table'):
-                dlg.table.setEditTriggers(dlg.table.EditTrigger.NoEditTriggers)
+        # IntCostSheetUI has no apply_edit_mode — lock directly
+        if not can_edit:
+            dlg.table.setEditTriggers(dlg.table.EditTrigger.NoEditTriggers)
+            dlg.save_btn.setEnabled(False)
+            dlg.save_btn.setToolTip("🔒 Editing disabled — display only")
+            dlg.calc_btn.setEnabled(False)
+            dlg.calc_btn.setToolTip("🔒 Editing disabled — display only")
         dlg.exec()
 
     def handle_pur_import(self):
         if not self._check_permission("tab.pur_import", "Purchase Import"): return
         dlg = PurImportUI(self)
         can_import = self.user_session.can("pur_import.import") if self.user_session else True
-        if not can_import:
-            if hasattr(dlg, 'btn_import'):
-                dlg.btn_import.setEnabled(False)
-                dlg.btn_import.setToolTip("🔒 Import action disabled — display only")
-            if hasattr(dlg, 'btn_select'):
-                dlg.btn_select.setEnabled(False)
+        dlg.apply_edit_mode(can_import)
         dlg.exec()
     def handle_security(self): 
         if self.current_company and hasattr(self, 'current_company_path'):

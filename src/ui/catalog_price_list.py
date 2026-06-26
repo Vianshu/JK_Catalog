@@ -31,8 +31,8 @@ class CatalogPriceListUI(QDialog):
         btn_box = QHBoxLayout()
         
         # सेव बटन - स्टाइल QSS से (ID: SaveButton)
-        save_btn = QPushButton("💾 Save Price List")
-        save_btn.setObjectName("SaveButton")
+        self.save_btn = QPushButton("💾 Save Price List")
+        self.save_btn.setObjectName("SaveButton")
         
         # क्लोज बटन - स्टाइल QSS के सामान्य QPushButton से
         close_btn = QPushButton("Close")
@@ -40,6 +40,19 @@ class CatalogPriceListUI(QDialog):
         close_btn.clicked.connect(self.reject)
         
         btn_box.addStretch()
-        btn_box.addWidget(save_btn)
+        btn_box.addWidget(self.save_btn)
         btn_box.addWidget(close_btn)
         layout.addLayout(btn_box)
+
+    def apply_edit_mode(self, can_edit: bool):
+        """Called by main_window handler to enforce display-only mode."""
+        if can_edit:
+            self.table.setEditTriggers(
+                self.table.EditTrigger.DoubleClicked |
+                self.table.EditTrigger.AnyKeyPressed |
+                self.table.EditTrigger.EditKeyPressed
+            )
+        else:
+            self.table.setEditTriggers(self.table.EditTrigger.NoEditTriggers)
+        self.save_btn.setEnabled(can_edit)
+        self.save_btn.setToolTip("" if can_edit else "🔒 Editing disabled — display only")

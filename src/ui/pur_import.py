@@ -71,3 +71,21 @@ class PurImportUI(QDialog):
             self.file_label.setText(file_path.split("/")[-1]) # सिर्फ फाइल का नाम दिखाएँ
             print(f"File selected: {file_path}")
             # यहाँ फाइल डेटा को टेबल में लोड करने का लॉजिक आएगा
+
+    def apply_edit_mode(self, can_edit: bool):
+        """Called by main_window handler to enforce display-only mode."""
+        # Lock the preview table
+        if can_edit:
+            self.table.setEditTriggers(
+                self.table.EditTrigger.DoubleClicked |
+                self.table.EditTrigger.AnyKeyPressed |
+                self.table.EditTrigger.EditKeyPressed
+            )
+        else:
+            self.table.setEditTriggers(self.table.EditTrigger.NoEditTriggers)
+
+        # Disable action buttons
+        self.btn_select.setEnabled(can_edit)
+        self.btn_select.setToolTip("" if can_edit else "🔒 Import disabled — display only")
+        self.btn_import.setEnabled(can_edit)
+        self.btn_import.setToolTip("" if can_edit else "🔒 Import disabled — display only")
