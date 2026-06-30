@@ -62,6 +62,7 @@ class CatalogLogic:
         self._product_lookup_cache = {}
         self._last_clean_check_time = None  # Timestamp guard for detect_changed_pages
         self._db_ensured = set()  # Track which DBs we've already verified exist
+        self._post_sync_detected = False  # Set when post_sync_snapshot_reset flag found
 
     def set_paths(self, catalog_db, final_db, super_db=None):
         """Update database paths and derive logical names.
@@ -394,6 +395,7 @@ class CatalogLogic:
             conn.commit()
         except Exception as e:
             logger.error(f"rebuild_serial_numbers error: {e}")
+
 
     def add_page(self, mg_sn, group_name, sg_sn):
         conn = self._get_catalog_conn()
@@ -1724,6 +1726,17 @@ class CatalogLogic:
         product_lookup = self._product_lookup_cache[cache_key]
 
         # Build content signature — ORDER MATTERS (no sorting)
+        def _norm_num(v):
+            """Normalize '23.0' → '23' so mrps hash is insensitive to float formatting."""
+            s = str(v).strip()
+            try:
+                f = float(s)
+                if f == int(f):
+                    return str(int(f))
+                return s
+            except (ValueError, TypeError):
+                return s
+
         parts = []
         for name in product_names:
             p = product_lookup.get(name)
@@ -1732,7 +1745,7 @@ class CatalogLogic:
                     "name": name,
                     "length": p.get("length", "1|0"),
                     "sizes": p.get("sizes", []),
-                    "mrps": p.get("mrps", []),
+                    "mrps": [_norm_num(v) for v in p.get("mrps", [])],
                     "moqs": p.get("moqs", []),
                     "sort_price": str(p.get("sort_price", "")),
                     "img": p.get("image_path", ""),
@@ -1751,6 +1764,28 @@ class CatalogLogic:
         conn = self._get_catalog_conn()
         if not conn:
             return set()
+        
+        # ── Post-sync guard ──────────────────────────────────────────────
+        # After sync_to_sqlserver.ps1 pushes SQLite data to SQL Server,
+        # the pre-existing page_snapshots (computed from SQLite) won't match
+        # hashes computed from SQL Server data (different NULL/float/collation).
+        # The sync script sets a flag; we detect it here, regenerate correct
+        # snapshots from SQL Server, and return 0 changes to prevent CRM flood.
+        # Also sets _post_sync_detected so the engine skips sorting (no page creation).
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM build_config WHERE [key]='post_sync_snapshot_reset'")
+            flag_row = cursor.fetchone()
+            if flag_row and str(flag_row[0]).strip() == '1':
+                logger.info("Post-sync flag detected — regenerating snapshots from SQL Server (no CRM flood)")
+                cursor.execute("UPDATE build_config SET [value]='0' WHERE [key]='post_sync_snapshot_reset'")
+                conn.commit()
+                self._post_sync_detected = True
+                self.invalidate_cache()
+                self.save_all_page_snapshots()
+                return set()
+        except Exception:
+            pass  # build_config may not exist yet (first run)
         
         # FAST PATH removed: SQL Server string comparison of DD-MM-YYYY dates
         # causes alphabetical sort bugs, leading to falsely skipping dirty pages.
@@ -1860,7 +1895,15 @@ class CatalogLogic:
         self.invalidate_cache()
 
         # Step 2: Detect changes via snapshots
+        self._post_sync_detected = False
         snapshot_changed = self.detect_changed_pages()  # set of serial_no strings
+
+        # If this was the first build after a sync, snapshots were just regenerated.
+        # Skip sorting entirely — page assignments are already correct from SQLite.
+        if self._post_sync_detected:
+            logger.info("Engine: post-sync build — skipping sort/page-creation to preserve synced layout")
+            self._post_sync_detected = False
+            return {"dirty_count": 0, "dirty_serials": [], "pages_created": 0}
 
         # Step 3: Read least-pending CRM for sort scope
         # CRM defines which pages need reprinting → those pages should be

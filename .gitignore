@@ -19,4 +19,8 @@ config/admin.json
 company_history.json
 *.jkbackup
 .jk_export_temp/
-.jk_import_temp/
+.jk_import_temp/
+
+# Local dev / scratch folders (never commit)
+ignore/
+temp_data/

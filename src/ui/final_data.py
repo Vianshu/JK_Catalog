@@ -156,10 +156,60 @@ class NumericTableWidgetItem(QTableWidgetItem):
             return float(self.text()) < float(other.text())
         except ValueError:
             return super().__lt__(other)
-        
+
+
+class AutoImageSyncWorker(QThread):
+    """Lightweight background worker: image-only sync triggered on tab switch.
+
+    Only runs when the image folder fingerprint (file count + max mtime) has
+    changed since the last scan.  No Tally fetch, no product-name processing —
+    just image-path matching + True/False update + commit.
+
+    Guardrails:
+    - Never started while FinalDataSyncWorker (_sync_worker) is running.
+    - Commits its own transaction so changes are immediately visible.
+    - Cleans up its own DB thread-connections in finally block.
+    """
+    finished = pyqtSignal(object)   # dup_map dict (may be empty)
+    error    = pyqtSignal(str)
+
+    def __init__(self, ui_ref):
+        super().__init__()
+        self.ui = ui_ref
+
+    def run(self):
+        import time
+        t0 = time.perf_counter()
+        try:
+            # sync_images_after_processing() calls get_image_mapping() internally.
+            # Because the fingerprint already differs from the cache, it will do a
+            # full folder scan, update the cache, then update Image_Path / Image_Date
+            # / True/False columns — without committing (relies on caller to commit).
+            dup_map = self.ui.sync_images_after_processing()
+
+            # Commit — the full sync pipeline does this at its own end; here we must
+            # commit explicitly so changes are visible to the subsequent table refresh.
+            conn = self.ui.db.get_connection(self.ui.final_db_name)
+            if conn:
+                conn.commit()
+
+            elapsed = time.perf_counter() - t0
+            logger.info(f"AutoImageSync: completed in {elapsed:.2f}s")
+            self.finished.emit(dup_map or {})
+        except Exception as e:
+            logger.error(f"AutoImageSyncWorker error: {e}", exc_info=True)
+            self.error.emit(str(e))
+        finally:
+            try:
+                get_db_manager().close_thread_connections()
+            except Exception:
+                pass
+
+
 class FinalDataUI(ExcelTableMixin, QWidget):
-    sync_complete = pyqtSignal()  # Emitted when background sync finishes successfully
-    sync_cancelled = pyqtSignal()  # Emitted when background sync is cancelled
+    sync_complete  = pyqtSignal()  # Emitted when background Tally sync finishes
+    sync_cancelled = pyqtSignal()  # Emitted when background Tally sync is cancelled
+    image_sync_done = pyqtSignal() # Emitted when auto-image sync commits to DB
 
     def __init__(self):
         super().__init__()
@@ -187,6 +237,18 @@ class FinalDataUI(ExcelTableMixin, QWidget):
         company_name = os.path.basename(path)
         self.final_db_name = build_logical_name(company_name, company_path=path)
         self.row_data_db_name = build_logical_name(company_name, company_path=path)
+        # Load image_folder immediately so auto-sync can detect changes without a
+        # manual Tally sync being run first (previously only set in load_and_sync_data).
+        self.image_folder = ""
+        info_file = os.path.join(path, "company_info.json")
+        if os.path.exists(info_file):
+            try:
+                with open(info_file, 'r', encoding='utf-8') as f:
+                    info = json.load(f)
+                    if "image_path" in info:
+                        self.image_folder = info["image_path"]
+            except Exception:
+                pass
 
     def setup_ui(self):
         main_layout = QHBoxLayout(self)
@@ -832,7 +894,11 @@ class FinalDataUI(ExcelTableMixin, QWidget):
 
             if old_row_db:
                 old_row_norm = tuple("" if v is None else str(v) for v in old_row_db)
-                if old_row_norm != new_row:
+                # Compare excluding Part_No (index 2) — it is not visible on the
+                # catalog PDF so a Part_No-only change must NOT mark pages dirty
+                # or trigger CRM updates. Part_No is still persisted in the DB.
+                _CMP = (0, 1, 3, 4, 5, 6, 7, 8, 9, 10)
+                if tuple(old_row_norm[i] for i in _CMP) != tuple(new_row[i] for i in _CMP):
                     update_rows.append((*new_row, now, guid))
                     
                     # Check if reverting from Price List / MG_SN >= 90
@@ -1111,9 +1177,15 @@ class FinalDataUI(ExcelTableMixin, QWidget):
             logger.warning("ABORT: No final_db_name in refresh_table")
             return
         
-        # Prevent concurrent refreshes
+        # Prevent concurrent refreshes.
+        # If force=True (e.g. called from auto-image-sync callback), remember it so
+        # we run again immediately after the current refresh finishes.
         if self._refresh_worker and self._refresh_worker.isRunning():
+            if force:
+                self._pending_refresh = True   # will be honoured in _on_refresh_data_ready
+                logger.debug("refresh_table: worker busy — queued pending refresh")
             return
+        self._pending_refresh = False
         
         # --- Restore last sync label from DB on startup (so it's never "N/A" if data exists) ---
         if self.sync_lbl.text() == "Last Sync: N/A":
@@ -1237,6 +1309,13 @@ class FinalDataUI(ExcelTableMixin, QWidget):
             
             # Cache the row count for change detection
             self._last_data_hash = len(final_display_data)
+
+            # If a forced refresh was requested while we were running, do it now
+            if getattr(self, '_pending_refresh', False):
+                self._pending_refresh = False
+                self._last_data_hash = None     # ensure full re-read
+                logger.debug("_on_refresh_data_ready: executing pending forced refresh")
+                self.refresh_table(force=True)
             
             # Set column widths once (not on every refresh)
             if not self._columns_sized:
@@ -1340,23 +1419,23 @@ class FinalDataUI(ExcelTableMixin, QWidget):
         if not self.image_folder or not os.path.exists(self.image_folder):
             return {}, {}
 
-        # ── build a cheap folder fingerprint ───────────────────────────────
-        total_files = 0
-        max_mtime   = 0.0
+        # ── build folder fingerprint (filename + mtime) ────────────────────
+        # Using hash(frozenset((filename_lower, mtime))) so that renames,
+        # additions AND deletions are all detected — not just count/mtime changes.
+        sigs = set()
         for root, _, files in os.walk(self.image_folder):
             for f in files:
-                total_files += 1
                 try:
                     mt = os.path.getmtime(os.path.join(root, f))
-                    if mt > max_mtime:
-                        max_mtime = mt
                 except OSError:
-                    pass
-        fingerprint = (self.image_folder, total_files, max_mtime)
+                    mt = 0.0
+                sigs.add((f.lower(), mt))
+        fingerprint = (self.image_folder, hash(frozenset(sigs)))
 
         # ── return cached result if folder is unchanged ─────────────────────
         cached = getattr(self, '_img_map_cache', None)
-        if cached and cached[0] == fingerprint:
+        # cached[1] may be None if we stored only a fingerprint baseline (no full scan yet).
+        if cached and cached[0] == fingerprint and cached[1] is not None:
             logger.debug("get_image_mapping: folder unchanged — returning cached result")
             return cached[1], cached[2]
 
@@ -1381,7 +1460,99 @@ class FinalDataUI(ExcelTableMixin, QWidget):
         self._img_map_cache = (fingerprint, image_map, dup_map)
         return image_map, dup_map
 
+    # ── Auto-image sync (tab-switch trigger) ─────────────────────────────────
+
+    def check_and_sync_images(self):
+        """Check if the image folder changed since the last scan.
+
+        Performs a fast fingerprint pre-check (file count + max mtime via
+        os.walk).  If unchanged, returns False immediately — no worker started.
+        If changed, starts AutoImageSyncWorker in the background.
+
+        Returns:
+            True  — sync worker was started (folder changed).
+            False — nothing to do (folder unchanged, no DB, or another sync
+                    is already in progress).
+        """
+        logger.info(
+            f"AutoImageSync.check: image_folder='{self.image_folder}' "
+            f"sync_running={bool(self._sync_worker and self._sync_worker.isRunning())} "
+            f"auto_running={bool(getattr(self, '_auto_img_worker', None) and self._auto_img_worker.isRunning())}"
+        )
+        if not self.image_folder:
+            logger.warning("AutoImageSync: image_folder is empty — set up image path in company settings")
+            return False
+        if not os.path.exists(self.image_folder):
+            logger.warning(f"AutoImageSync: image_folder does not exist: '{self.image_folder}'")
+            return False
+        # Guard: never interfere with a running full Tally sync
+        if self._sync_worker and self._sync_worker.isRunning():
+            logger.info("AutoImageSync: skipping — full Tally sync in progress")
+            return False
+        # Guard: don't start a second auto-sync while one is running
+        if getattr(self, '_auto_img_worker', None) and self._auto_img_worker.isRunning():
+            logger.info("AutoImageSync: skipping — worker already running")
+            return False
+
+        # Fingerprint: hash(frozenset((filename_lower, mtime))) — detects renames too
+        sigs = set()
+        for root, _, files in os.walk(self.image_folder):
+            for f in files:
+                try:
+                    mt = os.path.getmtime(os.path.join(root, f))
+                except OSError:
+                    mt = 0.0
+                sigs.add((f.lower(), mt))
+        new_fp = (self.image_folder, hash(frozenset(sigs)))
+
+        cached = getattr(self, '_img_map_cache', None)
+        old_fp = cached[0] if cached else None
+
+        if old_fp is not None and old_fp == new_fp:
+            logger.debug("AutoImageSync: folder unchanged — skipping")
+            return False  # Folder unchanged — instant return, no worker
+
+        # Either no baseline yet (old_fp is None) OR folder changed.
+        # Both cases need a sync:
+        #   - No baseline: ensures images already in folder on first run are picked up.
+        #     The "skip unchanged rows" optimization makes this a no-op if DB is correct.
+        #   - Folder changed: new/removed/renamed image detected.
+        if old_fp is None:
+            logger.info(
+                f"AutoImageSync: no baseline — running initial sync "
+                f"(files={len(sigs)}) to ensure DB is consistent with folder"
+            )
+        else:
+            logger.info(
+                f"AutoImageSync: folder changed "
+                f"(hash {old_fp[1]} → {new_fp[1]}, files={len(sigs)}) — starting worker"
+            )
+        self._auto_img_worker = AutoImageSyncWorker(self)
+        self._auto_img_worker.finished.connect(self._on_auto_img_sync_done)
+        self._auto_img_worker.error.connect(
+            lambda e: logger.error(f"AutoImageSync error: {e}")
+        )
+        self._auto_img_worker.start()
+        return True
+
+    def _on_auto_img_sync_done(self, dup_map):
+        """Called on the main thread when AutoImageSyncWorker finishes.
+
+        1. Refreshes the Final Data table (✅/❌ status column).
+        2. Emits image_sync_done so main_window can rebuild the catalog if
+           Catalog or Reports tab is currently visible.
+        """
+        self._auto_img_worker = None
+        self._duplicate_images = dup_map
+        self._last_data_hash = None   # Invalidate cache — force full DB re-read
+        self.refresh_table(force=True)
+        self.image_sync_done.emit()   # Notify main_window
+        logger.info("AutoImageSync: done — table refresh + image_sync_done emitted")
+
+    # ─────────────────────────────────────────────────────────────────────────
+
     def filter_table(self):
+
         txt = self.search_input.text().lower()
         
         # Charo columns ke sahi index nikaalein

@@ -13,7 +13,7 @@
 ; ============================================================
 
 #define MyAppName "JK Catalog Multi"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "JK Hardware"
 #define MyAppExeName "JK_Catalog_Multi.exe"
 #define MyAppCopyright "Copyright © 2026 JK Hardware"

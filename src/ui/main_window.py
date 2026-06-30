@@ -625,11 +625,25 @@ class MainWindow(QWidget):
                     self.full_catalog_page.logic.invalidate_cache()
                     self.full_catalog_page.logic._last_clean_check_time = None
 
-        # Silent catalog build ONLY on Catalog (2) and Reports (7) tabs
-        # Skip if user explicitly has catalog.build_auto set to None
+        # ── Auto-image sync on Final Data (5), Catalog (2), Reports (7) tabs ─
+        # Runs a fast fingerprint pre-check.  If the image folder is unchanged
+        # the check returns in < 1ms (cache hit).  If changed, the lightweight
+        # AutoImageSyncWorker updates catalog.Image_Path in the background and
+        # emits image_sync_done when committed.  main_window catches that signal
+        # and rebuilds the catalog if Catalog/Reports is currently visible.
+        _fd = getattr(self, 'final_data_page', None)
+        if idx in (2, 5, 7) and _fd and hasattr(_fd, 'check_and_sync_images'):
+            _fd.check_and_sync_images()
+            # On Final Data tab: also trigger a table refresh so ✅/❌ image status
+            # reflects any DB changes made by a prior auto-sync (even if the user
+            # navigated away while the sync was running).
+            if idx == 5:
+                _fd.refresh_table()
+        # ─────────────────────────────────────────────────────────────────────
+
+        # Silent catalog build ONLY on Catalog (2) and Reports (7) tabs.
         if idx in (2, 7) and hasattr(self, 'full_catalog_page'):
             session = self.user_session
-            # Allow when no session (admin/owner) or when permission is explicitly granted
             can_auto_build = (session is None) or session.can("catalog.build_auto")
             if can_auto_build:
                 self.full_catalog_page.build_catalog(silent=True)
@@ -645,6 +659,29 @@ class MainWindow(QWidget):
             self.reports_page.set_refreshing(False)
             self.reports_page.refresh_report_data()
 
+    def _on_image_sync_done(self):
+        """Called when AutoImageSyncWorker commits image changes to the DB.
+
+        If the user is currently on Catalog (2) or Reports (7), rebuild the
+        catalog immediately so the fresh Image_Path values are rendered.
+        Debounce is reset so the build is never silently skipped.
+        """
+        current = self.main_stack.currentIndex()
+        if current not in (2, 7):
+            return  # User isn't viewing catalog — build will happen on next tab switch
+        if not hasattr(self, 'full_catalog_page'):
+            return
+        session = self.user_session
+        can_auto_build = (session is None) or session.can("catalog.build_auto")
+        if not can_auto_build:
+            return
+        fcp = self.full_catalog_page
+        if hasattr(fcp, 'logic'):
+            fcp.logic.invalidate_cache()
+        fcp._last_build_no_changes = False  # Bypass debounce
+        fcp.build_catalog(silent=True)
+        logger.info(f"_on_image_sync_done: triggered catalog rebuild (tab={current})")
+
     def init_main_pages(self):
         """राइट साइड के सभी पेजों को लोड करना"""
         self.company_login = CompanyLoginUI()
@@ -659,6 +696,8 @@ class MainWindow(QWidget):
         # Stack Pages
         self.full_catalog_page = FullCatalogUI()
         self.full_catalog_page.catalog_built.connect(self.on_catalog_built)
+        # When auto-image sync commits, rebuild catalog if it's currently visible
+        self.final_data_page.image_sync_done.connect(self._on_image_sync_done)
         
         self.main_stack.addWidget(self.company_login)      # 0
         self.main_stack.addWidget(WelcomeUI())             # 1
