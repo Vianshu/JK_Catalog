@@ -1311,12 +1311,33 @@ class MainWindow(QWidget):
                 if hasattr(self, 'full_catalog_page') and can_auto_build:
                     if hasattr(self.full_catalog_page, 'logic'):
                         self.full_catalog_page.logic.invalidate_cache()
+
+                    # Connect a one-shot callback to catalog_built so the success
+                    # popup fires AFTER the engine has written pages to report_data.
+                    # This prevents the race where the user opens Reports before the
+                    # build worker has finished updating the pending lists.
+                    def _after_catalog_built():
+                        try:
+                            self.full_catalog_page.catalog_built.disconnect(_after_catalog_built)
+                        except (TypeError, RuntimeError):
+                            pass
+                        QMessageBox.information(self, "Sync Complete",
+                            f"Data Synced Successfully!\nLoaded {row_count} rows.\n\nClick OK to close.")
+                        # L-6: Audit log for Tally sync
+                        if self._security_mgr and self.user_session:
+                            self._security_mgr.log_action(self.user_session, "tally_sync",
+                                module="final_data", detail=f"Synced {row_count} rows")
+
+                    self.full_catalog_page.catalog_built.connect(_after_catalog_built)
                     self.full_catalog_page.build_catalog(silent=True)
-                QMessageBox.information(self, "Sync Complete", f"Data Synced Successfully!\nLoaded {row_count} rows.\n\nClick OK to close.")
-                # L-6: Audit log for Tally sync
-                if self._security_mgr and self.user_session:
-                    self._security_mgr.log_action(self.user_session, "tally_sync",
-                        module="final_data", detail=f"Synced {row_count} rows")
+                else:
+                    # No auto-build permission — show popup immediately
+                    QMessageBox.information(self, "Sync Complete",
+                        f"Data Synced Successfully!\nLoaded {row_count} rows.\n\nClick OK to close.")
+                    # L-6: Audit log for Tally sync
+                    if self._security_mgr and self.user_session:
+                        self._security_mgr.log_action(self.user_session, "tally_sync",
+                            module="final_data", detail=f"Synced {row_count} rows")
 
             def _after_sync_cancelled():
                 # Disconnect both handlers so they don't fire again
