@@ -493,24 +493,8 @@ class FinalDataUI(ExcelTableMixin, QWidget):
                 self.table.blockSignals(False)
                 new_val = final_bool_val # Update variable for DB save
 
-            # When setting to 'false', remove from known_layout_products
-            # so if re-added later, it appears at the end of the subgroup
-            if final_bool_val == "false":
-                try:
-                    catalog_db_name = build_logical_name(
-                        os.path.basename(os.path.dirname(self.db_path)),
-                        company_path=getattr(self, '_company_path', None)
-                    )
-                    pname_item = self.table.item(row, self.col_index("Product Name"))
-                    product_name = pname_item.text().strip().lower() if pname_item else ""
-                    if product_name:
-                        self.db.execute_query(
-                            catalog_db_name,
-                            "DELETE FROM known_layout_products WHERE product_name=?",
-                            (product_name,), fetch=False
-                        )
-                except Exception as e:
-                    logger.warning(f"Known products cleanup error: {e}")
+            # known_layout_products table was removed in catalog v2 rewrite.
+            # No need to clean it up anymore.
 
             self.update_summary_stats() # Update counts on change
 

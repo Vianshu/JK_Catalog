@@ -10,6 +10,16 @@
 3. [Environment & Path Resolution](#3-environment-path-resolution)
 4. [Configuration Files](#4-configuration-files)
 5. [Build & Packaging](#5-build-packaging)
+gic.db_manager | [Aadrika Fashion house] Saved data origin: C:\Users\HP\Desktop\wait
+12:31:38 | CRITICAL | crash | [Aadrika Fashion house] Unhandled Exception:
+Traceback (most recent call last):
+  File "C:\Users\HP\Desktop\project-copy\src\ui\orders_page.py", line 151, in focusOutEvent
+    current = self._edit.text().strip()
+              ^^^^^^^^^^
+AttributeError: '_DropdownLineEdit' object has no attribute '_edit'
+
+[CRASH] AttributeError: '_DropdownLineEdit' object has no attribute '_edit'
+[CRASH] Full traceback saved to: C:\Users\HP\Desktop\project-copy\error.log
 
 **Data Layer**
 6. [Data Models & Schema](#6-data-models-schema)

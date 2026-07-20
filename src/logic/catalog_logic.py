@@ -786,7 +786,7 @@ class CatalogLogic:
     def _get_page_product_list(self, group_name, sg_sn, page_no):
         conn = self._get_catalog_conn()
         if not conn:
-            return []
+            return None
         try:
             cursor = conn.cursor()
             cursor.execute("""
@@ -796,14 +796,16 @@ class CatalogLogic:
                   AND page_no=?
             """, (group_name.strip(), sg_sn, page_no))
             row = cursor.fetchone()
-            if row and row[0]:
-                parsed = json.loads(row[0])
-                if isinstance(parsed, list):
-                    return [str(n).strip().lower() for n in parsed if str(n).strip()]
-            return []
+            if row:
+                if row[0]:
+                    parsed = json.loads(row[0])
+                    if isinstance(parsed, list):
+                        return [str(n).strip().lower() for n in parsed if str(n).strip()]
+                return []
+            return None
         except Exception as e:
             logger.warning(f"_get_page_product_list failed: group='{group_name}', sg={sg_sn}, page={page_no}, error={e}")
-            return []
+            return None
 
     def _load_all_page_assignments(self, group_name, sg_sn):
         conn = self._get_catalog_conn()
@@ -1111,7 +1113,9 @@ class CatalogLogic:
 
     def get_items_for_page_dynamic(self, group_name, sg_sn, page_no):
         product_names = self._get_page_product_list(group_name, sg_sn, page_no)
-        if product_names:
+        if product_names is not None:
+            if not product_names:
+                return []
             cache_key = f"{group_name}|{sg_sn}"
             if cache_key not in self._product_lookup_cache:
                 all_products = self.get_sorted_products_from_db(group_name, sg_sn)

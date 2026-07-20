@@ -309,6 +309,7 @@ class DBManager:
             "DRIVER={ODBC Driver 17 for SQL Server}",
             f"SERVER={self._server_name}",
             "Trusted_Connection=yes",
+            "MARS_Connection=yes",
         ]
         if database_name:
             parts.append(f"DATABASE={database_name}")
