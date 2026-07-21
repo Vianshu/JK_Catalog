@@ -1316,7 +1316,18 @@ class MainWindow(QWidget):
                     # popup fires AFTER the engine has written pages to report_data.
                     # This prevents the race where the user opens Reports before the
                     # build worker has finished updating the pending lists.
+                    # Guard: if user runs sync twice quickly, disconnect any
+                    # previous _after_catalog_built that is still pending.
+                    # Each sync creates a new closure, so we track it on self.
+                    if hasattr(self, '_pending_sync_catalog_cb') and self._pending_sync_catalog_cb:
+                        try:
+                            self.full_catalog_page.catalog_built.disconnect(self._pending_sync_catalog_cb)
+                        except (TypeError, RuntimeError):
+                            pass
+                        self._pending_sync_catalog_cb = None
+
                     def _after_catalog_built():
+                        self._pending_sync_catalog_cb = None
                         try:
                             self.full_catalog_page.catalog_built.disconnect(_after_catalog_built)
                         except (TypeError, RuntimeError):
@@ -1328,7 +1339,10 @@ class MainWindow(QWidget):
                             self._security_mgr.log_action(self.user_session, "tally_sync",
                                 module="final_data", detail=f"Synced {row_count} rows")
 
+                    self._pending_sync_catalog_cb = _after_catalog_built
                     self.full_catalog_page.catalog_built.connect(_after_catalog_built)
+                    # Reset debounce so a post-sync build is never silently skipped
+                    self.full_catalog_page._last_build_no_changes = False
                     self.full_catalog_page.build_catalog(silent=True)
                 else:
                     # No auto-build permission — show popup immediately

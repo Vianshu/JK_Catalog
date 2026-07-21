@@ -363,13 +363,32 @@ class CatalogLogic:
             return []
 
     def rebuild_serial_numbers(self):
-        """Rebuild serial_no and page_no using a single batched SQL UPDATE."""
+        """Rebuild serial_no and page_no using a single batched SQL UPDATE.
+
+        Uses sp_getapplock to serialize concurrent builds across machines.
+        Two simultaneous builds on different clients cannot both re-number
+        serials at the same time — the second waits for the first to commit.
+        """
         conn = self._get_catalog_conn()
         if not conn:
             return
         try:
             cursor = conn.cursor()
-            # Batch approach: single CTE-based UPDATE replaces N individual UPDATEs
+            # Acquire exclusive application lock (held until commit/rollback).
+            # LockTimeout=30000ms — fail-safe if another machine holds the lock
+            # longer than 30 seconds (e.g. due to crash).
+            try:
+                cursor.execute("""
+                    EXEC sp_getapplock
+                        @Resource    = 'JKCatalog_RebuildSerials',
+                        @LockMode    = 'Exclusive',
+                        @LockOwner   = 'Transaction',
+                        @LockTimeout = 30000
+                """)
+            except Exception as lock_err:
+                logger.warning(f"rebuild_serial_numbers: sp_getapplock unavailable ({lock_err}) — proceeding without lock")
+
+            # Single CTE-based UPDATE — far cheaper than N individual UPDATEs
             cursor.execute("""
                 WITH numbered AS (
                     SELECT id,
@@ -392,8 +411,12 @@ class CatalogLogic:
                 WHERE ISNULL(catalog_pages.serial_no, -1) != numbered.new_serial
                    OR ISNULL(catalog_pages.page_no, -1)   != numbered.new_page_no
             """)
-            conn.commit()
+            conn.commit()  # releases the sp_getapplock automatically
         except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             logger.error(f"rebuild_serial_numbers error: {e}")
 
 
@@ -561,30 +584,83 @@ class CatalogLogic:
         return set(str(s) for s in best) if best is not None else set()
 
     def _add_serials_to_all_crms(self, company_path, serial_numbers):
+        """Add dirty serial numbers to all CRM pending lists.
+
+        Uses a pure SQL IF NOT EXISTS / INSERT pattern — no Python
+        read-modify-write round-trip, naturally atomic, eliminates the
+        multi-user race where two concurrent builds could overwrite each
+        other's report_data writes.
+        """
         if not serial_numbers or not company_path:
             return 0
         from src.ui.settings import load_crm_list
-        pages_to_add = [str(s) for s in serial_numbers]
         crm_list = load_crm_list(company_path)
         if not crm_list:
             return 0
-        report_data = self._read_report_data(company_path)
+
+        conn = self._get_catalog_conn()
+        if not conn:
+            logger.warning("_add_serials_to_all_crms: no catalog connection — falling back to JSON write")
+            # Fallback: legacy Python read-modify-write
+            pages_to_add = [str(s) for s in serial_numbers]
+            report_data = self._read_report_data(company_path)
+            updated = 0
+            for crm_name in crm_list:
+                if crm_name not in report_data:
+                    report_data[crm_name] = {"pending": [], "recent": []}
+                current = report_data[crm_name].get("pending", [])
+                if not isinstance(current, list):
+                    current = []
+                added = any(p not in current for p in pages_to_add)
+                for page in pages_to_add:
+                    if page not in current:
+                        current.append(page)
+                if added:
+                    report_data[crm_name]["pending"] = current
+                    updated += 1
+            self._write_report_data(company_path, report_data)
+            return updated
+
+        pages_to_add = [str(s) for s in serial_numbers]
         updated = 0
-        for crm_name in crm_list:
-            if crm_name not in report_data:
-                report_data[crm_name] = {"pending": [], "recent": []}
-            current = report_data[crm_name].get("pending", [])
-            if not isinstance(current, list):
-                current = []
-            added = False
-            for page in pages_to_add:
-                if page not in current:
-                    current.append(page)
-                    added = True
-            if added:
-                report_data[crm_name]["pending"] = current
+        try:
+            cursor = conn.cursor()
+            for crm_name in crm_list:
+                for serial in pages_to_add:
+                    cursor.execute("""
+                        IF NOT EXISTS (
+                            SELECT 1 FROM report_data
+                            WHERE crm_name=? AND serial_no=? AND status='pending'
+                        )
+                        INSERT INTO report_data (crm_name, serial_no, status)
+                        VALUES (?, ?, 'pending')
+                    """, (crm_name, serial, crm_name, serial))
                 updated += 1
-        self._write_report_data(company_path, report_data)
+            conn.commit()
+            logger.info(
+                f"_add_serials_to_all_crms: {len(pages_to_add)} serial(s) → "
+                f"{updated} CRM(s) via SQL INSERT"
+            )
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            logger.error(f"_add_serials_to_all_crms SQL error: {e}", exc_info=True)
+            # Fallback to legacy write so data isn't silently lost
+            pages_to_add_fb = [str(s) for s in serial_numbers]
+            report_data = self._read_report_data(company_path)
+            for crm_name in crm_list:
+                if crm_name not in report_data:
+                    report_data[crm_name] = {"pending": [], "recent": []}
+                current = report_data[crm_name].get("pending", [])
+                if not isinstance(current, list):
+                    current = []
+                for page in pages_to_add_fb:
+                    if page not in current:
+                        current.append(page)
+                report_data[crm_name]["pending"] = current
+            self._write_report_data(company_path, report_data)
         return updated
 
     def _remap_crm_serials(self, company_path, old_to_new):
@@ -663,11 +739,28 @@ class CatalogLogic:
     # ─── PAGE SYNC ────────────────────────────────────────────────────────────
 
     def sync_pages_with_content(self):
+        """Sync catalog_pages with the current super_master subgroup list.
+
+        Orphan deletion safety guard:
+          A page group is only deleted as an 'orphan' if it is ABSENT from
+          super_master AND has NO products remaining in the catalog table.
+          This prevents accidentally wiping pages when super_master returns
+          fewer subgroups than expected (network glitch, partial sync, etc.).
+        """
         conn = self._get_catalog_conn()
         if not conn:
             return
         try:
             all_subgroups = self.get_page_data_list()
+
+            # Safety: if super_master returned nothing, do not touch existing pages
+            if not all_subgroups:
+                logger.warning(
+                    "sync_pages_with_content: super_master returned 0 subgroups — "
+                    "skipping entirely to prevent accidental page deletion"
+                )
+                return
+
             valid_pairs = set()
             for _, group_name, sg_sn in all_subgroups:
                 g_key = str(group_name).strip().upper()
@@ -679,13 +772,28 @@ class CatalogLogic:
 
             cursor = conn.cursor()
             cursor.execute("SELECT DISTINCT group_name, sg_sn FROM catalog_pages")
-            for db_group, db_sg in cursor.fetchall():
+            db_pairs = cursor.fetchall()
+            for db_group, db_sg in db_pairs:
                 g_key = str(db_group).strip().upper()
                 try:
                     s_key = str(int(str(db_sg).strip()))
                 except ValueError:
                     s_key = str(db_sg).strip()
                 if (g_key, s_key) not in valid_pairs:
+                    # Safety guard: only delete if the catalog table also has no products
+                    # for this group. If products exist, super_master lookup may have
+                    # transiently failed — skip deletion to avoid data loss.
+                    try:
+                        products = self.get_sorted_products_from_db(db_group, db_sg)
+                    except Exception:
+                        products = None
+                    if products:
+                        logger.warning(
+                            f"sync_pages_with_content: '{db_group}' sg={db_sg} absent from "
+                            f"super_master but {len(products)} products still in catalog — "
+                            f"skipping orphan deletion (super_master may be stale)"
+                        )
+                        continue
                     cursor.execute(
                         "DELETE FROM catalog_pages WHERE group_name=? AND sg_sn=?",
                         (db_group, db_sg)
@@ -808,9 +916,18 @@ class CatalogLogic:
             return None
 
     def _load_all_page_assignments(self, group_name, sg_sn):
+        """Load product_list assignments for all pages in a subgroup.
+
+        Returns:
+            dict  {page_no: [product_names]}  on success (may be empty dict for new subgroup)
+            None  on DB error — callers MUST check for None and bail out.
+                  Returning None distinguishes a real DB failure from a
+                  legitimately empty subgroup; only an empty subgroup should
+                  trigger the initial-layout path.
+        """
         conn = self._get_catalog_conn()
         if not conn:
-            return {}
+            return None  # DB error — signal to caller: do NOT rebuild layout
         try:
             cursor = conn.cursor()
             cursor.execute("""
@@ -830,10 +947,10 @@ class CatalogLogic:
                     except (json.JSONDecodeError, TypeError):
                         pass
                 assignments[page_no] = names
-            return assignments
+            return assignments  # empty dict {} is valid (new subgroup, no assignments yet)
         except Exception as e:
             logger.warning(f"_load_all_page_assignments error: {e}")
-            return {}
+            return None  # DB error — do NOT treat as empty
 
     def _save_page_assignments(self, group_name, sg_sn, assignments):
         conn = self._get_catalog_conn()
@@ -1369,6 +1486,15 @@ class CatalogLogic:
         modified_pages = set()
         assignments = self._load_all_page_assignments(group_name, sg_sn)
 
+        # Guard: None means DB error (not empty subgroup).  Bail out immediately
+        # to prevent the initial-layout path from overwriting manual customizations.
+        if assignments is None:
+            logger.error(
+                f"_sort_dirty_pages: DB error loading assignments for "
+                f"'{group_name}'|{sg_sn} — skipping sort to prevent layout reset"
+            )
+            return modified_pages
+
         # If no assignments exist yet → initial layout
         if not assignments or not any(names for names in assignments.values()):
             layout_map = self._build_layout(group_name, sg_sn, reshuffle=False)
@@ -1707,6 +1833,12 @@ class CatalogLogic:
         Order-sensitive: reordering products = different hash.
         Includes: product names, order, length, sizes, mrps, price, image.
         Does NOT call grid placement — no rspan/cspan in the hash.
+
+        If the product lookup returns empty for a non-empty product_names list,
+        this almost certainly indicates a transient DB failure.  In that case
+        we return a sentinel hash unique to this serial so the page always
+        appears "changed" — a safe false-positive that forces a re-sort rather
+        than silently skipping an update.
         """
         page_info = self.get_page_info_by_serial(serial_no)
         if not page_info:
@@ -1728,6 +1860,16 @@ class CatalogLogic:
                 for p in all_products
             }
         product_lookup = self._product_lookup_cache[cache_key]
+
+        # Guard: if the lookup is entirely empty but the page has products,
+        # get_sorted_products_from_db almost certainly failed.  Return a unique
+        # sentinel so this page always appears dirty (safe false-positive).
+        if not product_lookup and product_names:
+            logger.warning(
+                f"_compute_page_hash: product lookup empty for serial {serial_no} "
+                f"({len(product_names)} products expected) — returning fetch_error sentinel"
+            )
+            return f"fetch_error_{serial_no}"
 
         # Build content signature — ORDER MATTERS (no sorting)
         def _norm_num(v):
@@ -2007,16 +2149,39 @@ class CatalogLogic:
         # Step 8: Write CRM + save snapshots
         if company_path and crm_dirty:
             self._add_serials_to_all_crms(company_path, list(crm_dirty))
+        elif not company_path and crm_dirty:
+            logger.warning(
+                f"engine_run: {len(crm_dirty)} dirty pages detected but company_path is "
+                f"None — CRM report_data NOT updated. Build was triggered before company loaded?"
+            )
 
         # Invalidate cache BEFORE saving snapshots to ensure fresh product
         # data is hashed (sort may have changed assignments since detection)
         self.invalidate_cache()
         self.save_all_page_snapshots()
 
+        # Build delta for undo history (crm_adds only — page content captured by snapshot diff)
+        from src.ui.settings import load_crm_list
+        crm_list_for_delta = load_crm_list(company_path) if company_path and crm_dirty else []
+        build_delta = {
+            "crm_adds": {crm: sorted(crm_dirty, key=lambda x: int(x) if str(x).isdigit() else 0)
+                         for crm in crm_list_for_delta} if crm_dirty else {},
+            "affected_count": len(crm_dirty),
+            "pages_created": pages_created,
+            "serial_shifts": [
+                {"key": f"{k[0]}|{k[1]}|{k[2]}",
+                 "old_serial": old_serial_map[k],
+                 "new_serial": new_serial_map[k]}
+                for k in (new_keys & old_keys)
+                if old_serial_map[k] != new_serial_map[k]
+            ],
+        }
+
         return {
             "dirty_count": len(crm_dirty),
             "dirty_serials": sorted(crm_dirty, key=lambda x: int(x) if str(x).isdigit() else 0),
             "pages_created": pages_created,
+            "delta": build_delta,
         }
 
     # ═══════════════════════════════════════════════════════════════════════════

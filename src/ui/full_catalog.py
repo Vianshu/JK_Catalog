@@ -20,7 +20,8 @@ from PyQt6.QtWidgets import (
     QPushButton, QLineEdit, QLabel, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QScrollArea,
     QStyle, QGroupBox, QApplication,
-    QGraphicsView, QGraphicsScene, QGraphicsProxyWidget
+    QGraphicsView, QGraphicsScene, QGraphicsProxyWidget,
+    QDialog, QDialogButtonBox, QTextEdit, QSplitter
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QColor, QTransform, QPainter
@@ -46,10 +47,11 @@ class CatalogBuildWorker(QThread):
     progress_update = pyqtSignal(int, str)
     build_finished = pyqtSignal(dict)
 
-    def __init__(self, logic, company_path=None):
+    def __init__(self, logic, company_path=None, username=None):
         super().__init__()
         self.logic = logic
         self.company_path = company_path
+        self.username = username or "unknown"
 
     def run(self):
         try:
@@ -62,6 +64,16 @@ class CatalogBuildWorker(QThread):
             self.progress_update.emit(3, "Step 3/4: Finalizing...")
             now = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
             self.logic.save_last_build_date(now)
+
+            # Save build delta for undo history (only if something actually changed)
+            delta = engine_result.get("delta", {})
+            if delta and engine_result.get("dirty_count", 0) > 0:
+                try:
+                    from src.logic.build_history import save_checkpoint
+                    conn = self.logic._get_catalog_conn()
+                    save_checkpoint(conn, self.username, delta)
+                except Exception as hist_err:
+                    logger.warning(f"CatalogBuildWorker: build_history save failed: {hist_err}")
 
             self.progress_update.emit(4, "Step 4/4: Complete.")
 
@@ -417,6 +429,11 @@ class FullCatalogUI(QWidget):
         self.btn_build.setObjectName("CatalogBuildBtn")
         self.btn_build.setFixedHeight(40)
 
+        self.btn_history = QPushButton("📜 History")
+        self.btn_history.setObjectName("CatalogHistoryBtn")
+        self.btn_history.setToolTip("View build history / Undo last build")
+        self.btn_history.setFixedHeight(40)
+
         self.btn_export = QPushButton("📄 PDF")
         self.btn_export.setObjectName("CatalogExportBtn")
         self.btn_export.setToolTip("Export to PDF")
@@ -433,6 +450,7 @@ class FullCatalogUI(QWidget):
         self.btn_reshuffle.setFixedHeight(40)
 
         parent_layout.addWidget(self.btn_build)
+        parent_layout.addWidget(self.btn_history)
         parent_layout.addWidget(self.btn_export)
         parent_layout.addWidget(self.btn_print)
         parent_layout.addWidget(self.btn_reshuffle)
@@ -481,6 +499,7 @@ class FullCatalogUI(QWidget):
 
         # Build & Export
         self.btn_build.clicked.connect(self.build_catalog)
+        self.btn_history.clicked.connect(self.show_build_history)
         self.btn_export.clicked.connect(self.export_pdf)
         self.btn_print.clicked.connect(self.handle_direct_print)
         self.btn_reshuffle.clicked.connect(self.reshuffle_catalog)
@@ -847,7 +866,11 @@ class FullCatalogUI(QWidget):
             self._build_progress = None
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
 
-        self._build_worker = CatalogBuildWorker(self.logic, self.company_path)
+        self._build_worker = CatalogBuildWorker(
+            self.logic,
+            self.company_path,
+            username=getattr(self, '_username', 'unknown')
+        )
         self._build_worker.progress_update.connect(self._on_build_progress)
         self._build_worker.build_finished.connect(self._on_build_finished)
         self._build_worker.start()
@@ -895,6 +918,25 @@ class FullCatalogUI(QWidget):
                 logger.error(f"Auto-Build Error: {result['error']}")
 
         self._build_worker = None
+
+    # ───────────────────────────────────────────────────────────────────────────
+    # BUILD HISTORY / UNDO
+    # ───────────────────────────────────────────────────────────────────────────
+
+    def show_build_history(self):
+        """Open the Build History dialog to view or undo past builds."""
+        if not self.logic.catalog_db_path:
+            QMessageBox.warning(self, "No Data", "Please load a company first.")
+            return
+        conn = self.logic._get_catalog_conn()
+        if not conn:
+            QMessageBox.warning(self, "Connection Error", "Cannot connect to catalog database.")
+            return
+        dlg = BuildHistoryDialog(conn, self.logic, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            # User clicked Restore — re-run a silent build to re-render
+            self.logic.invalidate_cache()
+            self.build_catalog(silent=False)
 
     # ───────────────────────────────────────────────────────────────────────────
     # RESHUFFLE
@@ -1084,3 +1126,215 @@ class FullCatalogUI(QWidget):
     def _handle_print_preview_paint(self, printer):
         """Deprecated — handled by PrintExportDialog."""
         pass
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BUILD HISTORY DIALOG
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class BuildHistoryDialog(QDialog):
+    """Shows the last N catalog builds and lets the user restore one.
+
+    Layout:
+        Top:    Table listing builds (time, pages affected, CRMs, by)
+        Bottom: Detail panel showing the delta for the selected build
+        Footer: [View Diff]  [↩ Restore]  [Close]
+    """
+
+    def __init__(self, conn, logic, parent=None):
+        super().__init__(parent)
+        self.conn = conn
+        self.logic = logic
+        self._checkpoints = []   # list of row tuples from list_checkpoints
+        self._selected_id = None
+
+        self.setWindowTitle("📜 Build History")
+        self.setMinimumSize(720, 440)
+        self.setModal(True)
+        self._setup_ui()
+        self._load_checkpoints()
+
+    # ── UI ─────────────────────────────────────────────────────────────────────
+
+    def _setup_ui(self):
+        root = QVBoxLayout(self)
+        root.setSpacing(10)
+        root.setContentsMargins(14, 14, 14, 10)
+
+        # Header
+        lbl = QLabel("<b>Recent Catalog Builds</b> — select a build to inspect or restore")
+        lbl.setStyleSheet("font-size: 13px; color: #ccc;")
+        root.addWidget(lbl)
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+
+        # ── Build list table ───────────────────────────────────────────────────
+        self.tbl = QTableWidget(0, 4)
+        self.tbl.setHorizontalHeaderLabels(["Time", "Pages Changed", "CRMs", "By"])
+        self.tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.tbl.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.tbl.setAlternatingRowColors(True)
+        self.tbl.setStyleSheet(
+            "QTableWidget { background:#1e1e2e; color:#cdd6f4; gridline-color:#313244; font-size:12px; }"
+            "QTableWidget::item:selected { background:#45475a; }"
+            "QHeaderView::section { background:#313244; color:#cdd6f4; padding:4px; }"
+        )
+        self.tbl.itemSelectionChanged.connect(self._on_row_selected)
+        splitter.addWidget(self.tbl)
+
+        # ── Delta detail panel ─────────────────────────────────────────────────
+        self.detail = QTextEdit()
+        self.detail.setReadOnly(True)
+        self.detail.setPlaceholderText("Select a build above to see what changed...")
+        self.detail.setStyleSheet(
+            "QTextEdit { background:#181825; color:#a6e3a1; font-family:Consolas,monospace; "
+            "font-size:11px; border:1px solid #313244; border-radius:4px; padding:6px; }"
+        )
+        self.detail.setMaximumHeight(160)
+        splitter.addWidget(self.detail)
+
+        root.addWidget(splitter)
+
+        # ── Buttons ────────────────────────────────────────────────────────────
+        btn_row = QHBoxLayout()
+
+        self.btn_restore = QPushButton("↩ Restore This Build")
+        self.btn_restore.setEnabled(False)
+        self.btn_restore.setFixedHeight(36)
+        self.btn_restore.setStyleSheet(
+            "QPushButton { background:#f38ba8; color:#1e1e2e; border-radius:6px; "
+            "font-weight:bold; padding:0 16px; }"
+            "QPushButton:hover { background:#eba0ac; }"
+            "QPushButton:disabled { background:#45475a; color:#6c7086; }"
+        )
+        self.btn_restore.clicked.connect(self._on_restore)
+
+        btn_close = QPushButton("Close")
+        btn_close.setFixedHeight(36)
+        btn_close.setStyleSheet(
+            "QPushButton { background:#313244; color:#cdd6f4; border-radius:6px; padding:0 16px; }"
+            "QPushButton:hover { background:#45475a; }"
+        )
+        btn_close.clicked.connect(self.reject)
+
+        btn_row.addWidget(self.btn_restore)
+        btn_row.addStretch()
+        btn_row.addWidget(btn_close)
+        root.addLayout(btn_row)
+
+        # Dark dialog background
+        self.setStyleSheet("QDialog { background:#1e1e2e; }")
+
+    # ── Data ───────────────────────────────────────────────────────────────────
+
+    def _load_checkpoints(self):
+        from src.logic.build_history import list_checkpoints
+        self._checkpoints = list_checkpoints(self.conn)
+        self.tbl.setRowCount(0)
+
+        if not self._checkpoints:
+            self.detail.setPlaceholderText("No build history recorded yet.  Build the catalog first.")
+            return
+
+        for row_idx, (bid, btime, pages, crms, uname) in enumerate(self._checkpoints):
+            self.tbl.insertRow(row_idx)
+            # Format time
+            try:
+                time_str = str(btime)[:16]   # "2026-07-21 15:21"
+            except Exception:
+                time_str = str(btime)
+
+            self.tbl.setItem(row_idx, 0, QTableWidgetItem(time_str))
+            self.tbl.setItem(row_idx, 1, QTableWidgetItem(str(pages or 0)))
+            self.tbl.setItem(row_idx, 2, QTableWidgetItem(str(crms or 0)))
+            self.tbl.setItem(row_idx, 3, QTableWidgetItem(str(uname or "—")))
+            self.tbl.item(row_idx, 0).setData(Qt.ItemDataRole.UserRole, bid)
+
+        self.tbl.selectRow(0)
+
+    def _on_row_selected(self):
+        rows = self.tbl.selectedItems()
+        if not rows:
+            self._selected_id = None
+            self.btn_restore.setEnabled(False)
+            self.detail.clear()
+            return
+
+        row = self.tbl.currentRow()
+        item = self.tbl.item(row, 0)
+        if not item:
+            return
+        self._selected_id = item.data(Qt.ItemDataRole.UserRole)
+        self.btn_restore.setEnabled(True)
+        self._show_delta(self._selected_id)
+
+    def _show_delta(self, build_id):
+        from src.logic.build_history import get_delta
+        delta = get_delta(self.conn, build_id)
+        if not delta:
+            self.detail.setPlainText("(no delta data stored for this build)")
+            return
+
+        lines = []
+        crm_adds = delta.get("crm_adds", {})
+        if crm_adds:
+            lines.append("CRM Pending — pages added:")
+            for crm, serials in crm_adds.items():
+                lines.append(f"  {crm}: {', '.join(str(s) for s in serials[:20])}"
+                             + (" ..." if len(serials) > 20 else ""))
+        else:
+            lines.append("CRM Pending: (no new pages added)")
+
+        shifts = delta.get("serial_shifts", [])
+        if shifts:
+            lines.append(f"\nSerial shifts ({len(shifts)}):")
+            for s in shifts[:10]:
+                lines.append(f"  {s.get('key','?')}: serial {s.get('old_serial','?')} → {s.get('new_serial','?')}")
+            if len(shifts) > 10:
+                lines.append(f"  ... and {len(shifts)-10} more")
+
+        created = delta.get("pages_created", 0)
+        if created:
+            lines.append(f"\nNew pages created: {created}")
+
+        self.detail.setPlainText("\n".join(lines))
+
+    # ── Actions ────────────────────────────────────────────────────────────────
+
+    def _on_restore(self):
+        if self._selected_id is None:
+            return
+
+        row = self.tbl.currentRow()
+        time_str = self.tbl.item(row, 0).text() if self.tbl.item(row, 0) else "?"
+        pages    = self.tbl.item(row, 1).text() if self.tbl.item(row, 1) else "?"
+
+        answer = QMessageBox.question(
+            self,
+            "Confirm Restore",
+            f"Restore catalog to the state BEFORE the build at {time_str}?\n\n"
+            f"This will:\n"
+            f"  • Remove {pages} page(s) from all CRM pending lists that were added by this build\n"
+            f"  • Reverse any serial number shifts caused by this build\n\n"
+            f"The catalog will be re-built after restore.\n\n"
+            f"Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        from src.logic.build_history import restore_checkpoint
+        ok = restore_checkpoint(self.conn, self._selected_id)
+        if ok:
+            QMessageBox.information(self, "Restored",
+                f"Build {self._selected_id} reversed successfully.\n"
+                f"The catalog will now rebuild to reflect the restored state.")
+            self.accept()   # signal to caller (show_build_history) to re-build
+        else:
+            QMessageBox.critical(self, "Restore Failed",
+                "Could not restore this build. Check the error log for details.")
