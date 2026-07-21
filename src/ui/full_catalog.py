@@ -924,7 +924,7 @@ class FullCatalogUI(QWidget):
     # ───────────────────────────────────────────────────────────────────────────
 
     def show_build_history(self):
-        """Open the Build History dialog to view or undo past builds."""
+        """Open the Build History dialog to view or export pages from past builds."""
         if not self.logic.catalog_db_path:
             QMessageBox.warning(self, "No Data", "Please load a company first.")
             return
@@ -932,11 +932,8 @@ class FullCatalogUI(QWidget):
         if not conn:
             QMessageBox.warning(self, "Connection Error", "Cannot connect to catalog database.")
             return
-        dlg = BuildHistoryDialog(conn, self.logic, parent=self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            # User clicked Restore — re-run a silent build to re-render
-            self.logic.invalidate_cache()
-            self.build_catalog(silent=False)
+        dlg = BuildHistoryDialog(conn, self.logic, catalog_ui=self, parent=self)
+        dlg.exec()
 
     # ───────────────────────────────────────────────────────────────────────────
     # RESHUFFLE
@@ -1133,18 +1130,19 @@ class FullCatalogUI(QWidget):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class BuildHistoryDialog(QDialog):
-    """Shows the last N catalog builds and lets the user restore one.
+    """Shows the last N catalog builds and lets the user export affected pages as PDF.
 
     Layout:
         Top:    Table listing builds (time, pages affected, CRMs, by)
         Bottom: Detail panel showing the delta for the selected build
-        Footer: [View Diff]  [↩ Restore]  [Close]
+        Footer: [📄 Export Affected Pages]  [Close]
     """
 
-    def __init__(self, conn, logic, parent=None):
+    def __init__(self, conn, logic, catalog_ui=None, parent=None):
         super().__init__(parent)
         self.conn = conn
         self.logic = logic
+        self.catalog_ui = catalog_ui   # FullCatalogUI — needed for PDF export
         self._checkpoints = []   # list of row tuples from list_checkpoints
         self._selected_id = None
 
@@ -1162,7 +1160,7 @@ class BuildHistoryDialog(QDialog):
         root.setContentsMargins(14, 14, 14, 10)
 
         # Header
-        lbl = QLabel("<b>Recent Catalog Builds</b> — select a build to inspect or restore")
+        lbl = QLabel("<b>Recent Catalog Builds</b> — select a build to view what changed and export its pages")
         lbl.setStyleSheet("font-size: 13px; color: #ccc;")
         root.addWidget(lbl)
 
@@ -1202,16 +1200,16 @@ class BuildHistoryDialog(QDialog):
         # ── Buttons ────────────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
 
-        self.btn_restore = QPushButton("↩ Restore This Build")
-        self.btn_restore.setEnabled(False)
-        self.btn_restore.setFixedHeight(36)
-        self.btn_restore.setStyleSheet(
-            "QPushButton { background:#f38ba8; color:#1e1e2e; border-radius:6px; "
+        self.btn_export_pdf = QPushButton("📄 Export Affected Pages as PDF")
+        self.btn_export_pdf.setEnabled(False)
+        self.btn_export_pdf.setFixedHeight(36)
+        self.btn_export_pdf.setStyleSheet(
+            "QPushButton { background:#89b4fa; color:#1e1e2e; border-radius:6px; "
             "font-weight:bold; padding:0 16px; }"
-            "QPushButton:hover { background:#eba0ac; }"
+            "QPushButton:hover { background:#74c7ec; }"
             "QPushButton:disabled { background:#45475a; color:#6c7086; }"
         )
-        self.btn_restore.clicked.connect(self._on_restore)
+        self.btn_export_pdf.clicked.connect(self._on_export_pdf)
 
         btn_close = QPushButton("Close")
         btn_close.setFixedHeight(36)
@@ -1221,7 +1219,7 @@ class BuildHistoryDialog(QDialog):
         )
         btn_close.clicked.connect(self.reject)
 
-        btn_row.addWidget(self.btn_restore)
+        btn_row.addWidget(self.btn_export_pdf)
         btn_row.addStretch()
         btn_row.addWidget(btn_close)
         root.addLayout(btn_row)
@@ -1269,7 +1267,7 @@ class BuildHistoryDialog(QDialog):
         if not item:
             return
         self._selected_id = item.data(Qt.ItemDataRole.UserRole)
-        self.btn_restore.setEnabled(True)
+        self.btn_export_pdf.setEnabled(True)
         self._show_delta(self._selected_id)
 
     def _show_delta(self, build_id):
@@ -1305,36 +1303,68 @@ class BuildHistoryDialog(QDialog):
 
     # ── Actions ────────────────────────────────────────────────────────────────
 
-    def _on_restore(self):
+    def _on_export_pdf(self):
+        """Open PrintExportDialog filtered to the pages affected by the selected build.
+
+        Reads the delta's crm_adds to get affected serial numbers, maps them
+        to indices in catalog_ui.all_pages_data, and opens PrintExportDialog
+        pre-filtered to those pages.  No DB writes — read-only preview.
+        """
         if self._selected_id is None:
+            return
+        if not self.catalog_ui:
+            QMessageBox.warning(self, "Not Available",
+                "Catalog view is not connected. Close this dialog and try again.")
+            return
+        if not getattr(self.catalog_ui, 'all_pages_data', None):
+            QMessageBox.warning(self, "No Pages",
+                "No catalog pages are loaded. Please build the catalog first.")
+            return
+
+        from src.logic.build_history import get_delta
+        delta = get_delta(self.conn, self._selected_id)
+        if not delta:
+            QMessageBox.warning(self, "No Data", "No delta stored for this build.")
+            return
+
+        # Collect all unique affected serials across all CRMs in this build
+        crm_adds = delta.get("crm_adds", {})
+        affected_serials = set()
+        for serials in crm_adds.values():
+            affected_serials.update(str(s) for s in serials)
+
+        if not affected_serials:
+            QMessageBox.information(self, "No Affected Pages",
+                "This build did not add any pages to CRM pending lists.\n"
+                "Nothing to export.")
+            return
+
+        # Map serial numbers to indices in all_pages_data
+        # all_pages_data entries: (mg_sn, group_name, sg_sn, page_no, serial_no)
+        page_indices = [
+            idx for idx, entry in enumerate(self.catalog_ui.all_pages_data)
+            if str(entry[4]) in affected_serials
+        ]
+
+        if not page_indices:
+            QMessageBox.warning(self, "Pages Not Found",
+                f"{len(affected_serials)} affected serial(s) from this build could not be "
+                f"found in the current catalog.\nThe catalog may have been rebuilt since then.")
             return
 
         row = self.tbl.currentRow()
         time_str = self.tbl.item(row, 0).text() if self.tbl.item(row, 0) else "?"
-        pages    = self.tbl.item(row, 1).text() if self.tbl.item(row, 1) else "?"
 
-        answer = QMessageBox.question(
-            self,
-            "Confirm Restore",
-            f"Restore catalog to the state BEFORE the build at {time_str}?\n\n"
-            f"This will:\n"
-            f"  • Remove {pages} page(s) from all CRM pending lists that were added by this build\n"
-            f"  • Reverse any serial number shifts caused by this build\n\n"
-            f"The catalog will be re-built after restore.\n\n"
-            f"Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
+        # Close this dialog first so PDF dialog is on top
+        self.close()
+
+        # Open PDF export pre-filtered to the affected pages
+        self.catalog_ui.logic.invalidate_cache()
+        dialog = PrintExportDialog(
+            self.catalog_ui,
+            self.catalog_ui,
+            mode="pdf",
+            page_list=page_indices
         )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-
-        from src.logic.build_history import restore_checkpoint
-        ok = restore_checkpoint(self.conn, self._selected_id)
-        if ok:
-            QMessageBox.information(self, "Restored",
-                f"Build {self._selected_id} reversed successfully.\n"
-                f"The catalog will now rebuild to reflect the restored state.")
-            self.accept()   # signal to caller (show_build_history) to re-build
-        else:
-            QMessageBox.critical(self, "Restore Failed",
-                "Could not restore this build. Check the error log for details.")
+        dialog.setWindowTitle(f"Export PDF — Build {self._selected_id} ({time_str})")
+        dialog.exec()
