@@ -14,6 +14,26 @@ from src.utils.app_logger import get_logger
 logger = get_logger(__name__)
 
 
+# ─── PER-USER TALLY PORT ───────────────────────────────────────────────────────
+# Each RDP session / Windows user may have a different Tally instance running
+# on a different port.  QSettings with UserScope persists the choice per-user
+# in the Windows registry, so RDP User A and User B each get their own setting.
+
+def get_tally_port() -> int:
+    """Return the Tally port for the current OS user (default 9000)."""
+    from PyQt6.QtCore import QSettings, QSettings as _QS
+    s = _QS("JKCatalog", "TallyPort")
+    return int(s.value("port", 9000))
+
+
+def set_tally_port(port: int):
+    """Persist the Tally port for the current OS user."""
+    from PyQt6.QtCore import QSettings as _QS
+    s = _QS("JKCatalog", "TallyPort")
+    s.setValue("port", int(port))
+    logger.info(f"Tally port set to {port} for current user")
+
+
 warnings.filterwarnings(
     "ignore",
     category=UserWarning,
@@ -49,7 +69,30 @@ class TallyService:
             raise InterruptedError(f"Tally sync cancelled{' at ' + stage if stage else ''}")
 
     def connect(self):
+        """Connect to Tally ODBC.
+
+        Connection order:
+          1. User-configured port (from QSettings) — tried first.
+          2. Named DSNs TallyODBC64_9000 / TallyODBC_9000.
+          3. Auto-discovery across ports [9000, 9001].
+        Each RDP user stores their own port so multiple sessions can run
+        separate Tally instances simultaneously.
+        """
         try:
+            # 1. User-configured port (per-RDP-user)
+            user_port = get_tally_port()
+            drivers = [d for d in pyodbc.drivers() if "Tally" in d]
+            if drivers:
+                driver = drivers[0]
+                try:
+                    conn_str = f"DRIVER={{{driver}}};SERVER=(local);PORT={user_port}"
+                    self.connection = pyodbc.connect(conn_str, timeout=2)
+                    logger.info(f"Connected to Tally on user-configured port {user_port}")
+                    return True
+                except pyodbc.Error:
+                    logger.debug(f"User port {user_port} failed, trying DSNs")
+
+            # 2. Named DSNs (legacy fallback)
             for dsn in ["DSN=TallyODBC64_9000", "DSN=TallyODBC_9000"]:
                 try:
                     self.connection = pyodbc.connect(dsn, timeout=2)
@@ -57,16 +100,17 @@ class TallyService:
                 except pyodbc.Error:
                     pass
 
-            drivers = [d for d in pyodbc.drivers() if "Tally" in d]
             if not drivers:
                 return False
 
             driver = drivers[0]
 
-            for port in [9000, 9001]:
+            # 3. Auto-discovery: try nearby ports
+            for port in sorted({user_port, 9000, 9001}):
                 try:
                     conn_str = f"DRIVER={{{driver}}};SERVER=(local);PORT={port}"
                     self.connection = pyodbc.connect(conn_str, timeout=2)
+                    logger.info(f"Auto-discovered Tally on port {port}")
                     return True
                 except pyodbc.Error:
                     pass

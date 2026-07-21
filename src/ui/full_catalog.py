@@ -153,6 +153,9 @@ class FullCatalogUI(QWidget):
         self._last_build_no_changes = False
         self._zoom_factor = 1.0  # Current zoom level (1.0 = 100%)
 
+        self._user_session = None    # Set by main_window after login
+        self._security_mgr = None   # Set by main_window after login
+
         self._setup_ui()
         self._load_index_data()
         self._connect_signals()
@@ -899,6 +902,24 @@ class FullCatalogUI(QWidget):
                 f"Catalog build completed: changed={result['affected_count']}, "
                 f"created={result.get('pages_created', 0)}"
             )
+
+            # Audit log for catalog build (only when pages changed)
+            if result['affected_count'] > 0:
+                try:
+                    if self._security_mgr and self._user_session:
+                        self._security_mgr.log_action(
+                            self._user_session,
+                            "catalog_build",
+                            module="catalog",
+                            detail=(
+                                f"Changed pages: {result['affected_count']}, "
+                                f"Created: {result.get('pages_created', 0)}, "
+                                f"Silent: {self._build_silent}"
+                            )
+                        )
+                except Exception as audit_err:
+                    logger.warning(f"catalog_build audit log failed: {audit_err}")
+
             if not self._build_silent:
                 msg = f"Catalog built successfully!\n\n"
                 msg += f"• Changed Pages: {result['affected_count']}\n"

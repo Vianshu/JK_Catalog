@@ -88,9 +88,11 @@ class CRMSelectDialog(QDialog):
 class ReportsUI(QWidget):
     def __init__(self):
         super().__init__()
-        self.current_company_path = "" 
-        self.download_path = "" 
+        self.current_company_path = ""
+        self.download_path = ""
         self.logic = None
+        self._user_session = None    # Set by main_window after login
+        self._security_mgr = None   # Set by main_window after login
         self.init_ui()
         
     def init_ui(self):
@@ -281,15 +283,38 @@ class ReportsUI(QWidget):
     def update_pages_logic(self, crm_name):
         path = self.get_report_path()
         all_data = load_report_json(path)
-        
+
         if crm_name not in all_data:
             all_data[crm_name] = {"pending": [], "recent": []}
-            
+
+        pages_marked = list(all_data[crm_name].get("pending", []))
+        page_count = len(pages_marked)
+
         # Move pending to recent
         all_data[crm_name]["recent"] = all_data[crm_name]["pending"]
         all_data[crm_name]["pending"] = []
-        
+
         save_report_json(all_data, path)
+
+        # Audit log: who marked which CRM as done
+        try:
+            if self._security_mgr and self._user_session:
+                sample = ", ".join(str(p) for p in pages_marked[:10])
+                if len(pages_marked) > 10:
+                    sample += f" (+{len(pages_marked) - 10} more)"
+                self._security_mgr.log_action(
+                    self._user_session,
+                    "crm_update",
+                    module="reports",
+                    detail=f"CRM '{crm_name}' — {page_count} page(s) marked done. Pages: [{sample}]"
+                )
+                logger.info(
+                    f"Audit: crm_update by '{self._user_session.username}' — "
+                    f"CRM='{crm_name}', {page_count} pages"
+                )
+        except Exception as audit_err:
+            logger.warning(f"update_pages_logic: audit log failed: {audit_err}")
+
         self.refresh_report_data()
 
     def refresh_report_data(self):

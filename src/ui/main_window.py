@@ -508,6 +508,7 @@ class MainWindow(QWidget):
         m_catalog = self.create_menu_widget([
             ("⬅️ &Back", self.go_back_to_main, True),
             ("🔄 S&ync Tally", self.on_sync_tally_clicked, False, None, "final_data.sync"),
+            ("⚙️ &Tally Port", self.handle_tally_port, False, None, "final_data.sync"),
             ("📑 Super &Master", self.handle_super_master, False, None, "tab.super_master"),
             ("✅ &Final Data", self.final_data, False, None, "tab.final_data"),
             ("📖 Full Catalo&g", self.show_full_catalog_page, False, None, "tab.catalog"),
@@ -957,14 +958,19 @@ class MainWindow(QWidget):
                 self.cheque_list_page._user_session = self.user_session
             if hasattr(self, 'calendar_page'):
                 self.calendar_page._user_session = self.user_session
-            
+
             self._apply_permissions()
             self._start_timeout()  # Start session timeout
-            
+
             # Start live permission polling
             from src.logic.security_manager import SecurityManager
             self._security_mgr = SecurityManager(
                 os.path.dirname(company_path) if company_path else "")
+
+            # Propagate security manager to pages that need audit logging
+            for page in [self.reports_page, self.full_catalog_page]:
+                page._security_mgr = self._security_mgr
+
             self._perm_poll_timer.start()
             
             # CRITICAL FIX: Lock the window size again so the dashboard
@@ -1245,6 +1251,43 @@ class MainWindow(QWidget):
         """Reset timeout on mouse click."""
         self._reset_timeout()
         super().mousePressEvent(event)
+
+    def handle_tally_port(self):
+        """Let the current RDP user choose their own Tally port.
+
+        Each Windows / RDP user session has a separate Tally instance
+        that may listen on a different port.  The choice is stored per-user
+        in the Windows Registry via QSettings so it survives restarts.
+        """
+        from PyQt6.QtWidgets import QInputDialog
+        from src.services.tally_sync import get_tally_port, set_tally_port
+
+        current_port = get_tally_port()
+        port, ok = QInputDialog.getInt(
+            self,
+            "Tally Port",
+            "Enter the Tally port for your session\n"
+            "(Each RDP user should set their own port):",
+            value=current_port,
+            min=1,
+            max=65535,
+        )
+        if ok:
+            set_tally_port(port)
+            QMessageBox.information(
+                self,
+                "Tally Port Updated",
+                f"Tally port set to {port} for your Windows account.\n"
+                f"This applies only to your RDP session."
+            )
+            # Audit log
+            if self._security_mgr and self.user_session:
+                self._security_mgr.log_action(
+                    self.user_session,
+                    "tally_port_change",
+                    module="settings",
+                    detail=f"Tally port changed from {current_port} to {port}"
+                )
 
     def on_sync_tally_clicked(self):
         if not self.current_company: return
