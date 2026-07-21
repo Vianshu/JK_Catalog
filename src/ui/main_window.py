@@ -508,7 +508,6 @@ class MainWindow(QWidget):
         m_catalog = self.create_menu_widget([
             ("⬅️ &Back", self.go_back_to_main, True),
             ("🔄 S&ync Tally", self.on_sync_tally_clicked, False, None, "final_data.sync"),
-            ("⚙️ &Tally Port", self.handle_tally_port, False, None, "final_data.sync"),
             ("📑 Super &Master", self.handle_super_master, False, None, "tab.super_master"),
             ("✅ &Final Data", self.final_data, False, None, "tab.final_data"),
             ("📖 Full Catalo&g", self.show_full_catalog_page, False, None, "tab.catalog"),
@@ -527,6 +526,7 @@ class MainWindow(QWidget):
             ("👥 &Users", self.handle_manage_users, False, None, "settings.manage_users"),
             ("🛡️ User &Roles", self.handle_security, False, None, "settings.manage_roles"),
             ("📋 Audit &Log", self.handle_audit_log, False, None, "settings.manage_roles"),
+            ("⚙️ Tally &Port", self.handle_tally_port),
             ("🔑 Change &Password", self.handle_change_password, False, None, "settings.manage_users"),
             ("🔒 &Admin Panel", self.handle_admin_panel, False, None, "settings.manage_users"),
             ("📅 Ca&lendar", self.handle_calendar_mapping, False, None, "tab.calendar"),
