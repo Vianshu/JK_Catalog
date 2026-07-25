@@ -13,6 +13,9 @@ from PyQt6.QtCore import Qt, QEvent, QSettings, QSizeF, QMarginsF, QRect
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 from difflib import SequenceMatcher
 from src.logic.db_manager import get_db_manager, build_logical_name
+from PyQt6.QtCore import QSortFilterProxyModel
+from PyQt6.QtGui import QStandardItemModel, QStandardItem
+
 
 class NumericTableWidgetItem(QTableWidgetItem):
     def __lt__(self, other):
@@ -20,6 +23,72 @@ class NumericTableWidgetItem(QTableWidgetItem):
             return float(self.text()) < float(other.text())
         except Exception as e:
             return super().__lt__(other)
+
+
+# ── Tally-like completer: starts-with entries sorted to top ──────────────────
+class _TallySortProxyModel(QSortFilterProxyModel):
+    """Keeps starts-with matches at the top; contains matches below."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._prefix = ""
+
+    def set_prefix(self, prefix: str):
+        self._prefix = prefix.lower()
+
+    def lessThan(self, left, right):
+        lv = left.data(Qt.ItemDataRole.DisplayRole) or ""
+        rv = right.data(Qt.ItemDataRole.DisplayRole) or ""
+        p = self._prefix
+        l_starts = lv.lower().startswith(p)
+        r_starts = rv.lower().startswith(p)
+        if l_starts != r_starts:
+            return l_starts  # starts-with items sort lower (come first)
+        return lv.lower() < rv.lower()
+
+
+class _TallyCompleter(QCompleter):
+    """QCompleter that shows starts-with matches first, then contains."""
+    def __init__(self, data_list, parent=None):
+        self._data_list = [str(x) for x in data_list]
+        # Build a standard model so we can re-sort on each keystroke
+        self._src_model = QStandardItemModel()
+        for item in self._data_list:
+            self._src_model.appendRow(QStandardItem(item))
+
+        self._proxy = _TallySortProxyModel()
+        self._proxy.setSourceModel(self._src_model)
+        self._proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._proxy.setFilterKeyColumn(0)
+
+        super().__init__(self._proxy, parent)
+        self.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+
+        if parent:
+            parent.textEdited.connect(self._on_text_edited)
+
+    def _on_text_edited(self, text: str):
+        p = text.lower()
+        self._proxy.set_prefix(p)
+        # Show starts-with + contains
+        self._proxy.setFilterFixedString(text)
+        self._proxy.sort(0, Qt.SortOrder.AscendingOrder)
+        self.complete()
+
+
+def _enforce_match(editor: QLineEdit, text: str, data_list: list):
+    """Reject the last typed character if the current text has no match at all.
+    Mimics Tally behaviour: typing stops when nothing matches."""
+    if not text:
+        return
+    tl = text.lower()
+    for item in data_list:
+        if tl in str(item).lower():   # contains check
+            return                     # at least one match — allow
+    # No match at all: strip the last character
+    editor.blockSignals(True)
+    editor.setText(text[:-1])
+    editor.blockSignals(False)
         
 class AutocompleteDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
@@ -33,7 +102,7 @@ class AutocompleteDelegate(QStyledItemDelegate):
         if col in (2, 3, 5):
             editor = QLineEdit(parent)
             editor.setFrame(False)
-            
+
             data_list = []
             if col == 2:
                 data_list = list(self.main_ui.party_mapping.keys())
@@ -43,14 +112,18 @@ class AutocompleteDelegate(QStyledItemDelegate):
                 data_list = self.main_ui.crm_list_data
 
             if data_list:
-                completer = QCompleter(data_list)
+                # ── Tally-like completer: starts-with entries appear first ──
+                completer = _TallyCompleter(data_list, editor)
                 completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-                completer.setFilterMode(Qt.MatchFlag.MatchContains)
                 completer.setMaxVisibleItems(12)
                 editor.setCompleter(completer)
-                # Make popup wide enough to read long names
                 completer.popup().setMinimumWidth(350)
-                
+
+                # ── Tally-like typing guard: reject chars that have no match ──
+                editor.textEdited.connect(
+                    lambda text, e=editor, dl=data_list: _enforce_match(e, text, dl)
+                )
+
             editor.installEventFilter(self)
             return editor
         return super().createEditor(parent, option, index)
@@ -211,16 +284,28 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         self.search_box.setFixedWidth(220)
         self.search_box.textChanged.connect(self.apply_filter)
 
+        # "Unclear Chq. Hide" — hides rows where Clear Date is empty
+        self.btn_unclear_hide = QPushButton("⏳ Unclear Chq. Hide")
+        self.btn_unclear_hide.setObjectName("BtnClearChq")
+        self.btn_unclear_hide.setCheckable(True)
+        self.btn_unclear_hide.clicked.connect(self.toggle_unclear_visibility)
+
         top_bar.addWidget(self.btn_clear)
         top_bar.addWidget(self.search_box)
+        top_bar.addWidget(self.btn_unclear_hide)
 
         # 2. Middle: Summary Labels
         top_bar.addStretch()
 
+        # Bold font for summary labels
+        _sum_font = QFont()
+        _sum_font.setBold(True)
         self.lbl_count = QLabel("Total No. of Chq.: 0")
         self.lbl_total = QLabel("Amount: 0.00")
         self.lbl_count.setObjectName("ChqSummaryLabel")
         self.lbl_total.setObjectName("ChqSummaryLabel")
+        self.lbl_count.setFont(_sum_font)
+        self.lbl_total.setFont(_sum_font)
 
         top_bar.addWidget(self.lbl_count)
         top_bar.addWidget(self.lbl_total)
@@ -338,6 +423,26 @@ class ChequeListUI(ExcelTableMixin, QWidget):
     def is_similar_bank(self, a: str, b: str, threshold=0.85) -> bool:
         return SequenceMatcher(None, a, b).ratio() >= threshold
     
+    def toggle_unclear_visibility(self):
+        """Hide/show rows where Clear Date is empty (unclear/pending cheques)."""
+        hiding = self.btn_unclear_hide.isChecked()
+        for r in range(self.table.rowCount()):
+            clear_item = self.table.item(r, 8)
+            has_date = clear_item and clear_item.text().strip()
+            if hiding and not has_date:
+                self.table.setRowHidden(r, True)
+            elif not hiding:
+                # Restore — respect the existing clear-chq-hide state
+                is_clear_hiding = "Unhide" in self.btn_clear.text()
+                if is_clear_hiding and has_date:
+                    self.table.setRowHidden(r, True)
+                else:
+                    self.table.setRowHidden(r, False)
+        self.btn_unclear_hide.setText(
+            "✅ Unclear Shown" if not hiding else "⏳ Unclear Chq. Hide"
+        )
+        self.update_summary()
+
     def toggle_clear_visibility(self):
         is_currently_hidden = "Unhide" in self.btn_clear.text()
         
@@ -501,36 +606,34 @@ class ChequeListUI(ExcelTableMixin, QWidget):
 
     # ================= SUMMARY =================
     def update_summary(self):
+        """Count and sum only rows where Clear Date is blank (pending cheques)."""
         total = 0.0
         count = 0
         for r in range(self.table.rowCount()):
-            # Jo row chhupi hai (hidden), usko count nahi karega
             if self.table.isRowHidden(r):
                 continue
-                
-            chq = self.table.item(r, 4) # Chq No
-            amt = self.table.item(r, 6) # Amount
-            
+
+            # Only include rows with no Clear Date (pending / uncleared)
+            clear_item = self.table.item(r, 8)
+            if clear_item and clear_item.text().strip():
+                continue  # Already cleared — skip from totals
+
+            chq = self.table.item(r, 4)  # Chq No
+            amt = self.table.item(r, 6)  # Amount
+
             if chq and chq.text().strip():
                 count += 1
             try:
                 total += float(amt.text().replace(",", "")) if amt and amt.text() else 0
-            except Exception as e: pass
-        
+            except Exception:
+                pass
+
         self.lbl_count.setText(f"Total No. of Chq.: {count}")
         self.lbl_total.setText(f"Amount: {total:,.2f}")
         self.update_bank_counts()
 
     def generate_sn(self, row_index):
-        if row_index < 50:
-            return f"{row_index + 1:03d}"
-
-        # after 50, grow by blocks of 10
-        extra = row_index - 50
-        block = extra // 10
-        sn = 50 + (block + 1) * 10
-        offset = extra % 10
-        return f"{sn - 9 + offset:03d}"
+        return f"{row_index + 1:04d}"
 
     def sort_table_safe(self, col_idx):
         # सिग्नल्स रोकें ताकि डेटाबेस बार-बार सेव न हो
@@ -576,17 +679,17 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             if any(v.strip() for v in row[1:]): 
                 data.append(row)
 
-        # 2. डेटा वापस डालना (S.N को 001 फॉर्मेट में करके)
+        # 2. डेटा वापस डालना (S.N को 0001 फॉर्मेट में करके)
         self.table.setRowCount(0)
         for row_data in data:
             idx = self.table.rowCount()
             self.table.insertRow(idx)
             for c, v in enumerate(row_data):
                 if c == 0:
-                    val = f"{idx + 1:03d}"
+                    val = f"{idx + 1:04d}"
                 else:
                     val = v
-                
+
                 item = QTableWidgetItem(val)
                 if c == 0:
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -597,14 +700,14 @@ class ChequeListUI(ExcelTableMixin, QWidget):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(idx, c, item)
 
-        # 3. एक्स्ट्रा खाली रोज़ (S.N को 001 फॉर्मेट में करके)
+        # 3. एक्स्ट्रा खाली रोज़ (S.N को 0001 फॉर्मेट में करके)
         target = max(50, len(data) + 10)
         while self.table.rowCount() < target:
             idx = self.table.rowCount()
             self.table.insertRow(idx)
             for c in range(10):
                 if c == 0:
-                    val = f"{idx + 1:03d}"
+                    val = f"{idx + 1:04d}"
                     item = QTableWidgetItem(val)
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                     item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)  # S.N not editable
@@ -614,7 +717,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
                     if c == 6: item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                     elif c == 7: item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                     self.table.setItem(idx, c, item)
-                    
+
         self.table.blockSignals(False)
             
     def update_bank_counts(self):
@@ -742,9 +845,9 @@ class ChequeListUI(ExcelTableMixin, QWidget):
                 # S.N को लोड करते समय ही 001 फॉर्मेट में बदलें
                 if c == 0:
                     try:
-                        val = f"{int(val):03d}"
-                    except Exception as e:
-                        val = f"{r + 1:03d}"
+                        val = f"{int(val):04d}"
+                    except Exception:
+                        val = f"{r + 1:04d}"
                 
                 item = QTableWidgetItem(val)
                 if c == 0:
