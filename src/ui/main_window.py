@@ -1335,14 +1335,6 @@ class MainWindow(QWidget):
             QMessageBox.information(self, "Cancelled", "Tally sync was cancelled.\nExisting data is preserved.")
             return
 
-        # Defensive fallback: if service was flagged cancelled but the error string
-        # didn't come back as "cancelled" (e.g. pyodbc error raced with cancel flag),
-        # treat it as a clean cancel rather than showing a spurious error popup.
-        if hasattr(self, '_tally_service') and self._tally_service and self._tally_service.cancelled:
-            logger.info("_on_tally_sync_done: service was cancelled, suppressing error popup")
-            QMessageBox.information(self, "Cancelled", "Tally sync was cancelled.\nExisting data is preserved.")
-            return
-
         if not error and df is not None and not df.empty:
             self.row_data_page.load_data(self.current_company_path)
 
