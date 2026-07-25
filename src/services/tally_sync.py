@@ -318,6 +318,10 @@ class TallyService:
                 conn.rollback()
                 raise
 
+            # Check for late cancellation — MERGE already committed but we
+            # can still stop here before Final Data pipeline starts.
+            self._check_cancelled("after MERGE")
+
             # Clean up staging table
             try:
                 cursor.execute(f"DROP TABLE [{staging_table}]")
@@ -352,6 +356,8 @@ class TallyService:
                     raise Exception("Could not connect to Tally")
 
             if company_name:
+                # Guard: cancel() may have fired between connect() and here
+                self._check_cancelled("before company check")
                 comp_df = pd.read_sql("SELECT $Name from Company", self.connection)
                 active_company = comp_df.iloc[0, 0].strip()
 
@@ -406,6 +412,11 @@ class TallyService:
             raise  # Let cancellation propagate cleanly
 
         except Exception as e:
+            # cancel() closes self.connection, which causes pd.read_sql to raise
+            # a pyodbc.Error (not InterruptedError).  Detect that case here so
+            # the whole chain correctly surfaces as 'cancelled', not as an error.
+            if self.cancelled:
+                raise InterruptedError("Tally sync cancelled during ODBC fetch")
             raise Exception(f"Tally data fetch failed: {e}")
 
         finally:
@@ -610,6 +621,11 @@ def fetch_tally_ledger_data(company_name=None, company_path=None, service=None):
         return 0, "cancelled"
 
     except Exception as e:
+        # cancel() closes service.connection, which causes pd.read_sql to raise
+        # a pyodbc.Error instead of InterruptedError — detect it here.
+        if service.cancelled:
+            logger.info("Ledger sync cancelled (via connection close)")
+            return 0, "cancelled"
         return 0, str(e)
 
     finally:

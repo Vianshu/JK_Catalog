@@ -1299,6 +1299,9 @@ class MainWindow(QWidget):
 
         logger.info(f"Tally sync started")
 
+        # Reset user-cancel flag so a previous cancel doesn't bleed into this run
+        self._tally_sync_user_cancelled = False
+
         # Create a shared TallyService so we can cancel it
         self._tally_service = TallyService()
 
@@ -1323,6 +1326,9 @@ class MainWindow(QWidget):
     def _on_tally_cancel(self):
         """Handle cancel button click — signal the TallyService to stop."""
         logger.info("Tally sync cancelled by user")
+        # Set flag immediately on main thread — this is the authoritative cancel
+        # signal even if the background thread finishes before service.cancel() takes effect.
+        self._tally_sync_user_cancelled = True
         if hasattr(self, '_tally_service') and self._tally_service:
             self._tally_service.cancel()
 
@@ -1332,6 +1338,20 @@ class MainWindow(QWidget):
             self._tally_progress.close()
 
         if error == "cancelled":
+            QMessageBox.information(self, "Cancelled", "Tally sync was cancelled.\nExisting data is preserved.")
+            return
+
+        # Layer 2: user clicked Cancel but Phase 1 finished just before the
+        # InterruptedError could propagate (race).  Honour the user's intent.
+        if getattr(self, '_tally_sync_user_cancelled', False):
+            logger.info("_on_tally_sync_done: user cancelled — suppressing Phase 2")
+            QMessageBox.information(self, "Cancelled", "Tally sync was cancelled.\nExisting data is preserved.")
+            return
+
+        # Layer 3: service flag set but error string didn't come back as 'cancelled'
+        # (e.g. pyodbc error raced with cancel flag before our guard could catch it).
+        if hasattr(self, '_tally_service') and self._tally_service and self._tally_service.cancelled:
+            logger.info("_on_tally_sync_done: service was cancelled — suppressing Phase 2")
             QMessageBox.information(self, "Cancelled", "Tally sync was cancelled.\nExisting data is preserved.")
             return
 
