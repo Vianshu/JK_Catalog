@@ -43,6 +43,44 @@ def _apply_part_no_override(item_name: str, current_part_no: str) -> str:
     return PART_NO_OVERRIDE.get(key, current_part_no)
 
 
+class _GodownSortProxyModel(QSortFilterProxyModel):
+    """Proxy model for the Godown col-0 completer.
+
+    Sorts the dropdown so that **starts-with** matches appear at the top
+    and **contains** matches appear below them — identical to Tally's
+    autocomplete behaviour.  Without this, Qt orders results by their
+    original position in the source list, which means items starting with
+    a completely different letter can float to the top just because they
+    contain the typed letter somewhere in the middle.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._prefix = ""
+        self.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+
+    def set_prefix(self, text: str):
+        self._prefix = text.lower()
+        self.invalidate()          # force re-sort
+
+    def filterAcceptsRow(self, source_row, source_parent):
+        """Accept rows that contain the current prefix (case-insensitive)."""
+        idx = self.sourceModel().index(source_row, 0, source_parent)
+        text = self.sourceModel().data(idx, Qt.ItemDataRole.DisplayRole) or ""
+        return self._prefix in text.lower()
+
+    def lessThan(self, left, right):
+        """Starts-with wins; within each tier sort alphabetically."""
+        lv = (self.sourceModel().data(left,  Qt.ItemDataRole.DisplayRole) or "").lower()
+        rv = (self.sourceModel().data(right, Qt.ItemDataRole.DisplayRole) or "").lower()
+        p  = self._prefix
+        l_starts = lv.startswith(p)
+        r_starts = rv.startswith(p)
+        if l_starts != r_starts:
+            return l_starts  # starts-with rows sort first
+        return lv < rv       # alphabetical within same tier
+
+
 class GodownListUI(ExcelTableMixin, QWidget):
     def __init__(self, data_folder_path, final_data_df=None):
         super().__init__()
@@ -304,12 +342,24 @@ class GodownListUI(ExcelTableMixin, QWidget):
         text = self._pre_edit_text
         editor = QLineEdit(text)
         if self.final_data:
-            # Create a NEW completer per editor to avoid stacking signal connections
-            local_completer = QCompleter(self.final_data)
+            # Build source model from the alias/item-name list
+            src_model = QStringListModel(self.final_data)
+
+            # Proxy: starts-with matches at the top, contains matches below
+            proxy = _GodownSortProxyModel()
+            proxy.setSourceModel(src_model)
+            proxy.setSortRole(Qt.ItemDataRole.DisplayRole)
+            proxy.setDynamicSortFilter(True)
+
+            local_completer = QCompleter(proxy, editor)
             local_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
             local_completer.setFilterMode(Qt.MatchFlag.MatchContains)
-            local_completer.setMaxVisibleItems(10)
+            local_completer.setMaxVisibleItems(12)
+            local_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
             editor.setCompleter(local_completer)
+
+            # Keep proxy sorted whenever the user types
+            editor.textEdited.connect(lambda t: proxy.set_prefix(t.strip()))
             local_completer.activated.connect(lambda val: self._commit_alias_search(row, editor))
 
         self.table.setCellWidget(row, col, editor)
