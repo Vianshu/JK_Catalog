@@ -857,12 +857,11 @@ class A4PageRenderer(QWidget):
 
         # Use InteractiveFrame for Double Click
         f = InteractiveProductFrame(double_click_callback=lambda: self._set_product_length(prod))
-        
-        # Tooltip for dimensions
-        dim_txt = str(prod.get("length", "1|0")).strip()
-        final_tooltip = self._format_tooltip(dim_txt)
-        f.setToolTip(final_tooltip)
-        
+
+        # Dimension info is accessible via right-click (Set Size/Layout).
+        # Tooltip intentionally NOT set here — Qt on Windows renders tooltips
+        # with the system default white background, producing an unwanted white box.
+
         f.setFixedSize(w, h)
         f.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         f.setStyleSheet(
@@ -873,8 +872,6 @@ class A4PageRenderer(QWidget):
             "border-bottom:none;"
             f"{('border-right:%dpx solid %s;' % (b, blue)) if draw_right else 'border-right:none;'}"
             "border-radius:0px;}"
-            # Item 5: explicit :hover keeps same background so OS theme cannot
-            # inject a white/grey highlight box on mouse-over
             "InteractiveProductFrame:hover {background:#ffffff;"
             f"border-top:{b}px solid {blue};"
             f"border-left:{b}px solid {blue};"
@@ -899,7 +896,7 @@ class A4PageRenderer(QWidget):
             if scaled:
                 lbl.setPixmap(scaled)
 
-        lbl.setToolTip(f.toolTip()) # Ensure hover works on image too
+        lbl.setToolTip("")  # No tooltip — avoids white system tooltip box
         lay.addWidget(lbl, 1)
         return f
     
@@ -939,15 +936,19 @@ class A4PageRenderer(QWidget):
         # Use InteractiveFrame for Double Click
         f = InteractiveProductFrame(double_click_callback=lambda: self._set_product_length(prod))
 
-        # Tooltip for dimensions
-        dim_txt = str(prod.get("length", "1|0")).strip()
-        final_tooltip = self._format_tooltip(dim_txt)
-        f.setToolTip(final_tooltip)
+        # Dimension info is accessible via right-click (Set Size/Layout).
+        # Tooltip intentionally NOT set here — avoids the white system tooltip box.
 
         f.setFixedSize(w, h)
         f.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         f.setStyleSheet(
             "InteractiveProductFrame {background:#ffffff;"
+            f"border-top:{b}px solid {blue};"
+            f"border-left:{b}px solid {red};"
+            "border-bottom:none;"
+            f"{('border-right:%dpx solid %s;' % (b, blue)) if draw_right else 'border-right:none;'}"
+            "border-radius:0px;}"
+            "InteractiveProductFrame:hover {background:#ffffff;"
             f"border-top:{b}px solid {blue};"
             f"border-left:{b}px solid {red};"
             "border-bottom:none;"
@@ -962,7 +963,7 @@ class A4PageRenderer(QWidget):
         lay.setSpacing(0)
         
         info_widget = self._build_info_container(prod)
-        info_widget.setToolTip(f.toolTip()) # Ensure hover works on text area
+        info_widget.setToolTip("")  # No tooltip — avoids white system tooltip box
         lay.addWidget(info_widget)
         return f
 
