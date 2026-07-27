@@ -6,6 +6,7 @@ from PyQt6.QtGui import *
 from PyQt6.QtPrintSupport import QPrintPreviewDialog, QPrinter
 from src.logic.db_manager import get_db_manager, build_logical_name
 from src.ui.table_nav_mixin import ExcelTableMixin
+from src.ui.ui_helpers import pick_export_folder
 
 # ── Part No Override Mapping ──────────────────────────────────────────────────
 # Item names that should display a fixed Part No in the Godown List,
@@ -705,16 +706,13 @@ class GodownListUI(ExcelTableMixin, QWidget):
 
     # ---------------- EXPORT / PRINT ----------------
     def set_export_location(self):
-        start_dir = self.export_folder if self.export_folder and os.path.exists(self.export_folder) else ""
-        # Item 9: DontUseNativeDialog keeps the dialog at a normal, non-maximised size
-        folder = QFileDialog.getExistingDirectory(
-            self, "Select Export Folder", start_dir,
-            QFileDialog.Option.DontUseNativeDialog
+        """Pick an export folder via the shared helper (native dialog)."""
+        self.export_folder = pick_export_folder(
+            parent=self,
+            settings=self.settings,
+            settings_key="export_folder",
+            current_folder=self.export_folder,
         )
-        if folder:
-            self.export_folder = folder
-            self.settings.setValue("export_folder", folder)
-            QMessageBox.information(self, "Location Set", f"Export folder saved to:\n{folder}")
 
     def export_to_excel(self):
         if not hasattr(self, 'export_folder') or not self.export_folder:
