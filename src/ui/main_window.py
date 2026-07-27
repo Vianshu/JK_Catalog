@@ -278,6 +278,7 @@ class MainWindow(QWidget):
         self.is_maximized = True
         self.current_active_btn = None
         self.user_session = None  # UserSession set after login
+        self._dual_sync_in_progress = False  # Guard against double sync (item 6)
         
         # Session timeout timer (30 min default, reset on user activity)
         from PyQt6.QtCore import QTimer
@@ -447,6 +448,13 @@ class MainWindow(QWidget):
         self.company_btn.hide()
         sidebar_layout.addWidget(self.company_btn)
 
+        # Item 2: Logged-in user label — shown after login
+        self.lbl_logged_user = QLabel("")
+        self.lbl_logged_user.setObjectName("LoggedUserLabel")
+        self.lbl_logged_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_logged_user.hide()
+        sidebar_layout.addWidget(self.lbl_logged_user)
+
         # Menu Navigation Stack — each page manages its own scrollbar
         self.nav_stack = QStackedWidget()
         self.nav_stack.setObjectName("NavStack")
@@ -571,34 +579,59 @@ class MainWindow(QWidget):
         self.nav_stack.addWidget(m_branch)
 
     def on_sync_ledger_clicked(self):
-        """Sync Ledger data from Tally into the company's ledger DB (background thread)."""
+        """Item 6: Either button now triggers a full dual sync (Stock + Ledger)."""
+        self._run_full_sync()
+
+    def _run_full_sync(self):
+        """Item 6: Run Tally Stock sync, then automatically chain Ledger sync.
+
+        Guard against concurrent calls — if a sync is already running, do nothing.
+        """
         if not self.current_company:
             return
+        if self._dual_sync_in_progress:
+            return
+        if not self._check_permission("final_data.sync", "Tally Sync"):
+            return
+        # If either worker is already running, bail out
+        tally_busy = hasattr(self, '_tally_worker') and self._tally_worker and self._tally_worker.isRunning()
+        ledger_busy = hasattr(self, '_ledger_worker') and self._ledger_worker and self._ledger_worker.isRunning()
+        if tally_busy or ledger_busy:
+            return
+
+        self._dual_sync_in_progress = True
+        # Phase 1: run the existing stock sync.  When it finishes, _on_tally_sync_done
+        # will call _run_ledger_sync_phase() to chain Phase 2.
+        self.on_sync_tally_clicked(_chain_ledger=True)
+
+    def _run_ledger_sync_phase(self):
+        """Item 6: Phase 2 — run Ledger sync silently after stock sync completes."""
         if not self._check_permission("ledger.sync", "Ledger Sync"):
+            self._dual_sync_in_progress = False
             return
-
-        # Prevent concurrent syncs
         if hasattr(self, '_ledger_worker') and self._ledger_worker and self._ledger_worker.isRunning():
+            self._dual_sync_in_progress = False
             return
-
-        self._ledger_progress = QProgressDialog("Syncing Ledger Data...", None, 0, 0, self)
-        self._ledger_progress.setWindowTitle("Please Wait")
-        self._ledger_progress.setWindowModality(Qt.WindowModality.WindowModal)
-        self._ledger_progress.setMinimumDuration(0)
-        self._ledger_progress.setCancelButton(None)
-        self._ledger_progress.show()
 
         company_path = getattr(self, 'current_company_path', None)
-
-        # Run in background thread
-        # Run in background thread
-
         self._ledger_worker = _LedgerWorker(self.current_company, company_path)
-        self._ledger_worker.finished.connect(self._on_ledger_sync_done)
+        self._ledger_worker.finished.connect(self._on_ledger_sync_done_dual)
         self._ledger_worker.start()
 
+    def _on_ledger_sync_done_dual(self, row_count, error):
+        """Item 6: Dual-sync ledger completion handler."""
+        self._dual_sync_in_progress = False
+        if error:
+            QMessageBox.warning(self, "Ledger Sync Issue", f"Ledger sync: {error}")
+        else:
+            QMessageBox.information(
+                self, "Full Sync Complete",
+                f"✅ Stock + Ledger Sync Complete\n"
+                f"Ledger entries loaded: {row_count}"
+            )
+
     def _on_ledger_sync_done(self, row_count, error):
-        """Handle ledger sync completion (runs on main thread)."""
+        """Handle ledger sync completion (standalone, runs on main thread)."""
         if hasattr(self, '_ledger_progress') and self._ledger_progress:
             self._ledger_progress.close()
         if not error and row_count > 0:
@@ -697,6 +730,10 @@ class MainWindow(QWidget):
         # Stack Pages
         self.full_catalog_page = FullCatalogUI()
         self.full_catalog_page.catalog_built.connect(self.on_catalog_built)
+        # Item 3: "Let's Check" button on missing-image alert navigates to Final Data
+        self.full_catalog_page.navigate_to_final_data.connect(
+            lambda: self.main_stack.setCurrentIndex(PageIndex.FINAL_DATA)
+        )
         # When auto-image sync commits, rebuild catalog if it's currently visible
         self.final_data_page.image_sync_done.connect(self._on_image_sync_done)
         
@@ -874,11 +911,20 @@ class MainWindow(QWidget):
             self.current_company_path = company_path
             self.user_session = user_session
             set_company_context(comp_name)
-            
+
             # Update UI with company name
             clean_name = re.sub(r'\s*\(\d{4}[-/].*?\)', '', comp_name)
             self.company_btn.setText(f"\U0001f3e2 {clean_name} \u25bc")
             self.company_btn.show()
+
+            # Item 2: show logged-in username below company button
+            if user_session and hasattr(user_session, 'username'):
+                role = getattr(user_session, 'role_name', '')
+                display = f"👤 {user_session.username}"
+                if role:
+                    display += f"\n({role})"
+                self.lbl_logged_user.setText(display)
+                self.lbl_logged_user.show()
 
             if not company_path or not os.path.exists(company_path):
                 QMessageBox.critical(self, "Error", f"Company path not found:\n{company_path}")
@@ -1289,7 +1335,7 @@ class MainWindow(QWidget):
                     detail=f"Tally port changed from {current_port} to {port}"
                 )
 
-    def on_sync_tally_clicked(self):
+    def on_sync_tally_clicked(self, _chain_ledger=False):
         if not self.current_company: return
         if not self._check_permission("final_data.sync", "Tally Sync"): return
 
@@ -1301,6 +1347,8 @@ class MainWindow(QWidget):
 
         # Reset user-cancel flag so a previous cancel doesn't bleed into this run
         self._tally_sync_user_cancelled = False
+        # Pass through the chain-ledger flag for dual-sync mode
+        self._chain_ledger_after_sync = _chain_ledger
 
         # Create a shared TallyService so we can cancel it
         self._tally_service = TallyService()
@@ -1395,8 +1443,13 @@ class MainWindow(QWidget):
                             self.full_catalog_page.catalog_built.disconnect(_after_catalog_built)
                         except (TypeError, RuntimeError):
                             pass
-                        QMessageBox.information(self, "Sync Complete",
-                            f"Data Synced Successfully!\nLoaded {row_count} rows.\n\nClick OK to close.")
+                        # Item 6: if this was a dual sync, chain ledger instead of showing popup here
+                        if getattr(self, '_chain_ledger_after_sync', False):
+                            self._chain_ledger_after_sync = False
+                            self._run_ledger_sync_phase()
+                        else:
+                            QMessageBox.information(self, "Sync Complete",
+                                f"Data Synced Successfully!\nLoaded {row_count} rows.\n\nClick OK to close.")
                         # L-6: Audit log for Tally sync
                         if self._security_mgr and self.user_session:
                             self._security_mgr.log_action(self.user_session, "tally_sync",
@@ -1408,13 +1461,17 @@ class MainWindow(QWidget):
                     self.full_catalog_page._last_build_no_changes = False
                     self.full_catalog_page.build_catalog(silent=True)
                 else:
-                    # No auto-build permission — show popup immediately
-                    QMessageBox.information(self, "Sync Complete",
-                        f"Data Synced Successfully!\nLoaded {row_count} rows.\n\nClick OK to close.")
+                    # No auto-build permission — show popup immediately, then chain ledger if needed
+                    if not getattr(self, '_chain_ledger_after_sync', False):
+                        QMessageBox.information(self, "Sync Complete",
+                            f"Data Synced Successfully!\nLoaded {row_count} rows.\n\nClick OK to close.")
                     # L-6: Audit log for Tally sync
                     if self._security_mgr and self.user_session:
                         self._security_mgr.log_action(self.user_session, "tally_sync",
                             module="final_data", detail=f"Synced {row_count} rows")
+                    if getattr(self, '_chain_ledger_after_sync', False):
+                        self._chain_ledger_after_sync = False
+                        self._run_ledger_sync_phase()
 
             def _after_sync_cancelled():
                 # Disconnect both handlers so they don't fire again
@@ -1667,7 +1724,8 @@ class MainWindow(QWidget):
         self._security_mgr = None
         self.set_active_menu_btn(None) # Clear highlighting
         self.company_btn.hide()
-        
+        self.lbl_logged_user.hide()   # Item 2: clear user badge on logout
+        self.lbl_logged_user.setText("")
         # Re-enable all menu buttons (clear permission locks from previous session)
         for menu_widget in [self.nav_stack.widget(i) for i in range(self.nav_stack.count())]:
             if not menu_widget:

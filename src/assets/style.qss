@@ -167,6 +167,17 @@ QPushButton#CompanyDisplayBtn:hover {
     background-color: rgba(255,255,255,0.1);
 }
 
+/* Logged-in user badge shown below the company button */
+#LoggedUserLabel {
+    color: rgba(255,255,255,0.85);
+    font-size: 11px;
+    background-color: rgba(255,255,255,0.08);
+    border-radius: 6px;
+    padding: 4px 6px;
+    margin: 2px 4px 6px 4px;
+    qproperty-alignment: 'AlignCenter';
+}
+
 #QuitHint {
     color: rgba(255,255,255,0.5);
     font-size: 11px;

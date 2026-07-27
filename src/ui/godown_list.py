@@ -1,10 +1,46 @@
 import os
+from datetime import date as _date
 from PyQt6.QtWidgets import *
 from PyQt6.QtCore import *
 from PyQt6.QtGui import *
 from PyQt6.QtPrintSupport import QPrintPreviewDialog, QPrinter
 from src.logic.db_manager import get_db_manager, build_logical_name
 from src.ui.table_nav_mixin import ExcelTableMixin
+
+# ── Part No Override Mapping ──────────────────────────────────────────────────
+# Item names that should display a fixed Part No in the Godown List,
+# overriding whatever Tally / stock_items returns.
+PART_NO_OVERRIDE = {
+    "super stick 100gm":  "col-1",
+    "super stick 250gm":  "col-2",
+    "super stick 500gm":  "col-3",
+    "super stick 1kg":    "col-4",
+    "super stick 2 kg":   "col-5",
+    "super stick 5 kg":   "col-6",
+    "super stick 10 kg":  "col-7",
+    "super stick 20 kg":  "col-8",
+    "super stick 50 kg":  "col-9",
+}
+
+# ── CN Blank Prefixes ─────────────────────────────────────────────────────────
+# Rows whose Part No starts with any of these prefixes get a blank CN value.
+# Their CN slot is recycled to maintain continuous numbering for other rows.
+CN_BLANK_PREFIXES = ("GI P", "JALI", "LDR", "SDC")
+
+
+def _is_cn_excluded(part_no: str) -> bool:
+    """Return True if this row's Part No means it should have a blank CN."""
+    if not part_no:
+        return False
+    p = part_no.strip()
+    return any(p.startswith(prefix) for prefix in CN_BLANK_PREFIXES)
+
+
+def _apply_part_no_override(item_name: str, current_part_no: str) -> str:
+    """Return the overridden Part No if the item name is in PART_NO_OVERRIDE,
+    otherwise return the original value."""
+    key = item_name.strip().lower()
+    return PART_NO_OVERRIDE.get(key, current_part_no)
 
 
 class GodownListUI(ExcelTableMixin, QWidget):
@@ -141,6 +177,8 @@ class GodownListUI(ExcelTableMixin, QWidget):
             "सामानको नाम", "प्रति कार्टुन", "UNIT",
             "जम्मा कार्टुन", "गोदाम", "Part No", "CN"
         ])
+        # Item 7: hide Qt's built-in row-number header (the "SN" the user sees)
+        self.table.verticalHeader().hide()
 
         self.table.setColumnWidth(0, 300)
         self.table.setColumnWidth(1, 100)
@@ -261,7 +299,9 @@ class GodownListUI(ExcelTableMixin, QWidget):
         self._cleanup_active_editor()
 
         current = self.table.item(row, col)
-        text = current.text() if current else ""
+        # Item 8: capture pre-edit text so we can restore it if user clears the field
+        self._pre_edit_text = current.text() if current else ""
+        text = self._pre_edit_text
         editor = QLineEdit(text)
         if self.final_data:
             # Create a NEW completer per editor to avoid stacking signal connections
@@ -271,7 +311,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
             local_completer.setMaxVisibleItems(10)
             editor.setCompleter(local_completer)
             local_completer.activated.connect(lambda val: self._commit_alias_search(row, editor))
-            
+
         self.table.setCellWidget(row, col, editor)
         # Use QTimer so deselect/cursor-end runs AFTER focusInEvent fires
         # (focusInEvent calls selectAll which overwrites any deselect done here)
@@ -279,10 +319,10 @@ class GodownListUI(ExcelTableMixin, QWidget):
         QTimer.singleShot(0, editor.deselect)
         QTimer.singleShot(0, lambda: editor.end(False))
         editor.setFocus()
-        
+
         # Track this editor
         self._active_editor = (row, editor)
-        
+
         editor.returnPressed.connect(lambda: self._commit_alias_search(row, editor))
         
     def _commit_alias_search(self, row, editor):
@@ -292,15 +332,21 @@ class GodownListUI(ExcelTableMixin, QWidget):
         Alias = editor.text().strip()
         self.table.removeCellWidget(row, 0)
 
-        # Empty input — clear the row
+        # Item 8: Empty input — restore original value instead of clearing
         if not Alias:
-            self.table.blockSignals(True)
-            for c in range(1, 7):
-                lock = True if c in (2, 5) else False
-                self.set_item_locked(row, c, "", should_lock=lock)
-            self.table.setItem(row, 0, self.create_table_item(""))
-            self.table.blockSignals(False)
-            self.save_data_to_db()
+            pre = getattr(self, '_pre_edit_text', '')
+            if pre:
+                # Restore the name that was there before editing started
+                self.table.setItem(row, 0, self.create_table_item(pre))
+            else:
+                # Row was truly empty before — clear everything
+                self.table.blockSignals(True)
+                for c in range(1, 7):
+                    lock = True if c in (2, 5) else False
+                    self.set_item_locked(row, c, "", should_lock=lock)
+                self.table.setItem(row, 0, self.create_table_item(""))
+                self.table.blockSignals(False)
+                self.save_data_to_db()
             return
 
         # Exact match first
@@ -315,16 +361,20 @@ class GodownListUI(ExcelTableMixin, QWidget):
                     break
 
         if data:
+            item_name = data["Item_Name"]
             # 1. Set Item Name (from Name column, not Alias)
-            self.table.setItem(row, 0, self.create_table_item(data["Item_Name"]))
+            self.table.setItem(row, 0, self.create_table_item(item_name))
 
             # 2. Unit - auto-fill and lock
             self.table.setItem(row, 2, self.create_table_item(
                 data.get("Unit", ""), Qt.AlignmentFlag.AlignCenter, True))
 
-            # 3. Part No - auto-fill and lock
+            # 3. Part No - auto-fill, apply override, then lock
             p_no = str(data.get("Part_No", ""))
-            if p_no.lower() == "none": p_no = ""
+            if p_no.lower() == "none":
+                p_no = ""
+            # Item 13: override Part No for mapped products
+            p_no = _apply_part_no_override(item_name, p_no)
             self.table.setItem(row, 5, self.create_table_item(
                 p_no, Qt.AlignmentFlag.AlignCenter, True))
 
@@ -348,8 +398,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
             return
 
         # No match — reject the input, restore previous value and stay on the cell
-        prev_item = self.table.item(row, 0)
-        prev_text = prev_item.text() if prev_item else ""
+        prev_text = getattr(self, '_pre_edit_text', '')
         self.table.setItem(row, 0, self.create_table_item(prev_text))
         self._nav_set_current(row, 0)  # stay on col 0, Mode 1
     
@@ -380,6 +429,19 @@ class GodownListUI(ExcelTableMixin, QWidget):
             for c in range(1, 7):
                 lock = True if c in (2, 5) else False
                 self.set_item_locked(row, c, "", should_lock=lock)
+
+        # Item 14: CN column — detect duplicate and swap
+        if col == 6 and text:
+            for r in range(self.table.rowCount()):
+                if r == row:
+                    continue
+                other = self.table.item(r, 6)
+                if other and other.text().strip() == text:
+                    # Swap: give this row's old CN to the conflicting row
+                    old_item = self.table.item(row, 6)
+                    old_val = old_item.text().strip() if old_item else ""
+                    self.set_item_locked(r, 6, old_val, should_lock=False)
+                    break
 
         self.table.blockSignals(False)
         self._save_timer.start()  # Debounced save — fires 1s after last edit
@@ -423,24 +485,77 @@ class GodownListUI(ExcelTableMixin, QWidget):
             conn.rollback()
             print(f"[ERROR] Failed to save godown stock: {e}")
     
+    def assign_cn_values(self):
+        """Item 14: Assign sequential CN values (1..N) to eligible rows.
+
+        Rules:
+        - Rows whose Part No starts with CN_BLANK_PREFIXES get CN = blank.
+        - All other rows with any data get sequential CNs starting from 1.
+        - Preserves user-set CNs where possible; only fills blanks / re-numbers
+          when a full re-assignment is requested (called from Save & Sort).
+        """
+        self.table.blockSignals(True)
+        cn_counter = 1
+        for r in range(self.table.rowCount()):
+            name_item = self.table.item(r, 0)
+            name = name_item.text().strip() if name_item else ""
+            if not name:
+                # Empty row — skip, CN stays as-is
+                continue
+            part_item = self.table.item(r, 5)
+            part_no = part_item.text().strip() if part_item else ""
+            if _is_cn_excluded(part_no):
+                # Excluded prefix — blank the CN
+                self.set_item_locked(r, 6, "", should_lock=False)
+            else:
+                # Assign next available number
+                self.set_item_locked(r, 6, str(cn_counter), should_lock=False)
+                cn_counter += 1
+        self.table.blockSignals(False)
+
     def manual_save_and_sort(self):
         self.table.blockSignals(True)
         try:
-            # Refresh Part No from final_data
+            # 1. Refresh Part No from stock_items
             self.refresh_part_no_from_item()
 
-            # Sort by Part No (Column 5)
+            # 2. Sort all rows by Part No A→Z
             self.table.sortItems(5, Qt.SortOrder.AscendingOrder)
 
-            # Delete empty rows
-            self.delete_fully_empty_rows()
+            # 3. For rows with no product (col 0 empty), sort their CN values ascending
+            #    Collect (cn_val, row_idx) for empty-name rows
+            empty_row_cns = []
+            for r in range(self.table.rowCount()):
+                name_item = self.table.item(r, 0)
+                if not name_item or not name_item.text().strip():
+                    cn_item = self.table.item(r, 6)
+                    cn_val = cn_item.text().strip() if cn_item else ""
+                    empty_row_cns.append((r, cn_val))
 
-            # Ensure at least 200 rows
+            # Sort collected CNs numerically (non-numeric treated as very large)
+            def _cn_sort_key(t):
+                try:
+                    return int(t[1])
+                except (ValueError, TypeError):
+                    return 999999
+
+            empty_row_cns.sort(key=_cn_sort_key)
+            # Re-write sorted CN values back to the same rows (in sorted order)
+            sorted_rows = [r for r, _ in empty_row_cns]
+            sorted_cns  = sorted([cn for _, cn in empty_row_cns], key=lambda v: _cn_sort_key(("", v)))
+            for r, cn_val in zip(sorted_rows, sorted_cns):
+                self.set_item_locked(r, 6, cn_val, should_lock=False)
+
+            # 4. Re-assign sequential CN to data rows (enforces clean numbering)
+            self.assign_cn_values()
+
+            # 5. Delete empty rows and ensure minimum
+            self.delete_fully_empty_rows()
             self.ensure_minimum_rows(200)
 
         except Exception as e:
             print(f"Error during save/sort: {e}")
-        
+
         self.table.blockSignals(False)
         self.save_data_to_db()
         QMessageBox.information(self, "Saved", "Data Saved & Sorted Successfully")
@@ -532,14 +647,20 @@ class GodownListUI(ExcelTableMixin, QWidget):
 
             part_no = item_lookup.get(item_name.lower())
             if part_no is not None:
-                if part_no is None or str(part_no).strip().lower() == "none":
+                if str(part_no).strip().lower() == "none":
                     part_no = ""
+                # Item 13: apply override mapping after fetching from DB
+                part_no = _apply_part_no_override(item_name, part_no)
                 self.set_item_locked(r, 5, part_no)
 
     # ---------------- EXPORT / PRINT ----------------
     def set_export_location(self):
         start_dir = self.export_folder if self.export_folder and os.path.exists(self.export_folder) else ""
-        folder = QFileDialog.getExistingDirectory(self, "Select Export Folder", start_dir)
+        # Item 9: DontUseNativeDialog keeps the dialog at a normal, non-maximised size
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select Export Folder", start_dir,
+            QFileDialog.Option.DontUseNativeDialog
+        )
         if folder:
             self.export_folder = folder
             self.settings.setValue("export_folder", folder)
@@ -599,7 +720,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
 
     def handle_print_preview(self):
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-        printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+        printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))  # Item 11: A4
         printer.setPageOrientation(QPageLayout.Orientation.Portrait)
         printer.setPageMargins(
             QMarginsF(12, 12, 12, 12),
@@ -607,10 +728,18 @@ class GodownListUI(ExcelTableMixin, QWidget):
         )
         preview = QPrintPreviewDialog(printer, self)
         preview.paintRequested.connect(self.paint_table)
+        # Item 10: open at a comfortable, non-maximised size
+        preview.resize(1100, 800)
         preview.exec()
 
     def paint_table(self, printer):
-        """Draw the table directly using QPainter for pixel-perfect A4 output."""
+        """Draw the table directly using QPainter for pixel-perfect A4 output.
+
+        Items 10, 11, 12:
+        - A4 paper size (set in handle_print_preview)
+        - Column widths derived from actual screen column widths (proportional)
+        - Page number and print date printed in a footer on every page
+        """
         painter = QPainter()
         if not painter.begin(printer):
             return
@@ -619,34 +748,43 @@ class GodownListUI(ExcelTableMixin, QWidget):
         page_w = page_rect.width()
         page_h = page_rect.height()
 
-        # --- Fonts (use painter.fontMetrics for PRINTER DPI measurements) ---
+        # --- Fonts ---
         header_font = QFont("Segoe UI", 10, QFont.Weight.Bold)
-        cell_font = QFont("Segoe UI", 9)
+        cell_font   = QFont("Segoe UI", 9)
+        footer_font = QFont("Segoe UI", 8)
 
-        # Measure using painter's coordinate system (printer DPI, not screen DPI)
         painter.setFont(header_font)
         fm_header = painter.fontMetrics()
         header_height = int(fm_header.height() * 1.8)
 
         painter.setFont(cell_font)
-        fm_cell = painter.fontMetrics()
+        fm_cell   = painter.fontMetrics()
         row_height = int(fm_cell.height() * 1.6)
-        padding = int(fm_cell.averageCharWidth() * 1.5)
+        padding    = int(fm_cell.averageCharWidth() * 1.5)
 
-        # --- Column widths as fractions of full page width ---
-        col_ratios = [0.32, 0.10, 0.08, 0.15, 0.10, 0.15, 0.10]
-        col_widths = [int(page_w * r) for r in col_ratios]
+        painter.setFont(footer_font)
+        fm_footer   = painter.fontMetrics()
+        footer_height = int(fm_footer.height() * 1.6)
+
+        # Item 12: derive column widths from actual screen column widths
+        col_count = self.table.columnCount()
+        screen_widths = [self.table.columnWidth(c) for c in range(col_count)]
+        total_screen  = sum(screen_widths) or 1
+        col_widths = [int(page_w * w / total_screen) for w in screen_widths]
+        # Correct rounding error on last column
         col_widths[-1] = page_w - sum(col_widths[:-1])
 
-        headers = [self.table.horizontalHeaderItem(c).text()
-                   for c in range(self.table.columnCount())]
+        headers = [self.table.horizontalHeaderItem(c).text() for c in range(col_count)]
+
+        # Reserve bottom of each page for the footer
+        usable_h = page_h - footer_height - padding
 
         # --- Collect data rows (skip fully empty) ---
         data_rows = []
         for r in range(self.table.rowCount()):
             row_data = []
             has_data = False
-            for c in range(self.table.columnCount()):
+            for c in range(col_count):
                 item = self.table.item(r, c)
                 text = item.text() if item else ""
                 if text.strip():
@@ -667,6 +805,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
         ]
 
         pen = QPen(QColor(0, 0, 0), 2)
+        today_str = _date.today().strftime("%Y-%m-%d")
 
         def draw_header(y):
             painter.setFont(header_font)
@@ -694,16 +833,38 @@ class GodownListUI(ExcelTableMixin, QWidget):
                 x += col_widths[c]
             return y + row_height
 
+        def draw_footer(page_num):
+            """Item 10: footer with page number and print date on every page."""
+            painter.setFont(footer_font)
+            painter.setPen(QPen(QColor(100, 100, 100), 1))
+            footer_y = page_h - footer_height
+            # Left: print date
+            painter.drawText(
+                QRect(0, footer_y, page_w // 2, footer_height),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                f"Printed: {today_str}"
+            )
+            # Right: page number
+            painter.drawText(
+                QRect(page_w // 2, footer_y, page_w // 2, footer_height),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                f"Page {page_num}"
+            )
+
         # --- Render pages ---
+        page_num = 1
         y = 0
         y = draw_header(y)
 
         for row_data in data_rows:
-            if y + row_height > page_h:
+            if y + row_height > usable_h:
+                draw_footer(page_num)
                 printer.newPage()
+                page_num += 1
                 y = 0
                 y = draw_header(y)
             y = draw_row(y, row_data)
 
+        draw_footer(page_num)  # Footer on last page
         painter.end()
 

@@ -274,21 +274,25 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         top_bar.setContentsMargins(4, 4, 4, 4)
         top_bar.setSpacing(6)
 
-        # 1. Left Side: View Filter (3-state cycle) + Search
-        # States: 0=All  1=Pending Only (default)  2=Cleared Only
-        self._view_state = 1   # Start in Pending Only (same as before)
-        self.btn_view_filter = QPushButton("⏳ Pending Only")
-        self.btn_view_filter.setObjectName("BtnClearChq")
-        self.btn_view_filter.setMinimumWidth(140)
-        self.btn_view_filter.clicked.connect(self.cycle_view_filter)
+        # 1. Left Side: Clear Button + Search
+        self.btn_clear = QPushButton("✅ Clear Chq Unhide")
+        self.btn_clear.setObjectName("BtnClearChq")
+        self.btn_clear.clicked.connect(self.toggle_clear_visibility)
 
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("🔍 Search")
         self.search_box.setFixedWidth(220)
         self.search_box.textChanged.connect(self.apply_filter)
 
-        top_bar.addWidget(self.btn_view_filter)
+        # "Unclear Chq. Hide" — hides rows where Clear Date is empty
+        self.btn_unclear_hide = QPushButton("⏳ Unclear Chq. Hide")
+        self.btn_unclear_hide.setObjectName("BtnClearChq")
+        self.btn_unclear_hide.setCheckable(True)
+        self.btn_unclear_hide.clicked.connect(self.toggle_unclear_visibility)
+
+        top_bar.addWidget(self.btn_clear)
         top_bar.addWidget(self.search_box)
+        top_bar.addWidget(self.btn_unclear_hide)
 
         # 2. Middle: Summary Labels
         top_bar.addStretch()
@@ -419,35 +423,53 @@ class ChequeListUI(ExcelTableMixin, QWidget):
     def is_similar_bank(self, a: str, b: str, threshold=0.85) -> bool:
         return SequenceMatcher(None, a, b).ratio() >= threshold
     
-    # ─── 3-state view filter ────────────────────────────────────────────────
-    # State 0: All rows visible
-    # State 1: Pending Only  — rows WITHOUT a Clear Date  (default)
-    # State 2: Cleared Only  — rows WITH    a Clear Date
+    def toggle_unclear_visibility(self):
+        """Hide/show rows where Clear Date is empty (unclear/pending cheques)."""
+        hiding = self.btn_unclear_hide.isChecked()
+        for r in range(self.table.rowCount()):
+            clear_item = self.table.item(r, 8)
+            has_date = clear_item and clear_item.text().strip()
+            if hiding and not has_date:
+                self.table.setRowHidden(r, True)
+            elif not hiding:
+                # Restore — respect the existing clear-chq-hide state
+                is_clear_hiding = "Unhide" in self.btn_clear.text()
+                if is_clear_hiding and has_date:
+                    self.table.setRowHidden(r, True)
+                else:
+                    self.table.setRowHidden(r, False)
+        self.btn_unclear_hide.setText(
+            "✅ Unclear Shown" if not hiding else "⏳ Unclear Chq. Hide"
+        )
+        self.update_summary()
 
-    _STATE_LABELS = [
-        ("\U0001f4cb Show: All",       "neutral"),   # 0
-        ("\u23f3 Pending Only",         "pending"),   # 1
-        ("\u2705 Cleared Only",         "cleared"),   # 2
-    ]
-
-    def cycle_view_filter(self):
-        """Advance to the next state and re-apply row visibility."""
-        self._view_state = (self._view_state + 1) % 3
-        label, prop = self._STATE_LABELS[self._view_state]
-        self.btn_view_filter.setText(label)
-        self.btn_view_filter.setProperty("state", prop)
-        self.btn_view_filter.style().unpolish(self.btn_view_filter)
-        self.btn_view_filter.style().polish(self.btn_view_filter)
-        self.apply_filter()
-
-    def _row_visible_by_filter(self, has_clear_date: bool) -> bool:
-        """Return True if a row should be visible given the current view state."""
-        if self._view_state == 0:   # All
-            return True
-        if self._view_state == 1:   # Pending Only
-            return not has_clear_date
-        # state 2 — Cleared Only
-        return bool(has_clear_date)
+    def toggle_clear_visibility(self):
+        is_currently_hidden = "Unhide" in self.btn_clear.text()
+        
+        for r in range(self.table.rowCount()):
+            clear_date_item = self.table.item(r, 8)
+            has_date = clear_date_item and clear_date_item.text().strip()
+            
+            if is_currently_hidden:
+                # Ab sab dikhana hai
+                self.table.setRowHidden(r, False)
+            else:
+                # Ab chhupana hai
+                if has_date: 
+                    self.table.setRowHidden(r, True)
+        
+        # Button update
+        if is_currently_hidden:
+            self.btn_clear.setText("🚫 Clear Chq Hide")
+            self.btn_clear.setProperty("state", "inactive")
+        else:
+            self.btn_clear.setText("✅ Clear Chq Unhide")
+            self.btn_clear.setProperty("state", "active")
+        self.btn_clear.style().unpolish(self.btn_clear)
+        self.btn_clear.style().polish(self.btn_clear)
+            
+        # 🔥 Sabse important: click ke baad summary update trigger karein
+        self.update_summary()
         
      # ================= TABLE LOGIC =================
     def on_item_changed(self, item):
@@ -500,32 +522,31 @@ class ChequeListUI(ExcelTableMixin, QWidget):
     
     def apply_filter(self):
         text = self.search_box.text().lower().strip()
-
+        is_currently_hiding = "Unhide" in self.btn_clear.text()
+        
         for r in range(self.table.rowCount()):
             clear_date_item = self.table.item(r, 8)
-            has_clear_date = bool(clear_date_item and clear_date_item.text().strip())
-
-            # First apply the view-state filter
-            if not self._row_visible_by_filter(has_clear_date):
+            clear_date = clear_date_item.text().strip() if clear_date_item else ""
+            
+            if is_currently_hiding and clear_date:
                 self.table.setRowHidden(r, True)
                 continue
 
-            # Then apply the search text filter
-            if not text:
-                self.table.setRowHidden(r, False)
-                continue
-
             found = False
-            for c in range(self.table.columnCount()):
-                w = self.table.cellWidget(r, c)
-                if w and isinstance(w, QLineEdit):
-                    val = w.text().lower()
-                else:
-                    it = self.table.item(r, c)
-                    val = it.text().lower() if it else ""
-                if text in val:
-                    found = True
-                    break
+            if not text:
+                found = True
+            else:
+                for c in range(self.table.columnCount()):
+                    w = self.table.cellWidget(r, c)
+                    if w and isinstance(w, QLineEdit):
+                        val = w.text().lower()
+                    else:
+                        it = self.table.item(r, c)
+                        val = it.text().lower() if it else ""
+
+                    if text in val:
+                        found = True
+                        break
 
             self.table.setRowHidden(r, not found)
 
@@ -891,11 +912,11 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             pass
     
     def apply_initial_hide(self):
-        """Apply the current view state on load (default: Pending Only)."""
+        """App start logic to hide cleared rows"""
         for r in range(self.table.rowCount()):
             clear_date_item = self.table.item(r, 8)
-            has_clear_date = bool(clear_date_item and clear_date_item.text().strip())
-            self.table.setRowHidden(r, not self._row_visible_by_filter(has_clear_date))
+            if clear_date_item and clear_date_item.text().strip():
+                self.table.setRowHidden(r, True)
                 
     def ensure_bank_row_capacity(self):
         self.bank_table.blockSignals(True)

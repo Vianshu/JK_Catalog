@@ -137,6 +137,8 @@ class ZoomableGraphicsView(QGraphicsView):
 
 class FullCatalogUI(QWidget):
     catalog_built = pyqtSignal()
+    # Item 3: emitted when user clicks "Let's Check" on missing-image alert
+    navigate_to_final_data = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -931,6 +933,11 @@ class FullCatalogUI(QWidget):
                     if result['affected_count'] > 5:
                         msg += f" (+{result['affected_count'] - 5} more)"
                 QMessageBox.information(self, "Build Complete", msg)
+
+            # Item 3: always check for missing images after a successful build
+            missing_count = self._count_missing_images()
+            if missing_count > 0:
+                self._show_missing_image_alert(missing_count)
         else:
             if not self._build_silent:
                 QMessageBox.critical(self, "Build Error",
@@ -939,6 +946,88 @@ class FullCatalogUI(QWidget):
                 logger.error(f"Auto-Build Error: {result['error']}")
 
         self._build_worker = None
+
+    # ── Item 3: Missing Image Alert ─────────────────────────────────────────
+
+    def _count_missing_images(self) -> int:
+        """Count products in the catalog table that have no Image_Path.
+        Excludes 'Price List' group rows (they deliberately have no image)."""
+        try:
+            conn = self.logic._get_conn("final")   # same connection used by the renderer
+            if not conn:
+                return 0
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM catalog
+                WHERE (
+                    [True/False] IS NULL
+                    OR TRIM(CAST([True/False] AS NVARCHAR(MAX))) = ''
+                    OR LOWER(TRIM(CAST([True/False] AS NVARCHAR(MAX)))) NOT IN ('false', '0', 'no')
+                )
+                AND LOWER(TRIM([Group])) <> 'price list'
+                AND (
+                    [Image_Path] IS NULL
+                    OR TRIM([Image_Path]) = ''
+                    OR LOWER(TRIM([Image_Path])) IN ('none', 'nan')
+                )
+                AND (
+                    CAST(REPLACE(ISNULL([Stock], '0'), ',', '') AS FLOAT) > 0
+                    OR LOWER(TRIM(CAST([True/False] AS NVARCHAR(MAX)))) IN ('1', 'true', 'yes')
+                )
+            """)
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+        except Exception as e:
+            logger.warning(f"_count_missing_images error: {e}")
+            return 0
+
+    def _show_missing_image_alert(self, count: int):
+        """Item 3: Show a non-blocking banner when products are missing images.
+
+        Presents two buttons:
+        - Let's Check → emits navigate_to_final_data so main_window switches tab
+        - Ignore        → dismisses the dialog
+        """
+        if count <= 0:
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Missing Images")
+        dlg.setWindowFlags(
+            Qt.WindowType.Dialog
+            | Qt.WindowType.WindowCloseButtonHint
+            | Qt.WindowType.WindowTitleHint
+        )
+        dlg.setMinimumWidth(340)
+        lay = QVBoxLayout(dlg)
+        lay.setSpacing(14)
+        lay.setContentsMargins(20, 20, 20, 16)
+
+        icon_lbl = QLabel(f"⚠️  <b>{count} item{'s' if count != 1 else ''} missing image{'s' if count != 1 else ''}</b>")
+        icon_lbl.setTextFormat(Qt.TextFormat.RichText)
+        icon_lbl.setWordWrap(True)
+        lay.addWidget(icon_lbl)
+
+        hint = QLabel("Some products will not appear in the catalog until images are assigned.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: rgba(0,0,0,0.55); font-size: 12px;")
+        lay.addWidget(hint)
+
+        btn_row = QHBoxLayout()
+        btn_check  = QPushButton("🔍 Let's Check")
+        btn_ignore = QPushButton("Ignore")
+        btn_check.setDefault(True)
+        btn_row.addWidget(btn_check)
+        btn_row.addWidget(btn_ignore)
+        lay.addLayout(btn_row)
+
+        def on_check():
+            dlg.accept()
+            self.navigate_to_final_data.emit()
+
+        btn_check.clicked.connect(on_check)
+        btn_ignore.clicked.connect(dlg.reject)
+        dlg.exec()
 
     # ───────────────────────────────────────────────────────────────────────────
     # BUILD HISTORY / UNDO

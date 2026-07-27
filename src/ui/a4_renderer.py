@@ -866,7 +866,16 @@ class A4PageRenderer(QWidget):
         f.setFixedSize(w, h)
         f.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         f.setStyleSheet(
+            # Normal state
             "InteractiveProductFrame {background:#ffffff;"
+            f"border-top:{b}px solid {blue};"
+            f"border-left:{b}px solid {blue};"
+            "border-bottom:none;"
+            f"{('border-right:%dpx solid %s;' % (b, blue)) if draw_right else 'border-right:none;'}"
+            "border-radius:0px;}"
+            # Item 5: explicit :hover keeps same background so OS theme cannot
+            # inject a white/grey highlight box on mouse-over
+            "InteractiveProductFrame:hover {background:#ffffff;"
             f"border-top:{b}px solid {blue};"
             f"border-left:{b}px solid {blue};"
             "border-bottom:none;"
