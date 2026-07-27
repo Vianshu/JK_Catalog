@@ -16,11 +16,7 @@ def pick_export_folder(
     current_folder: str = "",
     title: str = "Select Export Folder",
 ) -> str:
-    """Open a compact folder-picker dialog and persist the chosen path.
-
-    Uses Qt's own (non-native) folder dialog so the window size can be
-    controlled.  The native Windows dialog always opens full-screen and
-    cannot be resized programmatically.
+    """Open a native folder-picker dialog and persist the chosen path.
 
     Args:
         parent:         The calling QWidget (used as dialog parent).
@@ -34,19 +30,7 @@ def pick_export_folder(
         the user cancelled.
     """
     start_dir = current_folder if current_folder and os.path.exists(current_folder) else ""
-
-    dlg = QFileDialog(parent, title, start_dir)
-    dlg.setFileMode(QFileDialog.FileMode.Directory)
-    dlg.setOption(QFileDialog.Option.ShowDirsOnly, True)
-    dlg.setOption(QFileDialog.Option.DontUseNativeDialog, True)
-    dlg.resize(560, 420)
-
-    if dlg.exec():
-        selected = dlg.selectedFiles()
-        folder = selected[0] if selected else ""
-    else:
-        folder = ""
-
+    folder = QFileDialog.getExistingDirectory(parent, title, start_dir)
     if folder:
         settings.setValue(settings_key, folder)
         QMessageBox.information(
