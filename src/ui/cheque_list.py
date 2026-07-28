@@ -665,61 +665,91 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             self.db.add_column(self.cheque_db_name, "cheques", "narration", "NVARCHAR(MAX)")
 
     def sync_cheque_rows(self):
-        self.table.blockSignals(True)
-        data = []
-        
-        # 1. डेटा निकालना
-        for r in range(self.table.rowCount()):
-            def val(c):
-                w = self.table.cellWidget(r, c)
-                if w and isinstance(w, QLineEdit): return w.text().strip()
-                it = self.table.item(r, c)
-                return it.text().strip() if it and it.text().strip() else ""
-            
-            row = [val(c) for c in range(10)]
-            if any(v.strip() for v in row[1:]): 
-                data.append(row)
+        """Compact the cheque table: remove blank rows, preserve order and SNs.
 
-        # 2. डेटा वापस डालना (S.N को 0001 फॉर्मेट में करके)
+        Normal case (sequential SNs 1..N from a previous save):
+            Behaviour is identical to before — rows keep their sequential SNs.
+
+        Year-End case (pending cheques with non-sequential SNs, e.g. 0023, 0047):
+            Their original SNs are preserved so the user can see which cheques
+            were carried forward from the previous year.  Empty buffer rows below
+            get new SNs starting from 1, skipping any numbers already in use.
+        """
+        self.table.blockSignals(True)
+        data = []  # [(existing_sn_int | None, row_values_list)]
+
+        # 1. Collect data rows with their existing SN values
+        for r in range(self.table.rowCount()):
+            def val(c, _r=r):
+                w = self.table.cellWidget(_r, c)
+                if w and isinstance(w, QLineEdit): return w.text().strip()
+                it = self.table.item(_r, c)
+                return it.text().strip() if it and it.text().strip() else ""
+
+            row = [val(c) for c in range(10)]
+            if any(v.strip() for v in row[1:]):
+                try:
+                    existing_sn = int(row[0])
+                except (ValueError, TypeError):
+                    existing_sn = None
+                data.append((existing_sn, row))
+
+        # Track SN integers already claimed by data rows so buffer rows skip them
+        used_sns = {sn for sn, _ in data if sn is not None}
+        _next_ctr = [1]  # mutable counter for closure
+
+        def _next_free():
+            while _next_ctr[0] in used_sns:
+                _next_ctr[0] += 1
+            v = _next_ctr[0]
+            used_sns.add(v)
+            _next_ctr[0] += 1
+            return v
+
+        # 2. Re-insert data rows, keeping original SNs where present
         self.table.setRowCount(0)
-        for row_data in data:
+        for existing_sn, row_data in data:
             idx = self.table.rowCount()
             self.table.insertRow(idx)
             for c, v in enumerate(row_data):
                 if c == 0:
-                    val = f"{idx + 1:04d}"
+                    sn_val = existing_sn if existing_sn is not None else _next_free()
+                    cell_text = f"{sn_val:04d}"
                 else:
-                    val = v
+                    cell_text = v
 
-                item = QTableWidgetItem(val)
+                item = QTableWidgetItem(cell_text)
                 if c == 0:
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)  # S.N not editable
+                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                 elif c == 6:
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 elif c == 7:
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(idx, c, item)
 
-        # 3. एक्स्ट्रा खाली रोज़ (S.N को 0001 फॉर्मेट में करके)
+        # 3. Add empty buffer rows with new sequential SNs (start from 1, skip used)
         target = max(50, len(data) + 10)
         while self.table.rowCount() < target:
             idx = self.table.rowCount()
             self.table.insertRow(idx)
+            sn_val = _next_free()
             for c in range(10):
                 if c == 0:
-                    val = f"{idx + 1:04d}"
-                    item = QTableWidgetItem(val)
+                    item = QTableWidgetItem(f"{sn_val:04d}")
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)  # S.N not editable
+                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                     self.table.setItem(idx, c, item)
                 else:
                     item = QTableWidgetItem("")
-                    if c == 6: item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                    elif c == 7: item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    if c == 6:
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    elif c == 7:
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                     self.table.setItem(idx, c, item)
 
         self.table.blockSignals(False)
+
             
     def update_bank_counts(self):
         counts = {}

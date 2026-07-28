@@ -539,7 +539,8 @@ class MainWindow(QWidget):
             ("🔒 &Admin Panel", self.handle_admin_panel, False, None, "settings.manage_users"),
             ("📅 Ca&lendar", self.handle_calendar_mapping, False, None, "tab.calendar"),
             ("📤 &Export Data", self.handle_export_data, False, None, "data.export"),
-            ("📥 &Import Data", self.handle_import_data, False, None, "data.import")
+            ("📥 &Import Data", self.handle_import_data, False, None, "data.import"),
+            ("🗓️ &Year End",    self.handle_year_end,   False, None, "settings.year_end"),
         ])
         self.nav_stack.addWidget(m_settings)
 
@@ -1714,6 +1715,26 @@ class MainWindow(QWidget):
         self._import_progress.canceled.connect(on_cancel)
         self._import_worker.finished.connect(on_finished)
         self._import_worker.start()
+
+    def handle_year_end(self):
+        """Open the Year End wizard (permission: settings.year_end).
+
+        Creates a new company at the same location as the current one,
+        copies all data, then applies Option A cheque processing.
+        If the user clicks 'Switch to New Company', the app returns to the
+        company-selection screen so they can open the new company.
+        """
+        if not self._check_permission("settings.year_end", "Year End"):
+            return
+        if not hasattr(self, 'current_company_path') or not self.current_company_path:
+            QMessageBox.warning(self, "No Company", "No company is currently loaded.")
+            return
+
+        from src.ui.year_end_dialog import YearEndDialog
+        dlg = YearEndDialog(self.current_company_path, parent=self)
+        # Switch signal: take user to login/company-select screen
+        dlg.switch_company.connect(lambda _new_path: self.back_to_login_screen())
+        dlg.exec()
 
     def back_to_login_screen(self):
         logger.info(f"User logged out")
