@@ -855,7 +855,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
         preview = QPrintPreviewDialog(printer, self)
         preview.paintRequested.connect(self.paint_table)
         # Item 10: open at a comfortable, non-maximised size
-        preview.resize(1100, 800)
+        preview.resize(900, 680)
         preview.exec()
 
     def paint_table(self, printer):

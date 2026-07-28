@@ -1015,6 +1015,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         from PyQt6.QtPrintSupport import QPrintPreviewDialog
         preview = QPrintPreviewDialog(printer, self)
         preview.paintRequested.connect(self._paint_cheque_table)
+        preview.resize(900, 680)
         preview.exec()
 
     def _paint_cheque_table(self, printer):
