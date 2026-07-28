@@ -24,17 +24,18 @@ PART_NO_OVERRIDE = {
 }
 
 # ── CN Blank Prefixes ─────────────────────────────────────────────────────────
-# Rows whose Part No starts with any of these prefixes get a blank CN value.
-# Their CN slot is recycled to maintain continuous numbering for other rows.
-CN_BLANK_PREFIXES = ("GI P", "JALI", "LDR", "SDC")
+# Rows whose Part No starts with any of these prefixes (case-insensitive)
+# get a blank CN value and are excluded from sequential numbering.
+CN_BLANK_PREFIXES = ("COL", "GI P", "JALI", "LDR", "SDC")
 
 
 def _is_cn_excluded(part_no: str) -> bool:
-    """Return True if this row's Part No means it should have a blank CN."""
+    """Return True if this row's Part No means it should have a blank CN.
+    Matching is case-insensitive so 'col-1', 'GI P ...', etc. all match."""
     if not part_no:
         return False
-    p = part_no.strip()
-    return any(p.startswith(prefix) for prefix in CN_BLANK_PREFIXES)
+    p = part_no.strip().upper()
+    return any(p.startswith(prefix.upper()) for prefix in CN_BLANK_PREFIXES)
 
 
 def _apply_part_no_override(item_name: str, current_part_no: str) -> str:
@@ -94,6 +95,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
         self.godown_db_name = ""
         self.final_db_name = ""
         self._active_editor = None  # Track (row, editor) for cleanup
+        self._pre_cn       = ""    # CN value before the user starts editing col 6
         # _is_edit_mode is initialised by ExcelTableMixin._init_excel_table()
         
         # Debounced save timer — saves 1 second after last edit instead of on every keystroke
@@ -232,6 +234,10 @@ class GodownListUI(ExcelTableMixin, QWidget):
         # Col 0 (Alias) uses a QLineEdit overlay (setCellWidget), not the delegate.
         self._init_excel_table(self.table)
         self.table.itemChanged.connect(self.handle_item_changed)
+        # Track the CN value before each edit so the swap in handle_item_changed
+        # has the real old value (item already holds the new value by the time
+        # itemChanged fires).
+        self.table.currentCellChanged.connect(self._on_cn_cell_focus)
         
         layout.addWidget(self.table)
 
@@ -283,6 +289,10 @@ class GodownListUI(ExcelTableMixin, QWidget):
         if col == 0:
             self.start_Alias_search(row, col)
             return
+        if col == 6:
+            # Capture pre-edit CN so the swap in handle_item_changed is correct
+            item = self.table.item(row, 6)
+            self._pre_cn = item.text().strip() if item else ""
         super()._excel_on_double_click(row, col)
 
     def _excel_on_printable_key(self, row, col, text):
@@ -296,6 +306,10 @@ class GodownListUI(ExcelTableMixin, QWidget):
                 editor.clear()
                 editor.setText(text)
             return True
+        if col == 6:
+            # Capture pre-edit CN before super() clears/replaces the cell value
+            item = self.table.item(row, 6)
+            self._pre_cn = item.text().strip() if item else ""
         if col == 1 and text not in "0123456789.,-":
             return True   # block non-numeric
         return super()._excel_on_printable_key(row, col, text)
@@ -481,18 +495,26 @@ class GodownListUI(ExcelTableMixin, QWidget):
                 lock = True if c in (2, 5) else False
                 self.set_item_locked(row, c, "", should_lock=lock)
 
-        # Item 14: CN column — detect duplicate and swap
-        if col == 6 and text:
-            for r in range(self.table.rowCount()):
-                if r == row:
-                    continue
-                other = self.table.item(r, 6)
-                if other and other.text().strip() == text:
-                    # Swap: give this row's old CN to the conflicting row
-                    old_item = self.table.item(row, 6)
-                    old_val = old_item.text().strip() if old_item else ""
-                    self.set_item_locked(r, 6, old_val, should_lock=False)
-                    break
+        # CN column (col 6) — enforce blank for excluded prefixes; swap on duplicate
+        if col == 6:
+            part_item = self.table.item(row, 5)
+            part_no = part_item.text().strip() if part_item else ""
+            if _is_cn_excluded(part_no):
+                # Excluded rows must never hold a CN — blank it immediately
+                item.setText("")
+            elif text:
+                # Detect duplicate and swap with the old CN of this row.
+                # NOTE: by the time itemChanged fires, 'item' already holds the
+                # new value, so we use self._pre_cn (captured before the edit)
+                # as the "old" value to give to the conflicting row.
+                for r in range(self.table.rowCount()):
+                    if r == row:
+                        continue
+                    other = self.table.item(r, 6)
+                    if other and other.text().strip() == text:
+                        self.set_item_locked(r, 6, self._pre_cn, should_lock=False)
+                        break
+            self._pre_cn = ""  # reset after use
 
         self.table.blockSignals(False)
         self._save_timer.start()  # Debounced save — fires 1s after last edit
@@ -519,6 +541,8 @@ class GodownListUI(ExcelTableMixin, QWidget):
                 
                 self.table.setItem(r, c, self.create_table_item(val, align, is_locked))
         self.table.blockSignals(False)
+        # Fill in missing sequential CNs for rows that don't have one yet
+        self._init_cn_values()
         
     def save_data_to_db(self):
         conn = self.db.get_connection(self.godown_db_name)
@@ -536,14 +560,71 @@ class GodownListUI(ExcelTableMixin, QWidget):
             conn.rollback()
             print(f"[ERROR] Failed to save godown stock: {e}")
     
+    def _on_cn_cell_focus(self, curr_row, curr_col, _prev_row, _prev_col):
+        """Called whenever the selected cell changes.  When the user navigates
+        TO the CN column, capture the existing value as the pre-edit baseline
+        so the swap logic in handle_item_changed has the correct old value."""
+        if curr_col == 6:
+            item = self.table.item(curr_row, 6)
+            self._pre_cn = item.text().strip() if item else ""
+
+    def _init_cn_values(self):
+        """Assign sequential CNs to eligible rows that currently have no CN.
+
+        Called after load_data_from_db() to ensure every named row has a CN
+        from the start.  Rows that already have a CN keep it (user edits are
+        preserved across sessions).
+
+        Rules (same as assign_cn_values):
+        - Rows with no name are skipped.
+        - Rows whose Part No matches CN_BLANK_PREFIXES are blanked.
+        - Remaining rows without a CN get the next available integer.
+        """
+        # Collect integers already in use so we don't create duplicates
+        used_cns: set = set()
+        for r in range(self.table.rowCount()):
+            cn_item = self.table.item(r, 6)
+            try:
+                used_cns.add(int(cn_item.text().strip()))
+            except (ValueError, TypeError, AttributeError):
+                pass
+
+        next_cn = 1
+        self.table.blockSignals(True)
+        for r in range(self.table.rowCount()):
+            name_item = self.table.item(r, 0)
+            name = name_item.text().strip() if name_item else ""
+            if not name:
+                continue  # empty row — skip
+
+            part_item = self.table.item(r, 5)
+            part_no   = part_item.text().strip() if part_item else ""
+            if _is_cn_excluded(part_no):
+                self.set_item_locked(r, 6, "", should_lock=False)
+                continue
+
+            cn_item = self.table.item(r, 6)
+            if cn_item and cn_item.text().strip():
+                continue  # already has a CN — leave it
+
+            # Find the next integer not already taken
+            while next_cn in used_cns:
+                next_cn += 1
+            self.set_item_locked(r, 6, str(next_cn), should_lock=False)
+            used_cns.add(next_cn)
+            next_cn += 1
+        self.table.blockSignals(False)
+
     def assign_cn_values(self):
-        """Item 14: Assign sequential CN values (1..N) to eligible rows.
+        """Full re-sequence: assign CN 1..N to every eligible named row.
+
+        Called from Save & Sort to enforce clean sequential numbering.
+        Unlike _init_cn_values(), this OVERWRITES existing CNs.
 
         Rules:
-        - Rows whose Part No starts with CN_BLANK_PREFIXES get CN = blank.
-        - All other rows with any data get sequential CNs starting from 1.
-        - Preserves user-set CNs where possible; only fills blanks / re-numbers
-          when a full re-assignment is requested (called from Save & Sort).
+        - Rows with no name are skipped (CN stays as-is).
+        - Rows whose Part No starts with CN_BLANK_PREFIXES are blanked.
+        - All other named rows are numbered 1, 2, 3 … in table order.
         """
         self.table.blockSignals(True)
         cn_counter = 1
@@ -551,15 +632,12 @@ class GodownListUI(ExcelTableMixin, QWidget):
             name_item = self.table.item(r, 0)
             name = name_item.text().strip() if name_item else ""
             if not name:
-                # Empty row — skip, CN stays as-is
-                continue
+                continue  # Empty row — skip
             part_item = self.table.item(r, 5)
             part_no = part_item.text().strip() if part_item else ""
             if _is_cn_excluded(part_no):
-                # Excluded prefix — blank the CN
                 self.set_item_locked(r, 6, "", should_lock=False)
             else:
-                # Assign next available number
                 self.set_item_locked(r, 6, str(cn_counter), should_lock=False)
                 cn_counter += 1
         self.table.blockSignals(False)
