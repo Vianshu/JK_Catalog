@@ -302,15 +302,18 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         # 2. Middle: Summary Labels
         top_bar.addStretch()
 
-        # Bold font for summary labels
-        _sum_font = QFont()
+        # Bold font for summary labels — 2pt larger than app default
+        from PyQt6.QtWidgets import QApplication
+        _sum_font = QApplication.font()
         _sum_font.setBold(True)
+        _sum_font.setPointSize(_sum_font.pointSize() + 2)
         self.lbl_count = QLabel("Total No. of Chq.: 0")
         self.lbl_total = QLabel("Amount: 0.00")
         self.lbl_count.setObjectName("ChqSummaryLabel")
         self.lbl_total.setObjectName("ChqSummaryLabel")
         self.lbl_count.setFont(_sum_font)
         self.lbl_total.setFont(_sum_font)
+
 
         top_bar.addWidget(self.lbl_count)
         top_bar.addWidget(self.lbl_total)
