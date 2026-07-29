@@ -607,23 +607,32 @@ class ChequeListUI(ExcelTableMixin, QWidget):
 
     # ================= SUMMARY =================
     def update_summary(self):
-        """Count and sum only rows where Clear Date is blank (pending cheques)."""
+        """Count and sum pending cheques (clear_date blank, party name filled).
+
+        A row is treated as a real cheque entry when Party Name (col 2) has
+        a value.  This correctly handles:
+          - Normal cheques (party + chq no + amount)
+          - Cash entries   (party + amount, no chq number)
+          - Empty buffer rows (party blank → excluded from both count and total)
+        """
         total = 0.0
         count = 0
         for r in range(self.table.rowCount()):
             if self.table.isRowHidden(r):
                 continue
 
-            # Only include rows with no Clear Date (pending / uncleared)
+            # Skip rows that are already cleared
             clear_item = self.table.item(r, 8)
             if clear_item and clear_item.text().strip():
-                continue  # Already cleared — skip from totals
+                continue
 
-            chq = self.table.item(r, 4)  # Chq No
-            amt = self.table.item(r, 6)  # Amount
+            # A row "exists" when Party Name is filled
+            party = self.table.item(r, 2)
+            if not (party and party.text().strip()):
+                continue
 
-            if chq and chq.text().strip():
-                count += 1
+            count += 1
+            amt = self.table.item(r, 6)
             try:
                 total += float(amt.text().replace(",", "")) if amt and amt.text() else 0
             except Exception:
@@ -632,6 +641,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         self.lbl_count.setText(f"Total No. of Chq.: {count}")
         self.lbl_total.setText(f"Amount: {total:,.2f}")
         self.update_bank_counts()
+
 
     def generate_sn(self, row_index):
         return f"{row_index + 1:04d}"
