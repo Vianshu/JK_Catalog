@@ -1075,11 +1075,14 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         row_height = int(fm_cell.height() * 1.6)
         padding = int(fm_cell.averageCharWidth() * 1.2)
 
-        # --- Column widths as fractions of full page width ---
-        # S.N(5%), Date(9%), Party(22%), Bank(12%), Chq(8%), CRM(8%), Amount(10%), Cash/Bank(7%), Clear Date(9%), Narration(10%)
-        col_ratios = [0.05, 0.09, 0.22, 0.12, 0.08, 0.08, 0.10, 0.07, 0.09, 0.10]
-        col_widths = [int(page_w * r) for r in col_ratios]
+        # --- Column widths derived from actual screen column widths (proportional) ---
+        # This mirrors the godown-list approach so "what you see is what you print".
+        screen_widths = [self.table.columnWidth(c) for c in range(self.table.columnCount())]
+        total_screen  = sum(screen_widths) or 1
+        col_widths    = [int(page_w * w / total_screen) for w in screen_widths]
+        # Correct rounding error on the last column
         col_widths[-1] = page_w - sum(col_widths[:-1])
+
 
         # --- Alignment per column ---
         alignments = [
