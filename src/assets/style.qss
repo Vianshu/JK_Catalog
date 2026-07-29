@@ -1036,7 +1036,8 @@ QProgressBar::chunk {
     font-weight: bold;
 }
 #ChqSummaryLabel {
-    font-weight: 600;
+    font-weight: 700;
+    font-size: 15px;
     margin-right: 10px;
 }
 #BtnOrange {
