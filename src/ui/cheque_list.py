@@ -607,19 +607,20 @@ class ChequeListUI(ExcelTableMixin, QWidget):
 
     # ================= SUMMARY =================
     def update_summary(self):
-        """Count and sum pending cheques (clear_date blank, party name filled).
+        """Count and sum ALL uncleared pending cheques — irrespective of row visibility.
 
-        A row is treated as a real cheque entry when Party Name (col 2) has
-        a value.  This correctly handles:
-          - Normal cheques (party + chq no + amount)
-          - Cash entries   (party + amount, no chq number)
-          - Empty buffer rows (party blank → excluded from both count and total)
+        The summary always reflects the true total of pending cheques in the
+        database, regardless of which hide/show buttons are currently active.
+
+        A row counts when:
+          - Party Name (col 2) is filled  → it's a real entry, not a buffer row
+          - Clear Date (col 8) is blank   → cheque is still pending / uncleared
         """
         total = 0.0
         count = 0
         for r in range(self.table.rowCount()):
-            if self.table.isRowHidden(r):
-                continue
+            # NOTE: isRowHidden is intentionally NOT checked here.
+            # The summary always shows the full picture regardless of filters.
 
             # Skip rows that are already cleared
             clear_item = self.table.item(r, 8)
