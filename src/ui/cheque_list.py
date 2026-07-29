@@ -1086,12 +1086,39 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         row_height = int(fm_cell.height() * 1.6)
         padding = int(fm_cell.averageCharWidth() * 1.2)
 
-        # --- Column widths derived from actual screen column widths (proportional) ---
-        # This mirrors the godown-list approach so "what you see is what you print".
-        screen_widths = [self.table.columnWidth(c) for c in range(self.table.columnCount())]
-        total_screen  = sum(screen_widths) or 1
-        col_widths    = [int(page_w * w / total_screen) for w in screen_widths]
-        # Correct rounding error on the last column
+        # --- Collect visible data rows first (needed for auto-fit widths) ---
+        data_rows = []
+        for r in range(self.table.rowCount()):
+            if self.table.isRowHidden(r):
+                continue
+            def val(c, _r=r):
+                w = self.table.cellWidget(_r, c)
+                if w and isinstance(w, QLineEdit): return w.text().strip()
+                it = self.table.item(_r, c)
+                return it.text().strip() if it and it.text().strip() else ""
+            row_data = [val(c) for c in range(10)]
+            if any(v.strip() for v in row_data[1:]):
+                data_rows.append(row_data)
+
+        # --- Auto-fit column widths based on content ---
+        # Each column is sized to fit its widest text (header or data cell),
+        # then all widths are scaled proportionally to fill the full page width.
+        painter.setFont(header_font)
+        fm_h = painter.fontMetrics()
+        painter.setFont(cell_font)
+        fm_c = painter.fontMetrics()
+
+        raw_widths = []
+        for c in range(len(self.columns)):
+            max_w = fm_h.horizontalAdvance(self.columns[c]) + 2 * padding
+            for rd in data_rows:
+                w = fm_c.horizontalAdvance(rd[c]) + 2 * padding
+                if w > max_w:
+                    max_w = w
+            raw_widths.append(max(max_w, padding * 3))  # enforce a minimum
+
+        total_raw = sum(raw_widths) or 1
+        col_widths = [int(page_w * w / total_raw) for w in raw_widths]
         col_widths[-1] = page_w - sum(col_widths[:-1])
 
 
@@ -1143,20 +1170,6 @@ class ChequeListUI(ExcelTableMixin, QWidget):
                 painter.drawText(text_rect, align, text)
                 x += col_widths[c]
             return y + row_height
-
-        # --- Collect visible data rows ---
-        data_rows = []
-        for r in range(self.table.rowCount()):
-            if self.table.isRowHidden(r):
-                continue
-            def val(c):
-                w = self.table.cellWidget(r, c)
-                if w and isinstance(w, QLineEdit): return w.text().strip()
-                it = self.table.item(r, c)
-                return it.text().strip() if it and it.text().strip() else ""
-            row_data = [val(c) for c in range(10)]
-            if any(v.strip() for v in row_data[1:]):
-                data_rows.append(row_data)
 
         # --- Render pages ---
         y = 0
