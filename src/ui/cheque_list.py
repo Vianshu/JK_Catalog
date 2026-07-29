@@ -90,7 +90,11 @@ def _enforce_match(editor: QLineEdit, text: str, data_list: list):
     editor.blockSignals(True)
     editor.setText(text[:-1])
     editor.blockSignals(False)
-        
+    # Re-open the dropdown for the restored (still-valid) text
+    completer = editor.completer()
+    if completer:
+        completer.complete()
+
 class AutocompleteDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
         super().__init__(parent)
