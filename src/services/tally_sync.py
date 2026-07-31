@@ -79,45 +79,87 @@ class TallyService:
         separate Tally instances simultaneously.
         """
         try:
-            # 1. User-configured port (per-RDP-user)
             user_port = get_tally_port()
-            drivers = [d for d in pyodbc.drivers() if "Tally" in d]
-            if drivers:
-                driver = drivers[0]
-                try:
-                    conn_str = f"DRIVER={{{driver}}};SERVER=(local);PORT={user_port}"
-                    self.connection = pyodbc.connect(conn_str, timeout=2)
-                    logger.info(f"Connected to Tally on user-configured port {user_port}")
-                    return True
-                except pyodbc.Error:
-                    logger.debug(f"User port {user_port} failed, trying DSNs")
+            logger.info(f"[TALLY CONNECT] Starting connection sequence. User port: {user_port}")
 
-            # 2. Named DSNs (legacy fallback)
-            for dsn in ["DSN=TallyODBC64_9000", "DSN=TallyODBC_9000"]:
+
+            # Build candidate DSN names: prioritise the user-configured port
+            candidate_dsns = [
+                f"DSN=TallyODBC64_{user_port}",
+                f"DSN=TallyODBC_{user_port}",
+                "DSN=TallyODBC64_9000",
+                "DSN=TallyODBC_9000",
+                "DSN=TallyODBC64_9001",
+                "DSN=TallyODBC_9001",
+            ]
+
+            # Also scan the Windows registry for any user-DSN whose name starts
+            # with "TallyODBC" — covers any port Tally may have auto-registered.
+            try:
+                import winreg
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                    r"Software\ODBC\ODBC.INI\ODBC Data Sources") as key:
+                    i = 0
+                    while True:
+                        try:
+                            name, _, _ = winreg.EnumValue(key, i)
+                            if name.lower().startswith("tallyodbc"):
+                                dsn_entry = f"DSN={name}"
+                                if dsn_entry not in candidate_dsns:
+                                    candidate_dsns.insert(0, dsn_entry)  # highest priority
+                            i += 1
+                        except OSError:
+                            break
+            except Exception as e:
+                logger.debug(f"[TALLY CONNECT] Registry scan failed: {e}")
+
+            # Deduplicate while preserving order
+            seen = set()
+            unique_dsns = []
+            for d in candidate_dsns:
+                if d not in seen:
+                    seen.add(d)
+                    unique_dsns.append(d)
+            
+            logger.info(f"[TALLY CONNECT] Candidate DSNs to try: {unique_dsns}")
+
+            # 1+2+3. Try all candidate DSNs
+            for dsn in unique_dsns:
                 try:
+                    logger.debug(f"[TALLY CONNECT] Trying DSN: {dsn}")
                     self.connection = pyodbc.connect(dsn, timeout=2)
+                    logger.info(f"Connected to Tally via DSN: {dsn}")
                     return True
-                except pyodbc.Error:
-                    pass
+                except pyodbc.Error as e:
+                    logger.warning(f"[TALLY CONNECT] DSN {dsn} failed: {e}")
 
+            # 4. Driver-based fallback
+            all_drivers = pyodbc.drivers()
+            logger.info(f"[TALLY CONNECT] System ODBC Drivers found: {len(all_drivers)} total")
+            drivers = [d for d in all_drivers if "Tally" in d]
+            
             if not drivers:
+                logger.error("[TALLY CONNECT] No 'Tally' ODBC drivers found in pyodbc.drivers()")
                 return False
 
             driver = drivers[0]
-
-            # 3. Auto-discovery: try nearby ports
+            logger.info(f"[TALLY CONNECT] Found Tally driver: {driver}")
+            
             for port in sorted({user_port, 9000, 9001}):
                 try:
                     conn_str = f"DRIVER={{{driver}}};SERVER=(local);PORT={port}"
+                    logger.debug(f"[TALLY CONNECT] Trying Driver string: {conn_str}")
                     self.connection = pyodbc.connect(conn_str, timeout=2)
-                    logger.info(f"Auto-discovered Tally on port {port}")
+                    logger.info(f"Connected to Tally via driver '{driver}' on port {port}")
                     return True
-                except pyodbc.Error:
-                    pass
+                except pyodbc.Error as e:
+                    logger.warning(f"[TALLY CONNECT] Driver string {conn_str} failed: {e}")
 
+            logger.error("[TALLY CONNECT] Exhausted all DSN and Driver attempts.")
             return False
 
-        except Exception:
+        except Exception as e:
+            logger.error(f"[TALLY CONNECT] Unhandled exception in connect(): {e}", exc_info=True)
             return False
 
     def _get_sqlalchemy_engine(self, db_name):

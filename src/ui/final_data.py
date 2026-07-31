@@ -2,7 +2,7 @@ import os
 import json
 import datetime
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QLabel, QGroupBox,
+    QWidget, QHBoxLayout, QVBoxLayout, QLabel, QGroupBox, QPushButton,
     QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
     QProgressDialog, QApplication
 )
@@ -298,6 +298,24 @@ class FinalDataUI(ExcelTableMixin, QWidget):
         self.search_input.textChanged.connect(self.filter_table)
         side_layout.addWidget(self.search_input)
 
+        # 2b. GUID filter banner (hidden by default, shown when navigated from Reports)
+        self._guid_filter: set = set()   # empty = no GUID filter active
+        self._filter_banner = QWidget()
+        _fb_layout = QHBoxLayout(self._filter_banner)
+        _fb_layout.setContentsMargins(6, 2, 6, 2)
+        self._filter_banner_lbl = QLabel("")
+        self._filter_banner_lbl.setStyleSheet(
+            "color:#fff;background:#c0392b;border-radius:4px;padding:2px 6px;font-size:11px;")
+        _btn_clear_filter = QPushButton("✕ Clear")
+        _btn_clear_filter.setFixedHeight(22)
+        _btn_clear_filter.setStyleSheet(
+            "background:#e74c3c;color:white;border-radius:3px;padding:0 6px;font-size:11px;")
+        _btn_clear_filter.clicked.connect(self.clear_guid_filter)
+        _fb_layout.addWidget(self._filter_banner_lbl)
+        _fb_layout.addWidget(_btn_clear_filter)
+        self._filter_banner.hide()
+        side_layout.addWidget(self._filter_banner)
+
         # 3. Image Preview — fixed logical height, never expands
         from PyQt6.QtWidgets import QFrame, QGridLayout, QSizePolicy
         img_container = QFrame()
@@ -418,6 +436,37 @@ class FinalDataUI(ExcelTableMixin, QWidget):
 
     def col_index(self, name):
         return self.headers.index(name)
+
+    def select_rows_by_guid(self, guids: list):
+        """Deprecated alias — use filter_to_guids instead."""
+        self.filter_to_guids(guids)
+
+    def filter_to_guids(self, guids: list):
+        """Hide every row whose GUID is NOT in *guids*, show a clear-filter
+        banner, and scroll to the first visible row."""
+        self._guid_filter = set(guids)
+        if not self._guid_filter:
+            self.clear_guid_filter()
+            return
+        self.filter_table()   # applies both GUID filter and search text
+        # Update banner
+        self._filter_banner_lbl.setText(
+            f"Showing {len(guids)} product(s) with missing images from pending pages")
+        self._filter_banner.show()
+        # Scroll to first visible row
+        for row in range(self.table.rowCount()):
+            if not self.table.isRowHidden(row):
+                self.table.scrollToItem(
+                    self.table.item(row, 0),
+                    self.table.ScrollHint.PositionAtTop
+                )
+                break
+
+    def clear_guid_filter(self):
+        """Remove the GUID filter and show all rows again."""
+        self._guid_filter = set()
+        self._filter_banner.hide()
+        self.filter_table()   # re-applies search text only
 
     def current_datetime(self):
         return datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')
@@ -986,6 +1035,13 @@ class FinalDataUI(ExcelTableMixin, QWidget):
     def _on_sync_finished(self, sync_label, dup_map):
         """Called on main thread when background sync completes."""
         if hasattr(self, '_sync_progress') and self._sync_progress:
+            # Disconnect canceled BEFORE close() — QProgressDialog in indeterminate
+            # mode (max=0) emits canceled() on close(), which would incorrectly
+            # trigger _on_final_sync_cancel and emit sync_cancelled on a successful sync.
+            try:
+                self._sync_progress.canceled.disconnect(self._on_final_sync_cancel)
+            except (TypeError, RuntimeError):
+                pass
             self._sync_progress.close()
 
         # Handle cancellation
@@ -1014,6 +1070,10 @@ class FinalDataUI(ExcelTableMixin, QWidget):
     def _on_sync_error(self, error_msg):
         """Called on main thread when background sync fails."""
         if hasattr(self, '_sync_progress') and self._sync_progress:
+            try:
+                self._sync_progress.canceled.disconnect(self._on_final_sync_cancel)
+            except (TypeError, RuntimeError):
+                pass
             self._sync_progress.close()
         logger.error(f"Sync Error: {error_msg}")
         self._sync_worker = None
@@ -1538,7 +1598,8 @@ class FinalDataUI(ExcelTableMixin, QWidget):
     def filter_table(self):
 
         txt = self.search_input.text().lower()
-        
+        guid_filter = getattr(self, '_guid_filter', set())
+
         # Charo columns ke sahi index nikaalein
         idx_alias = self.col_index("Alias")
         idx_cat = self.col_index("Category")
@@ -1546,6 +1607,13 @@ class FinalDataUI(ExcelTableMixin, QWidget):
         idx_subgroup = self.col_index("Sub_Group")
 
         for i in range(self.table.rowCount()):
+            # GUID filter: if active, hide rows not in set
+            if guid_filter:
+                guid_item = self.table.item(i, 0)
+                if not guid_item or guid_item.text().strip() not in guid_filter:
+                    self.table.setRowHidden(i, True)
+                    continue
+
             it_alias = self.table.item(i, idx_alias)
             it_cat = self.table.item(i, idx_cat)
             it_group = self.table.item(i, idx_group)

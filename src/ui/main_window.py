@@ -46,13 +46,18 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 class _LedgerWorker(QThread):
     finished = pyqtSignal(int, str)  # row_count, error
-    def __init__(self, company_name, path):
+    def __init__(self, company_name, path, service=None):
         super().__init__()
         self.company_name = company_name
         self.path = path
+        self.service = service
     def run(self):
         try:
-            rc, err = fetch_tally_ledger_data(company_name=self.company_name, company_path=self.path)
+            rc, err = fetch_tally_ledger_data(
+                company_name=self.company_name,
+                company_path=self.path,
+                service=self.service
+            )
             self.finished.emit(rc or 0, err or "")
         except Exception as e:
             self.finished.emit(0, str(e))
@@ -448,12 +453,11 @@ class MainWindow(QWidget):
         self.company_btn.hide()
         sidebar_layout.addWidget(self.company_btn)
 
-        # Item 2: Logged-in user label — shown after login
+        # Item 2: Logged-in user label — added to sidebar near logout button
         self.lbl_logged_user = QLabel("")
         self.lbl_logged_user.setObjectName("LoggedUserLabel")
         self.lbl_logged_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_logged_user.hide()
-        sidebar_layout.addWidget(self.lbl_logged_user)
 
         # Menu Navigation Stack — each page manages its own scrollbar
         self.nav_stack = QStackedWidget()
@@ -468,10 +472,8 @@ class MainWindow(QWidget):
         # Add nav_stack directly — no outer scroll wrapper needed
         sidebar_layout.addWidget(self.nav_stack, 1)  # stretch factor 1 to fill space
 
-        # Quit Hint
-        quit_lbl = QLabel("Press Ctrl+Q to Quit")
-        quit_lbl.setObjectName("QuitHint")
-        sidebar_layout.addWidget(quit_lbl)
+        # Username label sits just above the logout button
+        sidebar_layout.addWidget(self.lbl_logged_user)
 
         # Logout Button
         self.logout_btn = QPushButton("🚪 LOGOUT")
@@ -615,7 +617,8 @@ class MainWindow(QWidget):
             return
 
         company_path = getattr(self, 'current_company_path', None)
-        self._ledger_worker = _LedgerWorker(self.current_company, company_path)
+        self._ledger_service = TallyService()
+        self._ledger_worker = _LedgerWorker(self.current_company, company_path, service=self._ledger_service)
         self._ledger_worker.finished.connect(self._on_ledger_sync_done_dual)
         self._ledger_worker.start()
 
@@ -726,6 +729,12 @@ class MainWindow(QWidget):
         self.final_data_page = FinalDataUI()
         self.super_master_page = SuperMasterUI()
         self.reports_page = ReportsUI()
+        # "Go to Final Data" from missing-image warning — navigate and auto-select affected rows
+        def _go_to_final_data_with_selection(guids):
+            self.main_stack.setCurrentIndex(PageIndex.FINAL_DATA)
+            if guids and hasattr(self, 'final_data_page'):
+                self.final_data_page.filter_to_guids(guids)
+        self.reports_page.navigate_to_final_data.connect(_go_to_final_data_with_selection)
         self.payment_list_page = PaymentListUI()
         self.godown_page = GodownListUI("") # Will be initialized on login
         # Stack Pages
@@ -1354,6 +1363,15 @@ class MainWindow(QWidget):
         # Create a shared TallyService so we can cancel it
         self._tally_service = TallyService()
 
+        # Clean up any leftover progress dialog from a previous sync to prevent
+        # stale canceled signals from firing on the new sync's service.
+        if hasattr(self, '_tally_progress') and self._tally_progress:
+            try:
+                self._tally_progress.canceled.disconnect(self._on_tally_cancel)
+            except (TypeError, RuntimeError):
+                pass
+            self._tally_progress.deleteLater()
+
         self._tally_progress = QProgressDialog("Syncing Tally Data...", "Cancel", 0, 0, self)
         self._tally_progress.setWindowTitle("Please Wait")
         self._tally_progress.setWindowModality(Qt.WindowModality.WindowModal)
@@ -1361,7 +1379,6 @@ class MainWindow(QWidget):
         self._tally_progress.canceled.connect(self._on_tally_cancel)
         self._tally_progress.show()
 
-        # Run in background thread
         # Run in background thread
 
         self._tally_worker = _TallyWorker(
@@ -1384,9 +1401,18 @@ class MainWindow(QWidget):
     def _on_tally_sync_done(self, df, error):
         """Handle Tally sync completion (runs on main thread)."""
         if hasattr(self, '_tally_progress') and self._tally_progress:
+            # IMPORTANT: disconnect canceled BEFORE close(). QProgressDialog in
+            # indeterminate mode (max=0) emits canceled() when close() is called,
+            # which would fire _on_tally_cancel() mid-execution and incorrectly
+            # poison _tally_sync_user_cancelled for every successful sync.
+            try:
+                self._tally_progress.canceled.disconnect(self._on_tally_cancel)
+            except (TypeError, RuntimeError):
+                pass
             self._tally_progress.close()
 
         if error == "cancelled":
+            self._dual_sync_in_progress = False
             QMessageBox.information(self, "Cancelled", "Tally sync was cancelled.\nExisting data is preserved.")
             return
 
@@ -1394,6 +1420,7 @@ class MainWindow(QWidget):
         # InterruptedError could propagate (race).  Honour the user's intent.
         if getattr(self, '_tally_sync_user_cancelled', False):
             logger.info("_on_tally_sync_done: user cancelled — suppressing Phase 2")
+            self._dual_sync_in_progress = False
             QMessageBox.information(self, "Cancelled", "Tally sync was cancelled.\nExisting data is preserved.")
             return
 
@@ -1401,6 +1428,7 @@ class MainWindow(QWidget):
         # (e.g. pyodbc error raced with cancel flag before our guard could catch it).
         if hasattr(self, '_tally_service') and self._tally_service and self._tally_service.cancelled:
             logger.info("_on_tally_sync_done: service was cancelled — suppressing Phase 2")
+            self._dual_sync_in_progress = False
             QMessageBox.information(self, "Cancelled", "Tally sync was cancelled.\nExisting data is preserved.")
             return
 
@@ -1411,6 +1439,7 @@ class MainWindow(QWidget):
             row_count = len(df)
             logger.info(f"Tally sync received: {row_count} rows")
             def _after_sync():
+                self._pending_after_sync_cb = None
                 self.final_data_page.sync_complete.disconnect(_after_sync)
                 # Also disconnect cancel handler if still connected
                 try:
@@ -1475,6 +1504,7 @@ class MainWindow(QWidget):
                         self._run_ledger_sync_phase()
 
             def _after_sync_cancelled():
+                self._pending_after_sync_cancelled_cb = None
                 # Disconnect both handlers so they don't fire again
                 try:
                     self.final_data_page.sync_cancelled.disconnect(_after_sync_cancelled)
@@ -1488,12 +1518,29 @@ class MainWindow(QWidget):
                 QMessageBox.information(self, "Cancelled", "Sync was cancelled.\nExisting data is preserved.")
 
             if hasattr(self, 'final_data_page'):
+                # Disconnect any stale handlers from a previous sync run before
+                # connecting new ones — otherwise cancelled signals accumulate and
+                # fire multiple "Tally sync cancelled" popups on unrelated actions.
+                if hasattr(self, '_pending_after_sync_cb') and self._pending_after_sync_cb:
+                    try:
+                        self.final_data_page.sync_complete.disconnect(self._pending_after_sync_cb)
+                    except (TypeError, RuntimeError):
+                        pass
+                if hasattr(self, '_pending_after_sync_cancelled_cb') and self._pending_after_sync_cancelled_cb:
+                    try:
+                        self.final_data_page.sync_cancelled.disconnect(self._pending_after_sync_cancelled_cb)
+                    except (TypeError, RuntimeError):
+                        pass
+
+                self._pending_after_sync_cb = _after_sync
+                self._pending_after_sync_cancelled_cb = _after_sync_cancelled
                 self.final_data_page.sync_complete.connect(_after_sync)
                 self.final_data_page.sync_cancelled.connect(_after_sync_cancelled)
                 self.final_data_page.load_and_sync_data(self.current_company, self.current_company_path)
             else:
                 QMessageBox.information(self, "Sync Complete", f"Data Synced Successfully!\nLoaded {row_count} rows.")
         else:
+            self._dual_sync_in_progress = False
             msg = error if error else "No data received from Tally. Check connection."
             logger.warning(f"Tally sync issue: {msg}")
             QMessageBox.warning(self, "Sync Issue", f"{msg}\n\nClick OK to close.")
