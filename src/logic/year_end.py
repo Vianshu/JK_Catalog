@@ -1,4 +1,4 @@
-﻿"""
+"""
 Year End Logic - Creates a new company from the current one.
 
 Workflow:
@@ -23,6 +23,30 @@ logger = get_logger(__name__)
 
 _DB_EXTENSIONS = {'.mdf', '.ldf', '.bak', '.db', '.db-wal', '.db-shm'}
 _SKIP_PREFIXES  = {'.jk_'}
+
+
+def _get_sql_data_path(db):
+    """Return SQL Server's default data directory.
+
+    Falls back to a temp subfolder inside the data_path root if the
+    registry / SQL query is unavailable.
+    """
+    try:
+        conn = db.get_master_connection()
+        if conn:
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT SERVERPROPERTY('InstanceDefaultDataPath')"
+                )
+                row = cursor.fetchone()
+                if row and row[0]:
+                    return str(row[0]).rstrip("\\/")
+            finally:
+                conn.close()
+    except Exception:
+        pass
+    return None
 
 
 def perform_year_end(company_path, new_company_name, progress_cb=None):
@@ -69,17 +93,30 @@ def perform_year_end(company_path, new_company_name, progress_cb=None):
     except OSError as e:
         return False, f"Could not create folder:\n{new_company_path}\n\n{e}", ""
 
+    # Bug 2 fix: place MDF/LDF in SQL Server's data directory, NOT the company
+    # folder. Falling back to a temp sub-dir next to the company data if the
+    # SQL Server data path is unavailable.
+    sql_data_dir = _get_sql_data_path(db)
+    if not sql_data_dir or not os.path.isdir(sql_data_dir):
+        # Fallback: use a hidden staging folder next to the company folders
+        sql_data_dir = os.path.join(data_path, ".jk_sql_data")
+        os.makedirs(sql_data_dir, exist_ok=True)
+        db._grant_sql_server_permissions(sql_data_dir)
+
     temp_dir = tempfile.mkdtemp(prefix=".jk_ye_", dir=data_path)
     bak_path = os.path.join(temp_dir, "year_end.bak")
+    _new_folder_created = True  # track so we can clean up on failure
 
     try:
         emit("Backing up current database...", 2)
-        db._grant_sql_server_permissions(temp_dir)
+        # backup_database() calls _grant_sql_server_permissions internally —
+        # no need to call it again here (Bug 1 fix: removed duplicate call).
         if not db.backup_database(old_db_name, bak_path):
             return False, "Database backup failed.\nCheck SQL Server has write access to the data folder.", ""
 
         emit("Restoring database for new company...", 3)
-        if not db.restore_database(new_db_name, bak_path, new_company_path):
+        # Bug 2 fix: restore MDF/LDF into sql_data_dir, not new_company_path
+        if not db.restore_database(new_db_name, bak_path, sql_data_dir):
             return False, "Database restore failed.\nSee the application log for details.", ""
 
         emit("Copying company files...", 4)
@@ -89,6 +126,7 @@ def perform_year_end(company_path, new_company_name, progress_cb=None):
         _process_cheque_year_end(db, new_db_name)
 
         emit("Year End complete!", 6)
+        _new_folder_created = False  # success — do not clean up
         return (True,
                 f"Year End completed successfully!\n\nNew company '{new_company_name}' is ready.",
                 new_company_path)
@@ -100,10 +138,22 @@ def perform_year_end(company_path, new_company_name, progress_cb=None):
     finally:
         try: shutil.rmtree(temp_dir, ignore_errors=True)
         except Exception: pass
+        # Bug 5 fix: remove the half-created company folder on failure so the
+        # user doesn't have to manually delete it before retrying.
+        if _new_folder_created and os.path.exists(new_company_path):
+            try:
+                shutil.rmtree(new_company_path, ignore_errors=True)
+                logger.info(f"[YearEnd] Cleaned up failed company folder: {new_company_path}")
+            except Exception:
+                pass
 
 
 def _copy_company_files(src_path, dst_path):
-    """Copy non-database files (images, config) from old to new company folder."""
+    """Copy non-database files (images, config) from old to new company folder.
+
+    Bug 3 fix: the DB extension filter is applied recursively so no .mdf/.ldf
+    files inside sub-folders can accidentally collide with the restored DB.
+    """
     for item in os.listdir(src_path):
         if any(item.startswith(p) for p in _SKIP_PREFIXES):
             continue
@@ -114,8 +164,27 @@ def _copy_company_files(src_path, dst_path):
                 try: shutil.copy2(src, dst)
                 except Exception as e: logger.warning(f"Could not copy {src}: {e}")
         elif os.path.isdir(src):
-            try: shutil.copytree(src, dst, dirs_exist_ok=True)
-            except Exception as e: logger.warning(f"Could not copy folder {src}: {e}")
+            # Copy directory tree but skip any DB files inside sub-folders
+            try:
+                _copy_dir_filtered(src, dst)
+            except Exception as e:
+                logger.warning(f"Could not copy folder {src}: {e}")
+
+
+def _copy_dir_filtered(src_dir, dst_dir):
+    """Recursively copy src_dir -> dst_dir, skipping DB extension files."""
+    os.makedirs(dst_dir, exist_ok=True)
+    for item in os.listdir(src_dir):
+        if any(item.startswith(p) for p in _SKIP_PREFIXES):
+            continue
+        src = os.path.join(src_dir, item)
+        dst = os.path.join(dst_dir, item)
+        if os.path.isfile(src):
+            if os.path.splitext(item)[1].lower() not in _DB_EXTENSIONS:
+                try: shutil.copy2(src, dst)
+                except Exception as e: logger.warning(f"Could not copy {src}: {e}")
+        elif os.path.isdir(src):
+            _copy_dir_filtered(src, dst)
 
 
 def _process_cheque_year_end(db, db_name):

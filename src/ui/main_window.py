@@ -1779,11 +1779,18 @@ class MainWindow(QWidget):
 
         from src.ui.year_end_dialog import YearEndDialog
         dlg = YearEndDialog(self.current_company_path, parent=self)
-        # Switch signal: take user to login/company-select screen
-        dlg.switch_company.connect(lambda _new_path: self.back_to_login_screen())
+        # Bug 4 fix: pass new_path so the company list can pre-select it
+        dlg.switch_company.connect(self.back_to_login_screen)
         dlg.exec()
 
-    def back_to_login_screen(self):
+    def back_to_login_screen(self, preselect_path=""):
+        """Return to the company selection screen.
+
+        Args:
+            preselect_path: If given, the company list will scroll to and
+                highlight the item whose path matches this value.  Used after
+                Year End so the user can immediately open the new company.
+        """
         logger.info(f"User logged out")
         set_company_context("")
         self.user_session = None  # Clear session
@@ -1801,10 +1808,32 @@ class MainWindow(QWidget):
             for btn in menu_widget.findChildren(MenuButtonWidget):
                 btn.setEnabled(True)
                 btn.setToolTip("")
-        
+
         self.nav_stack.setCurrentIndex(NavIndex.EMPTY)
         self.main_stack.setCurrentIndex(PageIndex.LOGIN)
         self.company_login.show_list()
+
+        # Bug 4 fix: pre-select the new company in the list after Year End
+        if preselect_path:
+            self._preselect_company(preselect_path)
+
+    def _preselect_company(self, target_path):
+        """Scroll to and select the company list item that matches target_path."""
+        try:
+            lst = self.company_login.list
+            target_norm = os.path.normpath(target_path).lower()
+            for i in range(lst.count()):
+                item = lst.item(i)
+                if not item:
+                    continue
+                item_path = item.data(Qt.ItemDataRole.UserRole + 1)
+                if item_path and os.path.normpath(str(item_path)).lower() == target_norm:
+                    lst.setCurrentItem(item)
+                    lst.scrollToItem(item)
+                    break
+        except Exception as e:
+            logger.debug(f"_preselect_company failed: {e}")
+
 
     def show_company_dropdown(self):
         menu = QMenu(self)
