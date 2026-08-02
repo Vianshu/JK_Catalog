@@ -569,19 +569,21 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         if not conn: return
         cur = conn.cursor()
         try:
-            cur.execute("DELETE FROM cheques")
-
+            # Build all rows first, then insert in one batch
+            rows_to_insert = []
             for r in range(self.table.rowCount()):
-                def txt(c):
-                    w = self.table.cellWidget(r, c)
+                def txt(c, _r=r):
+                    w = self.table.cellWidget(_r, c)
                     if w and isinstance(w, QLineEdit): return w.text().strip()
-                    it = self.table.item(r, c)
+                    it = self.table.item(_r, c)
                     return it.text().strip() if it and it.text().strip() else None
-
-                cur.execute("INSERT INTO cheques VALUES (?,?,?,?,?,?,?,?,?,?)", (
+                rows_to_insert.append((
                     txt(0), txt(1), txt(2), txt(3),
                     txt(4), txt(5), txt(6), txt(7), txt(8), txt(9)
                 ))
+            cur.execute("DELETE FROM cheques")
+            if rows_to_insert:
+                cur.executemany("INSERT INTO cheques VALUES (?,?,?,?,?,?,?,?,?,?)", rows_to_insert)
             conn.commit()
         except Exception as e:
             conn.rollback()
@@ -601,16 +603,23 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         conn = self.db.get_connection(self.cheque_db_name)
         if not conn: return
         cur = conn.cursor()
-        cur.execute("DELETE FROM bank_list")
-        save_idx = 1
-        self.bank_list_data = []
-        for r in range(total_row_idx):
-            it = self.bank_table.item(r, 1)
-            if it and it.text().strip():
-                cur.execute("INSERT INTO bank_list VALUES (?, ?)", (str(save_idx), it.text().strip()))
-                self.bank_list_data.append(it.text().strip())
-                save_idx += 1
-        conn.commit()
+        try:
+            rows_to_insert = []
+            save_idx = 1
+            self.bank_list_data = []
+            for r in range(total_row_idx):
+                it = self.bank_table.item(r, 1)
+                if it and it.text().strip():
+                    rows_to_insert.append((str(save_idx), it.text().strip()))
+                    self.bank_list_data.append(it.text().strip())
+                    save_idx += 1
+            cur.execute("DELETE FROM bank_list")
+            if rows_to_insert:
+                cur.executemany("INSERT INTO bank_list VALUES (?, ?)", rows_to_insert)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print(f"[ERROR] Failed to save bank_list: {e}")
 
         self.ensure_bank_row_capacity()
 
@@ -696,79 +705,80 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             get new SNs starting from 1, skipping any numbers already in use.
         """
         self.table.blockSignals(True)
-        data = []  # [(existing_sn_int | None, row_values_list)]
+        try:
+            data = []  # [(existing_sn_int | None, row_values_list)]
 
-        # 1. Collect data rows with their existing SN values
-        for r in range(self.table.rowCount()):
-            def val(c, _r=r):
-                w = self.table.cellWidget(_r, c)
-                if w and isinstance(w, QLineEdit): return w.text().strip()
-                it = self.table.item(_r, c)
-                return it.text().strip() if it and it.text().strip() else ""
+            # 1. Collect data rows with their existing SN values
+            for r in range(self.table.rowCount()):
+                def val(c, _r=r):
+                    w = self.table.cellWidget(_r, c)
+                    if w and isinstance(w, QLineEdit): return w.text().strip()
+                    it = self.table.item(_r, c)
+                    return it.text().strip() if it and it.text().strip() else ""
 
-            row = [val(c) for c in range(10)]
-            if any(v.strip() for v in row[1:]):
-                try:
-                    existing_sn = int(row[0])
-                except (ValueError, TypeError):
-                    existing_sn = None
-                data.append((existing_sn, row))
+                row = [val(c) for c in range(10)]
+                if any(v.strip() for v in row[1:]):
+                    try:
+                        existing_sn = int(row[0])
+                    except (ValueError, TypeError):
+                        existing_sn = None
+                    data.append((existing_sn, row))
 
-        # Track SN integers already claimed by data rows so buffer rows skip them
-        used_sns = {sn for sn, _ in data if sn is not None}
-        _next_ctr = [1]  # mutable counter for closure
+            # Track SN integers already claimed by data rows so buffer rows skip them
+            used_sns = {sn for sn, _ in data if sn is not None}
+            _next_ctr = [1]  # mutable counter for closure
 
-        def _next_free():
-            while _next_ctr[0] in used_sns:
+            def _next_free():
+                while _next_ctr[0] in used_sns:
+                    _next_ctr[0] += 1
+                v = _next_ctr[0]
+                used_sns.add(v)
                 _next_ctr[0] += 1
-            v = _next_ctr[0]
-            used_sns.add(v)
-            _next_ctr[0] += 1
-            return v
+                return v
 
-        # 2. Re-insert data rows, keeping original SNs where present
-        self.table.setRowCount(0)
-        for existing_sn, row_data in data:
-            idx = self.table.rowCount()
-            self.table.insertRow(idx)
-            for c, v in enumerate(row_data):
-                if c == 0:
-                    sn_val = existing_sn if existing_sn is not None else _next_free()
-                    cell_text = f"{sn_val:04d}"
-                else:
-                    cell_text = v
+            # 2. Re-insert data rows, keeping original SNs where present
+            self.table.setRowCount(0)
+            for existing_sn, row_data in data:
+                idx = self.table.rowCount()
+                self.table.insertRow(idx)
+                for c, v in enumerate(row_data):
+                    if c == 0:
+                        sn_val = existing_sn if existing_sn is not None else _next_free()
+                        cell_text = f"{sn_val:04d}"
+                    else:
+                        cell_text = v
 
-                item = QTableWidgetItem(cell_text)
-                if c == 0:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-                elif c == 6:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                elif c == 7:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.table.setItem(idx, c, item)
-
-        # 3. Add empty buffer rows with new sequential SNs (start from 1, skip used)
-        target = max(50, len(data) + 10)
-        while self.table.rowCount() < target:
-            idx = self.table.rowCount()
-            self.table.insertRow(idx)
-            sn_val = _next_free()
-            for c in range(10):
-                if c == 0:
-                    item = QTableWidgetItem(f"{sn_val:04d}")
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-                    self.table.setItem(idx, c, item)
-                else:
-                    item = QTableWidgetItem("")
-                    if c == 6:
+                    item = QTableWidgetItem(cell_text)
+                    if c == 0:
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                    elif c == 6:
                         item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                     elif c == 7:
                         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                     self.table.setItem(idx, c, item)
 
-        self.table.blockSignals(False)
+            # 3. Add empty buffer rows with new sequential SNs (start from 1, skip used)
+            target = max(50, len(data) + 10)
+            while self.table.rowCount() < target:
+                idx = self.table.rowCount()
+                self.table.insertRow(idx)
+                sn_val = _next_free()
+                for c in range(10):
+                    if c == 0:
+                        item = QTableWidgetItem(f"{sn_val:04d}")
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                        self.table.setItem(idx, c, item)
+                    else:
+                        item = QTableWidgetItem("")
+                        if c == 6:
+                            item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                        elif c == 7:
+                            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        self.table.setItem(idx, c, item)
+        finally:
+            self.table.blockSignals(False)
 
             
     def update_bank_counts(self):
@@ -1065,8 +1075,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         from PyQt6.QtPrintSupport import QPrintPreviewDialog
         preview = QPrintPreviewDialog(printer, self)
         preview.paintRequested.connect(self._paint_cheque_table)
-        # Open maximized so the toolbar (zoom controls) isn't cut off
-        preview.setWindowState(Qt.WindowState.WindowMaximized)
+        preview.resize(900, 680)
         preview.exec()
 
     def _paint_cheque_table(self, printer):
