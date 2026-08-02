@@ -882,11 +882,12 @@ QComboBox QAbstractItemView {
 
 /* Fix for Print Preview Toolbar Zoom ComboBox being cut off vertically */
 QToolBar QComboBox, QToolBar QLineEdit {
-    padding: 2px;
+    padding: 0px;
     margin: 0px;
-    min-height: 20px;
     font-size: 12px;
     border-radius: 2px;
+}
+QToolBar QLineEdit {
     qproperty-alignment: 'AlignCenter';
 }
 QToolBar QComboBox::drop-down {
