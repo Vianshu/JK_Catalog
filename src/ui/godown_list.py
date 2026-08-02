@@ -38,11 +38,14 @@ def _is_cn_excluded(part_no: str) -> bool:
     return any(p.startswith(prefix.upper()) for prefix in CN_BLANK_PREFIXES)
 
 
+# Pre-compute a space-free dictionary for robust matching
+_CLEAN_PART_NO_OVERRIDE = {k.replace(" ", ""): v for k, v in PART_NO_OVERRIDE.items()}
+
 def _apply_part_no_override(item_name: str, current_part_no: str) -> str:
     """Return the overridden Part No if the item name is in PART_NO_OVERRIDE,
-    otherwise return the original value."""
-    key = item_name.strip().lower()
-    return PART_NO_OVERRIDE.get(key, current_part_no)
+    otherwise return the original value. Ignores spaces for robust matching."""
+    clean_key = item_name.strip().lower().replace(" ", "")
+    return _CLEAN_PART_NO_OVERRIDE.get(clean_key, current_part_no)
 
 
 class _GodownSortProxyModel(QSortFilterProxyModel):
@@ -83,6 +86,25 @@ class _GodownSortProxyModel(QSortFilterProxyModel):
         return lv < rv       # alphabetical within same tier
 
 
+def _godown_enforce_match(editor, text: str, data_list: list, proxy, completer):
+    """Reject the last typed character if no entry in data_list contains it.
+    After rejecting, update the proxy and re-open the popup for the reverted text."""
+    if not text:
+        return
+    tl = text.lower()
+    for item in data_list:
+        if tl in str(item).lower():
+            return  # at least one match — allow
+    # No match: strip the last character
+    editor.blockSignals(True)
+    editor.setText(text[:-1])
+    editor.blockSignals(False)
+    # Re-open popup with correct matches for the reverted text
+    reverted = text[:-1].lower()
+    proxy.set_prefix(reverted)
+    completer.complete()
+
+
 class GodownListUI(ExcelTableMixin, QWidget):
     def __init__(self, data_folder_path, final_data_df=None):
         super().__init__()
@@ -96,6 +118,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
         self.final_db_name = ""
         self._active_editor = None  # Track (row, editor) for cleanup
         self._pre_cn       = ""    # CN value before the user starts editing col 6
+        self._cn_jump_map  = {}    # {jumped_to_cn: freed_cn} — exact jump history
         # _is_edit_mode is initialised by ExcelTableMixin._init_excel_table()
         
         # Debounced save timer — saves 1 second after last edit instead of on every keystroke
@@ -375,6 +398,11 @@ class GodownListUI(ExcelTableMixin, QWidget):
 
             # Keep proxy sorted whenever the user types
             editor.textEdited.connect(lambda t: proxy.set_prefix(t.strip()))
+            # Typing guard: reject characters that have no match in the list
+            editor.textEdited.connect(
+                lambda t, e=editor, dl=self.final_data, p=proxy, c=local_completer:
+                    _godown_enforce_match(e, t, dl, p, c)
+            )
             local_completer.activated.connect(lambda val: self._commit_alias_search(row, editor))
 
         self.table.setCellWidget(row, col, editor)
@@ -459,6 +487,8 @@ class GodownListUI(ExcelTableMixin, QWidget):
             self._is_edit_mode = True
             self.table.editItem(self.table.item(row, 1))
 
+            # Assign CN immediately so the new row gets a number right away
+            self._init_cn_values()
             self.save_data_to_db()
             return
 
@@ -503,21 +533,39 @@ class GodownListUI(ExcelTableMixin, QWidget):
                 # Excluded rows must never hold a CN — blank it immediately
                 item.setText("")
             elif text:
-                # Detect duplicate and swap with the old CN of this row.
-                # NOTE: by the time itemChanged fires, 'item' already holds the
-                # new value, so we use self._pre_cn (captured before the edit)
-                # as the "old" value to give to the conflicting row.
+                # Look for a duplicate CN on another row
+                swapped = False
                 for r in range(self.table.rowCount()):
                     if r == row:
                         continue
                     other = self.table.item(r, 6)
                     if other and other.text().strip() == text:
+                        # Swap: give the conflicting row the old CN of this row
                         self.set_item_locked(r, 6, self._pre_cn, should_lock=False)
+                        # If we displaced a row with our jump map entry, remove it
+                        try:
+                            displaced = int(text)
+                            if displaced in self._cn_jump_map:
+                                del self._cn_jump_map[displaced]
+                        except (ValueError, TypeError):
+                            pass
+                        swapped = True
                         break
+                if not swapped and self._pre_cn:
+                    # No swap happened — user jumped from _pre_cn to a new CN.
+                    # Record the exact mapping so _init_cn_values can substitute
+                    # the jumped-to position with the freed number later.
+                    try:
+                        self._cn_jump_map[int(text)] = int(self._pre_cn)
+                    except (ValueError, TypeError):
+                        pass
             self._pre_cn = ""  # reset after use
 
         self.table.blockSignals(False)
         self._save_timer.start()  # Debounced save — fires 1s after last edit
+        # After any CN column edit (swap or jump), fill any newly-blank rows
+        if col == 6:
+            QTimer.singleShot(0, self._init_cn_values)
     
     def load_data_from_db(self):
         conn = self.db.get_connection(self.godown_db_name)
@@ -569,33 +617,51 @@ class GodownListUI(ExcelTableMixin, QWidget):
             self._pre_cn = item.text().strip() if item else ""
 
     def _init_cn_values(self):
-        """Assign sequential CNs to eligible rows that currently have no CN.
+        """Assign CNs to eligible rows that have no CN yet.
 
-        Called after load_data_from_db() to ensure every named row has a CN
-        from the start.  Rows that already have a CN keep it (user edits are
-        preserved across sessions).
+        Assignment rule — CN is a serial number with substitution:
 
-        Rules (same as assign_cn_values):
-        - Rows with no name are skipped.
-        - Rows whose Part No matches CN_BLANK_PREFIXES are blanked.
-        - Remaining rows without a CN get the next available integer.
+        Let N = number of eligible rows that already have a CN.
+        The next natural candidate is N+1.
+
+        If N+1 is already occupied (user jumped to it from a lower number):
+          gaps          = integers missing from 1..N   (freed by jumps)
+          over_naturals = CN integers that are > N     (jumped-to values)
+          pre_claimed   = {over_natural: gap, ...}     (paired in order)
+          Assign pre_claimed[N+1] instead of N+1.
+
+        Otherwise assign N+1 directly.
+
+        Rows already holding a CN are left untouched.
+        Excluded-prefix rows are blanked.
         """
-        # Collect integers already in use so we don't create duplicates
-        used_cns: set = set()
-        for r in range(self.table.rowCount()):
-            cn_item = self.table.item(r, 6)
-            try:
-                used_cns.add(int(cn_item.text().strip()))
-            except (ValueError, TypeError, AttributeError):
-                pass
+        # ── Phase 1: collect current CN state ────────────────────────────
+        used_cns: set[int] = set()
+        n = 0  # count of eligible rows that already hold an integer CN
 
-        next_cn = 1
+        for r in range(self.table.rowCount()):
+            name_item = self.table.item(r, 0)
+            if not (name_item and name_item.text().strip()):
+                continue
+            part_item = self.table.item(r, 5)
+            part_no   = part_item.text().strip() if part_item else ""
+            if _is_cn_excluded(part_no):
+                continue
+            cn_item = self.table.item(r, 6)
+            if cn_item and cn_item.text().strip():
+                try:
+                    used_cns.add(int(cn_item.text().strip()))
+                    n += 1
+                except ValueError:
+                    pass
+
+        # ── Phase 2: assign CNs to rows that need one ────────────────────
         self.table.blockSignals(True)
         for r in range(self.table.rowCount()):
             name_item = self.table.item(r, 0)
             name = name_item.text().strip() if name_item else ""
             if not name:
-                continue  # empty row — skip
+                continue
 
             part_item = self.table.item(r, 5)
             part_no   = part_item.text().strip() if part_item else ""
@@ -607,12 +673,15 @@ class GodownListUI(ExcelTableMixin, QWidget):
             if cn_item and cn_item.text().strip():
                 continue  # already has a CN — leave it
 
-            # Find the next integer not already taken
-            while next_cn in used_cns:
-                next_cn += 1
-            self.set_item_locked(r, 6, str(next_cn), should_lock=False)
-            used_cns.add(next_cn)
-            next_cn += 1
+            # Use jump map first (exact: Y→X because X specifically moved to Y)
+            # Fall back to candidate itself if no jump was recorded for this position.
+            candidate = n + 1
+            new_cn    = self._cn_jump_map.pop(candidate, candidate)
+
+            self.set_item_locked(r, 6, str(new_cn), should_lock=False)
+            used_cns.add(new_cn)
+            n += 1
+
         self.table.blockSignals(False)
 
     def assign_cn_values(self):
@@ -675,10 +744,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
             for r, cn_val in zip(sorted_rows, sorted_cns):
                 self.set_item_locked(r, 6, cn_val, should_lock=False)
 
-            # 4. Re-assign sequential CN to data rows (enforces clean numbering)
-            self.assign_cn_values()
-
-            # 5. Delete empty rows and ensure minimum
+            # 4. Delete empty rows and ensure minimum
             self.delete_fully_empty_rows()
             self.ensure_minimum_rows(200)
 
@@ -727,9 +793,14 @@ class GodownListUI(ExcelTableMixin, QWidget):
                 p_no = str(data.get("Part_No", ""))
                 if p_no.lower() == "none": p_no = ""
                 self.set_item_locked(row, 5, p_no, should_lock=True)
-                # 6: CN - Unlock
-                self.set_item_locked(row, 6, "", should_lock=False)
+                # 6: CN - preserve existing value; only blank if excluded by Part No
+                existing_cn_item = self.table.item(row, 6)
+                existing_cn = existing_cn_item.text().strip() if existing_cn_item else ""
+                p_no_for_cn = _apply_part_no_override(str(data.get("Item_Name", "")), p_no)
+                new_cn = "" if _is_cn_excluded(p_no_for_cn) else existing_cn
+                self.set_item_locked(row, 6, new_cn, should_lock=False)
 
+                self._init_cn_values()   # assign CN immediately (real-time)
                 self.save_data_to_db()
                 return
 
