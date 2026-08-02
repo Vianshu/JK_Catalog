@@ -930,8 +930,8 @@ class GodownListUI(ExcelTableMixin, QWidget):
         )
         preview = QPrintPreviewDialog(printer, self)
         preview.paintRequested.connect(self.paint_table)
-        # Item 10: open at a comfortable, non-maximised size
-        preview.resize(900, 680)
+        # Open maximized so the toolbar (zoom controls) isn't cut off
+        preview.setWindowState(Qt.WindowState.WindowMaximized)
         preview.exec()
 
     def paint_table(self, printer):

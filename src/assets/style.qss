@@ -880,6 +880,20 @@ QComboBox QAbstractItemView {
     padding: 4px;
 }
 
+/* Fix for Print Preview Toolbar Zoom ComboBox being cut off vertically */
+QToolBar QComboBox, QToolBar QLineEdit {
+    padding: 2px;
+    margin: 0px;
+    min-height: 20px;
+    font-size: 12px;
+    border-radius: 2px;
+    qproperty-alignment: 'AlignCenter';
+}
+QToolBar QComboBox::drop-down {
+    width: 15px;
+}
+
+
 /* --- 25. Progress Bar --- */
 QProgressBar {
     border: 1px solid #E2E4E8;
@@ -1037,7 +1051,7 @@ QProgressBar::chunk {
 }
 #ChqSummaryLabel {
     font-weight: 700;
-    font-size: 15px;
+    font-size: 14px;
     margin-right: 10px;
 }
 #BtnOrange {

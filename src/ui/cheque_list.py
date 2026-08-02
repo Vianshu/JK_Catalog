@@ -90,10 +90,14 @@ def _enforce_match(editor: QLineEdit, text: str, data_list: list):
     editor.blockSignals(True)
     editor.setText(text[:-1])
     editor.blockSignals(False)
-    # Re-open the dropdown for the restored (still-valid) text
+    # Re-open the popup for the restored text.
+    # We call _on_text_edited (not bare complete()) so the proxy filter
+    # is updated to text[:-1] first — otherwise the popup would show empty
+    # results (still filtered to the rejected text) and Qt's popup event
+    # filter would intercept subsequent keypresses, bypassing this guard.
     completer = editor.completer()
-    if completer:
-        completer.complete()
+    if completer and hasattr(completer, '_on_text_edited'):
+        completer._on_text_edited(text[:-1])
 
 class AutocompleteDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
@@ -1061,7 +1065,8 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         from PyQt6.QtPrintSupport import QPrintPreviewDialog
         preview = QPrintPreviewDialog(printer, self)
         preview.paintRequested.connect(self._paint_cheque_table)
-        preview.resize(900, 680)
+        # Open maximized so the toolbar (zoom controls) isn't cut off
+        preview.setWindowState(Qt.WindowState.WindowMaximized)
         preview.exec()
 
     def _paint_cheque_table(self, printer):
