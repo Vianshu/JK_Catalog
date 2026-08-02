@@ -432,9 +432,9 @@ class GodownListUI(ExcelTableMixin, QWidget):
                 # Restore the name that was there before editing started
                 self.table.setItem(row, 0, self.create_table_item(pre))
             else:
-                # Row was truly empty before — clear everything
+                # Row was truly empty before — clear everything except CN
                 self.table.blockSignals(True)
-                for c in range(1, 7):
+                for c in range(1, 6):
                     lock = True if c in (2, 5) else False
                     self.set_item_locked(row, c, "", should_lock=lock)
                 self.table.setItem(row, 0, self.create_table_item(""))
@@ -519,9 +519,9 @@ class GodownListUI(ExcelTableMixin, QWidget):
                     QMessageBox.warning(self, "Invalid Input", "कृपया केवल संख्या (numbers) लिखें।")
                     item.setText("")
 
-        # If item name cleared, clear all other columns
+        # If item name cleared, clear all other columns except CN (col 6)
         if col == 0 and text == "":
-            for c in range(1, 7):
+            for c in range(1, 6):
                 lock = True if c in (2, 5) else False
                 self.set_item_locked(row, c, "", should_lock=lock)
 
@@ -673,10 +673,15 @@ class GodownListUI(ExcelTableMixin, QWidget):
             if cn_item and cn_item.text().strip():
                 continue  # already has a CN — leave it
 
-            # Use jump map first (exact: Y→X because X specifically moved to Y)
-            # Fall back to candidate itself if no jump was recorded for this position.
+            # Find a candidate that results in a new_cn not already in used_cns
             candidate = n + 1
-            new_cn    = self._cn_jump_map.pop(candidate, candidate)
+            while True:
+                new_cn = self._cn_jump_map.get(candidate, candidate)
+                if new_cn not in used_cns:
+                    break
+                candidate += 1
+                
+            new_cn = self._cn_jump_map.pop(candidate, candidate)
 
             self.set_item_locked(r, 6, str(new_cn), should_lock=False)
             used_cns.add(new_cn)
