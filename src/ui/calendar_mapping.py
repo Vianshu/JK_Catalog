@@ -101,27 +101,29 @@ class CalendarMappingUI(QWidget):
             return
             
         # 3. Generate and Append 5 years (1826 days)
-        for _ in range(1826): 
-            ad_str = curr_ad.strftime("%d-%m-%Y")
-            
-            # Get accurate astrological date from the package
-            bs_date = nepali_datetime.date.from_datetime_date(curr_ad)
-            y, m, d = bs_date.year, bs_date.month, bs_date.day
-            bs_str = f"{y:04d}-{m:02d}-{d:02d}"
-            
-            # Use MERGE for INSERT OR IGNORE behavior
-            cursor.execute("""
-                MERGE calendar AS target
-                USING (SELECT ? AS ad_date) AS source
-                ON target.ad_date = source.ad_date
-                WHEN NOT MATCHED THEN
-                    INSERT (ad_date, bs_date, year, month, day)
-                    VALUES (?, ?, ?, ?, ?);
-            """, (ad_str, ad_str, bs_str, str(y), str(m), str(d)))
-            
-            curr_ad += datetime.timedelta(days=1)
-        
-        conn.commit()
+        try:
+            for _ in range(1826): 
+                ad_str = curr_ad.strftime("%d-%m-%Y")
+                
+                bs_date = nepali_datetime.date.from_datetime_date(curr_ad)
+                y, m, d = bs_date.year, bs_date.month, bs_date.day
+                bs_str = f"{y:04d}-{m:02d}-{d:02d}"
+                
+                cursor.execute("""
+                    MERGE calendar AS target
+                    USING (SELECT ? AS ad_date) AS source
+                    ON target.ad_date = source.ad_date
+                    WHEN NOT MATCHED THEN
+                        INSERT (ad_date, bs_date, year, month, day)
+                        VALUES (?, ?, ?, ?, ?);
+                """, (ad_str, ad_str, bs_str, str(y), str(m), str(d)))
+                
+                curr_ad += datetime.timedelta(days=1)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            QMessageBox.critical(self, "Error", f"Failed to extend calendar: {e}")
+            return
         self.load_data()
         QMessageBox.information(self, "Success", "Calendar successfully extended by 5 years!")
 
@@ -141,25 +143,28 @@ class CalendarMappingUI(QWidget):
         curr_ad = datetime.date(2025, 7, 1)
         
         # Generate 5 years (1826 days)
-        for _ in range(1826): 
-            ad_str = curr_ad.strftime("%d-%m-%Y")
-            bs_date = nepali_datetime.date.from_datetime_date(curr_ad)
-            y, m, d = bs_date.year, bs_date.month, bs_date.day
-            bs_str = f"{y:04d}-{m:02d}-{d:02d}"
-            
-            cursor.execute("""
-                MERGE calendar AS target
-                USING (SELECT ? AS ad_date) AS source
-                ON target.ad_date = source.ad_date
-                WHEN NOT MATCHED THEN
-                    INSERT (ad_date, bs_date, year, month, day)
-                    VALUES (?, ?, ?, ?, ?);
-            """, (ad_str, ad_str, bs_str, str(y), str(m), str(d)))
-            
-            curr_ad += datetime.timedelta(days=1)
-        
-        conn.commit()
-        logger.info("Auto-generated 5 years of calendar data.")
+        try:
+            for _ in range(1826): 
+                ad_str = curr_ad.strftime("%d-%m-%Y")
+                bs_date = nepali_datetime.date.from_datetime_date(curr_ad)
+                y, m, d = bs_date.year, bs_date.month, bs_date.day
+                bs_str = f"{y:04d}-{m:02d}-{d:02d}"
+                
+                cursor.execute("""
+                    MERGE calendar AS target
+                    USING (SELECT ? AS ad_date) AS source
+                    ON target.ad_date = source.ad_date
+                    WHEN NOT MATCHED THEN
+                        INSERT (ad_date, bs_date, year, month, day)
+                        VALUES (?, ?, ?, ?, ?);
+                """, (ad_str, ad_str, bs_str, str(y), str(m), str(d)))
+                
+                curr_ad += datetime.timedelta(days=1)
+            conn.commit()
+            logger.info("Auto-generated 5 years of calendar data.")
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to auto-generate calendar data: {e}")
 
     def load_data(self):
         rows = self.db.execute_query(self._cal_db, "SELECT * FROM calendar")
@@ -195,10 +200,20 @@ class CalendarMappingUI(QWidget):
             QMessageBox.critical(self, "Error", "Could not connect to Calendar database.")
             return
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM calendar")
-        for r in range(self.table.rowCount()):
-            row_vals = [self.table.item(r, c).text() if self.table.item(r, c) else "" for c in range(5)]
-            if row_vals[0]:
-                cursor.execute("INSERT INTO calendar (ad_date, bs_date, year, month, day) VALUES (?,?,?,?,?)", row_vals)
-        conn.commit()
-        QMessageBox.information(self, "Saved", "Manual changes save ho gaye!")
+        try:
+            rows_to_insert = [
+                [self.table.item(r, c).text() if self.table.item(r, c) else "" for c in range(5)]
+                for r in range(self.table.rowCount())
+                if self.table.item(r, 0) and self.table.item(r, 0).text()
+            ]
+            cursor.execute("DELETE FROM calendar")
+            if rows_to_insert:
+                cursor.executemany(
+                    "INSERT INTO calendar (ad_date, bs_date, year, month, day) VALUES (?,?,?,?,?)",
+                    rows_to_insert
+                )
+            conn.commit()
+            QMessageBox.information(self, "Saved", "Manual changes save ho gaye!")
+        except Exception as e:
+            conn.rollback()
+            QMessageBox.critical(self, "Error", f"Failed to save calendar: {e}")

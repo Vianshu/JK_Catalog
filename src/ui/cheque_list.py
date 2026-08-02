@@ -798,36 +798,38 @@ class ChequeListUI(ExcelTableMixin, QWidget):
                 counts[name] = counts.get(name, 0) + 1
         
         self.bank_table.blockSignals(True)
-        total_count = 0
-        total_row_idx = self.bank_table.rowCount() - 1
-        
-        for r in range(total_row_idx):
-            bank_name_item = self.bank_table.item(r, 1)
-            if bank_name_item:
-                bn = bank_name_item.text().strip()
-                if bn:
-                    count_val = counts.get(bn, 0)
-                    total_count += count_val
-                    display_val = str(count_val) if count_val > 0 else ""
-                    
-                    self.bank_table.setItem(r, 2, QTableWidgetItem(display_val))
-                    count_item = self.bank_table.item(r, 2)
-                    if count_item:
-                        count_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                else:
-                    self.bank_table.setItem(r, 2, QTableWidgetItem(""))
+        try:
+            total_count = 0
+            total_row_idx = self.bank_table.rowCount() - 1
+            
+            for r in range(total_row_idx):
+                bank_name_item = self.bank_table.item(r, 1)
+                if bank_name_item:
+                    bn = bank_name_item.text().strip()
+                    if bn:
+                        count_val = counts.get(bn, 0)
+                        total_count += count_val
+                        display_val = str(count_val) if count_val > 0 else ""
+                        
+                        self.bank_table.setItem(r, 2, QTableWidgetItem(display_val))
+                        count_item = self.bank_table.item(r, 2)
+                        if count_item:
+                            count_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    else:
+                        self.bank_table.setItem(r, 2, QTableWidgetItem(""))
 
-        # Update Total Row
-        total_str = str(total_count) if total_count > 0 else "0"
-        total_item = QTableWidgetItem(total_str)
-        total_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.bank_table.setItem(total_row_idx, 2, total_item)
-        
-        lbl_item = QTableWidgetItem("Total")
-        lbl_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.bank_table.setItem(total_row_idx, 1, lbl_item)
-        self.bank_table.setItem(total_row_idx, 0, QTableWidgetItem(""))
-        self.bank_table.blockSignals(False)
+            # Update Total Row
+            total_str = str(total_count) if total_count > 0 else "0"
+            total_item = QTableWidgetItem(total_str)
+            total_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.bank_table.setItem(total_row_idx, 2, total_item)
+            
+            lbl_item = QTableWidgetItem("Total")
+            lbl_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.bank_table.setItem(total_row_idx, 1, lbl_item)
+            self.bank_table.setItem(total_row_idx, 0, QTableWidgetItem(""))
+        finally:
+            self.bank_table.blockSignals(False)
 
     def clear_completed_cheques(self):
         reply = QMessageBox.question(self, "Confirm Clear", "Kya aap saare 'C' (Cleared) cheques hatana chahte hain?", 
@@ -870,26 +872,27 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         cursor.execute("SELECT * FROM bank_list")
         bnks = cursor.fetchall()
         self.bank_table.blockSignals(True)
-        total_required_rows = max(30, len(bnks)+10)
-        self.bank_table.setRowCount(total_required_rows)
-        
-        total_idx = total_required_rows - 1
-        
-        for i in range(total_idx): 
-            self.bank_table.setItem(i, 0, QTableWidgetItem(str(i+1)))
-            self.bank_table.setItem(i, 1, QTableWidgetItem(""))
-            self.bank_table.setItem(i, 2, QTableWidgetItem(""))
+        try:
+            total_required_rows = max(30, len(bnks)+10)
+            self.bank_table.setRowCount(total_required_rows)
             
-        for r, b in enumerate(bnks): 
-            self.bank_table.setItem(r, 1, QTableWidgetItem(b[1]))
+            total_idx = total_required_rows - 1
             
-        self.bank_table.setItem(total_idx, 0, QTableWidgetItem(""))
-        total_lbl = QTableWidgetItem("Total")
-        total_lbl.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.bank_table.setItem(total_idx, 1, total_lbl)
-        self.bank_table.setItem(total_idx, 2, QTableWidgetItem(""))
-            
-        self.bank_table.blockSignals(False)
+            for i in range(total_idx): 
+                self.bank_table.setItem(i, 0, QTableWidgetItem(str(i+1)))
+                self.bank_table.setItem(i, 1, QTableWidgetItem(""))
+                self.bank_table.setItem(i, 2, QTableWidgetItem(""))
+                
+            for r, b in enumerate(bnks): 
+                self.bank_table.setItem(r, 1, QTableWidgetItem(b[1]))
+                
+            self.bank_table.setItem(total_idx, 0, QTableWidgetItem(""))
+            total_lbl = QTableWidgetItem("Total")
+            total_lbl.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.bank_table.setItem(total_idx, 1, total_lbl)
+            self.bank_table.setItem(total_idx, 2, QTableWidgetItem(""))
+        finally:
+            self.bank_table.blockSignals(False)
         self.bank_list_data = [b[1] for b in bnks]
         
         # Cheque list loading logic
@@ -897,30 +900,30 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         chqs = cursor.fetchall()
         
         self.table.blockSignals(True)
-        self.table.setRowCount(len(chqs))
-        for r, row in enumerate(chqs):
-            for c, v in enumerate(row):
-                if c >= 10: break
-                val = "" if v in (None, "None") else str(v)
-                
-                # S.N को लोड करते समय ही 001 फॉर्मेट में बदलें
-                if c == 0:
-                    try:
-                        val = f"{int(val):04d}"
-                    except Exception:
-                        val = f"{r + 1:04d}"
-                
-                item = QTableWidgetItem(val)
-                if c == 0:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)  # S.N not editable
-                elif c == 6:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                elif c == 7:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.table.setItem(r, c, item)
-        
-        self.table.blockSignals(False)
+        try:
+            self.table.setRowCount(len(chqs))
+            for r, row in enumerate(chqs):
+                for c, v in enumerate(row):
+                    if c >= 10: break
+                    val = "" if v in (None, "None") else str(v)
+                    
+                    if c == 0:
+                        try:
+                            val = f"{int(val):04d}"
+                        except Exception:
+                            val = f"{r + 1:04d}"
+                    
+                    item = QTableWidgetItem(val)
+                    if c == 0:
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                    elif c == 6:
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    elif c == 7:
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    self.table.setItem(r, c, item)
+        finally:
+            self.table.blockSignals(False)
         
         # --- 3. Final Triggers (सही क्रम) ---
         self.sync_cheque_rows()      # रोज़ को सिंक करें
@@ -981,26 +984,26 @@ class ChequeListUI(ExcelTableMixin, QWidget):
                 
     def ensure_bank_row_capacity(self):
         self.bank_table.blockSignals(True)
-        total_row_idx = self.bank_table.rowCount() - 1
-        filled = 0
-        for r in range(total_row_idx):
-            it = self.bank_table.item(r, 1)
-            if it and it.text().strip():
-                filled += 1
-
-        # Keep at least 4 empty rows above Total
-        empty_rows = total_row_idx - filled
-        if empty_rows < 4:
-            # Need to insert 5 rows above Total
-            for _ in range(5):
-                self.bank_table.insertRow(total_row_idx)
-            
-            # Recalculate SNs and update total_row_idx
+        try:
             total_row_idx = self.bank_table.rowCount() - 1
+            filled = 0
             for r in range(total_row_idx):
-                self.bank_table.setItem(r, 0, QTableWidgetItem(str(r+1)))
+                it = self.bank_table.item(r, 1)
+                if it and it.text().strip():
+                    filled += 1
+
+            # Keep at least 4 empty rows above Total
+            empty_rows = total_row_idx - filled
+            if empty_rows < 4:
+                for _ in range(5):
+                    self.bank_table.insertRow(total_row_idx)
                 
-        self.bank_table.blockSignals(False)
+                # Recalculate SNs and update total_row_idx
+                total_row_idx = self.bank_table.rowCount() - 1
+                for r in range(total_row_idx):
+                    self.bank_table.setItem(r, 0, QTableWidgetItem(str(r+1)))
+        finally:
+            self.bank_table.blockSignals(False)
 
     def set_export_location(self):
         """Pick an export folder via the shared helper (native dialog)."""
