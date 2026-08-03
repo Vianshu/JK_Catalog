@@ -512,6 +512,10 @@ class GodownListUI(ExcelTableMixin, QWidget):
 
             # Assign CN immediately so the new row gets a number right away
             self._init_cn_values()
+            
+            # Instantly recycle any freed gaps to the empty buffer rows
+            self._reassign_empty_cns()
+            
             self.save_data_to_db()
             return
 
@@ -774,6 +778,23 @@ class GodownListUI(ExcelTableMixin, QWidget):
         finally:
             self.table.blockSignals(False)
 
+    def _reassign_empty_cns(self):
+        """Immediately recycle any missing gaps to the empty buffer rows.
+        
+        This blanks all empty buffer rows and re-runs the gap filler, causing
+        freed CNs (like when a row is changed to JALI) to instantly appear
+        at the bottom of the table.
+        """
+        self.table.blockSignals(True)
+        try:
+            for r in range(self.table.rowCount()):
+                name_item = self.table.item(r, 0)
+                if not (name_item and name_item.text().strip()):
+                    self.set_item_locked(r, 6, "", should_lock=False)
+        finally:
+            self.table.blockSignals(False)
+        self._fill_all_cn_gaps()
+
     def manual_save_and_sort(self):
         """Save & Sort: sorts by Part No, re-sequences all CNs, then saves.
 
@@ -912,42 +933,15 @@ class GodownListUI(ExcelTableMixin, QWidget):
             current_folder=self.export_folder,
         )
 
-    def _get_max_named_cn(self):
-        """Find the largest CN currently held by a named row."""
-        max_cn = 0
-        for r in range(self.table.rowCount()):
-            name_item = self.table.item(r, 0)
-            if name_item and name_item.text().strip():
-                cn_item = self.table.item(r, 6)
-                if cn_item:
-                    try:
-                        v = int(cn_item.text().strip())
-                        if v > max_cn:
-                            max_cn = v
-                    except (ValueError, TypeError):
-                        pass
-        return max_cn
-
     def export_to_excel(self):
         if not hasattr(self, 'export_folder') or not self.export_folder:
             QMessageBox.warning(self, "Set Location", "Please set an export location first using 'Set Location' button.")
             return
 
-        max_cn = self._get_max_named_cn()
         data = []
         for r in range(self.table.rowCount()):
-            name_item = self.table.item(r, 0)
-            name = name_item.text().strip() if name_item else ""
-            
-            cn_item = self.table.item(r, 6)
-            try:
-                cn_val = int(cn_item.text().strip()) if cn_item else 0
-            except (ValueError, TypeError):
-                cn_val = 0
-
-            # Exclude trailing empty buffer rows: keep if named OR if CN <= max_cn
-            if name or (cn_val > 0 and cn_val <= max_cn):
-                row = [self.table.item(r, c).text() if self.table.item(r, c) else "" for c in range(7)]
+            row = [self.table.item(r, c).text() if self.table.item(r, c) else "" for c in range(7)]
+            if any(row):
                 data.append(row)
 
         if not data:
@@ -1048,25 +1042,18 @@ class GodownListUI(ExcelTableMixin, QWidget):
         # Reserve bottom of each page for the footer
         usable_h = page_h - footer_height - padding
 
-        # --- Collect data rows (stop printing empty buffer rows) ---
-        max_cn = self._get_max_named_cn()
+        # --- Collect data rows (skip fully empty) ---
         data_rows = []
         for r in range(self.table.rowCount()):
-            name_item = self.table.item(r, 0)
-            name = name_item.text().strip() if name_item else ""
-            
-            cn_item = self.table.item(r, 6)
-            try:
-                cn_val = int(cn_item.text().strip()) if cn_item else 0
-            except (ValueError, TypeError):
-                cn_val = 0
-
-            # Keep row if named or if CN is within the active pool (<= max_cn)
-            if name or (cn_val > 0 and cn_val <= max_cn):
-                row_data = []
-                for c in range(col_count):
-                    item = self.table.item(r, c)
-                    row_data.append(item.text() if item else "")
+            row_data = []
+            has_data = False
+            for c in range(col_count):
+                item = self.table.item(r, c)
+                text = item.text() if item else ""
+                if text.strip():
+                    has_data = True
+                row_data.append(text)
+            if has_data:
                 data_rows.append(row_data)
 
         # --- Alignment per column ---
