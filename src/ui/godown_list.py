@@ -149,6 +149,8 @@ class GodownListUI(ExcelTableMixin, QWidget):
             self.load_data_from_db()
             self.update_completer()
             self.ensure_minimum_rows(200)
+            # Every row (named or empty) must always have a CN from the start
+            self._fill_all_cn_gaps()
 
     # ---------------- LOAD PRODUCT DATA ----------------
     def load_final_data_from_db(self, company_path):
@@ -425,21 +427,18 @@ class GodownListUI(ExcelTableMixin, QWidget):
         Alias = editor.text().strip()
         self.table.removeCellWidget(row, 0)
 
-        # Item 8: Empty input — restore original value instead of clearing
+        # Empty input — user wants to clear the row completely
         if not Alias:
-            pre = getattr(self, '_pre_edit_text', '')
-            if pre:
-                # Restore the name that was there before editing started
-                self.table.setItem(row, 0, self.create_table_item(pre))
-            else:
-                # Row was truly empty before — clear everything except CN
-                self.table.blockSignals(True)
-                for c in range(1, 6):
-                    lock = True if c in (2, 5) else False
-                    self.set_item_locked(row, c, "", should_lock=lock)
-                self.table.setItem(row, 0, self.create_table_item(""))
-                self.table.blockSignals(False)
-                self.save_data_to_db()
+            self.table.blockSignals(True)
+            # Clear name
+            self.table.setItem(row, 0, self.create_table_item(""))
+            # Clear columns 1-5
+            for c in range(1, 6):
+                lock = True if c in (2, 5) else False
+                self.set_item_locked(row, c, "", should_lock=lock)
+            self.table.blockSignals(False)
+
+            self.save_data_to_db()
             return
 
         # Exact match first
@@ -481,7 +480,31 @@ class GodownListUI(ExcelTableMixin, QWidget):
             if not self.table.item(row, 6):
                 self.set_item_locked(row, 6, "", should_lock=False)
 
-            # 5. Move cursor to quantity col (col 1) and open editor
+            # 5. If Part No is excluded, handle CN removal (with dialog for named rows)
+            if _is_cn_excluded(p_no):
+                existing_cn_item = self.table.item(row, 6)
+                existing_cn = existing_cn_item.text().strip() if existing_cn_item else ""
+                if existing_cn:
+                    pre_name = getattr(self, '_pre_edit_text', '').strip()
+                    if pre_name:
+                        # Case 2: Row previously had a name with an assigned CN → ask
+                        reply = QMessageBox.question(
+                            self, 'Remove CN?',
+                            f"This product does not need a CN.\nRemove CN {existing_cn} and recycle it?",
+                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                            QMessageBox.StandardButton.Yes
+                        )
+                        if reply == QMessageBox.StandardButton.Yes:
+                            self.table.blockSignals(True)
+                            self.set_item_locked(row, 6, "", should_lock=False)
+                            self.table.blockSignals(False)
+                    else:
+                        # Case 1: Row was empty before — blank silently
+                        self.table.blockSignals(True)
+                        self.set_item_locked(row, 6, "", should_lock=False)
+                        self.table.blockSignals(False)
+
+            # 6. Move cursor to quantity col (col 1) and open editor
             self._nav_set_current(row, 1)
             self.table.setFocus()
             self._is_edit_mode = True
@@ -669,7 +692,10 @@ class GodownListUI(ExcelTableMixin, QWidget):
                 part_item = self.table.item(r, 5)
                 part_no   = part_item.text().strip() if part_item else ""
                 if _is_cn_excluded(part_no):
-                    self.set_item_locked(r, 6, "", should_lock=False)
+                    # CN removal for excluded rows is handled explicitly via
+                    # _commit_alias_search (with optional confirmation dialog).
+                    # _init_cn_values must not auto-blank here so that a user
+                    # who declined the dialog keeps their CN.
                     continue
 
                 cn_item = self.table.item(r, 6)
@@ -694,36 +720,73 @@ class GodownListUI(ExcelTableMixin, QWidget):
 
 
 
-    def assign_cn_values(self):
-        """Full re-sequence: assign CN 1..N to every eligible named row.
+    def _fill_all_cn_gaps(self):
+        """Ensure every row in the table has a CN, reusing any gaps.
 
-        Called from Save & Sort to enforce clean sequential numbering.
-        Unlike _init_cn_values(), this OVERWRITES existing CNs.
-
-        Rules:
-        - Rows with no name are skipped (CN stays as-is).
-        - Rows whose Part No starts with CN_BLANK_PREFIXES are blanked.
-        - All other named rows are numbered 1, 2, 3 … in table order.
+        - Rows that already have a CN are left untouched.
+        - Named excluded rows (CN_BLANK_PREFIXES) keep their blank CN.
+        - Missing CNs (gaps below the current max) are recycled and given 
+          to empty rows first. Once gaps are filled, it continues sequentially.
         """
+        # Collect all used CNs
+        used_cns: set[int] = set()
+        max_cn = 0
+        for r in range(self.table.rowCount()):
+            cn_item = self.table.item(r, 6)
+            try:
+                v = int(cn_item.text().strip()) if cn_item else 0
+                if v > 0:
+                    used_cns.add(v)
+                    if v > max_cn:
+                        max_cn = v
+            except (ValueError, TypeError):
+                pass
+
+        # Find available gaps
+        available_cns = [v for v in range(1, max_cn) if v not in used_cns]
+        available_cns.sort()
+
         self.table.blockSignals(True)
         try:
-            cn_counter = 1
+            next_new_cn = max_cn + 1
             for r in range(self.table.rowCount()):
                 name_item = self.table.item(r, 0)
                 name = name_item.text().strip() if name_item else ""
-                if not name:
-                    continue  # Empty row — skip
                 part_item = self.table.item(r, 5)
                 part_no = part_item.text().strip() if part_item else ""
-                if _is_cn_excluded(part_no):
+
+                if name and _is_cn_excluded(part_no):
                     self.set_item_locked(r, 6, "", should_lock=False)
+                    continue  # named excluded row — intentionally blank
+
+                cn_item = self.table.item(r, 6)
+                if cn_item and cn_item.text().strip():
+                    continue  # already has a CN — skip
+
+                # Assign a CN to this row
+                if available_cns:
+                    assigned_cn = available_cns.pop(0)
                 else:
-                    self.set_item_locked(r, 6, str(cn_counter), should_lock=False)
-                    cn_counter += 1
+                    assigned_cn = next_new_cn
+                    next_new_cn += 1
+
+                self.set_item_locked(r, 6, str(assigned_cn), should_lock=False)
         finally:
             self.table.blockSignals(False)
 
     def manual_save_and_sort(self):
+        """Save & Sort: sorts by Part No, re-sequences all CNs, then saves.
+
+        Steps:
+        1. Refresh Part No from stock_items (live DB lookup).
+        2. Sort named rows by Part No A→Z.
+        3. Delete fully-empty rows + ensure 200-row minimum buffer.
+        4. Re-assign CN 1..N to every eligible named row (in sorted order).
+        5. Fill every empty-name row with N+1, N+2, ... sequentially.
+        6. Save to DB and notify user.
+
+        CN re-sequencing (steps 4-5) ONLY happens when this button is pressed.
+        """
         self.table.blockSignals(True)
         try:
             # 1. Refresh Part No from stock_items
@@ -732,33 +795,12 @@ class GodownListUI(ExcelTableMixin, QWidget):
             # 2. Sort all rows by Part No A→Z
             self.table.sortItems(5, Qt.SortOrder.AscendingOrder)
 
-            # 3. For rows with no product (col 0 empty), sort their CN values ascending
-            #    Collect (cn_val, row_idx) for empty-name rows
-            empty_row_cns = []
-            for r in range(self.table.rowCount()):
-                name_item = self.table.item(r, 0)
-                if not name_item or not name_item.text().strip():
-                    cn_item = self.table.item(r, 6)
-                    cn_val = cn_item.text().strip() if cn_item else ""
-                    empty_row_cns.append((r, cn_val))
-
-            # Sort collected CNs numerically (non-numeric treated as very large)
-            def _cn_sort_key(t):
-                try:
-                    return int(t[1])
-                except (ValueError, TypeError):
-                    return 999999
-
-            empty_row_cns.sort(key=_cn_sort_key)
-            # Re-write sorted CN values back to the same rows (in sorted order)
-            sorted_rows = [r for r, _ in empty_row_cns]
-            sorted_cns  = sorted([cn for _, cn in empty_row_cns], key=lambda v: _cn_sort_key(("", v)))
-            for r, cn_val in zip(sorted_rows, sorted_cns):
-                self.set_item_locked(r, 6, cn_val, should_lock=False)
-
-            # 4. Delete empty rows and ensure minimum
+            # 3. Compact table, then pad to minimum row count
             self.delete_fully_empty_rows()
             self.ensure_minimum_rows(200)
+
+            # 4. Fill gaps and sequential CNs for all rows
+            self._fill_all_cn_gaps()
 
         except Exception as e:
             print(f"Error during save/sort: {e}")
@@ -819,14 +861,9 @@ class GodownListUI(ExcelTableMixin, QWidget):
         self.table.setItem(row, 0, QTableWidgetItem(Alias))
 
     def delete_fully_empty_rows(self):
-        """Delete rows where all columns 0-6 are empty"""
+        """Delete rows where all columns 0-5 are empty.
+        (We ignore column 6 / CN, because it is always auto-filled)."""
         for r in range(self.table.rowCount() - 1, -1, -1):
-            # If CN has value, keep row
-            cn_item = self.table.item(r, 6)
-            if cn_item and cn_item.text().strip() != "":
-                continue
-
-            # Check columns 0-5
             all_empty = True
             for c in range(0, 6):
                 item = self.table.item(r, c)
@@ -875,15 +912,42 @@ class GodownListUI(ExcelTableMixin, QWidget):
             current_folder=self.export_folder,
         )
 
+    def _get_max_named_cn(self):
+        """Find the largest CN currently held by a named row."""
+        max_cn = 0
+        for r in range(self.table.rowCount()):
+            name_item = self.table.item(r, 0)
+            if name_item and name_item.text().strip():
+                cn_item = self.table.item(r, 6)
+                if cn_item:
+                    try:
+                        v = int(cn_item.text().strip())
+                        if v > max_cn:
+                            max_cn = v
+                    except (ValueError, TypeError):
+                        pass
+        return max_cn
+
     def export_to_excel(self):
         if not hasattr(self, 'export_folder') or not self.export_folder:
             QMessageBox.warning(self, "Set Location", "Please set an export location first using 'Set Location' button.")
             return
 
+        max_cn = self._get_max_named_cn()
         data = []
         for r in range(self.table.rowCount()):
-            row = [self.table.item(r, c).text() if self.table.item(r, c) else "" for c in range(7)]
-            if any(row):
+            name_item = self.table.item(r, 0)
+            name = name_item.text().strip() if name_item else ""
+            
+            cn_item = self.table.item(r, 6)
+            try:
+                cn_val = int(cn_item.text().strip()) if cn_item else 0
+            except (ValueError, TypeError):
+                cn_val = 0
+
+            # Exclude trailing empty buffer rows: keep if named OR if CN <= max_cn
+            if name or (cn_val > 0 and cn_val <= max_cn):
+                row = [self.table.item(r, c).text() if self.table.item(r, c) else "" for c in range(7)]
                 data.append(row)
 
         if not data:
@@ -984,18 +1048,25 @@ class GodownListUI(ExcelTableMixin, QWidget):
         # Reserve bottom of each page for the footer
         usable_h = page_h - footer_height - padding
 
-        # --- Collect data rows (skip fully empty) ---
+        # --- Collect data rows (stop printing empty buffer rows) ---
+        max_cn = self._get_max_named_cn()
         data_rows = []
         for r in range(self.table.rowCount()):
-            row_data = []
-            has_data = False
-            for c in range(col_count):
-                item = self.table.item(r, c)
-                text = item.text() if item else ""
-                if text.strip():
-                    has_data = True
-                row_data.append(text)
-            if has_data:
+            name_item = self.table.item(r, 0)
+            name = name_item.text().strip() if name_item else ""
+            
+            cn_item = self.table.item(r, 6)
+            try:
+                cn_val = int(cn_item.text().strip()) if cn_item else 0
+            except (ValueError, TypeError):
+                cn_val = 0
+
+            # Keep row if named or if CN is within the active pool (<= max_cn)
+            if name or (cn_val > 0 and cn_val <= max_cn):
+                row_data = []
+                for c in range(col_count):
+                    item = self.table.item(r, c)
+                    row_data.append(item.text() if item else "")
                 data_rows.append(row_data)
 
         # --- Alignment per column ---

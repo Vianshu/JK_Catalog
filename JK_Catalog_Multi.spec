@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_data_files
 # ============================================================
 # JK Catalog Multi — PyInstaller Spec File
 # ============================================================
-# Builds a single-file Windows EXE for the MULTI-USER version.
+# Builds a one-dir (folder) Windows application for the MULTI-USER version.
 # Includes SQL Server (pyodbc), RBAC security, and multi-company
 # support designed for RDP-based deployments.
 #

@@ -936,7 +936,7 @@ class FullCatalogUI(QWidget):
 
             # Item 3: always check for missing images after a successful build
             missing_count = self._count_missing_images()
-            if missing_count > 0:
+            if missing_count > 0 and not self._build_silent:
                 self._show_missing_image_alert(missing_count)
         else:
             if not self._build_silent:

@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QLabel,
     QDialog, QComboBox, QListWidget, QFileDialog, QMessageBox, QProgressDialog
 )
-from PyQt6.QtCore import Qt, QMarginsF
+from PyQt6.QtCore import Qt, QMarginsF, pyqtSignal
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter, QPrintPreviewDialog
 from PyQt6.QtGui import QPainter, QPageSize, QPageLayout
 from src.logic.report_store import load_crm_list, load_report_json, save_report_json
@@ -86,6 +86,11 @@ class CRMSelectDialog(QDialog):
         self.pages_list.addItems(pending)
 
 class ReportsUI(QWidget):
+    # Emitted when the user clicks "Go to Final Data" from the missing-image warning.
+    # Carries the list of GUIDs for the missing-image products so Final Data can
+    # auto-select those rows.
+    navigate_to_final_data = pyqtSignal(list)
+
     def __init__(self):
         super().__init__()
         self.current_company_path = ""
@@ -185,6 +190,131 @@ class ReportsUI(QWidget):
             logger.info(f"Report download location set: '{path}'")
             QMessageBox.information(self, "Success", f"Download location set to:\n{path}")
 
+    def _get_pages_missing_images(self, pending_serials: list) -> dict:
+        """Return {serial_no: {'products': [...], 'guids': [...]}} for each
+        pending page that has at least one product without an image."""
+        result = {}
+        if not pending_serials or not self.logic:
+            return result
+        try:
+            conn = self.logic._get_conn("_DB_CATALOG")
+            if conn is None:
+                conn = self.logic._get_conn("catalog")
+        except Exception:
+            conn = None
+        try:
+            conn_fd = self.logic._get_conn("_DB_FINAL")
+            if conn_fd is None:
+                conn_fd = self.logic._get_conn("final")
+        except Exception:
+            conn_fd = None
+
+        if not conn or not conn_fd:
+            return result
+
+        try:
+            placeholders = ",".join(["?" for _ in pending_serials])
+            cursor = conn.cursor()
+            cursor.execute(
+                f"SELECT serial_no, group_name, sg_sn FROM catalog_pages "
+                f"WHERE serial_no IN ({placeholders})",
+                [str(s) for s in pending_serials]
+            )
+            page_map = {str(r[0]): (r[1], r[2]) for r in cursor.fetchall()}
+        except Exception as e:
+            import logging; logging.getLogger(__name__).warning(f"_get_pages_missing_images step1: {e}")
+            return result
+
+        try:
+            cursor_fd = conn_fd.cursor()
+            for serial, (grp, sg) in page_map.items():
+                cursor_fd.execute("""
+                    SELECT [Product Name], [Item_Name], [GUID]
+                    FROM catalog
+                    WHERE REPLACE(TRIM([Group]), '.', '') =
+                          REPLACE(TRIM(?), '.', '') COLLATE Latin1_General_CI_AI
+                      AND CAST([SG_SN] AS INTEGER) = CAST(? AS INTEGER)
+                      AND (LOWER(TRIM(CAST([True/False] AS NVARCHAR(MAX)))) NOT IN ('false', '0', 'no')
+                           OR [True/False] IS NULL OR TRIM([True/False]) = '')
+                      AND (CAST(REPLACE(ISNULL([Stock], '0'), ',', '') AS FLOAT) > 0
+                           OR LOWER(TRIM(CAST([True/False] AS NVARCHAR(MAX)))) IN ('1', 'true', 'yes'))
+                      AND ([Image_Path] IS NULL OR TRIM(CAST([Image_Path] AS NVARCHAR(MAX))) = '')
+                """, (grp, sg))
+                products, guids = [], []
+                for row in cursor_fd.fetchall():
+                    name = row[0] if row[0] and str(row[0]).strip() else row[1]
+                    if name:
+                        products.append(str(name).strip())
+                    if row[2]:
+                        guids.append(str(row[2]).strip())
+                if products:
+                    result[str(serial)] = {"products": products, "guids": guids}
+        except Exception as e:
+            import logging; logging.getLogger(__name__).warning(f"_get_pages_missing_images step2: {e}")
+        return result
+
+    def _show_missing_image_warning(self, pages_missing: dict) -> bool:
+        """Show a dialog listing pending pages with missing images.
+        Returns True if the user wants to Continue Anyway, False to cancel."""
+        from PyQt6.QtWidgets import QScrollArea
+        dlg = QDialog(self)
+        dlg.setWindowTitle("⚠️ Missing Images Detected")
+        dlg.setMinimumWidth(520)
+        dlg.setMinimumHeight(360)
+        layout = QVBoxLayout(dlg)
+
+        header = QLabel(
+            f"<b>{len(pages_missing)} pending page(s) have products with no image.</b><br>"
+            "You can continue printing or go to Final Data to fix them first."
+        )
+        header.setWordWrap(True)
+        layout.addWidget(header)
+
+        # Scrollable list of pages + products
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        inner = QWidget()
+        inner_layout = QVBoxLayout(inner)
+        inner_layout.setSpacing(4)
+        for serial in sorted(pages_missing.keys(), key=lambda x: int(x) if x.isdigit() else 0):
+            entry = pages_missing[serial]
+            products = entry["products"] if isinstance(entry, dict) else entry
+            lbl = QLabel(f"<b>Page {serial}:</b> " + ", ".join(products[:5])
+                         + (f" (+{len(products)-5} more)" if len(products) > 5 else ""))
+            lbl.setWordWrap(True)
+            inner_layout.addWidget(lbl)
+        inner_layout.addStretch()
+        inner.setLayout(inner_layout)
+        scroll.setWidget(inner)
+        layout.addWidget(scroll)
+
+        btn_row = QHBoxLayout()
+        btn_go = QPushButton("🔍 Go to Final Data")
+        btn_go.setObjectName("BtnBlue")
+        btn_continue = QPushButton("🖨️ Continue Anyway")
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.setObjectName("BtnCancel")
+        btn_row.addWidget(btn_go)
+        btn_row.addWidget(btn_continue)
+        btn_row.addWidget(btn_cancel)
+        layout.addLayout(btn_row)
+
+        user_choice = ["cancel"]
+        btn_go.clicked.connect(lambda: [user_choice.__setitem__(0, "go"), dlg.accept()])
+        btn_continue.clicked.connect(lambda: [user_choice.__setitem__(0, "continue"), dlg.accept()])
+        btn_cancel.clicked.connect(dlg.reject)
+
+        dlg.exec()
+        if user_choice[0] == "go":
+            # Collect all GUIDs from affected pages
+            all_guids = []
+            for entry in pages_missing.values():
+                guids = entry.get("guids", []) if isinstance(entry, dict) else []
+                all_guids.extend(guids)
+            self.navigate_to_final_data.emit(all_guids)
+            return False   # cancel the print flow
+        return user_choice[0] == "continue"
+
     def open_dialog(self, mode):
         """
         Open the unified printing flow:
@@ -221,6 +351,13 @@ class ReportsUI(QWidget):
             pending_serials = sorted(pending_serials, key=lambda x: int(x) if str(x).isdigit() else float('inf'))
         except Exception as e:
             pending_serials = sorted(pending_serials)
+
+        # 1b. Pre-flight: warn about pending pages with missing images
+        missing_pages = self._get_pages_missing_images(pending_serials)
+        if missing_pages:
+            should_continue = self._show_missing_image_warning(missing_pages)
+            if not should_continue:
+                return
 
         # 2. Open Print/Export Dialog
         # We pass the mode (Print or PDF) to pre-configure the dialog, but let the user switch if they want.
