@@ -574,14 +574,23 @@ class GodownListUI(ExcelTableMixin, QWidget):
                     # Excluded rows must never hold a CN — blank it immediately
                     item.setText("")
                 elif text:
-                    # Look for a duplicate CN on another row and swap
+                    # Look for a duplicate CN on another row
                     for r in range(self.table.rowCount()):
                         if r == row:
                             continue
                         other = self.table.item(r, 6)
                         if other and other.text().strip() == text:
-                            # Swap: give the conflicting row the old CN of this row
-                            self.set_item_locked(r, 6, self._pre_cn, should_lock=False)
+                            other_name = self.table.item(r, 0)
+                            if other_name and other_name.text().strip():
+                                # Target CN belongs to a named row — reject, revert to old CN
+                                item.setText(self._pre_cn)
+                                QMessageBox.warning(
+                                    self, "Cannot Swap",
+                                    f"CN {text} is assigned to a product.\nYou can only swap with an empty row."
+                                )
+                            else:
+                                # Target is an empty buffer row — swap allowed
+                                self.set_item_locked(r, 6, self._pre_cn, should_lock=False)
                             break
                 self._pre_cn = ""  # reset after use
         finally:
