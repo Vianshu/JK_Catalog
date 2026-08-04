@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
     QTableWidgetItem, QLineEdit, QLabel, QHeaderView,
     QPushButton, QCompleter, QMessageBox, QFileDialog,
-    QRadioButton, QButtonGroup, QAbstractItemView, QStyledItemDelegate, QSplitter
+    QRadioButton, QButtonGroup, QAbstractItemView, QStyledItemDelegate, QSplitter, QDialog
 )
 
 from PyQt6.QtGui import QTextDocument, QPageSize, QPageLayout, QFont, QPainter, QPen, QColor, QFontMetrics
@@ -1102,15 +1102,60 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             QMarginsF(5, 3, 5, 3),
             QPageLayout.Unit.Millimeter
         )
-        
+
         from PyQt6.QtPrintSupport import QPrintPreviewDialog
+        from PyQt6.QtWidgets import QToolBar
+
+        self._cheque_print_pages = []  # populated during first paintRequested
+        self._cheque_printer = printer
+
         preview = QPrintPreviewDialog(printer, self)
         preview.paintRequested.connect(self._paint_cheque_table)
+
+        # Override the internal "Print" toolbar action with our page-range-aware handler.
+        # QPrintPreviewDialog caches rendered pages and sends them directly — it does NOT
+        # re-call paintRequested with fromPage/toPage, so we intercept the action here.
+        self._preview_ref = preview
+        for toolbar in preview.findChildren(QToolBar):
+            for action in toolbar.actions():
+                tip = (action.toolTip() or "").lower()
+                txt = (action.text() or "").replace("&", "").strip().lower()
+                if tip == "print" or txt == "print":
+                    action.triggered.disconnect()
+                    action.triggered.connect(self._custom_print_from_preview)
+                    break
+
         preview.resize(900, 680)
         preview.exec()
 
-    def _paint_cheque_table(self, printer):
-        """Draw the cheque table directly using QPainter for pixel-perfect A4 Landscape output."""
+    def _custom_print_from_preview(self):
+        """Opened when user clicks Print inside QPrintPreviewDialog.
+        Bypasses the cached-page mechanism and renders the selected page
+        range directly to the physical printer."""
+        total = len(self._cheque_print_pages) if self._cheque_print_pages else 1
+        printer = self._cheque_printer
+
+        dlg = QPrintDialog(printer, self._preview_ref)
+        dlg.setOption(QPrintDialog.PrintDialogOption.PrintPageRange)
+        dlg.setMinMax(1, total)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        # Render only the selected page range directly to the physical printer
+        fp = printer.fromPage()   # 1-indexed; 0 = all
+        tp = printer.toPage()
+        if fp == 0 or tp == 0:
+            start_pg, end_pg = 0, total - 1
+        else:
+            start_pg = max(0, fp - 1)
+            end_pg   = min(tp - 1, total - 1)
+
+        self._paint_cheque_table(printer, page_range=(start_pg, end_pg))
+
+    def _paint_cheque_table(self, printer, page_range=None):
+        """Draw the cheque table directly using QPainter for pixel-perfect A4 Landscape output.
+        page_range: (start, end) 0-indexed inclusive. None = all pages (preview mode)."""
         painter = QPainter()
         if not painter.begin(printer):
             return
@@ -1221,19 +1266,60 @@ class ChequeListUI(ExcelTableMixin, QWidget):
                 x += col_widths[c]
             return y + row_height
 
-        # --- Render pages ---
-        y = 0
-        y = draw_title(y)
-        y = draw_header(y)
+        # --- Pre-calculate pages (pass 1) ---
+        # Simulate the layout to know which rows land on which page,
+        # so we can honour printer.fromPage() / printer.toPage() from the
+        # page-range selector in QPrintPreviewDialog's print dialog.
+        pages = []          # pages[i] = list of row_data for logical page i
+        current_page = []
 
+        # Page 0 has title + header; subsequent pages have header only
+        avail_h_p0 = page_h - title_height - header_height
+        avail_h    = page_h - header_height
+
+        used = 0
+        avail = avail_h_p0
         for row_data in data_rows:
-            if y + row_height > page_h:
+            if used + row_height > avail:
+                pages.append(current_page)
+                current_page = []
+                used = 0
+                avail = avail_h
+            current_page.append(row_data)
+            used += row_height
+        if current_page or not pages:
+            pages.append(current_page)
+
+        total_pages = len(pages)
+
+        # Store pages so _custom_print_from_preview knows the total count
+        self._cheque_print_pages = pages
+
+        # Determine which pages to render
+        # page_range=(start, end) is passed by _custom_print_from_preview (0-indexed).
+        # When called from QPrintPreviewDialog (preview mode), page_range=None → all pages.
+        if page_range is None:
+            start_pg, end_pg = 0, total_pages - 1
+        else:
+            start_pg, end_pg = page_range[0], min(page_range[1], total_pages - 1)
+
+        # --- Render selected pages (pass 2) ---
+        first = True
+        for pg_idx in range(start_pg, end_pg + 1):
+            if not first:
                 printer.newPage()
-                y = 0
-                y = draw_header(y)
-            y = draw_row(y, row_data)
+            first = False
+
+            y = 0
+            if pg_idx == 0:          # Title only on the first logical page
+                y = draw_title(y)
+            y = draw_header(y)
+
+            for row_data in pages[pg_idx]:
+                y = draw_row(y, row_data)
 
         painter.end()
+
 
 
     # ── ExcelTableMixin overrides ────────────────────────────────────────────

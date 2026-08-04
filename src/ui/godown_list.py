@@ -924,22 +924,66 @@ class GodownListUI(ExcelTableMixin, QWidget):
         printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
         printer.setPageOrientation(QPageLayout.Orientation.Portrait)
         printer.setPageMargins(QMarginsF(12, 12, 12, 12), QPageLayout.Unit.Millimeter)
+
+        self._godown_print_pages = []
+        self._godown_printer = printer
+
         preview = QPrintPreviewDialog(printer, self)
         preview.paintRequested.connect(self.paint_table)
+
+        # Override the internal "Print" toolbar action with our page-range-aware handler.
+        # QPrintPreviewDialog caches rendered pages and sends them directly — it does NOT
+        # re-call paintRequested with fromPage/toPage, so we intercept the action here.
+        self._godown_preview_ref = preview
+        for toolbar in preview.findChildren(QToolBar):
+            for action in toolbar.actions():
+                tip = (action.toolTip() or "").lower()
+                txt = (action.text() or "").replace("&", "").strip().lower()
+                if tip == "print" or txt == "print":
+                    action.triggered.disconnect()
+                    action.triggered.connect(self._custom_print_godown)
+                    break
+
         preview.resize(900, 680)
         preview.exec()
 
-    def paint_table(self, printer):
+    def _custom_print_godown(self):
+        """Called when user clicks Print inside the godown QPrintPreviewDialog.
+        Opens QPrintDialog with proper page range support and renders only selected pages."""
+        total = len(self._godown_print_pages) if self._godown_print_pages else 1
+        printer = self._godown_printer
+
+        from PyQt6.QtPrintSupport import QPrintDialog
+        dlg = QPrintDialog(printer, self._godown_preview_ref)
+        dlg.setOption(QPrintDialog.PrintDialogOption.PrintPageRange)
+        dlg.setMinMax(1, total)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        fp = printer.fromPage()   # 1-indexed; 0 = all
+        tp = printer.toPage()
+        if fp == 0 or tp == 0:
+            start_pg, end_pg = 0, total - 1
+        else:
+            start_pg = max(0, fp - 1)
+            end_pg   = min(tp - 1, total - 1)
+
+        self.paint_table(printer, page_range=(start_pg, end_pg))
+
+    def paint_table(self, printer, page_range=None):
         """Draw the table directly using QPainter for pixel-perfect A4 output.
 
         Items 10, 11, 12:
         - A4 paper size (set in handle_print_preview)
         - Column widths derived from actual screen column widths (proportional)
         - Page number and print date printed in a footer on every page
+        page_range: (start, end) 0-indexed inclusive. None = all pages (preview mode).
         """
         painter = QPainter()
         if not painter.begin(printer):
             return
+
 
         page_rect = printer.pageLayout().paintRectPixels(printer.resolution())
         page_w = page_rect.width()
@@ -1048,20 +1092,43 @@ class GodownListUI(ExcelTableMixin, QWidget):
                 f"Page {page_num}"
             )
 
-        # --- Render pages ---
-        page_num = 1
-        y = 0
-        y = draw_header(y)
-
+        # --- Pre-calculate pages (pass 1) ---
+        pages = []
+        current_page = []
+        avail_h = usable_h - header_height
+        used = 0
         for row_data in data_rows:
-            if y + row_height > usable_h:
-                draw_footer(page_num)
+            if used + row_height > avail_h:
+                pages.append(current_page)
+                current_page = []
+                used = 0
+            current_page.append(row_data)
+            used += row_height
+        if current_page or not pages:
+            pages.append(current_page)
+
+        total_pages = len(pages)
+        # Store for _custom_print_godown to know total count
+        self._godown_print_pages = pages
+
+        # Determine which pages to render
+        if page_range is None:
+            start_pg, end_pg = 0, total_pages - 1
+        else:
+            start_pg, end_pg = page_range[0], min(page_range[1], total_pages - 1)
+
+        # --- Render selected pages (pass 2) ---
+        first = True
+        for pg_idx in range(start_pg, end_pg + 1):
+            if not first:
                 printer.newPage()
-                page_num += 1
-                y = 0
-                y = draw_header(y)
-            y = draw_row(y, row_data)
+            first = False
 
-        draw_footer(page_num)  # Footer on last page
+            page_num = pg_idx + 1
+            y = 0
+            y = draw_header(y)
+            for row_data in pages[pg_idx]:
+                y = draw_row(y, row_data)
+            draw_footer(page_num)
+
         painter.end()
-
