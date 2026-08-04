@@ -403,6 +403,9 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         self.bank_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.bank_table.setColumnWidth(2, 60)
         self.bank_table.itemChanged.connect(self.handle_bank_change)
+        # Capture old name before user starts editing a bank cell
+        self.bank_table.currentItemChanged.connect(self._capture_pre_bank_name)
+        self._pre_bank_name = ""
 
         right_layout.addWidget(self.bank_table)
 
@@ -590,14 +593,39 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             print(f"[ERROR] Failed to save cheques: {e}")
         self.update_summary()
         
+    def _capture_pre_bank_name(self, current, previous):
+        """Store the bank name before the user starts editing, so we can revert if needed."""
+        if current and current.column() == 1:
+            self._pre_bank_name = current.text().strip()
+
     # ================= BANK LIST =================
     def handle_bank_change(self, item):
         if item.column() != 1: return
-        
+
         total_row_idx = self.bank_table.rowCount() - 1
-        if item.row() == total_row_idx: return # Ignoring edits on total row
+        if item.row() == total_row_idx: return  # Ignore edits on total row
 
         new_name = item.text().strip()
+        old_name = self._pre_bank_name
+
+        # If the bank name was cleared (user deleted it), check if it's still in use
+        if not new_name and old_name:
+            # Count how many cheque rows reference this bank
+            used_count = 0
+            for r in range(self.table.rowCount()):
+                bank_item = self.table.item(r, 3)
+                if bank_item and bank_item.text().strip() == old_name:
+                    used_count += 1
+            if used_count > 0:
+                # Revert — cannot remove a bank that is in use
+                self.bank_table.blockSignals(True)
+                item.setText(old_name)
+                self.bank_table.blockSignals(False)
+                QMessageBox.warning(
+                    self, "Cannot Remove Bank",
+                    f"'{old_name}' is used in {used_count} cheque(s).\nClear those cheques first before removing this bank."
+                )
+                return
 
         # DB Update Logic (Export explicit list items to bank_list)
         conn = self.db.get_connection(self.cheque_db_name)
@@ -1071,7 +1099,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
         printer.setPageOrientation(QPageLayout.Orientation.Landscape)
         printer.setPageMargins(
-            QMarginsF(10, 10, 10, 10),
+            QMarginsF(5, 3, 5, 3),
             QPageLayout.Unit.Millimeter
         )
         
@@ -1093,8 +1121,8 @@ class ChequeListUI(ExcelTableMixin, QWidget):
 
         # --- Fonts (use painter.fontMetrics for PRINTER DPI measurements) ---
         title_font = QFont("Segoe UI", 12, QFont.Weight.Bold)
-        header_font = QFont("Segoe UI", 9, QFont.Weight.Bold)
-        cell_font = QFont("Segoe UI", 8)
+        header_font = QFont("Segoe UI", 11, QFont.Weight.Bold)
+        cell_font = QFont("Segoe UI", 10)
 
         # Measure using painter's coordinate system (printer DPI, not screen DPI)
         painter.setFont(title_font)

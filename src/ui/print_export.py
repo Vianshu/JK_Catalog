@@ -161,23 +161,43 @@ class PDFPreviewDialog(QDialog):
         """
         from PyQt6.QtWidgets import QApplication
 
+        # Open the PDF first so we know total page count before showing dialog
+        try:
+            doc_check = fitz.open(self.pdf_path)
+            total = len(doc_check)
+            doc_check.close()
+        except Exception as e:
+            QMessageBox.critical(self, "Print Error", f"Could not open PDF:\n{e}")
+            return
+
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
         dialog = QPrintDialog(printer, self)
+        # Enable page range selection in the print dialog
+        dialog.setOption(QPrintDialog.PrintDialogOption.PrintPageRange)
+        dialog.setMinMax(1, total)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-            
+
+        # Determine which pages to print
+        from_page = printer.fromPage()   # 1-indexed; 0 = all
+        to_page   = printer.toPage()     # 1-indexed; 0 = all
+        if from_page == 0 or to_page == 0:
+            start, end = 0, total - 1   # All pages
+        else:
+            start = max(0, from_page - 1)
+            end   = min(to_page - 1, total - 1)
+
+        pages_to_print = list(range(start, end + 1))
+
         # Crucial on Windows: release file lock so PyMuPDF can open it
         self.pdf_document.close()
 
         doc = None
         try:
-            # Enforce full page mapping so hardware margins symmetrically trim the image
             printer.setFullPage(True)
-
             doc = fitz.open(self.pdf_path)
-            total = len(doc)
 
-            progress = QProgressDialog("Starting print job...", "Cancel", 0, total, self)
+            progress = QProgressDialog("Starting print job...", "Cancel", 0, len(pages_to_print), self)
             progress.setWindowTitle("Printing")
             progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setMinimumDuration(0)
@@ -198,7 +218,7 @@ class PDFPreviewDialog(QDialog):
             zoom_matrix = fitz.Matrix(300 / 72, 300 / 72)
             cancelled = False
 
-            for i in range(total):
+            for idx, i in enumerate(pages_to_print):
                 if progress.wasCanceled():
                     cancelled = True
                     break
@@ -214,10 +234,10 @@ class PDFPreviewDialog(QDialog):
                 painter.drawImage(
                     printer.paperRect(QPrinter.Unit.DevicePixel), img)
 
-                if i < total - 1:
+                if idx < len(pages_to_print) - 1:
                     printer.newPage()
 
-                progress.setValue(i + 1)
+                progress.setValue(idx + 1)
                 progress.setLabelText(f"Printing page {i + 1} of {total}...")
                 QApplication.processEvents()
 
