@@ -28,6 +28,9 @@ PART_NO_OVERRIDE = {
 # get a blank CN value and are excluded from sequential numbering.
 CN_BLANK_PREFIXES = ("COL", "GI P", "JALI", "LDR", "SDC")
 
+# CN numbers that must never be assigned to any row (culturally/business reserved)
+_EXCLUDED_CNS = frozenset({6, 9, 66, 69, 86, 89, 98, 99})
+
 
 def _is_cn_excluded(part_no: str) -> bool:
     """Return True if this row's Part No means it should have a blank CN.
@@ -272,6 +275,12 @@ class GodownListUI(ExcelTableMixin, QWidget):
         
         layout.addWidget(self.table)
 
+        # Larger font fills the cell; 1px padding leaves maximum room for text
+        self.table.setFont(QFont("Segoe UI", 11))
+        self.table.setStyleSheet(
+            "QTableWidget::item { padding: 1px; margin: 0px; }"
+        )
+
     def apply_edit_mode(self, can_edit: bool):
         """Called by main_window._apply_permissions() to enforce display-only mode.
 
@@ -406,11 +415,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
 
             # Keep proxy sorted whenever the user types
             editor.textEdited.connect(lambda t: proxy.set_prefix(t.strip()))
-            # Typing guard: reject characters that have no match in the list
-            editor.textEdited.connect(
-                lambda t, e=editor, dl=self.final_data, p=proxy, c=local_completer:
-                    _godown_enforce_match(e, t, dl, p, c)
-            )
+            # No typing guard — user can type anything (autocomplete gives suggestions only)
             local_completer.activated.connect(lambda val: self._commit_alias_search(row, editor))
 
         self.table.setCellWidget(row, col, editor)
@@ -439,8 +444,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
             # Clear name and columns 1-5 only; CN stays as-is
             self.table.setItem(row, 0, self.create_table_item(""))
             for c in range(1, 6):
-                lock = True if c in (2, 5) else False
-                self.set_item_locked(row, c, "", should_lock=lock)
+                self.set_item_locked(row, c, "", should_lock=False)
             self.table.blockSignals(False)
 
             self.save_data_to_db()
@@ -462,18 +466,18 @@ class GodownListUI(ExcelTableMixin, QWidget):
             # 1. Set Item Name (from Name column, not Alias)
             self.table.setItem(row, 0, self.create_table_item(item_name))
 
-            # 2. Unit - auto-fill and lock
+            # 2. Unit - auto-fill, editable (user can override)
             self.table.setItem(row, 2, self.create_table_item(
-                data.get("Unit", ""), Qt.AlignmentFlag.AlignCenter, True))
+                data.get("Unit", ""), Qt.AlignmentFlag.AlignCenter, False))
 
-            # 3. Part No - auto-fill, apply override, then lock
+            # 3. Part No - auto-fill, apply override, editable (user can override)
             p_no = str(data.get("Part_No", ""))
             if p_no.lower() == "none":
                 p_no = ""
             # Item 13: override Part No for mapped products
             p_no = _apply_part_no_override(item_name, p_no)
             self.table.setItem(row, 5, self.create_table_item(
-                p_no, Qt.AlignmentFlag.AlignCenter, True))
+                p_no, Qt.AlignmentFlag.AlignCenter, False))
 
             # 4. Set remaining columns as editable (if empty)
             if not self.table.item(row, 1):
@@ -533,10 +537,21 @@ class GodownListUI(ExcelTableMixin, QWidget):
             self.save_data_to_db()
             return
 
-        # No match — reject the input, restore previous value and stay on the cell
-        prev_text = getattr(self, '_pre_edit_text', '')
-        self.table.setItem(row, 0, self.create_table_item(prev_text))
-        self._nav_set_current(row, 0)  # stay on col 0, Mode 1
+        # No match in lookup — allow the typed text and let user fill Unit/Part No manually
+        self.table.setItem(row, 0, self.create_table_item(Alias))
+        # Ensure Unit and Part No are editable for manual entry
+        unit_val = self.table.item(row, 2).text() if self.table.item(row, 2) else ""
+        pno_val  = self.table.item(row, 5).text() if self.table.item(row, 5) else ""
+        self.set_item_locked(row, 2, unit_val, should_lock=False)
+        self.set_item_locked(row, 5, pno_val,  should_lock=False)
+        # Ensure col 1 item exists before opening editor (fresh row may have None)
+        if not self.table.item(row, 1):
+            self.set_item_locked(row, 1, "", should_lock=False)
+        self._nav_set_current(row, 1)
+        self.table.setFocus()
+        self._is_edit_mode = True
+        self.table.editItem(self.table.item(row, 1))
+        self.save_data_to_db()
     
     def ensure_minimum_rows(self, min_rows=200):
         """Ensure at least min_rows rows exist in the table"""
@@ -548,6 +563,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
         row = item.row()
         col = item.column()
         text = item.text().strip()
+        _trigger_sort = False  # set True when CN cleared on a named row
 
         self.table.blockSignals(True)
         try:
@@ -560,42 +576,87 @@ class GodownListUI(ExcelTableMixin, QWidget):
                         QMessageBox.warning(self, "Invalid Input", "कृपया केवल संख्या (numbers) लिखें।")
                         item.setText("")
 
+            # Column 3 (जम्मा कार्टुन) — right-align + arithmetic expression evaluator (+ and - only)
+            if col == 3:
+                item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                if text and any(op in text for op in '+-'):
+                    import re as _re
+                    tokens = _re.findall(r'[+-]?\d+', text.replace(' ', ''))
+                    if tokens:
+                        try:
+                            result = sum(int(t) for t in tokens)
+                            item.setText(str(result))
+                        except ValueError:
+                            pass
+
+            # Column 4 (Godown) — auto-uppercase and center-align
+            if col == 4 and text:
+                item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+                item.setText(text.upper())
+
             # If item name cleared, clear all other columns except CN (col 6)
             if col == 0 and text == "":
                 for c in range(1, 6):
-                    lock = True if c in (2, 5) else False
-                    self.set_item_locked(row, c, "", should_lock=lock)
+                    self.set_item_locked(row, c, "", should_lock=False)
 
-            # CN column (col 6) — enforce blank for excluded prefixes; swap on duplicate
+            # CN column (col 6) — enforce blank for excluded prefixes; handle clear; swap on duplicate
             if col == 6:
                 part_item = self.table.item(row, 5)
                 part_no = part_item.text().strip() if part_item else ""
                 if _is_cn_excluded(part_no):
                     # Excluded rows must never hold a CN — blank it immediately
                     item.setText("")
+                elif not text:
+                    # CN was cleared — if row has a product, clear the product and sort
+                    name_item = self.table.item(row, 0)
+                    if name_item and name_item.text().strip():
+                        for c in range(0, 6):
+                            self.set_item_locked(row, c, "", should_lock=False)
+                        _trigger_sort = True
+                    # else: empty buffer row CN cleared — _fill_all_cn_gaps re-assigns on next sort
                 elif text:
-                    # Look for a duplicate CN on another row
-                    for r in range(self.table.rowCount()):
-                        if r == row:
-                            continue
-                        other = self.table.item(r, 6)
-                        if other and other.text().strip() == text:
-                            other_name = self.table.item(r, 0)
-                            if other_name and other_name.text().strip():
-                                # Target CN belongs to a named row — reject, revert to old CN
-                                item.setText(self._pre_cn)
-                                QMessageBox.warning(
-                                    self, "Cannot Swap",
-                                    f"CN {text} is assigned to a product.\nYou can only swap with an empty row."
-                                )
-                            else:
-                                # Target is an empty buffer row — swap allowed
-                                self.set_item_locked(r, 6, self._pre_cn, should_lock=False)
-                            break
+                    # Reject permanently excluded CN numbers
+                    _cn_rejected = False
+                    try:
+                        if int(text) in _EXCLUDED_CNS:
+                            item.setText(self._pre_cn)
+                            QMessageBox.warning(
+                                self, "Invalid CN",
+                                f"CN {text} is reserved and cannot be assigned."
+                            )
+                            _cn_rejected = True
+                    except ValueError:
+                        pass
+
+                    if not _cn_rejected:
+                        # Look for a duplicate CN on another row
+                        for r in range(self.table.rowCount()):
+                            if r == row:
+                                continue
+                            other = self.table.item(r, 6)
+                            if other and other.text().strip() == text:
+                                other_name = self.table.item(r, 0)
+                                if other_name and other_name.text().strip():
+                                    # Target CN belongs to a named row — reject, revert to old CN
+                                    item.setText(self._pre_cn)
+                                    QMessageBox.warning(
+                                        self, "Cannot Swap",
+                                        f"CN {text} is assigned to a product.\nYou can only swap with an empty row."
+                                    )
+                                else:
+                                    # Target is an empty buffer row — swap allowed
+                                    self.set_item_locked(r, 6, self._pre_cn, should_lock=False)
+                                break
                 self._pre_cn = ""  # reset after use
         finally:
             self.table.blockSignals(False)
-        self._save_timer.start()  # Debounced save — fires 1s after last edit
+
+        if _trigger_sort:
+            # CN cleared on a named row — run silent sort so the freed CN
+            # gets recycled and empty buffer rows are re-ordered.
+            self.manual_save_and_sort(silent=True)
+        else:
+            self._save_timer.start()  # Debounced save — fires 1s after last edit
     
     def load_data_from_db(self):
         conn = self.db.get_connection(self.godown_db_name)
@@ -615,8 +676,9 @@ class GodownListUI(ExcelTableMixin, QWidget):
                     is_locked = False
                     
                     if c == 1: align = Qt.AlignmentFlag.AlignRight # प्रति कार्टुन
-                    if c in (2, 5, 6): align = Qt.AlignmentFlag.AlignCenter # Unit, PartNo, CN
-                    if c in (2, 5): is_locked = True # Unit and Part No locked
+                    if c == 3: align = Qt.AlignmentFlag.AlignRight # जम्मा कार्टुन
+                    if c in (2, 4, 5, 6): align = Qt.AlignmentFlag.AlignCenter # Unit, Godown, PartNo, CN
+                    # cols 2 and 5 are now editable (user can override Unit/Part No)
                     
                     self.table.setItem(r, c, self.create_table_item(val, align, is_locked))
         finally:
@@ -681,13 +743,20 @@ class GodownListUI(ExcelTableMixin, QWidget):
             except (ValueError, TypeError):
                 pass
 
-        # Find available gaps
-        available_cns = [v for v in range(1, max_cn) if v not in used_cns]
+        # Find available gaps — permanently excluded CNs are never recycled
+        available_cns = [
+            v for v in range(1, max_cn)
+            if v not in used_cns and v not in _EXCLUDED_CNS
+        ]
         available_cns.sort()
 
         self.table.blockSignals(True)
         try:
+            # Start sequential assignment after max used CN, skipping excluded numbers
             next_new_cn = max_cn + 1
+            while next_new_cn in _EXCLUDED_CNS:
+                next_new_cn += 1
+
             for r in range(self.table.rowCount()):
                 name_item = self.table.item(r, 0)
                 name = name_item.text().strip() if name_item else ""
@@ -702,12 +771,14 @@ class GodownListUI(ExcelTableMixin, QWidget):
                 if cn_item and cn_item.text().strip():
                     continue  # already has a CN — skip
 
-                # Assign a CN to this row
+                # Assign a CN to this row, skipping excluded numbers
                 if available_cns:
                     assigned_cn = available_cns.pop(0)
                 else:
                     assigned_cn = next_new_cn
                     next_new_cn += 1
+                    while next_new_cn in _EXCLUDED_CNS:
+                        next_new_cn += 1
 
                 self.set_item_locked(r, 6, str(assigned_cn), should_lock=False)
         finally:
@@ -730,7 +801,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
             self.table.blockSignals(False)
         self._fill_all_cn_gaps()
 
-    def manual_save_and_sort(self):
+    def manual_save_and_sort(self, silent=False):
         """Save & Sort:
         1. Refresh Part No from stock_items (live DB lookup).
         2. Sort named rows by Part No A→Z, then empty rows by CN ascending.
@@ -777,8 +848,10 @@ class GodownListUI(ExcelTableMixin, QWidget):
                     align = Qt.AlignmentFlag.AlignLeft
                     is_locked = False
                     if c == 1: align = Qt.AlignmentFlag.AlignRight
-                    if c in (2, 5, 6): align = Qt.AlignmentFlag.AlignCenter
-                    if c in (2, 5): is_locked = True
+                    if c == 3: align = Qt.AlignmentFlag.AlignRight  # जम्मा कार्टुन
+                    if c in (2, 4, 5, 6): align = Qt.AlignmentFlag.AlignCenter
+                    # cols 2 and 5 are editable — user can manually override Unit/Part No
+                    if c in (2, 5): is_locked = False
                     self.table.setItem(r, c, self.create_table_item(val, align, is_locked))
 
             # 3. Safety net: fill any named rows missing a CN, and give CNs to
@@ -794,7 +867,8 @@ class GodownListUI(ExcelTableMixin, QWidget):
             self.table.blockSignals(False)
 
         self.save_data_to_db()
-        QMessageBox.information(self, "Saved", "Data Saved & Sorted Successfully")
+        if not silent:
+            QMessageBox.information(self, "Saved", "Data Saved & Sorted Successfully")
 
     
     # ---------------- CELL LOGIC ----------------
@@ -804,7 +878,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
         
         if col == 1:
             item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        elif col in (2, 5, 6):
+        elif col in (2, 4, 5, 6):
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
         if should_lock:
