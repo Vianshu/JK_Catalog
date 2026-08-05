@@ -295,6 +295,16 @@ def main():
     light_palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
     app.setPalette(light_palette)
 
+    # --- Register Noto Sans Devanagari (bundled font for clear Hindi/Nepali text) ---
+    from PyQt6.QtGui import QFontDatabase
+    _font_path = get_asset_path("fonts/NotoSansDevanagari.ttf")
+    if os.path.exists(_font_path):
+        _fid = QFontDatabase.addApplicationFont(_font_path)
+        if _fid == -1:
+            print(f"Warning: Could not load Noto Sans Devanagari from {_font_path}")
+    else:
+        print(f"Warning: Font file not found: {_font_path}")
+
     # --- Load stylesheet with absolute path (works in EXE too) ---
     style_path = get_asset_path("style.qss")
     load_stylesheet(app, style_path)

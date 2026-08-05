@@ -582,8 +582,41 @@ class MainWindow(QWidget):
         self.nav_stack.addWidget(m_branch)
 
     def on_sync_ledger_clicked(self):
-        """Item 6: Either button now triggers a full dual sync (Stock + Ledger)."""
-        self._run_full_sync()
+        """Run ledger-only sync — does NOT sync stock. For Stock+Ledger use Sync Tally."""
+        if not self.current_company:
+            return
+        if not self._check_permission("ledger.sync", "Ledger Sync"):
+            return
+        if hasattr(self, '_ledger_worker') and self._ledger_worker and self._ledger_worker.isRunning():
+            return
+
+        company_path = getattr(self, 'current_company_path', None)
+        self._ledger_service = TallyService()
+
+        # Clean up any stale progress dialog from a previous run
+        if hasattr(self, '_ledger_progress') and self._ledger_progress:
+            try:
+                self._ledger_progress.canceled.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            self._ledger_progress.deleteLater()
+
+        self._ledger_progress = QProgressDialog(
+            "Syncing Ledger from Tally...", "Cancel", 0, 0, self
+        )
+        self._ledger_progress.setWindowTitle("Ledger Sync")
+        self._ledger_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._ledger_progress.setMinimumDuration(0)
+        self._ledger_progress.canceled.connect(
+            lambda: self._ledger_service.cancel() if self._ledger_service else None
+        )
+        self._ledger_progress.show()
+
+        self._ledger_worker = _LedgerWorker(
+            self.current_company, company_path, service=self._ledger_service
+        )
+        self._ledger_worker.finished.connect(self._on_ledger_sync_done)
+        self._ledger_worker.start()
 
     def _run_full_sync(self):
         """Item 6: Run Tally Stock sync, then automatically chain Ledger sync.
@@ -637,8 +670,18 @@ class MainWindow(QWidget):
     def _on_ledger_sync_done(self, row_count, error):
         """Handle ledger sync completion (standalone, runs on main thread)."""
         if hasattr(self, '_ledger_progress') and self._ledger_progress:
+            # IMPORTANT: disconnect canceled BEFORE close(). An indeterminate
+            # QProgressDialog (max=0) emits canceled() when close() is called,
+            # which would fire the cancel lambda on an already-finished service.
+            try:
+                self._ledger_progress.canceled.disconnect()
+            except (TypeError, RuntimeError):
+                pass
             self._ledger_progress.close()
-        if not error and row_count > 0:
+
+        if error == "cancelled":
+            QMessageBox.information(self, "Cancelled", "Ledger sync was cancelled.\nExisting data is preserved.")
+        elif not error and row_count > 0:
             QMessageBox.information(
                 self, "Sync Complete",
                 f"Ledger data synced successfully!\nLoaded {row_count} ledger entries."
@@ -1345,7 +1388,12 @@ class MainWindow(QWidget):
                     detail=f"Tally port changed from {current_port} to {port}"
                 )
 
-    def on_sync_tally_clicked(self, _chain_ledger=False):
+    def on_sync_tally_clicked(self, _chain_ledger=True):
+        """Sync stock from Tally, then automatically chain Ledger sync.
+
+        Always chains to ledger after stock so Sync Tally = Stock + Ledger.
+        Pass _chain_ledger=False only if you explicitly want stock-only (internal use).
+        """
         if not self.current_company: return
         if not self._check_permission("final_data.sync", "Tally Sync"): return
 

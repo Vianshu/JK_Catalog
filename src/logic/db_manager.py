@@ -817,10 +817,10 @@ class DBManager:
             return False
         try:
             cursor = conn.cursor()
-            # Check if table exists
+            # Check if table exists in dbo schema specifically
             cursor.execute("""
                 SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES 
-                WHERE TABLE_NAME = ?
+                WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = ?
             """, table_name)
             if cursor.fetchone()[0] == 0:
                 cursor.execute(create_sql)

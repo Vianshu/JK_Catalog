@@ -387,6 +387,12 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         self.table.setItemDelegate(AutocompleteDelegate(self))
         # _init_excel_table already connected cellDoubleClicked — no duplicate needed.
 
+        # Inline stylesheet overrides global QSS cascade for font and padding
+        self.table.setStyleSheet(
+            "QTableWidget { font-family: 'Noto Sans Devanagari'; font-size: 14pt; }"
+            "QTableWidget::item { padding: 0px; margin: 0px; }"
+        )
+
         # ================= RIGHT (BANK LIST) =================
         self.right_container = QWidget()
         right_layout = QVBoxLayout(self.right_container)
@@ -1165,21 +1171,21 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         page_h = page_rect.height()
 
         # --- Fonts (use painter.fontMetrics for PRINTER DPI measurements) ---
-        title_font = QFont("Segoe UI", 12, QFont.Weight.Bold)
-        header_font = QFont("Segoe UI", 11, QFont.Weight.Bold)
-        cell_font = QFont("Segoe UI", 10)
+        title_font = QFont("Noto Sans Devanagari", 15, QFont.Weight.Bold)
+        header_font = QFont("Noto Sans Devanagari", 13, QFont.Weight.Bold)
+        cell_font = QFont("Noto Sans Devanagari", 12)
 
         # Measure using painter's coordinate system (printer DPI, not screen DPI)
         painter.setFont(title_font)
         title_height = int(painter.fontMetrics().height() * 2.2)
 
         painter.setFont(header_font)
-        header_height = int(painter.fontMetrics().height() * 1.8)
+        header_height = int(painter.fontMetrics().height() * 1.3)
 
         painter.setFont(cell_font)
         fm_cell = painter.fontMetrics()
-        row_height = int(fm_cell.height() * 1.6)
-        padding = int(fm_cell.averageCharWidth() * 1.2)
+        row_height = int(fm_cell.height() * 1.15)
+        h_pad = int(fm_cell.averageCharWidth() * 0.3)
 
         # --- Collect visible data rows first (needed for auto-fit widths) ---
         data_rows = []
@@ -1205,12 +1211,12 @@ class ChequeListUI(ExcelTableMixin, QWidget):
 
         raw_widths = []
         for c in range(len(self.columns)):
-            max_w = fm_h.horizontalAdvance(self.columns[c]) + 2 * padding
+            max_w = fm_h.horizontalAdvance(self.columns[c]) + 2 * h_pad
             for rd in data_rows:
-                w = fm_c.horizontalAdvance(rd[c]) + 2 * padding
+                w = fm_c.horizontalAdvance(rd[c]) + 2 * h_pad
                 if w > max_w:
                     max_w = w
-            raw_widths.append(max(max_w, padding * 3))  # enforce a minimum
+            raw_widths.append(max(max_w, h_pad * 3))  # enforce a minimum
 
         total_raw = sum(raw_widths) or 1
         col_widths = [int(page_w * w / total_raw) for w in raw_widths]
@@ -1248,7 +1254,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
                 rect = QRect(x, y, col_widths[c], header_height)
                 painter.fillRect(rect, QColor(220, 220, 220))
                 painter.drawRect(rect)
-                text_rect = QRect(x + padding, y, col_widths[c] - 2 * padding, header_height)
+                text_rect = QRect(x + h_pad, y, col_widths[c] - 2 * h_pad, header_height)
                 painter.drawText(text_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, col_name)
                 x += col_widths[c]
             return y + header_height
@@ -1260,7 +1266,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             for c, text in enumerate(row_data):
                 rect = QRect(x, y, col_widths[c], row_height)
                 painter.drawRect(rect)
-                text_rect = QRect(x + padding, y, col_widths[c] - 2 * padding, row_height)
+                text_rect = QRect(x + h_pad, y, col_widths[c] - 2 * h_pad, row_height)
                 align = alignments[c] | Qt.AlignmentFlag.AlignVCenter
                 painter.drawText(text_rect, align, text)
                 x += col_widths[c]

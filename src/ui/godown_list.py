@@ -267,6 +267,13 @@ class GodownListUI(ExcelTableMixin, QWidget):
         # _NavResetDelegate (from mixin) resets _is_edit_mode on editor close.
         # Col 0 (Alias) uses a QLineEdit overlay (setCellWidget), not the delegate.
         self._init_excel_table(self.table)
+        
+        # Inline stylesheet overrides global QSS cascade for font and padding
+        self.table.setStyleSheet(
+            "QTableWidget { font-family: 'Noto Sans Devanagari'; font-size: 14pt; }"
+            "QTableWidget::item { padding: 0px; margin: 0px; }"
+        )
+        
         self.table.itemChanged.connect(self.handle_item_changed)
         # Track the CN value before each edit so the swap in handle_item_changed
         # has the real old value (item already holds the new value by the time
@@ -274,12 +281,6 @@ class GodownListUI(ExcelTableMixin, QWidget):
         self.table.currentCellChanged.connect(self._on_cn_cell_focus)
         
         layout.addWidget(self.table)
-
-        # Larger font fills the cell; 1px padding leaves maximum room for text
-        self.table.setFont(QFont("Segoe UI", 11))
-        self.table.setStyleSheet(
-            "QTableWidget::item { padding: 1px; margin: 0px; }"
-        )
 
     def apply_edit_mode(self, can_edit: bool):
         """Called by main_window._apply_permissions() to enforce display-only mode.
@@ -466,18 +467,18 @@ class GodownListUI(ExcelTableMixin, QWidget):
             # 1. Set Item Name (from Name column, not Alias)
             self.table.setItem(row, 0, self.create_table_item(item_name))
 
-            # 2. Unit - auto-fill, editable (user can override)
+            # 2. Unit - auto-fill and lock (item is in the master list)
             self.table.setItem(row, 2, self.create_table_item(
-                data.get("Unit", ""), Qt.AlignmentFlag.AlignCenter, False))
+                data.get("Unit", ""), Qt.AlignmentFlag.AlignCenter, True))
 
-            # 3. Part No - auto-fill, apply override, editable (user can override)
+            # 3. Part No - auto-fill, apply override, and lock (item is in the master list)
             p_no = str(data.get("Part_No", ""))
             if p_no.lower() == "none":
                 p_no = ""
             # Item 13: override Part No for mapped products
             p_no = _apply_part_no_override(item_name, p_no)
             self.table.setItem(row, 5, self.create_table_item(
-                p_no, Qt.AlignmentFlag.AlignCenter, False))
+                p_no, Qt.AlignmentFlag.AlignCenter, True))
 
             # 4. Set remaining columns as editable (if empty)
             if not self.table.item(row, 1):
@@ -668,18 +669,24 @@ class GodownListUI(ExcelTableMixin, QWidget):
 
         self.table.blockSignals(True)
         try:
+            # Build set of known item names to determine lock state for Unit/Part No
+            known_names = {
+                v["Item_Name"].strip().lower()
+                for v in (self._alias_lookup or {}).values()
+            }
             if len(rows) > self.table.rowCount():
                 self.table.setRowCount(len(rows))
             for r, data in enumerate(rows):
+                row_item_lower = str(data[0]).strip().lower() if data[0] else ""
+                item_in_list = bool(row_item_lower) and row_item_lower in known_names
                 for c, val in enumerate(data):
                     align = Qt.AlignmentFlag.AlignLeft
                     is_locked = False
-                    
                     if c == 1: align = Qt.AlignmentFlag.AlignRight # प्रति कार्टुन
                     if c == 3: align = Qt.AlignmentFlag.AlignRight # जम्मा कार्टुन
                     if c in (2, 4, 5, 6): align = Qt.AlignmentFlag.AlignCenter # Unit, Godown, PartNo, CN
-                    # cols 2 and 5 are now editable (user can override Unit/Part No)
-                    
+                    # Lock Unit/Part No only for items in the master list
+                    if c in (2, 5): is_locked = item_in_list
                     self.table.setItem(r, c, self.create_table_item(val, align, is_locked))
         finally:
             self.table.blockSignals(False)
@@ -843,15 +850,22 @@ class GodownListUI(ExcelTableMixin, QWidget):
             total_needed = max(200, len(named_rows) + 50)  # always 50+ buffer rows
             if self.table.rowCount() < total_needed:
                 self.table.setRowCount(total_needed)
+            # Build known names to decide lock state for Unit/Part No
+            known_names = {
+                v["Item_Name"].strip().lower()
+                for v in (self._alias_lookup or {}).values()
+            }
             for r, row_data in enumerate(all_rows):
+                row_item_lower = str(row_data[0]).strip().lower() if row_data[0] else ""
+                item_in_list = bool(row_item_lower) and row_item_lower in known_names
                 for c, val in enumerate(row_data):
                     align = Qt.AlignmentFlag.AlignLeft
                     is_locked = False
                     if c == 1: align = Qt.AlignmentFlag.AlignRight
                     if c == 3: align = Qt.AlignmentFlag.AlignRight  # जम्मा कार्टुन
                     if c in (2, 4, 5, 6): align = Qt.AlignmentFlag.AlignCenter
-                    # cols 2 and 5 are editable — user can manually override Unit/Part No
-                    if c in (2, 5): is_locked = False
+                    # Lock Unit/Part No only for items in the master list
+                    if c in (2, 5): is_locked = item_in_list
                     self.table.setItem(r, c, self.create_table_item(val, align, is_locked))
 
             # 3. Safety net: fill any named rows missing a CN, and give CNs to
@@ -1064,18 +1078,18 @@ class GodownListUI(ExcelTableMixin, QWidget):
         page_h = page_rect.height()
 
         # --- Fonts ---
-        header_font = QFont("Segoe UI", 10, QFont.Weight.Bold)
-        cell_font   = QFont("Segoe UI", 9)
-        footer_font = QFont("Segoe UI", 8)
+        header_font = QFont("Noto Sans Devanagari", 13, QFont.Weight.Bold)
+        cell_font   = QFont("Noto Sans Devanagari", 11)
+        footer_font = QFont("Noto Sans Devanagari", 9)
 
         painter.setFont(header_font)
         fm_header = painter.fontMetrics()
-        header_height = int(fm_header.height() * 1.8)
+        header_height = int(fm_header.height() * 1.3)
 
         painter.setFont(cell_font)
         fm_cell   = painter.fontMetrics()
-        row_height = int(fm_cell.height() * 1.6)
-        padding    = int(fm_cell.averageCharWidth() * 1.5)
+        row_height = int(fm_cell.height() * 1.15)
+        h_pad = int(fm_cell.averageCharWidth() * 0.3)
 
         painter.setFont(footer_font)
         fm_footer   = painter.fontMetrics()
@@ -1092,7 +1106,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
         headers = [self.table.horizontalHeaderItem(c).text() for c in range(col_count)]
 
         # Reserve bottom of each page for the footer
-        usable_h = page_h - footer_height - padding
+        usable_h = page_h - footer_height
 
         # --- Collect data rows (skip fully empty) ---
         data_rows = []
@@ -1130,7 +1144,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
                 rect = QRect(x, y, col_widths[c], header_height)
                 painter.fillRect(rect, QColor(220, 220, 220))
                 painter.drawRect(rect)
-                text_rect = QRect(x + padding, y, col_widths[c] - 2 * padding, header_height)
+                text_rect = QRect(x + h_pad, y, col_widths[c] - 2 * h_pad, header_height)
                 painter.drawText(text_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, hdr)
                 x += col_widths[c]
             return y + header_height
@@ -1142,7 +1156,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
             for c, text in enumerate(row_data):
                 rect = QRect(x, y, col_widths[c], row_height)
                 painter.drawRect(rect)
-                text_rect = QRect(x + padding, y, col_widths[c] - 2 * padding, row_height)
+                text_rect = QRect(x + h_pad, y, col_widths[c] - 2 * h_pad, row_height)
                 align = alignments[c] | Qt.AlignmentFlag.AlignVCenter
                 painter.drawText(text_rect, align, text)
                 x += col_widths[c]

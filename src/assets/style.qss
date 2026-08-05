@@ -7,7 +7,7 @@
 
 /* --- 1. Global Setup --- */
 QWidget {
-    font-family: 'Inter', 'Segoe UI', sans-serif;
+    font-family: 'Noto Sans Devanagari', 'Inter', 'Segoe UI', sans-serif;
     font-size: 13px;
     color: #1A2035;
 }

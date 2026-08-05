@@ -30,6 +30,7 @@ a = Analysis(
     datas=[
         ('splash.png', '.'),                          # Splash image for PyQt
         ('src/assets/style.qss', 'src/assets'),       # UI stylesheet
+        ('src/assets/fonts', 'src/assets/fonts'),     # Bundled fonts (Noto Sans Devanagari, etc.)
         ('config/cleaning_rules.json', 'config'),      # Product name cleaning rules
         ('config/catalog_config.json', 'config'),      # Per-company catalog header config
     ] + collect_data_files('nepali_datetime'),

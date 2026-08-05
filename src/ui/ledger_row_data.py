@@ -68,16 +68,16 @@ class LedgerRowDataUI(QWidget):
         try:
             cursor = conn.cursor()
             
-            # Check if table exists
+            # Check if table exists in dbo schema
             cursor.execute("""
                 SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES 
-                WHERE TABLE_NAME = 'row_ledger_data'
+                WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'row_ledger_data'
             """)
             if cursor.fetchone()[0] == 0:
-                self.show_error("Table 'row_ledger_data' is missing in the database.")
+                self.show_error("Table 'row_ledger_data' is missing in the database.\nPlease sync Ledger from Tally first.")
                 return
 
-            cursor.execute("SELECT * FROM row_ledger_data")
+            cursor.execute("SELECT * FROM dbo.row_ledger_data")
             db_headers = [desc[0] for desc in cursor.description]
             rows = cursor.fetchall()
 

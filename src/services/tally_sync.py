@@ -307,7 +307,7 @@ class TallyService:
             # Drop staging table if leftover from a previous failed sync
             staging_table = "stock_items_staging"
             try:
-                cursor.execute(f"IF OBJECT_ID('{staging_table}', 'U') IS NOT NULL DROP TABLE [{staging_table}]")
+                cursor.execute(f"IF OBJECT_ID('dbo.{staging_table}', 'U') IS NOT NULL DROP TABLE dbo.[{staging_table}]")
                 conn.commit()
             except Exception:
                 pass
@@ -318,17 +318,17 @@ class TallyService:
             logger.info("Writing stock items to staging via SQLAlchemy (fast_executemany=True)")
             # Force NVARCHAR for all string columns so Hindi/Unicode text is preserved
             nvarchar_dtype = {col: NVARCHAR(length=None) for col in export_df.select_dtypes(include=['object']).columns}
-            export_df.to_sql(staging_table, con=engine, if_exists="replace", index=False, dtype=nvarchar_dtype)
+            export_df.to_sql(staging_table, con=engine, if_exists="replace", index=False, dtype=nvarchar_dtype, schema="dbo")
             engine.dispose()
 
             self._check_cancelled("after staging write")
 
             # Verify staging has data before merging
-            cursor.execute(f"SELECT COUNT(*) FROM [{staging_table}]")
+            cursor.execute(f"SELECT COUNT(*) FROM dbo.[{staging_table}]")
             staging_count = cursor.fetchone()[0]
             if staging_count == 0:
                 logger.warning("Staging table is empty, aborting merge")
-                cursor.execute(f"DROP TABLE [{staging_table}]")
+                cursor.execute(f"DROP TABLE dbo.[{staging_table}]")
                 conn.commit()
                 raise Exception("Staging table was empty after insert")
 
@@ -340,8 +340,8 @@ class TallyService:
             source_cols = ", ".join([f"source.[{c}]" for c in export_df.columns])
 
             merge_sql = f"""
-                MERGE stock_items AS target
-                USING [{staging_table}] AS source
+                MERGE dbo.stock_items AS target
+                USING dbo.[{staging_table}] AS source
                 ON target.GUID = source.GUID
                 WHEN MATCHED THEN
                     UPDATE SET {update_set}
@@ -366,7 +366,7 @@ class TallyService:
 
             # Clean up staging table
             try:
-                cursor.execute(f"DROP TABLE [{staging_table}]")
+                cursor.execute(f"DROP TABLE dbo.[{staging_table}]")
                 conn.commit()
             except Exception:
                 pass
@@ -381,7 +381,7 @@ class TallyService:
                 conn = self.db.get_connection(db_name)
                 if conn:
                     cursor = conn.cursor()
-                    cursor.execute("IF OBJECT_ID('stock_items_staging', 'U') IS NOT NULL DROP TABLE stock_items_staging")
+                    cursor.execute("IF OBJECT_ID('dbo.stock_items_staging', 'U') IS NOT NULL DROP TABLE dbo.stock_items_staging")
                     conn.commit()
             except Exception:
                 pass
@@ -621,7 +621,7 @@ def fetch_tally_ledger_data(company_name=None, company_path=None, service=None):
         # Use staging table pattern to prevent data loss on failure
         staging_table = "row_ledger_data_staging"
         try:
-            cursor.execute(f"IF OBJECT_ID('{staging_table}', 'U') IS NOT NULL DROP TABLE [{staging_table}]")
+            cursor.execute(f"IF OBJECT_ID('dbo.{staging_table}', 'U') IS NOT NULL DROP TABLE dbo.[{staging_table}]")
             conn.commit()
         except Exception:
             pass
@@ -632,15 +632,15 @@ def fetch_tally_ledger_data(company_name=None, company_path=None, service=None):
         logger.info("Writing ledger data to staging via SQLAlchemy (fast_executemany=True)")
         # Force NVARCHAR for all string columns so Hindi/Unicode text is preserved
         nvarchar_dtype = {col: NVARCHAR(length=None) for col in ledger_df.select_dtypes(include=['object']).columns}
-        ledger_df.to_sql(staging_table, con=engine, if_exists="replace", index=False, dtype=nvarchar_dtype)
+        ledger_df.to_sql(staging_table, con=engine, if_exists="replace", index=False, dtype=nvarchar_dtype, schema="dbo")
         engine.dispose()
 
         service._check_cancelled("after ledger staging write")
 
         # Verify staging before swap
-        cursor.execute(f"SELECT COUNT(*) FROM [{staging_table}]")
+        cursor.execute(f"SELECT COUNT(*) FROM dbo.[{staging_table}]")
         if cursor.fetchone()[0] == 0:
-            cursor.execute(f"DROP TABLE [{staging_table}]")
+            cursor.execute(f"DROP TABLE dbo.[{staging_table}]")
             conn.commit()
             return 0, "Staging table empty after insert — original data preserved."
 
@@ -648,8 +648,8 @@ def fetch_tally_ledger_data(company_name=None, company_path=None, service=None):
         # With autocommit=False, both statements run in the same implicit
         # transaction — conn.commit() makes them atomic.
         try:
-            cursor.execute("IF OBJECT_ID('row_ledger_data', 'U') IS NOT NULL DROP TABLE row_ledger_data")
-            cursor.execute(f"EXEC sp_rename '{staging_table}', 'row_ledger_data'")
+            cursor.execute("IF OBJECT_ID('dbo.row_ledger_data', 'U') IS NOT NULL DROP TABLE dbo.row_ledger_data")
+            cursor.execute(f"EXEC sp_rename 'dbo.{staging_table}', 'row_ledger_data'")
             conn.commit()
         except Exception:
             conn.rollback()
