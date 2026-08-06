@@ -192,7 +192,7 @@ class CompanyCreateForm(QWidget):
         grid.setSpacing(15)
         
         # Labels modified to reflect logic: "Location" instead of "Folder Path"
-        labels = ["Display Name :-", "User Name :-", "Password :-", "Confirm Password :-", "Location :-", "Image Location :-"]
+        labels = ["Display Name :-", "User Name :-", "Password :-", "Confirm Password :-", "Location :-", "Image Location :-", "Backup Location :-"]
         
         for i, text in enumerate(labels):
             grid.addWidget(QLabel(f"<b>{text}</b>"), i, 0)
@@ -200,15 +200,15 @@ class CompanyCreateForm(QWidget):
             edit.setObjectName("FormInput") 
             if "Password" in text: edit.setEchoMode(QLineEdit.EchoMode.Password)
             
-            if "Location" in text and "Image" not in text:
+            if "Location" in text and "Image" not in text and "Backup" not in text:
                 edit.setReadOnly(True) 
                 edit.setPlaceholderText("Selected Data Folder")
                 
-            if "Image Location" in text:
+            if "Image Location" in text or "Backup Location" in text:
                  hb = QHBoxLayout()
                  hb.addWidget(edit)
                  btn = QPushButton("Browse")
-                 btn.clicked.connect(lambda _, e=edit: self.browse_img(e))
+                 btn.clicked.connect(lambda _, e=edit: self.browse_dir(e))
                  hb.addWidget(btn)
                  grid.addLayout(hb, i, 1)
             else:
@@ -229,15 +229,15 @@ class CompanyCreateForm(QWidget):
         btns.addWidget(self.save_btn)
         btns.addWidget(back)
         btns.addStretch()
-        grid.addLayout(btns, 6, 1)
+        grid.addLayout(btns, 7, 1)
 
         self.error_lbl = QLabel("")
         self.error_lbl.setObjectName("FormErrorLabel")
-        grid.addWidget(self.error_lbl, 7, 1)
+        grid.addWidget(self.error_lbl, 8, 1)
         layout.addWidget(content, 1)
         
-    def browse_img(self, edit_field):
-        p = QFileDialog.getExistingDirectory(self, "Select Image Folder")
+    def browse_dir(self, edit_field):
+        p = QFileDialog.getExistingDirectory(self, "Select Folder")
         if p: edit_field.setText(p)
 
     def load_for_setup(self, parent_path):
@@ -252,6 +252,15 @@ class CompanyCreateForm(QWidget):
             
         # Show parent path to user
         self.fields[4].setText(parent_path) 
+        
+        # Load global backup path
+        from src.utils.path_utils import get_app_dir
+        config_file = os.path.join(get_app_dir(), "config.json")
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    self.fields[6].setText(json.load(f).get("backup_path", ""))
+            except Exception: pass
         
     def load_for_alter(self, company_path):
         """Called when Editing existing company at company_path"""
@@ -293,6 +302,15 @@ class CompanyCreateForm(QWidget):
                         self.fields[4].setText(self.base_folder_path)
                         self.fields[5].setText(d.get("image_path", ""))
             except Exception: pass
+            
+        # Load global backup path
+        from src.utils.path_utils import get_app_dir
+        config_file = os.path.join(get_app_dir(), "config.json")
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    self.fields[6].setText(json.load(f).get("backup_path", ""))
+            except Exception: pass
 
     def back_to_list(self):
         self.back_callback()
@@ -307,6 +325,7 @@ class CompanyCreateForm(QWidget):
         password = self.fields[2].text().strip()
         conf_pass = self.fields[3].text().strip()
         img_path = self.fields[5].text().strip()
+        backup_path = self.fields[6].text().strip()
 
         if not display_name:
             self.error_lbl.setText("❌ Display Name is required!")
@@ -345,6 +364,21 @@ class CompanyCreateForm(QWidget):
             info_file = target_path / "company_info.json"
             with open(info_file, 'w', encoding='utf-8') as f:
                 json.dump(info, f, indent=4)
+                
+            # Save global backup path
+            from src.utils.path_utils import get_app_dir
+            config_file = os.path.join(get_app_dir(), "config.json")
+            c_data = {}
+            if os.path.exists(config_file):
+                try:
+                    with open(config_file, 'r', encoding='utf-8') as f:
+                        c_data = json.load(f)
+                except Exception: pass
+            c_data["backup_path"] = backup_path
+            try:
+                with open(config_file, 'w', encoding='utf-8') as f:
+                    json.dump(c_data, f, indent=4)
+            except Exception: pass
                 
             # Initialize empty report data in SQL (ensures table exists)
             save_report_json({}, str(target_path))
@@ -564,14 +598,6 @@ class CompanyLoginUI(QWidget):
             self.create_new_company()
         elif role == "set_path":
             self.change_path()
-        elif role == "login": 
-            path = item.data(Qt.ItemDataRole.UserRole + 1)
-            self.handle_login(path)
-        elif role == "setup": 
-            path = item.data(Qt.ItemDataRole.UserRole + 1)
-            self.form_screen.load_for_setup(path)
-            self.stack.setCurrentIndex(1)
-
     def create_new_company(self):
         # Automatically use the stored data path that was set using 'Change Data Path'
         if self.current_data_path and os.path.exists(self.current_data_path):

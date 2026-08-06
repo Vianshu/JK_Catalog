@@ -552,7 +552,6 @@ class MainWindow(QWidget):
             ("🔑 Change &Password", self.handle_change_password, False, None, "settings.manage_users"),
             ("🔒 &Admin Panel", self.handle_admin_panel, False, None, "settings.manage_users"),
             ("📅 Ca&lendar", self.handle_calendar_mapping, False, None, "tab.calendar"),
-            ("📂 Backup &Location", self.handle_set_backup_location),
             ("📤 &Export Data", self.handle_export_data, False, None, "data.export"),
             ("📥 &Import Data", self.handle_import_data, False, None, "data.import"),
             ("🗓️ &Year End",    self.handle_year_end,   False, None, "settings.year_end"),
@@ -1761,12 +1760,22 @@ class MainWindow(QWidget):
             logger.warning("[AutoBackup] Skipped — no company is loaded.")
             return
 
-        backup_folder = getattr(self, '_auto_backup_folder', '') or \
-                        self._backup_settings.value("backup_folder", "")
+        backup_folder = ""
+        from src.utils.path_utils import get_app_dir
+        config_file = os.path.join(get_app_dir(), "config.json")
+        if os.path.exists(config_file):
+            try:
+                import json
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    d = json.load(f)
+                    backup_folder = d.get("backup_path", "").strip()
+            except Exception:
+                pass
+
         if not backup_folder or not os.path.isdir(backup_folder):
             logger.warning(
                 "[AutoBackup] Skipped — backup location not set or folder missing. "
-                "Go to Settings → '📂 Backup Location' to configure."
+                "Set it on the main startup screen using '📂 Set Backup Path'."
             )
             return
 
@@ -1836,24 +1845,7 @@ class MainWindow(QWidget):
         except Exception as exc:
             logger.error(f"[AutoBackup] Unexpected error: {exc}", exc_info=True)
 
-    def handle_set_backup_location(self):
-        """Let the user pick a folder for automatic backups (Settings menu).
 
-        The chosen path is stored in QSettings('TallySync', 'AutoBackup')
-        under the key 'backup_folder' and is shared across all companies.
-        Each company's backups are placed in a named subfolder inside it.
-        """
-        from src.ui.ui_helpers import pick_export_folder
-        new_folder = pick_export_folder(
-            parent=self,
-            settings=self._backup_settings,
-            settings_key="backup_folder",
-            current_folder=self._auto_backup_folder,
-            title="Select Auto-Backup Folder",
-        )
-        if new_folder and new_folder != self._auto_backup_folder:
-            self._auto_backup_folder = new_folder
-            logger.info(f"[AutoBackup] Backup location set to: {new_folder}")
 
 
     def handle_export_data(self):
