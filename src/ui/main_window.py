@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, 
     QFrame, QStackedWidget, QMenu, QMessageBox, QProgressDialog, QApplication
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QEvent
+from PyQt6.QtCore import Qt, QTimer, QSettings, pyqtSignal, QObject, QEvent
 from PyQt6.QtGui import QShortcut, QKeySequence, QIcon
 import pandas as pd
 import re
@@ -297,6 +297,18 @@ class MainWindow(QWidget):
         self._perm_poll_timer.setInterval(60_000)  # 60 seconds
         self._perm_poll_timer.timeout.connect(self._poll_permissions)
         self._security_mgr = None  # Initialized on login
+
+        # ── 24-hour automatic backup ──────────────────────────────────────────
+        # Hybrid trigger: fires every 24h while the app is open AND on
+        # login if the company hasn’t been backed up in the past 24 hours.
+        # Backups are PER-COMPANY and saved to a user-chosen folder.
+        _24H_MS = 24 * 60 * 60 * 1_000  # 24 hours in milliseconds
+        self._auto_backup_timer = QTimer(self)
+        self._auto_backup_timer.setInterval(_24H_MS)
+        self._auto_backup_timer.timeout.connect(self._run_auto_backup)
+        # Persistent settings for backup: folder path + per-company last-run timestamps
+        self._backup_settings = QSettings("TallySync", "AutoBackup")
+        self._auto_backup_folder = self._backup_settings.value("backup_folder", "")
         
         # Shortcuts
         QShortcut(QKeySequence("Ctrl+Q"), self, activated=self.close)
@@ -540,6 +552,7 @@ class MainWindow(QWidget):
             ("🔑 Change &Password", self.handle_change_password, False, None, "settings.manage_users"),
             ("🔒 &Admin Panel", self.handle_admin_panel, False, None, "settings.manage_users"),
             ("📅 Ca&lendar", self.handle_calendar_mapping, False, None, "tab.calendar"),
+            ("📂 Backup &Location", self.handle_set_backup_location),
             ("📤 &Export Data", self.handle_export_data, False, None, "data.export"),
             ("📥 &Import Data", self.handle_import_data, False, None, "data.import"),
             ("🗓️ &Year End",    self.handle_year_end,   False, None, "settings.year_end"),
@@ -1071,7 +1084,16 @@ class MainWindow(QWidget):
                 page._security_mgr = self._security_mgr
 
             self._perm_poll_timer.start()
-            
+
+            # ── Hybrid 24-hour auto-backup ──────────────────────────────────
+            # 1. Check if this company was last backed up more than 24 h ago.
+            #    If so, run a backup immediately (covers the ‘app was closed’ gap).
+            # 2. (Re)start the repeating 24 h timer for as long as the app runs.
+            if company_path and os.path.isdir(company_path):
+                self._auto_backup_timer.start()   # restarts if already running
+                logger.info("[AutoBackup] 24-hour backup timer started.")
+                self._check_startup_backup(company_path)
+
             # CRITICAL FIX: Lock the window size again so the dashboard
             # cannot push the bottom out of bounds.
             self.maximize_window()
@@ -1689,6 +1711,150 @@ class MainWindow(QWidget):
     def handle_manage_users(self):
         if self.current_company and hasattr(self, 'current_company_path'):
             UserManagerDialog(self.current_company, self.current_company_path, parent=self).exec()
+
+    def _check_startup_backup(self, company_path: str):
+        """Run a backup immediately on login if the last backup is >24 hours old.
+
+        Reads the per-company last-backup timestamp from QSettings and triggers
+        _run_auto_backup if needed.  Uses a short QTimer.singleShot delay so the
+        main window has fully painted before the (potentially slow) backup starts.
+        """
+        from datetime import datetime, timezone
+        _24H = 24 * 60 * 60  # seconds
+
+        # Key is based on the company folder name so each company is tracked independently
+        company_key = os.path.basename(os.path.normpath(company_path))
+        ts_key = f"last_backup/{company_key}"
+        last_ts = self._backup_settings.value(ts_key, 0, type=float)
+        now_ts  = datetime.now(timezone.utc).timestamp()
+
+        elapsed = now_ts - last_ts
+        if elapsed >= _24H:
+            logger.info(
+                f"[AutoBackup] Last backup for '{company_key}' was "
+                f"{elapsed/3600:.1f}h ago — running startup backup."
+            )
+            # Delay 3 s so the UI is fully ready before the backup thread blocks disk I/O
+            from PyQt6.QtCore import QTimer as _QT
+            _QT.singleShot(3_000, self._run_auto_backup)
+        else:
+            logger.info(
+                f"[AutoBackup] '{company_key}' backed up "
+                f"{elapsed/3600:.1f}h ago — no startup backup needed."
+            )
+
+    def _run_auto_backup(self):
+        """Silent per-company automatic backup.
+
+        Called by the 24-hour QTimer AND on login if the last backup is stale.
+        Creates a timestamped .jkbackup for the CURRENT company only and saves it
+        into the user-chosen backup folder (set via '📂 Backup Location').
+
+        File pattern:
+            <backup_folder>/<company_name>/JK_AutoBackup_YYYY-MM-DD_HH-MM.jkbackup
+
+        Keeps the 7 most recent backups per company; older ones are pruned.
+        All errors are logged — no popups are shown to the user.
+        """
+        company_path = getattr(self, 'current_company_path', '')
+        if not company_path or not os.path.isdir(company_path):
+            logger.warning("[AutoBackup] Skipped — no company is loaded.")
+            return
+
+        backup_folder = getattr(self, '_auto_backup_folder', '') or \
+                        self._backup_settings.value("backup_folder", "")
+        if not backup_folder or not os.path.isdir(backup_folder):
+            logger.warning(
+                "[AutoBackup] Skipped — backup location not set or folder missing. "
+                "Go to Settings → '📂 Backup Location' to configure."
+            )
+            return
+
+        from datetime import datetime, timezone
+        from src.logic.data_transfer import export_data_path
+
+        company_key  = os.path.basename(os.path.normpath(company_path))
+        data_path    = os.path.dirname(company_path)   # parent of the company folder
+        timestamp    = datetime.now().strftime("%Y-%m-%d_%H-%M")
+
+        # Each company gets its own subfolder inside the chosen backup root
+        company_backup_dir = os.path.join(backup_folder, company_key)
+        try:
+            os.makedirs(company_backup_dir, exist_ok=True)
+        except OSError as e:
+            logger.error(f"[AutoBackup] Could not create backup folder: {e}")
+            return
+
+        output_file = os.path.join(
+            company_backup_dir,
+            f"JK_AutoBackup_{company_key}_{timestamp}.jkbackup"
+        )
+        logger.info(f"[AutoBackup] Starting backup for '{company_key}' → {output_file}")
+
+        try:
+            # export_data_path backs up the whole data_path but the company folder
+            # is the only subfolder that will match company_info.json in practice
+            # when company_path IS the data_path root.
+            # We pass the data_path so shared DBs (security, super, calendar) are
+            # included; the output file is labelled by company for clarity.
+            success, msg = export_data_path(data_path, output_file)
+            if success:
+                logger.info(f"[AutoBackup] Backup complete: {output_file}")
+
+                # Record the timestamp so _check_startup_backup can skip next login
+                ts_key = f"last_backup/{company_key}"
+                self._backup_settings.setValue(
+                    ts_key, datetime.now(timezone.utc).timestamp()
+                )
+
+                # Audit log
+                if self._security_mgr and self.user_session:
+                    self._security_mgr.log_action(
+                        self.user_session, "auto_backup",
+                        module="system",
+                        detail=f"Auto-backup: {os.path.basename(output_file)}"
+                    )
+
+                # Prune: keep only the 7 most recent backups for this company
+                try:
+                    prefix = f"JK_AutoBackup_{company_key}_"
+                    backups = sorted(
+                        f for f in os.listdir(company_backup_dir)
+                        if f.startswith(prefix) and f.endswith(".jkbackup")
+                    )
+                    MAX_KEEP = 7
+                    for old in backups[: max(0, len(backups) - MAX_KEEP)]:
+                        try:
+                            os.remove(os.path.join(company_backup_dir, old))
+                            logger.info(f"[AutoBackup] Pruned: {old}")
+                        except OSError as del_err:
+                            logger.warning(f"[AutoBackup] Could not delete {old}: {del_err}")
+                except Exception as prune_err:
+                    logger.warning(f"[AutoBackup] Pruning failed: {prune_err}")
+            else:
+                logger.error(f"[AutoBackup] Backup FAILED: {msg}")
+        except Exception as exc:
+            logger.error(f"[AutoBackup] Unexpected error: {exc}", exc_info=True)
+
+    def handle_set_backup_location(self):
+        """Let the user pick a folder for automatic backups (Settings menu).
+
+        The chosen path is stored in QSettings('TallySync', 'AutoBackup')
+        under the key 'backup_folder' and is shared across all companies.
+        Each company's backups are placed in a named subfolder inside it.
+        """
+        from src.ui.ui_helpers import pick_export_folder
+        new_folder = pick_export_folder(
+            parent=self,
+            settings=self._backup_settings,
+            settings_key="backup_folder",
+            current_folder=self._auto_backup_folder,
+            title="Select Auto-Backup Folder",
+        )
+        if new_folder and new_folder != self._auto_backup_folder:
+            self._auto_backup_folder = new_folder
+            logger.info(f"[AutoBackup] Backup location set to: {new_folder}")
+
 
     def handle_export_data(self):
         """Export the current data path to a .jkbackup file (RBAC-protected)."""

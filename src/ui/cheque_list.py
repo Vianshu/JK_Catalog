@@ -391,6 +391,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         self.table.setStyleSheet(
             "QTableWidget { font-family: 'Noto Sans Devanagari'; font-size: 14pt; }"
             "QTableWidget::item { padding: 0px; margin: 0px; }"
+            "QHeaderView::section { font-weight: normal; }"
         )
 
         # ================= RIGHT (BANK LIST) =================
@@ -408,6 +409,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         self.bank_table.setColumnWidth(0, 40)
         self.bank_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.bank_table.setColumnWidth(2, 60)
+        self.bank_table.setStyleSheet("QHeaderView::section { font-weight: normal; }")
         self.bank_table.itemChanged.connect(self.handle_bank_change)
         # Capture old name before user starts editing a bank cell
         self.bank_table.currentItemChanged.connect(self._capture_pre_bank_name)
@@ -784,12 +786,14 @@ class ChequeListUI(ExcelTableMixin, QWidget):
 
                     item = QTableWidgetItem(cell_text)
                     if c == 0:
-                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                         item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                     elif c == 6:
                         item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                     elif c == 7:
-                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+                    else:
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                     self.table.setItem(idx, c, item)
 
             # 3. Add empty buffer rows with new sequential SNs (start from 1, skip used)
@@ -809,7 +813,9 @@ class ChequeListUI(ExcelTableMixin, QWidget):
                         if c == 6:
                             item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                         elif c == 7:
-                            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+                        else:
+                            item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                         self.table.setItem(idx, c, item)
         finally:
             self.table.blockSignals(False)
