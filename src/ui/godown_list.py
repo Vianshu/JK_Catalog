@@ -273,9 +273,9 @@ class GodownListUI(ExcelTableMixin, QWidget):
         
         # Inline stylesheet overrides global QSS cascade for font and padding
         self.table.setStyleSheet(
-            "QTableWidget { font-family: 'Noto Sans Devanagari'; font-size: 14pt; }"
+            "QTableWidget, QLineEdit { font-family: 'Noto Sans Devanagari'; font-size: 14pt; }"
             "QTableWidget::item { padding: 0px; margin: 0px; }"
-            "QHeaderView::section { font-weight: normal; }"
+            "QHeaderView::section { font-family: 'Noto Sans Devanagari'; font-weight: bold; font-size: 14pt; }"
         )
         
         self.table.itemChanged.connect(self.handle_item_changed)
@@ -403,6 +403,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
         self._pre_edit_text = current.text() if current else ""
         text = self._pre_edit_text
         editor = QLineEdit(text)
+        editor.setFont(QFont("Noto Sans Devanagari", 14))
         if self.final_data:
             # Build source model from the alias/item-name list
             src_model = QStringListModel(self.final_data)
@@ -1118,7 +1119,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
         page_h = page_rect.height()
 
         # --- Fonts ---
-        header_font = QFont("Noto Sans Devanagari", 13, QFont.Weight.Bold)
+        header_font = QFont("Noto Sans Devanagari", 13, QFont.Weight.Normal)
         cell_font   = QFont("Noto Sans Devanagari", 11)
         footer_font = QFont("Noto Sans Devanagari", 9)
 

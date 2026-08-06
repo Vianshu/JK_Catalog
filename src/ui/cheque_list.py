@@ -1178,7 +1178,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
 
         # --- Fonts (use painter.fontMetrics for PRINTER DPI measurements) ---
         title_font = QFont("Noto Sans Devanagari", 15, QFont.Weight.Bold)
-        header_font = QFont("Noto Sans Devanagari", 13, QFont.Weight.Bold)
+        header_font = QFont("Noto Sans Devanagari", 13, QFont.Weight.Normal)
         cell_font = QFont("Noto Sans Devanagari", 12)
 
         # Measure using painter's coordinate system (printer DPI, not screen DPI)
