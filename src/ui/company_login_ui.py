@@ -598,6 +598,13 @@ class CompanyLoginUI(QWidget):
             self.create_new_company()
         elif role == "set_path":
             self.change_path()
+        elif role == "login": 
+            path = item.data(Qt.ItemDataRole.UserRole + 1)
+            self.handle_login(path)
+        elif role == "setup": 
+            path = item.data(Qt.ItemDataRole.UserRole + 1)
+            self.form_screen.load_for_setup(path)
+            self.stack.setCurrentIndex(1)
     def create_new_company(self):
         # Automatically use the stored data path that was set using 'Change Data Path'
         if self.current_data_path and os.path.exists(self.current_data_path):
