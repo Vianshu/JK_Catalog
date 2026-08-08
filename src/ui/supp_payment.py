@@ -1113,8 +1113,8 @@ class RecordTab(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(True)
         
-        headers = ["SN", "A/C of", "Field", "Company Account", "", "Field", "Personal Account", ""]
-        self.table.setHorizontalHeaderLabels(headers)
+        self._headers = ["SN", "A/C of", "Field", "Company Account", "", "Field", "Personal Account", ""]
+        self.table.setHorizontalHeaderLabels(self._headers)
         
         self.table.setStyleSheet("""
             QTableWidget { gridline-color: #A0A0A0; }
@@ -1216,10 +1216,17 @@ class RecordTab(QWidget):
 
     def _add_account(self):
         if not self._can_edit: return
+        
+        from PyQt6.QtWidgets import QInputDialog
+        text, ok = QInputDialog.getText(self, "Add Account", "Enter Account Type (e.g., Company 2, Personal 2):")
+        if not ok or not text: return
+        
         self._n_accts += 1
+        self._headers.extend(["Field", text, ""])
         
         # update columns
         self._setup_columns()
+        self.table.setHorizontalHeaderLabels(self._headers)
         
         new_a = self._n_accts - 1
         
