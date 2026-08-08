@@ -643,113 +643,6 @@ def _rec_col(acct: int, part: int) -> int:
 # ===========================================================================
 # TODAY PAYMENT TAB
 # ===========================================================================
-class _TodayTable(QWidget):
-    def __init__(self, title, headers, col_widths=None, header_color="#2b579a"):
-        super().__init__()
-        
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-        
-        hlay = QHBoxLayout()
-        hlay.setContentsMargins(4, 4, 4, 0)
-        
-        lbl = QLabel(title)
-        lbl.setFont(_H_BOLD)
-        lbl.setStyleSheet(f"""
-            QLabel {{
-                background-color: {header_color}; 
-                color: white; 
-                padding: 6px 14px; 
-                border-radius: 4px;
-            }}
-        """)
-        hlay.addWidget(lbl)
-        hlay.addStretch()
-        
-        self.btn_add = QPushButton("+ Add Row")
-        self.btn_add.setFixedHeight(28)
-        self.btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_add.setStyleSheet("""
-            QPushButton {
-                background-color: #f1f3f5;
-                color: #333;
-                border: 1px solid #ced4da;
-                border-radius: 4px;
-                padding: 0px 10px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #e9ecef;
-                border: 1px solid #adb5bd;
-            }
-            QPushButton:pressed {
-                background-color: #dee2e6;
-            }
-        """)
-        hlay.addWidget(self.btn_add)
-        layout.addLayout(hlay)
-        
-        table_frame = QFrame()
-        table_frame.setStyleSheet("""
-            QFrame {
-                border: 1px solid #dee2e6;
-                border-radius: 6px;
-                background-color: white;
-            }
-        """)
-        frame_layout = QVBoxLayout(table_frame)
-        frame_layout.setContentsMargins(1, 1, 1, 1)
-        
-        self.table = QTableWidget(0, len(headers))
-        self.table.setHorizontalHeaderLabels(headers)
-        self.table.setFont(_H_NORM)
-        self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        
-        self.table.setStyleSheet("""
-            QTableWidget {
-                border: none;
-                gridline-color: #f1f3f5;
-                background-color: transparent;
-                alternate-background-color: #f8f9fa;
-            }
-            QHeaderView::section {
-                background-color: #f8f9fa;
-                border: none;
-                border-bottom: 2px solid #dee2e6;
-                border-right: 1px solid #e9ecef;
-                padding: 4px;
-                font-weight: bold;
-                color: #495057;
-            }
-        """)
-        
-        if col_widths:
-            for i, w in enumerate(col_widths):
-                self.table.setColumnWidth(i, w)
-        else:
-            self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-            
-        frame_layout.addWidget(self.table)
-        layout.addWidget(table_frame)
-        
-        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    
-    def recalculate_height(self):
-        h = self.table.horizontalHeader().height()
-        rows = self.table.rowCount()
-        for i in range(rows):
-            h += self.table.rowHeight(i)
-        
-        if h < 50 and rows > 0:
-            h = 30 + (rows * 24)
-            
-        h += 6
-        self.table.setMinimumHeight(h)
-        self.table.setMaximumHeight(h)
-
 class TodayPaymentTab(QWidget):
     def __init__(self):
         super().__init__()
@@ -823,17 +716,17 @@ class TodayPaymentTab(QWidget):
         col1.setContentsMargins(0, 0, 0, 0)
         col1.setSpacing(25)
         
-        self.t_pay = _TodayTable("Payments", ["DATE", "Particulars", "Payment"], [100, 250, 150], header_color="#1976D2")
+        self.t_pay = _StyledTable("Payments", ["DATE", "Particulars", "Payment"], [100, 250, 150], header_color="#1976D2")
         self.t_pay.btn_add.clicked.connect(lambda: self._add_row(self.t_pay, 3))
         self._tables.append(self.t_pay)
         col1.addWidget(self.t_pay)
 
-        self.t_pur_tod = _TodayTable("Purchase (Today)", ["DATE", "Particulars", "Payment"], [100, 250, 150], header_color="#1976D2")
+        self.t_pur_tod = _StyledTable("Purchase (Today)", ["DATE", "Particulars", "Payment"], [100, 250, 150], header_color="#1976D2")
         self.t_pur_tod.btn_add.clicked.connect(lambda: self._add_row(self.t_pur_tod, 3))
         self._tables.append(self.t_pur_tod)
         col1.addWidget(self.t_pur_tod)
 
-        self.t_pur_upc = _TodayTable("Purchase (Upcoming)", ["DATE", "Particulars", "Payment"], [100, 250, 150], header_color="#1976D2")
+        self.t_pur_upc = _StyledTable("Purchase (Upcoming)", ["DATE", "Particulars", "Payment"], [100, 250, 150], header_color="#1976D2")
         self.t_pur_upc.btn_add.clicked.connect(lambda: self._add_row(self.t_pur_upc, 3))
         self._tables.append(self.t_pur_upc)
         col1.addWidget(self.t_pur_upc)
@@ -845,18 +738,18 @@ class TodayPaymentTab(QWidget):
         col2.setContentsMargins(0, 0, 0, 0)
         col2.setSpacing(25)
         
-        self.t_dl = _TodayTable("Demand Loans (DL)", ["SN", "DL No.", "Amount", "Expiry Date", "Day's left"], [40, 100, 120, 120, 80], header_color="#388E3C")
+        self.t_dl = _StyledTable("Demand Loans (DL)", ["SN", "DL No.", "Amount", "Expiry Date", "Day's left"], [40, 100, 120, 120, 80], header_color="#388E3C")
         self.t_dl.btn_add.clicked.connect(self._add_dl_row)
         self.t_dl.table.itemChanged.connect(self._calc_days_left)
         self._tables.append(self.t_dl)
         col2.addWidget(self.t_dl)
         
-        self.t_acc = _TodayTable("Account Table", ["Account Name", "Remain Cash", "Bank / Cash"], [200, 120, 120], header_color="#F57C00")
+        self.t_acc = _StyledTable("Account Table", ["Account Name", "Remain Cash", "Bank / Cash"], [200, 120, 120], header_color="#F57C00")
         self.t_acc.btn_add.clicked.connect(lambda: self._add_row(self.t_acc, 3))
         self._tables.append(self.t_acc)
         col2.addWidget(self.t_acc)
         
-        self.t_lim = _TodayTable("Limits & LC", ["Limit Type", "Amount"], [200, 150], header_color="#D84315")
+        self.t_lim = _StyledTable("Limits & LC", ["Limit Type", "Amount"], [200, 150], header_color="#D84315")
         self.t_lim.btn_add.clicked.connect(lambda: self._add_row(self.t_lim, 2))
         self._tables.append(self.t_lim)
         col2.addWidget(self.t_lim)
@@ -1181,7 +1074,7 @@ class RecordTab(QWidget):
     def __init__(self):
         super().__init__()
         self._can_edit = True
-        self._n_accts = 3
+        self._n_accts = 2  # Changed to 2 accounts: Company and Personal
 
         vlay = QVBoxLayout(self)
         vlay.setContentsMargins(8, 8, 8, 8)
@@ -1209,11 +1102,24 @@ class RecordTab(QWidget):
         self.table.setObjectName("RecordTable")
         self.table.setFont(_H_NORM)
         
-        # Hide headers completely to match the excel sheet
-        self.table.horizontalHeader().setVisible(False)
+        # We enable the horizontal header to label Company vs Personal
+        self.table.horizontalHeader().setVisible(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(True)
-        self.table.setStyleSheet("QTableWidget { gridline-color: #A0A0A0; }")
+        
+        headers = ["SN", "A/C of", "Field", "Company Account", "", "Field", "Personal Account", ""]
+        self.table.setHorizontalHeaderLabels(headers)
+        
+        self.table.setStyleSheet("""
+            QTableWidget { gridline-color: #A0A0A0; }
+            QHeaderView::section {
+                background-color: #f8f9fa;
+                border: 1px solid #dee2e6;
+                padding: 4px;
+                font-weight: bold;
+                color: #343a40;
+            }
+        """)
         
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         vlay.addWidget(self.table)
@@ -1230,7 +1136,7 @@ class RecordTab(QWidget):
         self.table.setColumnWidth(1, 200)
         for a in range(self._n_accts):
             self.table.setColumnWidth(_rec_col(a, 0), _REC_LBL_W)
-            self.table.setColumnWidth(_rec_col(a, 1), _REC_VAL_W)
+            self.table.setColumnWidth(_rec_col(a, 1), 250) # Made value column slightly wider
             if a < self._n_accts - 1:
                 self.table.setColumnWidth(_rec_col(a, 2), _REC_SEP_W)
             else:
@@ -1630,41 +1536,260 @@ _SHEET_CONFIGS = [
 ]
 
 
-class PaymentSheet(QTableWidget):
-    def __init__(self, cfg: dict):
-        cols = cfg["columns"]
-        super().__init__(cfg.get("rows", 50), len(cols))
-        self.setObjectName("PaymentSheetTable")
-        self._numeric = cfg.get("numeric_cols", set())
-        self.setFont(_H_NORM)
-        self.setHorizontalHeaderLabels([c[0] for c in cols])
-        for col, (_, w) in enumerate(cols):
-            self.setColumnWidth(col, w)
-        self.verticalHeader().setDefaultSectionSize(25)
-        self.horizontalHeader().setHighlightSections(False)
-        self.horizontalHeader().setStretchLastSection(True)
-        self.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectItems)
-        self._paint_sections(cfg.get("sections", {}))
+class _StyledTable(QWidget):
+    def __init__(self, title, headers, col_widths=None, header_color="#2b579a"):
+        super().__init__()
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        
+        hlay = QHBoxLayout()
+        hlay.setContentsMargins(4, 4, 4, 0)
+        
+        lbl = QLabel(title)
+        lbl.setFont(_H_BOLD)
+        lbl.setStyleSheet(f"""
+            QLabel {{
+                background-color: {header_color}; 
+                color: white; 
+                padding: 6px 14px; 
+                border-radius: 4px;
+            }}
+        """)
+        hlay.addWidget(lbl)
+        hlay.addStretch()
+        
+        self.btn_add = QPushButton("+ Add Row")
+        self.btn_add.setFixedHeight(28)
+        self.btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_add.setStyleSheet("""
+            QPushButton {
+                background-color: #f1f3f5;
+                color: #333;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                padding: 0px 10px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #e9ecef;
+                border: 1px solid #adb5bd;
+            }
+            QPushButton:pressed {
+                background-color: #dee2e6;
+            }
+        """)
+        hlay.addWidget(self.btn_add)
+        layout.addLayout(hlay)
+        
+        table_frame = QFrame()
+        table_frame.setStyleSheet("""
+            QFrame {
+                border: 1px solid #dee2e6;
+                border-radius: 6px;
+                background-color: white;
+            }
+        """)
+        frame_layout = QVBoxLayout(table_frame)
+        frame_layout.setContentsMargins(1, 1, 1, 1)
+        
+        self.table = QTableWidget(0, len(headers))
+        self.table.setHorizontalHeaderLabels(headers)
+        self.table.setFont(_H_NORM)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        
+        self.table.setStyleSheet("""
+            QTableWidget {
+                border: none;
+                gridline-color: #f1f3f5;
+                background-color: transparent;
+                alternate-background-color: #f8f9fa;
+            }
+            QHeaderView::section {
+                background-color: #f8f9fa;
+                border: none;
+                border-bottom: 2px solid #dee2e6;
+                border-right: 1px solid #e9ecef;
+                padding: 4px;
+                font-weight: bold;
+                color: #495057;
+            }
+        """)
+        
+        if col_widths:
+            for i, w in enumerate(col_widths):
+                self.table.setColumnWidth(i, w)
+        else:
+            self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            
+        frame_layout.addWidget(self.table)
+        layout.addWidget(table_frame)
+        
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    
+    def recalculate_height(self):
+        h = self.table.horizontalHeader().height()
+        rows = self.table.rowCount()
+        for i in range(rows):
+            h += self.table.rowHeight(i)
+        
+        if h < 50 and rows > 0:
+            h = 30 + (rows * 24)
+            
+        h += 6
+        self.table.setMinimumHeight(h)
+        self.table.setMaximumHeight(h)
 
+
+class PaymentSheet(QWidget):
+    def __init__(self, cfg: dict):
+        super().__init__()
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # --- Top Bar (Toggle Switch) ---
+        top_bar = QWidget()
+        top_bar.setStyleSheet("background-color: #f1f3f5; border-bottom: 1px solid #dee2e6;")
+        top_lay = QHBoxLayout(top_bar)
+        top_lay.setContentsMargins(15, 8, 15, 8)
+        
+        title_lbl = QLabel(cfg.get("tab", "Sheet"))
+        title_lbl.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        title_lbl.setStyleSheet("color: #343a40; border: none;")
+        top_lay.addWidget(title_lbl)
+        
+        top_lay.addStretch()
+        
+        from PyQt6.QtWidgets import QComboBox, QStackedWidget
+        self.view_selector = QComboBox()
+        self.view_selector.addItems(["Detailed Column View", "Classic Excel Grid View"])
+        self.view_selector.setFont(QFont("Arial", 10))
+        self.view_selector.setStyleSheet("""
+            QComboBox {
+                padding: 4px 10px;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                background-color: white;
+            }
+        """)
+        self.view_selector.currentIndexChanged.connect(self._switch_view)
+        top_lay.addWidget(self.view_selector)
+        
+        main_layout.addWidget(top_bar)
+        
+        # --- Stacked Widget ---
+        self.stack = QStackedWidget()
+        self._tables = []
+        
+        # --- VIEW 1: Column View ---
+        self.view1 = QWidget()
+        v1_layout = QVBoxLayout(self.view1)
+        v1_layout.setContentsMargins(0, 0, 0, 0)
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background-color: #fdfdfd; }")
+        
+        container = QWidget()
+        container.setStyleSheet("background-color: transparent;")
+        c_lay = QVBoxLayout(container)
+        c_lay.setContentsMargins(12, 12, 12, 12)
+        c_lay.setSpacing(25)
+        
+        cols = cfg.get("columns", [])
+        headers = [c[0] for c in cols]
+        widths = [c[1] for c in cols]
+        sections = cfg.get("sections", {})
+        
+        if not sections:
+            sections = {0: ("Data", "#1976D2", "#ffffff")}
+            
+        for row, (label, bg, fg) in sections.items():
+            t = _StyledTable(label, headers, widths, header_color=bg)
+            t.btn_add.clicked.connect(lambda _, tbl=t: self._add_row(tbl, len(headers)))
+            self._tables.append(t)
+            c_lay.addWidget(t)
+            
+        c_lay.addStretch()
+        scroll.setWidget(container)
+        v1_layout.addWidget(scroll)
+        self.stack.addWidget(self.view1)
+        
+        # --- VIEW 2: Excel Grid View ---
+        self.view2 = QWidget()
+        v2_layout = QVBoxLayout(self.view2)
+        v2_layout.setContentsMargins(12, 12, 12, 12)
+        
+        self.grid = QTableWidget(cfg.get("rows", 50), len(cols))
+        self.grid.setObjectName("PaymentSheetTable")
+        self._numeric = cfg.get("numeric_cols", set())
+        self.grid.setFont(_H_NORM)
+        self.grid.setHorizontalHeaderLabels(headers)
+        for col, (_, w) in enumerate(cols):
+            self.grid.setColumnWidth(col, w)
+            
+        self.grid.verticalHeader().setDefaultSectionSize(25)
+        self.grid.horizontalHeader().setHighlightSections(False)
+        self.grid.horizontalHeader().setStretchLastSection(True)
+        self.grid.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        
+        self.grid.setStyleSheet("""
+            QTableWidget {
+                gridline-color: #dee2e6;
+                alternate-background-color: #f8f9fa;
+                border: 1px solid #ced4da;
+            }
+            QHeaderView::section {
+                background-color: #e9ecef;
+                padding: 4px;
+                border: 1px solid #ced4da;
+                font-weight: bold;
+            }
+        """)
+        
+        self._paint_sections(sections)
+        v2_layout.addWidget(self.grid)
+        self.stack.addWidget(self.view2)
+        
+        main_layout.addWidget(self.stack)
+        
+    def _switch_view(self, idx):
+        self.stack.setCurrentIndex(idx)
+        
     def _paint_sections(self, sections: dict):
         for row, (label, bg, fg) in sections.items():
-            if row >= self.rowCount():
+            if row >= self.grid.rowCount():
                 continue
-            for col in range(self.columnCount()):
+            for col in range(self.grid.columnCount()):
                 it = QTableWidgetItem(label if col == 0 else "")
                 it.setFont(_H_BOLD)
                 it.setBackground(QBrush(QColor(bg)))
                 it.setForeground(QBrush(QColor(fg)))
                 it.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                super().setItem(row, col, it)
-            self.setRowHeight(row, 28)
+                self.grid.setItem(row, col, it)
+            self.grid.setRowHeight(row, 28)
 
-    def setItem(self, row, col, item):  # noqa: N802
+    def setItem(self, row, col, item):
         if item and col in self._numeric:
-            item.setTextAlignment(
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        super().setItem(row, col, item)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.grid.setItem(row, col, item)
+        
+    def setEditTriggers(self, trigs):
+        self.grid.setEditTriggers(trigs)
+        for t in self._tables:
+            t.table.setEditTriggers(trigs)
+            
+    def _add_row(self, t_obj, num_cols):
+        r = t_obj.table.rowCount()
+        t_obj.table.insertRow(r)
+        for c in range(num_cols):
+            t_obj.table.setItem(r, c, QTableWidgetItem(""))
+        t_obj.recalculate_height()
 
 
 # ===========================================================================
