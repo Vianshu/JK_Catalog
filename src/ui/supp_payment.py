@@ -212,11 +212,12 @@ class InsuranceTab(QWidget):
         self.grid.setStyleSheet("""
             QTableWidget {
                 gridline-color: #dee2e6;
-                alternate-background-color: #f8f9fa;
+                alternate-background-color: #1A2035;
                 border: 1px solid #ced4da;
             }
             QHeaderView::section {
-                background-color: #e9ecef;
+                background-color: #1A2035;
+                color: #ffffff;
                 padding: 4px;
                 border: 1px solid #ced4da;
                 font-weight: bold;
@@ -877,24 +878,22 @@ class TodayPaymentTab(QWidget):
         v2_layout.setContentsMargins(12, 12, 12, 12)
         
         # Removed spacer columns to make it one massive, tight table
-        grid_headers = [
-            "DATE", "Particulars", "Payment", "", "",
-            "Account Name", "Remain Cash", "Bank / Cash",
-            "SN", "DL No.", "Amount", "Expiry Date", "Day's left"
-        ]
+        grid_headers = [""] * 13
         self.grid = QTableWidget(50, len(grid_headers))
         self.grid.setHorizontalHeaderLabels(grid_headers)
+        self.grid.horizontalHeader().setVisible(False)
         self.grid.setFont(_H_NORM)
         self.grid.setAlternatingRowColors(True)
         self.grid.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.grid.setStyleSheet("""
             QTableWidget {
                 gridline-color: #dee2e6;
-                alternate-background-color: #f8f9fa;
+                alternate-background-color: #1A2035;
                 border: 1px solid #ced4da;
             }
             QHeaderView::section {
-                background-color: #e9ecef;
+                background-color: #1A2035;
+                color: #ffffff;
                 padding: 4px;
                 border: 1px solid #ced4da;
                 font-weight: bold;
@@ -1016,15 +1015,27 @@ class TodayPaymentTab(QWidget):
         self.grid.clearContents()
         # Removed colored header painting
         
-        def paint_sub_header(r, c_start, c_end, text, bg="#e9ecef"):
+        def paint_sub_header(r, c_start, c_end, text, col_headers=None, bg="#1976D2"):
             for c in range(c_start, c_end + 1):
                 item = QTableWidgetItem(text if c == c_start else "")
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled)
                 item.setBackground(QBrush(QColor(bg)))
+                item.setForeground(QBrush(QColor("#ffffff")))
                 item.setFont(_H_BOLD)
                 self.grid.setItem(r, c, item)
             if c_start != c_end:
                 self.grid.setSpan(r, c_start, 1, c_end - c_start + 1)
+            
+            # Print column headers below
+            if col_headers:
+                for idx, h in enumerate(col_headers):
+                    if c_start + idx <= c_end:
+                        h_item = QTableWidgetItem(h)
+                        h_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                        h_item.setBackground(QBrush(QColor("#e9ecef")))
+                        h_item.setForeground(QBrush(QColor("#000000")))
+                        h_item.setFont(_H_BOLD)
+                        self.grid.setItem(r + 1, c_start + idx, h_item)
         
         def fill_block(start_r, start_c, data):
             for i, row_data in enumerate(data):
@@ -1040,30 +1051,30 @@ class TodayPaymentTab(QWidget):
 
         # Left Column (Purchases)
         r_pur = 1
-        paint_sub_header(r_pur, 0, 2, "Payments")
-        fill_block(r_pur + 1, 0, pay_data)
+        paint_sub_header(r_pur, 0, 4, "Payments", ["DATE", "Particulars", "Payment", "", ""], "#1976D2")
+        fill_block(r_pur + 2, 0, pay_data)
         
-        r_pur += len(pay_data) + 2
-        paint_sub_header(r_pur, 0, 2, "Purchase (Today)")
-        fill_block(r_pur + 1, 0, pur_tod_data)
+        r_pur += len(pay_data) + 3
+        paint_sub_header(r_pur, 0, 4, "Purchase (Today)", ["DATE", "Particulars", "Payment", "", ""], "#1976D2")
+        fill_block(r_pur + 2, 0, pur_tod_data)
         
-        r_pur += len(pur_tod_data) + 2
-        paint_sub_header(r_pur, 0, 2, "Purchase (Upcoming)")
-        fill_block(r_pur + 1, 0, pur_upc_data)
+        r_pur += len(pur_tod_data) + 3
+        paint_sub_header(r_pur, 0, 4, "Purchase (Upcoming)", ["DATE", "Particulars", "Payment", "", ""], "#1976D2")
+        fill_block(r_pur + 2, 0, pur_upc_data)
         
         # Middle Column (Accounts & Limits)
         r_acc = 1
-        paint_sub_header(r_acc, 5, 7, "Account Table")
-        fill_block(r_acc + 1, 5, acc_data)
+        paint_sub_header(r_acc, 5, 7, "Account Table", ["Account Name", "Remain Cash", "Bank / Cash"], "#F57C00")
+        fill_block(r_acc + 2, 5, acc_data)
         
-        r_acc += len(acc_data) + 2
-        paint_sub_header(r_acc, 5, 7, "Limits & LC")
-        fill_block(r_acc + 1, 5, lim_data)
+        r_acc += len(acc_data) + 3
+        paint_sub_header(r_acc, 5, 7, "Limits & LC", ["Limit Type", "Amount", ""], "#D84315")
+        fill_block(r_acc + 2, 5, lim_data)
         
         # Right Column (Demand Loans)
         r_dl = 1
-        paint_sub_header(r_dl, 8, 12, "Demand Loans (DL)")
-        fill_block(r_dl + 1, 8, dl_data)
+        paint_sub_header(r_dl, 8, 12, "Demand Loans (DL)", ["SN", "DL No.", "Amount", "Expiry Date", "Day's left"], "#388E3C")
+        fill_block(r_dl + 2, 8, dl_data)
         
         QTimer.singleShot(100, self._adjust_heights)
 
@@ -1246,13 +1257,13 @@ class RecordTab(QWidget):
         self.table.setHorizontalHeaderLabels(self._headers)
         
         self.table.setStyleSheet("""
-            QTableWidget { gridline-color: #A0A0A0; alternate-background-color: #f8f9fa; }
+            QTableWidget { gridline-color: #A0A0A0; alternate-background-color: #1A2035; }
             QHeaderView::section {
-                background-color: #e9ecef;
+                background-color: #1A2035;
                 border: 1px solid #dee2e6;
                 padding: 4px;
                 font-weight: bold;
-                color: #343a40;
+                color: #ffffff;
             }
         """)
         self.table.setAlternatingRowColors(True)
@@ -1825,16 +1836,16 @@ class _StyledTable(QWidget):
                 border: none;
                 gridline-color: #f1f3f5;
                 background-color: transparent;
-                alternate-background-color: #f8f9fa;
+                alternate-background-color: #1A2035;
             }
             QHeaderView::section {
-                background-color: #f8f9fa;
+                background-color: #1A2035;
                 border: none;
                 border-bottom: 2px solid #dee2e6;
                 border-right: 1px solid #e9ecef;
                 padding: 4px;
                 font-weight: bold;
-                color: #495057;
+                color: #ffffff;
             }
         """)
         
@@ -1961,11 +1972,12 @@ class PaymentSheet(QWidget):
         self.grid.setStyleSheet("""
             QTableWidget {
                 gridline-color: #dee2e6;
-                alternate-background-color: #f8f9fa;
+                alternate-background-color: #1A2035;
                 border: 1px solid #ced4da;
             }
             QHeaderView::section {
-                background-color: #e9ecef;
+                background-color: #1A2035;
+                color: #ffffff;
                 padding: 4px;
                 border: 1px solid #ced4da;
                 font-weight: bold;
