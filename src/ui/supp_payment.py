@@ -991,97 +991,67 @@ class TodayPaymentTab(QWidget):
                         f.setBold(True)
                         item.setFont(f)
                     t_obj.table.setItem(r, c, item)
+        pay_data = [       ('', 'Macha Bank', '', 'macha', 'from jnk'),
+                ('', 'Macha Bank', '', 'macha', 'from brt'),
+                ('', 'Macha Bank', '', 'macha', 'from btm'),
+                ('', 'Macha Bank', '', 'macha', 'from ngt'),
+                ('2026-08-10', 'Car Loan Emi', '50000', '', ''),
+                ('2026-09-10', 'Home Loan Suman Mam', '0', '', ''),
+                ('2026-08-16', 'Interest-Macha Bank-QTR End', '0', '', ''),
+                ('2026-08-16', 'PWCL- Every 3 Month interest', '0', '', ''),
+                ('2026-09-14', 'PWCL- Every 3 Month', '0', '', ''),
+                ('2026-08-10', 'NEW LOAN 1013', '500000', '', ''),
+                ('2026-08-16', 'NEW LOAN 1013 interest', '0', '', ''),
+                ('', 'Rajkumar ji', '', '', ''),
+                ('fri', 'Chandrodaya, Brt', '', '', ''),
+                ('mon/tue', 'Chandrodaya, KTM', '650000', '', ''),
+                ('', 'ANIL SIR', '', '', ''),
+                ('2026-08-07', 'Kishan Pipe Product', '150000', '', ''),
+                ('fri', 'Dhiraj trading', '', '', ''),
+                ('thu', 'Priti valve & Fitting Ind, P. Ltd', '40000', '', ''),
+                ('sun', 'Tejas Tiwari Group Pvt.Ltd, Ktm', '', '', ''),
+                ('wed', 'Aarna International Pvt.Ltd, Kathmandu', '45000', '', ''),
+                ('fri', 'Sujita Paints Industries,Brt', '', '', ''),
+                ('wed', 'Jeen Mata Impex Pvt. Ltd.', '', '', ''),
+                ('', 'Jitu sir (machha credit card)', '', '', ''),
+                ('', 'Papa', '', '', ''),
+                ('', 'vat', '', '', ''),
+                (       '',
+                        'Brijwashi Products , Aligarh India',
+                        '241281.99',
+                        'M11548',
+                        'rtgs')]
+        pur_tod_data = [('2026-08-07', 'surendra joshi', '305395', '', 'cash brt')]
+        pur_upc_data = [       ('', 'jaipur', '800000', '', ''),
+                ('', 'Sri Maruti Mangal, Ktm', '460000', '', 'chq'),
+                ('', 'Lotus ,Ktm', '500000', '', ''),
+                ('', 'New Famous Tar Jali Udhyog ,Brj', '176200', '', '')]
+        acc_data = [       ('laxmi Bank', '3653.76', '3653.76'),
+                ('macha (dl settle)', '-732210.42', '1008184.58'),
+                ('Cash', '505395', '505395'),
+                ('btm', '430000', '430000'),
+                ('jnk', '0', '50000'),
+                ('Ngt', '0', '25000')]
+        lim_data = [       ('Remain Demand Loan Limit', '', ''),
+                ('Remain LC Limit', '', ''),
+                ('Used LC', '', '')]
+        dl_data = [       ('1', 'DL-995', '700000', '2026-08-25', '17'),
+                ('2', 'DL-997', '700000', '2026-09-01', '24'),
+                ('3', 'DL-1001', '700000', '2026-09-07', '30'),
+                ('4', 'DL-1003', '700000', '2026-09-11', '34'),
+                ('5', 'DL-1009', '700000', '2026-09-18', '41'),
+                ('6', 'DL-1016', '700000', '2026-09-28', '51'),
+                ('7', 'DL-1024', '700000', '2026-10-01', '54'),
+                ('8', 'DL-1029', '700000', '2026-10-06', '59'),
+                ('9', 'DL-1036', '700000', '2026-10-12', '65'),
+                ('10', 'DL-1043', '700000', '2026-10-21', '74'),
+                ('11', 'DL-1048', '700000', '2026-10-29', '82'),
+                ('12', 'DL-1052', '700000', '2026-11-04', '88'),
+                ('13', 'DL-1057', '700000', '2026-11-10', '94'),
+                ('14', 'DL-1062', '700000', '2026-11-17', '101'),
+                ('15', 'DL-1071', '700000', '2026-11-26', '110'),
+                ('16', 'DL-10', '700000', '2026-12-02', '116')]
 
-        pay_data = [
-            ('2026-08-10', 'Car Loan Emi', '50000', '', ''),
-            ('2026-09-10', 'Home Loan Suman Mam', '', '', ''),
-            ('2026-08-16', 'Interest-Macha Bank-QTR End', '', '', ''),
-            ('2026-08-16', 'PWCL- Every 3 Month interest', '', '', ''),
-            ('2026-08-10', 'NEW LOAN 1013', '500000', '', ''),
-            ('2026-08-16', 'NEW LOAN 1013 interest', '', '', ''),
-            ('fri', 'Chandrodaya, Brt', '', '', ''),
-            ('mon/tue', 'Chandrodaya, KTM  ', '650000', '', ''),
-            ('2026-08-07', 'Kishan Pipe Product', '150000', '', ''),
-        ]
-        pop(self.t_pay, pay_data)
-        
-        pur_tod_data = [
-            ('2026-08-07', 'surendra joshi', '305395', '', ''),
-            ('', 'Brijwashi Products , Aligarh India', '241281.99', '', '')
-        ]
-        pop(self.t_pur_tod, pur_tod_data)
-        
-        pur_upc_data = [
-            ('fri', 'Dhiraj trading', '', '', ''),
-            ('thu', 'Priti valve & Fitting Ind, P. Ltd', '40000', '', ''),
-            ('sun', 'Tejas Tiwari Group Pvt.Ltd, Ktm', '', '', ''),
-            ('wed', 'Aarna International Pvt.Ltd, Kathmandu', '45000', '', ''),
-            ('fri', 'Sujita Paints Industries,Brt', '', '', ''),
-            ('wed', 'Jeen Mata Impex Pvt. Ltd.', '', '', ''),
-        ]
-        pop(self.t_pur_upc, pur_upc_data)
-        
-        acc_data = [
-            ('laxmi Bank', '3653.76', '3653.76'),
-            ('macha (dl settle)', '-732210.42', '1008184.58'),
-            ('Cash', '505395', '505395'),
-            ('btm', '430000', '430000'),
-            ('jnk', '0', '50000'),
-            ('Ngt', '0', '25000')
-        ]
-        pop(self.t_acc, acc_data)
-        
-        dl_data = [
-            ('1', 'DL-995', '700000', '2026-08-25', '17'), 
-            ('2', 'DL-997', '700000', '2026-09-01', '24'), 
-            ('3', 'DL-1001', '700000', '2026-09-07', '30'), 
-            ('4', 'DL-1003', '700000', '2026-09-11', '34'), 
-            ('5', 'DL-1009', '700000', '2026-09-18', '41'), 
-            ('6', 'DL-1016', '700000', '2026-09-28', '51'), 
-            ('7', 'DL-1024', '700000', '2026-10-01', '54'), 
-            ('8', 'DL-1029', '700000', '2026-10-06', '59'), 
-            ('9', 'DL-1036', '700000', '2026-10-12', '65'), 
-            ('10', 'DL-1043', '700000', '2026-10-21', '74'), 
-            ('11', 'DL-1048', '700000', '2026-10-29', '82'), 
-            ('12', 'DL-1052', '700000', '2026-11-04', '88'), 
-            ('13', 'DL-1057', '700000', '2026-11-10', '94'), 
-            ('14', 'DL-1062', '700000', '2026-11-17', '101'), 
-            ('15', 'DL-1071', '700000', '2026-11-26', '110')
-        ]
-        pop(self.t_dl, dl_data)
-        
-        lim_data = [
-            ('Remain Demand Loan Limit', ''),
-            ('Remain LC Limit', ''),
-            ('Used LC', '')
-        ]
-        pop(self.t_lim, lim_data)
-        
-        # 2. Populate Grid View
-        self.grid.clearContents()
-        # Removed colored header painting
-        
-        def paint_sub_header(r, c_start, c_end, text, col_headers=None, bg="#1976D2"):
-            for c in range(c_start, c_end + 1):
-                item = QTableWidgetItem(text if c == c_start else "")
-                item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                item.setBackground(QBrush(QColor(bg)))
-                item.setForeground(QBrush(QColor("#ffffff")))
-                item.setFont(_H_BOLD)
-                self.grid.setItem(r, c, item)
-            if c_start != c_end:
-                self.grid.setSpan(r, c_start, 1, c_end - c_start + 1)
-            
-            # Print column headers below
-            if col_headers:
-                for idx, h in enumerate(col_headers):
-                    if c_start + idx <= c_end:
-                        h_item = QTableWidgetItem(h)
-                        h_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                        h_item.setBackground(QBrush(QColor("#1A2035")))
-                        h_item.setForeground(QBrush(QColor("#ffffff")))
-                        h_item.setFont(_H_BOLD)
-                        self.grid.setItem(r + 1, c_start + idx, h_item)
         
         def fill_block(start_r, start_c, data):
             for i, row_data in enumerate(data):
