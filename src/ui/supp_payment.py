@@ -877,9 +877,10 @@ class TodayPaymentTab(QWidget):
         v2_layout = QVBoxLayout(self.view2)
         v2_layout.setContentsMargins(12, 12, 12, 12)
         
+        # Removed spacer columns to make it one massive, tight table
         grid_headers = [
-            "DATE", "Particulars", "Payment", " ", 
-            "Account Name", "Remain Cash", "Bank / Cash", " ",
+            "DATE", "Particulars", "Payment",
+            "Account Name", "Remain Cash", "Bank / Cash",
             "SN", "DL No.", "Amount", "Expiry Date", "Day's left"
         ]
         self.grid = QTableWidget(50, len(grid_headers))
@@ -901,11 +902,9 @@ class TodayPaymentTab(QWidget):
             }
         """)
         
-        widths = [100, 200, 120, 30, 200, 120, 120, 30, 50, 100, 120, 120, 80]
+        widths = [90, 220, 110, 180, 110, 110, 40, 90, 110, 100, 70]
         for i, w in enumerate(widths):
             self.grid.setColumnWidth(i, w)
-            if grid_headers[i] == " ":
-                self.grid.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.Fixed)
         
         self.grid.itemChanged.connect(self._grid_item_changed)
         v2_layout.addWidget(self.grid)
@@ -918,12 +917,11 @@ class TodayPaymentTab(QWidget):
         self.stack.setCurrentIndex(idx)
 
     def _paint_grid_headers(self):
-        # We manually paint row 0 with colored headers across the specific columns
         self.grid.setRowHeight(0, 30)
         headers = [
             (0, 2, "PURCHASES", "#1976D2", "#ffffff"),
-            (4, 6, "ACCOUNTS & LIMITS", "#F57C00", "#ffffff"),
-            (8, 12, "DEMAND LOANS", "#388E3C", "#ffffff")
+            (3, 5, "ACCOUNTS & LIMITS", "#F57C00", "#ffffff"),
+            (6, 10, "DEMAND LOANS", "#388E3C", "#ffffff")
         ]
         for start_c, end_c, title, bg, fg in headers:
             for c in range(start_c, end_c + 1):
@@ -937,6 +935,7 @@ class TodayPaymentTab(QWidget):
                 self.grid.setSpan(0, start_c, 1, (end_c - start_c + 1))
 
     def _load_data(self):
+        # 1. Populate Column View
         def pop(t_obj, arr):
             t_obj.table.setRowCount(len(arr))
             for r, row_data in enumerate(arr):
@@ -949,7 +948,7 @@ class TodayPaymentTab(QWidget):
                         item.setFont(f)
                     t_obj.table.setItem(r, c, item)
 
-        pop(self.t_pay, [
+        pay_data = [
             ('2026-08-10', 'Car Loan Emi', '50000'),
             ('2026-09-10', 'Home Loan Suman Mam', ''),
             ('2026-08-16', 'Interest-Macha Bank-QTR End', ''),
@@ -959,30 +958,34 @@ class TodayPaymentTab(QWidget):
             ('fri', 'Chandrodaya, Brt', ''),
             ('mon/tue', 'Chandrodaya, KTM  ', '650000'),
             ('2026-08-07', 'Kishan Pipe Product', '150000'),
-        ])
+        ]
+        pop(self.t_pay, pay_data)
         
-        pop(self.t_pur_tod, [
+        pur_tod_data = [
             ('2026-08-07', 'surendra joshi', '305395'),
             ('', 'Brijwashi Products , Aligarh India', '241281.99')
-        ])
+        ]
+        pop(self.t_pur_tod, pur_tod_data)
         
-        pop(self.t_pur_upc, [
+        pur_upc_data = [
             ('fri', 'Dhiraj trading', ''),
             ('thu', 'Priti valve & Fitting Ind, P. Ltd', '40000'),
             ('sun', 'Tejas Tiwari Group Pvt.Ltd, Ktm', ''),
             ('wed', 'Aarna International Pvt.Ltd, Kathmandu', '45000'),
             ('fri', 'Sujita Paints Industries,Brt', ''),
             ('wed', 'Jeen Mata Impex Pvt. Ltd.', ''),
-        ])
+        ]
+        pop(self.t_pur_upc, pur_upc_data)
         
-        pop(self.t_acc, [
+        acc_data = [
             ('laxmi Bank', '3653.76', '3653.76'),
             ('macha (dl settle)', '-732210.42', '1008184.58'),
             ('Cash', '505395', '505395'),
             ('btm', '430000', '430000'),
             ('jnk', '0', '50000'),
             ('Ngt', '0', '25000')
-        ])
+        ]
+        pop(self.t_acc, acc_data)
         
         dl_data = [
             ('1', 'DL-995', '700000', '2026-08-25', '17'), 
@@ -1003,34 +1006,66 @@ class TodayPaymentTab(QWidget):
         ]
         pop(self.t_dl, dl_data)
         
-        pop(self.t_lim, [
+        lim_data = [
             ('Remain Demand Loan Limit', ''),
             ('Remain LC Limit', ''),
             ('Used LC', '')
-        ])
+        ]
+        pop(self.t_lim, lim_data)
         
-        # Grid Init
+        # 2. Populate Grid View
+        self.grid.clearContents()
         self._paint_grid_headers()
         
-        # Populate some data into grid as an example of how it maps
-        for r, row_data in enumerate(dl_data):
-            for i, val in enumerate(row_data):
-                item = QTableWidgetItem(val)
-                if i == 4:
-                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    f = item.font()
-                    f.setBold(True)
-                    item.setFont(f)
-                self.grid.setItem(r+1, 8+i, item)
+        def paint_sub_header(r, c_start, c_end, text, bg="#e9ecef"):
+            for c in range(c_start, c_end + 1):
+                item = QTableWidgetItem(text if c == c_start else "")
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                item.setBackground(QBrush(QColor(bg)))
+                item.setFont(_H_BOLD)
+                self.grid.setItem(r, c, item)
+            if c_start != c_end:
+                self.grid.setSpan(r, c_start, 1, c_end - c_start + 1)
         
-        # Grey out spacer columns
-        for row in range(1, 50):
-            for col in [3, 7]:
-                item = QTableWidgetItem("")
-                item.setFlags(Qt.ItemFlag.NoItemFlags)
-                item.setBackground(QBrush(QColor("#f8f9fa")))
-                self.grid.setItem(row, col, item)
+        def fill_block(start_r, start_c, data):
+            for i, row_data in enumerate(data):
+                for j, val in enumerate(row_data):
+                    item = QTableWidgetItem(val)
+                    # DL day's left column
+                    if start_c == 6 and j == 4:
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                        f = item.font()
+                        f.setBold(True)
+                        item.setFont(f)
+                    self.grid.setItem(start_r + i, start_c + j, item)
 
+        # Left Column (Purchases)
+        r_pur = 1
+        paint_sub_header(r_pur, 0, 2, "Payments")
+        fill_block(r_pur + 1, 0, pay_data)
+        
+        r_pur += len(pay_data) + 2
+        paint_sub_header(r_pur, 0, 2, "Purchase (Today)")
+        fill_block(r_pur + 1, 0, pur_tod_data)
+        
+        r_pur += len(pur_tod_data) + 2
+        paint_sub_header(r_pur, 0, 2, "Purchase (Upcoming)")
+        fill_block(r_pur + 1, 0, pur_upc_data)
+        
+        # Middle Column (Accounts & Limits)
+        r_acc = 1
+        paint_sub_header(r_acc, 3, 5, "Account Table")
+        fill_block(r_acc + 1, 3, acc_data)
+        
+        r_acc += len(acc_data) + 2
+        paint_sub_header(r_acc, 3, 5, "Limits & LC")
+        fill_block(r_acc + 1, 3, lim_data)
+        
+        # Right Column (Demand Loans)
+        r_dl = 1
+        paint_sub_header(r_dl, 6, 10, "Demand Loans (DL)")
+        fill_block(r_dl + 1, 6, dl_data)
+        
         QTimer.singleShot(100, self._adjust_heights)
 
     def _adjust_heights(self):
@@ -1095,23 +1130,23 @@ class TodayPaymentTab(QWidget):
             self.t_dl.table.blockSignals(False)
 
     def _grid_item_changed(self, item):
-        # Grid day's left calc (Column 11 is Expiry Date, Column 12 is Day's left)
-        if item.column() != 11: return
+        # Grid day's left calc (Column 9 is Expiry Date, Column 10 is Day's left)
+        if item.column() != 9: return
         r = item.row()
         date_str = item.text().strip()
         self.grid.blockSignals(True)
         try:
-            item12 = self.grid.item(r, 12)
-            if item12 is None:
-                item12 = QTableWidgetItem("")
-                font = item12.font()
+            item10 = self.grid.item(r, 10)
+            if item10 is None:
+                item10 = QTableWidgetItem("")
+                font = item10.font()
                 font.setBold(True)
-                item12.setFont(font)
-                item12.setFlags(item12.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.grid.setItem(r, 12, item12)
+                item10.setFont(font)
+                item10.setFlags(item10.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.grid.setItem(r, 10, item10)
 
             if not date_str:
-                item12.setText("")
+                item10.setText("")
                 return
             import datetime
             try:
@@ -1124,11 +1159,11 @@ class TodayPaymentTab(QWidget):
                         dt = datetime.date(int(parts[2]), int(parts[1]), int(parts[0]))
                     today = datetime.date.today()
                     diff = (dt - today).days
-                    item12.setText(str(diff))
+                    item10.setText(str(diff))
                 else:
-                    item12.setText("?")
+                    item10.setText("?")
             except Exception:
-                item12.setText("?")
+                item10.setText("?")
         finally:
             self.grid.blockSignals(False)
 
