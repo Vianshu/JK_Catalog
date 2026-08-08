@@ -129,8 +129,50 @@ class _InsTable(QWidget):
 class InsuranceTab(QWidget):
     def __init__(self):
         super().__init__()
+        self._can_edit = True
         self._tables: list[_InsTable] = []
-
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # --- Top Bar (Toggle Switch) ---
+        top_bar = QWidget()
+        top_bar.setStyleSheet("background-color: #f1f3f5; border-bottom: 1px solid #dee2e6;")
+        top_lay = QHBoxLayout(top_bar)
+        top_lay.setContentsMargins(15, 8, 15, 8)
+        
+        title_lbl = QLabel("Insurance Details")
+        title_lbl.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        title_lbl.setStyleSheet("color: #343a40; border: none;")
+        top_lay.addWidget(title_lbl)
+        
+        top_lay.addStretch()
+        
+        from PyQt6.QtWidgets import QComboBox, QStackedWidget
+        self.view_selector = QComboBox()
+        self.view_selector.addItems(["Detailed Column View", "Classic Excel Grid View"])
+        self.view_selector.setFont(QFont("Arial", 10))
+        self.view_selector.setStyleSheet("""
+            QComboBox {
+                padding: 4px 10px;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                background-color: white;
+            }
+        """)
+        self.view_selector.currentIndexChanged.connect(self._switch_view)
+        top_lay.addWidget(self.view_selector)
+        
+        main_layout.addWidget(top_bar)
+        
+        # --- Stacked Widget ---
+        self.stack = QStackedWidget()
+        
+        # --- VIEW 1: Detailed Column View ---
+        self.view1 = QWidget()
+        v1_layout = QVBoxLayout(self.view1)
+        v1_layout.setContentsMargins(0, 0, 0, 0)
+        
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -147,14 +189,66 @@ class InsuranceTab(QWidget):
 
         vlay.addStretch()
         scroll.setWidget(container)
+        v1_layout.addWidget(scroll)
+        self.stack.addWidget(self.view1)
+        
+        # --- VIEW 2: Excel Grid View ---
+        self.view2 = QWidget()
+        v2_layout = QVBoxLayout(self.view2)
+        v2_layout.setContentsMargins(12, 12, 12, 12)
+        
+        self.grid = QTableWidget(50, len(_INS_COLS))
+        self.grid.setObjectName("InsuranceGridTable")
+        self.grid.setFont(_H_NORM)
+        self.grid.setHorizontalHeaderLabels(_INS_COLS)
+        for c, w in enumerate(_INS_COL_W):
+            self.grid.setColumnWidth(c, w)
+            
+        self.grid.verticalHeader().setDefaultSectionSize(25)
+        self.grid.horizontalHeader().setHighlightSections(False)
+        self.grid.horizontalHeader().setStretchLastSection(True)
+        self.grid.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        
+        self.grid.setStyleSheet("""
+            QTableWidget {
+                gridline-color: #dee2e6;
+                alternate-background-color: #f8f9fa;
+                border: 1px solid #ced4da;
+            }
+            QHeaderView::section {
+                background-color: #e9ecef;
+                padding: 4px;
+                border: 1px solid #ced4da;
+                font-weight: bold;
+            }
+        """)
+        
+        # Paint colored sections
+        for row, (label, bg) in enumerate(_INS_SECTIONS):
+            r = row * 10 # Spread sections out by 10 rows
+            for col in range(len(_INS_COLS)):
+                it = QTableWidgetItem(label if col == 0 else "")
+                it.setFont(_H_BOLD)
+                it.setBackground(QBrush(QColor(bg)))
+                it.setForeground(QBrush(QColor("#ffffff")))
+                it.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                self.grid.setItem(r, col, it)
+            self.grid.setRowHeight(r, 28)
+            
+        v2_layout.addWidget(self.grid)
+        self.stack.addWidget(self.view2)
+        
+        main_layout.addWidget(self.stack)
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(scroll)
+    def _switch_view(self, idx):
+        self.stack.setCurrentIndex(idx)
 
     def apply_edit_mode(self, can_edit: bool):
+        self._can_edit = can_edit
+        flags = (QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.AnyKeyPressed) if can_edit else QTableWidget.EditTrigger.NoEditTriggers
         for t in self._tables:
             t.set_edit_mode(can_edit)
+        self.grid.setEditTriggers(flags)
 
 
 # ===========================================================================
@@ -186,8 +280,8 @@ _BONUS_DATA = [
     ("NGT", "Office Member", "Team--Basistha  Chaurasiya",     "",   ""),
 ]
 
-_BONUS_BASE_COLS = ["Location", "Post", "Employee Name", "Diwali Bonus"]
-_BONUS_BASE_W    = [90, 110, 200, 110]
+_BONUS_BASE_COLS = ["Location", "Post", "Employee Name", "Diwali Bonus", "Remarks"]
+_BONUS_BASE_W    = [90, 110, 200, 110, 150]
 _BONUS_LOC_BG    = {"HO": "#E8F4FD", "BTM": "#FFF3E0",
                     "JNK": "#F3E5F5", "NGT": "#E8F5E9"}
 
@@ -335,7 +429,7 @@ _TEAM_DATA = [
 ]
 
 _TEAM_LOC_BG = {"HO":"#E3F2FD","BTM":"#FFF9C4","JNK":"#F3E5F5","NGT":"#E8F5E9"}
-_FIXED_COLS  = [("Location",70),("Post",110),("Name",200)]
+_FIXED_COLS  = [("Location",70),("Post",110),("Name",200), ("", 30)]
 _FIXED_N     = len(_FIXED_COLS)
 
 
@@ -415,6 +509,11 @@ class TeamListTab(QWidget):
             self.table.setItem(r, 0, _item(loc, bg=bg))
             self.table.setItem(r, 1, _item(post))
             self.table.setItem(r, 2, _item(name, bold=True))
+            
+            spacer = QTableWidgetItem("")
+            spacer.setFlags(Qt.ItemFlag.NoItemFlags)
+            spacer.setBackground(QBrush(QColor("#f8f9fa")))
+            self.table.setItem(r, 3, spacer)
             for yr, (yr_month, salary) in yr_data.items():
                 if yr in self._year_labels:
                     bc = self._col_for_year(yr)
@@ -1081,57 +1180,168 @@ class RecordTab(QWidget):
         super().__init__()
         self._can_edit = True
         self._n_accts = 2  # Changed to 2 accounts: Company and Personal
+        self._headers = ["SN", "A/C of", "Field", "Company Account", "", "Field", "Personal Account", ""]
 
-        vlay = QVBoxLayout(self)
-        vlay.setContentsMargins(8, 8, 8, 8)
-        vlay.setSpacing(6)
-
-        # Toolbar
-        tbar = QHBoxLayout()
-        tbar.setContentsMargins(0, 0, 0, 0)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # --- Top Bar (Toggle Switch & Buttons) ---
+        top_bar = QWidget()
+        top_bar.setStyleSheet("background-color: #f1f3f5; border-bottom: 1px solid #dee2e6;")
+        tbar = QHBoxLayout(top_bar)
+        tbar.setContentsMargins(15, 8, 15, 8)
+        
         lbl = QLabel("Supplier Bank Account Records")
-        lbl.setFont(_H_BOLD)
+        lbl.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        lbl.setStyleSheet("color: #343a40; border: none;")
         tbar.addWidget(lbl)
         tbar.addStretch()
+        
         self._add_row_btn = QPushButton("+ Add Supplier")
         self._add_row_btn.setFixedHeight(28)
         self._add_row_btn.clicked.connect(self._add_supplier)
         tbar.addWidget(self._add_row_btn)
+        
         self._add_acct_btn = QPushButton("+ Add Account")
         self._add_acct_btn.setFixedHeight(28)
         self._add_acct_btn.clicked.connect(self._add_account)
         tbar.addWidget(self._add_acct_btn)
-        vlay.addLayout(tbar)
-
+        
+        from PyQt6.QtWidgets import QComboBox, QStackedWidget
+        self.view_selector = QComboBox()
+        self.view_selector.addItems(["Classic Excel Grid View", "Detailed Column View"])
+        self.view_selector.setFont(QFont("Arial", 10))
+        self.view_selector.setStyleSheet("""
+            QComboBox {
+                padding: 4px 10px;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                background-color: white;
+            }
+        """)
+        self.view_selector.currentIndexChanged.connect(self._switch_view)
+        tbar.addWidget(self.view_selector)
+        
+        main_layout.addWidget(top_bar)
+        
+        # --- Stacked Widget ---
+        self.stack = QStackedWidget()
+        
+        # --- VIEW 0: Excel Grid View (Default) ---
+        self.view0 = QWidget()
+        v0_layout = QVBoxLayout(self.view0)
+        v0_layout.setContentsMargins(8, 8, 8, 8)
+        v0_layout.setSpacing(6)
+        
         # Table
         self.table = QTableWidget(0, self._total_cols())
         self.table.setObjectName("RecordTable")
         self.table.setFont(_H_NORM)
         
-        # We enable the horizontal header to label Company vs Personal
         self.table.horizontalHeader().setVisible(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(True)
         
-        self._headers = ["SN", "A/C of", "Field", "Company Account", "", "Field", "Personal Account", ""]
         self.table.setHorizontalHeaderLabels(self._headers)
         
         self.table.setStyleSheet("""
-            QTableWidget { gridline-color: #A0A0A0; }
+            QTableWidget { gridline-color: #A0A0A0; alternate-background-color: #f8f9fa; }
             QHeaderView::section {
-                background-color: #f8f9fa;
+                background-color: #e9ecef;
                 border: 1px solid #dee2e6;
                 padding: 4px;
                 font-weight: bold;
                 color: #343a40;
             }
         """)
-        
+        self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
-        vlay.addWidget(self.table)
+        v0_layout.addWidget(self.table)
+        self.stack.addWidget(self.view0)
+        
+        # --- VIEW 1: Detailed Column View ---
+        self.view1 = QWidget()
+        v1_layout = QVBoxLayout(self.view1)
+        v1_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setStyleSheet("QScrollArea { background-color: #fdfdfd; }")
+        
+        self.container = QWidget()
+        self.container.setStyleSheet("background-color: transparent;")
+        self.c_lay = QVBoxLayout(self.container)
+        self.c_lay.setContentsMargins(12, 12, 12, 12)
+        self.c_lay.setSpacing(25)
+        
+        self.scroll.setWidget(self.container)
+        v1_layout.addWidget(self.scroll)
+        self.stack.addWidget(self.view1)
+        
+        main_layout.addWidget(self.stack)
 
         self._setup_columns()
         self._load_data()
+        self._build_detailed_view()
+
+    def _switch_view(self, idx):
+        self.stack.setCurrentIndex(idx)
+        
+    def _build_detailed_view(self):
+        # Clear existing layout
+        while self.c_lay.count():
+            child = self.c_lay.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+                
+        # Build individual tables based on Grid View data
+        r = 0
+        while r < self.table.rowCount():
+            # Skip gaps
+            if self.table.rowSpan(r, 0) == 1 and not (self.table.item(r, 0) and self.table.item(r, 0).text()):
+                r += 1
+                continue
+                
+            sn = self.table.item(r, 0).text() if self.table.item(r, 0) else ""
+            acof = self.table.item(r, 1).text() if self.table.item(r, 1) else ""
+            
+            group = QGroupBox(f"{sn}. {acof}")
+            group.setFont(_H_BOLD)
+            group.setStyleSheet("QGroupBox { border: 1px solid #ced4da; border-radius: 6px; margin-top: 10px; padding-top: 15px; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; color: #1976D2; }")
+            g_lay = QHBoxLayout(group)
+            
+            # For each account
+            for a in range(self._n_accts):
+                header_idx = 3 + (a * 3)
+                acc_name = self._headers[header_idx] if header_idx < len(self._headers) else f"Account {a+1}"
+                
+                t = QTableWidget(6, 2)
+                t.setHorizontalHeaderLabels(["Field", acc_name])
+                t.horizontalHeader().setStretchLastSection(True)
+                t.verticalHeader().setVisible(False)
+                t.setFixedHeight(210)
+                t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+                t.setStyleSheet("QHeaderView::section { background-color: #e9ecef; font-weight: bold; }")
+                
+                for i in range(6):
+                    lbl = self.table.item(r + i, _rec_col(a, 0))
+                    val = self.table.item(r + i, _rec_col(a, 1))
+                    
+                    t.setItem(i, 0, QTableWidgetItem(lbl.text() if lbl else ""))
+                    v_item = QTableWidgetItem(val.text() if val else "")
+                    if val and val.font().bold():
+                        f = v_item.font()
+                        f.setBold(True)
+                        v_item.setFont(f)
+                    t.setItem(i, 1, v_item)
+                
+                g_lay.addWidget(t)
+            
+            self.c_lay.addWidget(group)
+            r += 6
+            
+        self.c_lay.addStretch()
 
     def _total_cols(self) -> int:
         return _REC_FIXED + self._n_accts * _REC_BLOCK
@@ -1213,6 +1423,7 @@ class RecordTab(QWidget):
         if not self._can_edit: return
         self._insert_row("", "", [{}, {}, {}])
         self.table.scrollToBottom()
+        self._build_detailed_view()
 
     def _add_account(self):
         if not self._can_edit: return
@@ -1227,6 +1438,7 @@ class RecordTab(QWidget):
         # update columns
         self._setup_columns()
         self.table.setHorizontalHeaderLabels(self._headers)
+        self._build_detailed_view()
         
         new_a = self._n_accts - 1
         
