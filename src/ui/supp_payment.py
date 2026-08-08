@@ -207,6 +207,8 @@ class InsuranceTab(QWidget):
         self.grid.verticalHeader().setDefaultSectionSize(25)
         self.grid.horizontalHeader().setHighlightSections(False)
         self.grid.horizontalHeader().setStretchLastSection(True)
+        self.grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.grid.customContextMenuRequested.connect(self._show_grid_context_menu)
         self.grid.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         
         self.grid.setStyleSheet("""
@@ -250,6 +252,48 @@ class InsuranceTab(QWidget):
         for t in self._tables:
             t.set_edit_mode(can_edit)
         self.grid.setEditTriggers(flags)
+    def _show_grid_context_menu(self, pos):
+        if getattr(self, "_can_edit", True) == False: return
+        
+        # Determine which grid we are targeting
+        if hasattr(self, "grid"):
+            grid = self.grid
+        elif hasattr(self, "table"):
+            grid = self.table
+        else:
+            return
+
+        menu = QMenu(self)
+        action_insert_row_above = menu.addAction("Insert Row Above")
+        action_insert_row_below = menu.addAction("Insert Row Below")
+        menu.addSeparator()
+        action_insert_col_left = menu.addAction("Insert Column Left")
+        action_insert_col_right = menu.addAction("Insert Column Right")
+        menu.addSeparator()
+        action_delete_row = menu.addAction("Delete Row")
+        action_delete_col = menu.addAction("Delete Column")
+        
+        item = grid.itemAt(pos)
+        r = item.row() if item else grid.currentRow()
+        c = item.column() if item else grid.currentColumn()
+        
+        if r < 0: r = 0
+        if c < 0: c = 0
+        
+        action = menu.exec(grid.viewport().mapToGlobal(pos))
+        
+        if action == action_insert_row_above:
+            grid.insertRow(r)
+        elif action == action_insert_row_below:
+            grid.insertRow(r + 1)
+        elif action == action_insert_col_left:
+            grid.insertColumn(c)
+        elif action == action_insert_col_right:
+            grid.insertColumn(c + 1)
+        elif action == action_delete_row:
+            grid.removeRow(r)
+        elif action == action_delete_col:
+            grid.removeColumn(c)
 
 
 # ===========================================================================
@@ -884,6 +928,8 @@ class TodayPaymentTab(QWidget):
         self.grid.horizontalHeader().setVisible(False)
         self.grid.setFont(_H_NORM)
         self.grid.setAlternatingRowColors(True)
+        self.grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.grid.customContextMenuRequested.connect(self._show_grid_context_menu)
         self.grid.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.grid.setStyleSheet("""
             QTableWidget {
@@ -1184,7 +1230,48 @@ class TodayPaymentTab(QWidget):
             t.table.setEditTriggers(flags)
             t.btn_add.setEnabled(can_edit)
         self.grid.setEditTriggers(flags)
+    def _show_grid_context_menu(self, pos):
+        if getattr(self, "_can_edit", True) == False: return
+        
+        # Determine which grid we are targeting
+        if hasattr(self, "grid"):
+            grid = self.grid
+        elif hasattr(self, "table"):
+            grid = self.table
+        else:
+            return
 
+        menu = QMenu(self)
+        action_insert_row_above = menu.addAction("Insert Row Above")
+        action_insert_row_below = menu.addAction("Insert Row Below")
+        menu.addSeparator()
+        action_insert_col_left = menu.addAction("Insert Column Left")
+        action_insert_col_right = menu.addAction("Insert Column Right")
+        menu.addSeparator()
+        action_delete_row = menu.addAction("Delete Row")
+        action_delete_col = menu.addAction("Delete Column")
+        
+        item = grid.itemAt(pos)
+        r = item.row() if item else grid.currentRow()
+        c = item.column() if item else grid.currentColumn()
+        
+        if r < 0: r = 0
+        if c < 0: c = 0
+        
+        action = menu.exec(grid.viewport().mapToGlobal(pos))
+        
+        if action == action_insert_row_above:
+            grid.insertRow(r)
+        elif action == action_insert_row_below:
+            grid.insertRow(r + 1)
+        elif action == action_insert_col_left:
+            grid.insertColumn(c)
+        elif action == action_insert_col_right:
+            grid.insertColumn(c + 1)
+        elif action == action_delete_row:
+            grid.removeRow(r)
+        elif action == action_delete_col:
+            grid.removeColumn(c)
 
 
 class RecordTab(QWidget):
@@ -1267,6 +1354,8 @@ class RecordTab(QWidget):
             }
         """)
         self.table.setAlternatingRowColors(True)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_grid_context_menu)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         v0_layout.addWidget(self.table)
         self.stack.addWidget(self.view0)
@@ -1486,6 +1575,49 @@ class RecordTab(QWidget):
         )
         self._add_row_btn.setEnabled(can_edit)
         self._add_acct_btn.setEnabled(can_edit)
+    def _show_grid_context_menu(self, pos):
+        if getattr(self, "_can_edit", True) == False: return
+        
+        # Determine which grid we are targeting
+        if hasattr(self, "grid"):
+            grid = self.grid
+        elif hasattr(self, "table"):
+            grid = self.table
+        else:
+            return
+
+        menu = QMenu(self)
+        action_insert_row_above = menu.addAction("Insert Row Above")
+        action_insert_row_below = menu.addAction("Insert Row Below")
+        menu.addSeparator()
+        action_insert_col_left = menu.addAction("Insert Column Left")
+        action_insert_col_right = menu.addAction("Insert Column Right")
+        menu.addSeparator()
+        action_delete_row = menu.addAction("Delete Row")
+        action_delete_col = menu.addAction("Delete Column")
+        
+        item = grid.itemAt(pos)
+        r = item.row() if item else grid.currentRow()
+        c = item.column() if item else grid.currentColumn()
+        
+        if r < 0: r = 0
+        if c < 0: c = 0
+        
+        action = menu.exec(grid.viewport().mapToGlobal(pos))
+        
+        if action == action_insert_row_above:
+            grid.insertRow(r)
+        elif action == action_insert_row_below:
+            grid.insertRow(r + 1)
+        elif action == action_insert_col_left:
+            grid.insertColumn(c)
+        elif action == action_insert_col_right:
+            grid.insertColumn(c + 1)
+        elif action == action_delete_row:
+            grid.removeRow(r)
+        elif action == action_delete_col:
+            grid.removeColumn(c)
+
 
 # ===========================================================================
 # ANIL DAI HISAB TAB  -  running-balance ledger
