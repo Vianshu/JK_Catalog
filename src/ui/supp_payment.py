@@ -1135,12 +1135,12 @@ class TodayPaymentTab(QWidget):
         self.grid.blockSignals(True)
         try:
             item12 = self.grid.item(r, 12)
-            if item10 is None:
+            if item12 is None:
                 item12 = QTableWidgetItem("")
                 font = item12.font()
                 font.setBold(True)
                 item12.setFont(font)
-                item12.setFlags(item10.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                item12.setFlags(item12.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.grid.setItem(r, 12, item12)
 
             if not date_str:
@@ -1306,6 +1306,7 @@ class RecordTab(QWidget):
             sn = self.table.item(r, 0).text() if self.table.item(r, 0) else ""
             acof = self.table.item(r, 1).text() if self.table.item(r, 1) else ""
             
+            from PyQt6.QtWidgets import QGroupBox
             group = QGroupBox(f"{sn}. {acof}")
             group.setFont(_H_BOLD)
             group.setStyleSheet("QGroupBox { border: 1px solid #ced4da; border-radius: 6px; margin-top: 10px; padding-top: 15px; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; color: #1976D2; }")
