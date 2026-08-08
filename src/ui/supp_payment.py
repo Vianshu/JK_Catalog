@@ -1637,14 +1637,7 @@ class AnilHisabTab(QWidget):
             start, end, days, part, dr, cr, bal = row_data
             r = self.table.rowCount()
             self.table.insertRow(r)
-
-            # Colour: DR rows warm-orange tint, Cr. rows green tint
-            if cr and not dr:
-                row_bg = QColor("#E8F5E9")   # green tint  - money received
-            elif dr and not cr:
-                row_bg = QColor("#FFF3E0")   # orange tint - interest/debit
-            else:
-                row_bg = None                 # both present (mixed row)
+            row_bg = None
 
             vals = [
                 (start, _C),
