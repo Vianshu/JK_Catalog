@@ -373,7 +373,7 @@ class BonusTab(QWidget):
 # ===========================================================================
 # C) TEAM-LIST TAB  –  fixed left cols + year pairs (oldest -> newest ->)
 # ===========================================================================
-_YEAR_LABELS = ["75-76","76-77","77-78","78-79","79-80","80-81","81-82","82-83"]
+_YEAR_LABELS = []
 
 # (location, post, name, {yr_label: (yr_month, salary)})
 _TEAM_DATA = [
@@ -429,7 +429,7 @@ _TEAM_DATA = [
 ]
 
 _TEAM_LOC_BG = {"HO":"#E3F2FD","BTM":"#FFF9C4","JNK":"#F3E5F5","NGT":"#E8F5E9"}
-_FIXED_COLS  = [("Location",70),("Post",110),("Name",200), ("", 30)]
+_FIXED_COLS  = [("Location",70),("Post",110),("Name",200)]
 _FIXED_N     = len(_FIXED_COLS)
 
 
@@ -437,7 +437,8 @@ class TeamListTab(QWidget):
     def __init__(self):
         super().__init__()
         self._can_edit   = True
-        self._year_labels = list(_YEAR_LABELS)
+        # Reversed order for newest on left
+        self._year_labels = ["82-83","81-82","80-81","79-80","78-79","77-78","76-77","75-76"]
 
         vlay = QVBoxLayout(self)
         vlay.setContentsMargins(8, 8, 8, 8)
@@ -446,7 +447,7 @@ class TeamListTab(QWidget):
         # Toolbar
         tbar = QHBoxLayout()
         tbar.setContentsMargins(0, 0, 0, 0)
-        lbl = QLabel("Team Salary History  (oldest → newest  ▶)")
+        lbl = QLabel("Team Salary History  (◀ newest → oldest)")
         lbl.setFont(_H_BOLD)
         tbar.addWidget(lbl)
         tbar.addStretch()
@@ -465,13 +466,13 @@ class TeamListTab(QWidget):
         # Hint label
         hint = QLabel(
             "  Each year block: Joining Month  |  Salary  "
-            "— scroll right to see newest year"
+            "— newest years on the left"
         )
         hint.setStyleSheet("color:#666; font-size:11px;")
         vlay.addWidget(hint)
 
         # Table
-        self.table = QTableWidget(0, _FIXED_N + len(self._year_labels) * 2)
+        self.table = QTableWidget(0, _FIXED_N + len(self._year_labels) * 3)
         self.table.setObjectName("TeamListTable")
         self.table.setFont(_H_NORM)
         self.table.verticalHeader().setDefaultSectionSize(25)
@@ -484,21 +485,22 @@ class TeamListTab(QWidget):
         self._load_data()
 
     def _col_for_year(self, yr: str) -> int:
-        return _FIXED_N + self._year_labels.index(yr) * 2
+        return _FIXED_N + self._year_labels.index(yr) * 3 + 1
 
     def _rebuild_headers(self):
-        total = _FIXED_N + len(self._year_labels) * 2
+        total = _FIXED_N + len(self._year_labels) * 3
         self.table.setColumnCount(total)
         labels = [n for n, _ in _FIXED_COLS]
         for yr in self._year_labels:
-            labels += [yr, "Salary"]
+            labels += ["", yr, "Salary"]
         self.table.setHorizontalHeaderLabels(labels)
         for c, (_, w) in enumerate(_FIXED_COLS):
             self.table.setColumnWidth(c, w)
         for i in range(len(self._year_labels)):
-            base = _FIXED_N + i * 2
-            self.table.setColumnWidth(base,     80)
-            self.table.setColumnWidth(base + 1, 85)
+            base = _FIXED_N + i * 3
+            self.table.setColumnWidth(base,     30)
+            self.table.setColumnWidth(base + 1, 80)
+            self.table.setColumnWidth(base + 2, 85)
 
     def _load_data(self):
         self.table.setRowCount(0)
@@ -510,10 +512,13 @@ class TeamListTab(QWidget):
             self.table.setItem(r, 1, _item(post))
             self.table.setItem(r, 2, _item(name, bold=True))
             
-            spacer = QTableWidgetItem("")
-            spacer.setFlags(Qt.ItemFlag.NoItemFlags)
-            spacer.setBackground(QBrush(QColor("#f8f9fa")))
-            self.table.setItem(r, 3, spacer)
+            for i in range(len(self._year_labels)):
+                base = _FIXED_N + i * 3
+                spacer = QTableWidgetItem("")
+                spacer.setFlags(Qt.ItemFlag.NoItemFlags)
+                spacer.setBackground(QBrush(QColor("#f8f9fa")))
+                self.table.setItem(r, base, spacer)
+                
             for yr, (yr_month, salary) in yr_data.items():
                 if yr in self._year_labels:
                     bc = self._col_for_year(yr)
@@ -539,14 +544,10 @@ class TeamListTab(QWidget):
         if yr in self._year_labels:
             QMessageBox.information(self, "Exists", f"Year {yr} already exists.")
             return
-        self._year_labels.append(yr)
-        c = self.table.columnCount()
-        self.table.insertColumn(c)
-        self.table.insertColumn(c + 1)
-        self.table.setHorizontalHeaderItem(c,     QTableWidgetItem(yr))
-        self.table.setHorizontalHeaderItem(c + 1, QTableWidgetItem("Salary"))
-        self.table.setColumnWidth(c,     80)
-        self.table.setColumnWidth(c + 1, 85)
+        
+        self._year_labels.insert(0, yr)
+        self._rebuild_headers()
+        self._load_data()
 
     def apply_edit_mode(self, can_edit: bool):
         self._can_edit = can_edit
