@@ -212,10 +212,10 @@ class InsuranceTab(QWidget):
         self.grid.setStyleSheet("""
             QTableWidget {
                 gridline-color: #dee2e6;
-                alternate-background-color: #1A2035;
+                alternate-background-color: #f8f9fa;
                 border: 1px solid #ced4da;
             }
-            QHeaderView::section {
+            QHeaderView::section:horizontal {
                 background-color: #1A2035;
                 color: #ffffff;
                 padding: 4px;
@@ -888,10 +888,10 @@ class TodayPaymentTab(QWidget):
         self.grid.setStyleSheet("""
             QTableWidget {
                 gridline-color: #dee2e6;
-                alternate-background-color: #1A2035;
+                alternate-background-color: #f8f9fa;
                 border: 1px solid #ced4da;
             }
-            QHeaderView::section {
+            QHeaderView::section:horizontal {
                 background-color: #1A2035;
                 color: #ffffff;
                 padding: 4px;
@@ -1032,8 +1032,8 @@ class TodayPaymentTab(QWidget):
                     if c_start + idx <= c_end:
                         h_item = QTableWidgetItem(h)
                         h_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                        h_item.setBackground(QBrush(QColor("#e9ecef")))
-                        h_item.setForeground(QBrush(QColor("#000000")))
+                        h_item.setBackground(QBrush(QColor("#1A2035")))
+                        h_item.setForeground(QBrush(QColor("#ffffff")))
                         h_item.setFont(_H_BOLD)
                         self.grid.setItem(r + 1, c_start + idx, h_item)
         
@@ -1257,8 +1257,8 @@ class RecordTab(QWidget):
         self.table.setHorizontalHeaderLabels(self._headers)
         
         self.table.setStyleSheet("""
-            QTableWidget { gridline-color: #A0A0A0; alternate-background-color: #1A2035; }
-            QHeaderView::section {
+            QTableWidget { gridline-color: #A0A0A0; alternate-background-color: #f8f9fa; }
+            QHeaderView::section:horizontal {
                 background-color: #1A2035;
                 border: 1px solid #dee2e6;
                 padding: 4px;
@@ -1335,7 +1335,7 @@ class RecordTab(QWidget):
                 t.verticalHeader().setVisible(False)
                 t.setFixedHeight(210)
                 t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-                t.setStyleSheet("QHeaderView::section { background-color: #e9ecef; font-weight: bold; }")
+                t.setStyleSheet("QHeaderView::section:horizontal { background-color: #e9ecef; font-weight: bold; }")
                 
                 for i in range(6):
                     lbl = self.table.item(r + i, _rec_col(a, 0))
@@ -1836,9 +1836,9 @@ class _StyledTable(QWidget):
                 border: none;
                 gridline-color: #f1f3f5;
                 background-color: transparent;
-                alternate-background-color: #1A2035;
+                alternate-background-color: #f8f9fa;
             }
-            QHeaderView::section {
+            QHeaderView::section:horizontal {
                 background-color: #1A2035;
                 border: none;
                 border-bottom: 2px solid #dee2e6;
@@ -1972,10 +1972,10 @@ class PaymentSheet(QWidget):
         self.grid.setStyleSheet("""
             QTableWidget {
                 gridline-color: #dee2e6;
-                alternate-background-color: #1A2035;
+                alternate-background-color: #f8f9fa;
                 border: 1px solid #ced4da;
             }
-            QHeaderView::section {
+            QHeaderView::section:horizontal {
                 background-color: #1A2035;
                 color: #ffffff;
                 padding: 4px;
