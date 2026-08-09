@@ -1072,7 +1072,11 @@ class TodayPaymentTab(QWidget):
             actual_bg   = custom.get("color", bg)
             for c in range(c_start, c_end + 1):
                 item = QTableWidgetItem(actual_text if c == c_start else "")
-                item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                # Anchor cell is editable so the user can type directly
+                if c == c_start:
+                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsSelectable)
+                else:
+                    item.setFlags(Qt.ItemFlag.ItemIsEnabled)
                 item.setBackground(QBrush(QColor(actual_bg)))
                 item.setForeground(QBrush(QColor("#ffffff")))
                 item.setFont(_H_BOLD)
@@ -1228,9 +1232,19 @@ class TodayPaymentTab(QWidget):
             self.t_dl.table.blockSignals(False)
 
     def _grid_item_changed(self, item):
-        # Grid day's left calc (Column 9 is Expiry Date, Column 10 is Day's left)
-        if item.column() != 11: return
-        r = item.row()
+        r, c = item.row(), item.column()
+
+        # Auto-save header renames (user typed directly into the anchor cell)
+        hdr_info = self._header_registry.get((r, c))
+        if hdr_info and c == hdr_info["cols"][0]:
+            key = hdr_info["key"]
+            self._header_customizations.setdefault(key, {})["name"] = item.text().strip()
+            self._hdr_settings.setValue("customizations", self._header_customizations)
+            return  # no further processing needed
+
+        # Grid day's left calc (Column 11 is Expiry Date, Column 12 is Day's left)
+        if c != 11:
+            return
         date_str = item.text().strip()
         self.grid.blockSignals(True)
         try:
@@ -1273,7 +1287,8 @@ class TodayPaymentTab(QWidget):
             t.btn_add.setEnabled(can_edit)
         self.grid.setEditTriggers(flags)
     def _show_grid_context_menu(self, pos):
-        if getattr(self, "_can_edit", True) == False: return
+        if not getattr(self, "_can_edit", True):
+            return
 
         grid = self.grid if hasattr(self, "grid") else getattr(self, "table", None)
         if not grid:
@@ -1287,65 +1302,9 @@ class TodayPaymentTab(QWidget):
 
         menu = QMenu(self)
 
-        # ── Header cell detected: offer rename + color change ─────────────────
-        hdr_info = self._header_registry.get((r, c))
-        if hdr_info:
-            action_rename = menu.addAction("✏️  Rename Header")
-            action_color  = menu.addAction("🎨  Change Color")
-            action_reset  = menu.addAction("↩️  Reset to Default")
-            menu.addSeparator()
-
-            action = menu.exec(grid.viewport().mapToGlobal(pos))
-
-            if action == action_rename:
-                from PyQt6.QtWidgets import QInputDialog
-                key  = hdr_info["key"]
-                cur  = self._header_customizations.get(key, {}).get("name", hdr_info["default_name"])
-                new_name, ok = QInputDialog.getText(
-                    self, "Rename Header", "Header name:", text=cur
-                )
-                if ok and new_name.strip():
-                    self._header_customizations.setdefault(key, {})["name"] = new_name.strip()
-                    self._hdr_settings.setValue("customizations", self._header_customizations)
-                    # Update the anchor cell immediately
-                    c_start = hdr_info["cols"][0]
-                    it = grid.item(r, c_start)
-                    if it:
-                        it.setText(new_name.strip())
-
-            elif action == action_color:
-                from PyQt6.QtWidgets import QColorDialog
-                key     = hdr_info["key"]
-                cur_hex = self._header_customizations.get(key, {}).get("color", hdr_info["default_color"])
-                color   = QColorDialog.getColor(QColor(cur_hex), self, "Pick Header Color")
-                if color.isValid():
-                    new_hex = color.name()
-                    self._header_customizations.setdefault(key, {})["color"] = new_hex
-                    self._hdr_settings.setValue("customizations", self._header_customizations)
-                    # Apply new color to all cells in this header span
-                    c_start, c_end = hdr_info["cols"]
-                    for col in range(c_start, c_end + 1):
-                        it = grid.item(r, col)
-                        if it:
-                            it.setBackground(QBrush(QColor(new_hex)))
-
-            elif action == action_reset:
-                key = hdr_info["key"]
-                self._header_customizations.pop(key, None)
-                self._hdr_settings.setValue("customizations", self._header_customizations)
-                # Repaint the header cell with its default values
-                c_start, c_end = hdr_info["cols"]
-                default_name  = hdr_info["default_name"]
-                default_color = hdr_info["default_color"]
-                for col in range(c_start, c_end + 1):
-                    it = grid.item(r, col)
-                    if it:
-                        if col == c_start:
-                            it.setText(default_name)
-                        it.setBackground(QBrush(QColor(default_color)))
-            return
-
-        # ── Normal cell: standard row/column operations ───────────────────────
+        # — Color picker available for every cell —
+        action_color = menu.addAction("🎨  Change Cell Color")
+        menu.addSeparator()
         action_insert_row_above = menu.addAction("Insert Row Above")
         action_insert_row_below = menu.addAction("Insert Row Below")
         menu.addSeparator()
@@ -1357,7 +1316,31 @@ class TodayPaymentTab(QWidget):
 
         action = menu.exec(grid.viewport().mapToGlobal(pos))
 
-        if action == action_insert_row_above:
+        if action == action_color:
+            from PyQt6.QtWidgets import QColorDialog
+            it = grid.item(r, c)
+            cur_color = it.background().color() if it else QColor("#ffffff")
+            color = QColorDialog.getColor(cur_color, self, "Pick Cell Color")
+            if color.isValid():
+                if it is None:
+                    it = QTableWidgetItem("")
+                    grid.setItem(r, c, it)
+                it.setBackground(QBrush(color))
+                # If it's a header anchor cell, also save the color
+                hdr_info = self._header_registry.get((r, c))
+                if hdr_info:
+                    key = hdr_info["key"]
+                    new_hex = color.name()
+                    self._header_customizations.setdefault(key, {})["color"] = new_hex
+                    self._hdr_settings.setValue("customizations", self._header_customizations)
+                    # Apply to all cells in the span
+                    c_start, c_end = hdr_info["cols"]
+                    for col in range(c_start, c_end + 1):
+                        span_it = grid.item(r, col)
+                        if span_it:
+                            span_it.setBackground(QBrush(color))
+
+        elif action == action_insert_row_above:
             grid.insertRow(r)
         elif action == action_insert_row_below:
             grid.insertRow(r + 1)
