@@ -1398,8 +1398,8 @@ class RecordTab(QWidget):
         self.container = QWidget()
         self.container.setStyleSheet("background-color: transparent;")
         self.c_lay = QVBoxLayout(self.container)
-        self.c_lay.setContentsMargins(12, 12, 12, 12)
-        self.c_lay.setSpacing(25)
+        self.c_lay.setContentsMargins(12, 8, 12, 8)
+        self.c_lay.setSpacing(10)
         
         self.scroll.setWidget(self.container)
         v1_layout.addWidget(self.scroll)
@@ -1427,16 +1427,27 @@ class RecordTab(QWidget):
         header_idx = 3 + (a * 3)
         acc_name = self._headers[header_idx] if header_idx < len(self._headers) else f"Account {a+1}"
         
-        from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem
-        t = QTableWidget(6, 2)
+        from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QAbstractScrollArea
+        NUM_ROWS = 6
+        t = QTableWidget(NUM_ROWS, 2)
         t.setHorizontalHeaderLabels(["Field", acc_name])
         t.horizontalHeader().setStretchLastSection(True)
         t.verticalHeader().setVisible(False)
-        t.setFixedHeight(210)
         t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        t.setStyleSheet("QHeaderView::section:horizontal { background-color: #1A2035; color: #ffffff; padding: 4px; border: 1px solid #ced4da; font-weight: bold; }")
+        # Disable both scroll bars — the table will auto-expand to show all rows
+        t.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        t.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        t.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustToContents)
+        t.setStyleSheet(
+            "QTableWidget { border: none; }"
+            "QHeaderView::section:horizontal { background-color: #1A2035; color: #ffffff; "
+            "padding: 4px; border: 1px solid #ced4da; font-weight: bold; }"
+        )
+        # Compact row heights
+        for i in range(NUM_ROWS):
+            t.setRowHeight(i, 24)
         
-        for i in range(6):
+        for i in range(NUM_ROWS):
             lbl = self.table.item(r + i, _rec_col(a, 0))
             val = self.table.item(r + i, _rec_col(a, 1))
             
@@ -1447,6 +1458,11 @@ class RecordTab(QWidget):
                 f.setBold(True)
                 v_item.setFont(f)
             t.setItem(i, 1, v_item)
+        
+        # Calculate exact height: header + (NUM_ROWS * row_height) + 2px border
+        header_h = t.horizontalHeader().sizeHint().height()
+        rows_h   = sum(t.rowHeight(i) for i in range(NUM_ROWS))
+        t.setFixedHeight(header_h + rows_h + 2)
         return t
 
     def _build_detailed_view(self):
@@ -1470,8 +1486,15 @@ class RecordTab(QWidget):
             from PyQt6.QtWidgets import QGroupBox
             group = QGroupBox(f"{sn}. {acof}")
             group.setFont(_H_BOLD)
-            group.setStyleSheet("QGroupBox { border: 1px solid #ced4da; border-radius: 6px; margin-top: 10px; padding-top: 15px; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; color: #1976D2; }")
+            group.setStyleSheet(
+                "QGroupBox { border: 1px solid #ced4da; border-radius: 6px; "
+                "margin-top: 8px; padding-top: 8px; padding-bottom: 4px; } "
+                "QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; "
+                "padding: 0 5px; color: #1976D2; }"
+            )
             g_lay = QVBoxLayout(group)
+            g_lay.setContentsMargins(6, 4, 6, 4)
+            g_lay.setSpacing(4)
             
             total_accts = self._n_company + self._n_personal
             
@@ -1479,7 +1502,8 @@ class RecordTab(QWidget):
             if self._n_company > 0:
                 c_row = QWidget()
                 c_lay = QHBoxLayout(c_row)
-                c_lay.setContentsMargins(0,0,0,0)
+                c_lay.setContentsMargins(0, 0, 0, 0)
+                c_lay.setSpacing(6)
                 for a in range(self._n_company):
                     c_lay.addWidget(self._build_detailed_table(r, a))
                 g_lay.addWidget(c_row)
@@ -1488,7 +1512,8 @@ class RecordTab(QWidget):
             if self._n_personal > 0:
                 p_row = QWidget()
                 p_lay = QHBoxLayout(p_row)
-                p_lay.setContentsMargins(0,0,0,0)
+                p_lay.setContentsMargins(0, 0, 0, 0)
+                p_lay.setSpacing(6)
                 for a in range(self._n_company, total_accts):
                     p_lay.addWidget(self._build_detailed_table(r, a))
                 g_lay.addWidget(p_row)
