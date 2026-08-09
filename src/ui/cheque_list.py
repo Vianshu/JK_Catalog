@@ -290,7 +290,13 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         self.cmb_filter.currentIndexChanged.connect(self.apply_filter)
         self.cmb_filter.setMinimumWidth(150)
         
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("🔍 Search...")
+        self.search_bar.setMinimumWidth(200)
+        self.search_bar.textChanged.connect(self.apply_filter)
+        
         top_bar.addWidget(self.cmb_filter)
+        top_bar.addWidget(self.search_bar)
 
         # 2. Middle: Summary Labels
         top_bar.addStretch()
@@ -434,15 +440,30 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         return SequenceMatcher(None, a, b).ratio() >= threshold
     def apply_filter(self):
         idx = self.cmb_filter.currentIndex()
+        search_text = getattr(self, 'search_bar', QLineEdit()).text().strip().lower()
+        
         for r in range(self.table.rowCount()):
             clear_item = self.table.item(r, 8)
             has_date = clear_item and clear_item.text().strip()
+            
+            show_row = False
             if idx == 0:  # All cheques
-                self.table.setRowHidden(r, False)
+                show_row = True
             elif idx == 1:  # Cleared Cheques
-                self.table.setRowHidden(r, not has_date)
+                show_row = bool(has_date)
             elif idx == 2:  # Uncleared Cheques
-                self.table.setRowHidden(r, bool(has_date))
+                show_row = not bool(has_date)
+                
+            if show_row and search_text:
+                row_match = False
+                for c in range(self.table.columnCount()):
+                    it = self.table.item(r, c)
+                    if it and search_text in it.text().lower():
+                        row_match = True
+                        break
+                show_row = row_match
+                
+            self.table.setRowHidden(r, not show_row)
         self.update_summary()
 
     def on_item_changed(self, item):
