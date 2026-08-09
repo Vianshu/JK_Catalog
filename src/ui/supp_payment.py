@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QColor, QBrush
+from src.logic.db_manager import get_db_manager, build_logical_name
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -955,7 +956,88 @@ class TodayPaymentTab(QWidget):
         self.stack.addWidget(self.view2)
         
         main_layout.addWidget(self.stack)
+        self._db = get_db_manager()
+        self._db_name = ""  # Set via set_company_path when company is loaded
         self._load_data()
+
+    def set_company_path(self, path: str):
+        """Called by SuppPaymentUI when the company session is activated."""
+        import os
+        company_name = os.path.basename(os.path.normpath(path))
+        self._db_name = build_logical_name(company_name, company_path=path)
+        self._db.ensure_database_exists(self._db_name, path)
+        self._ensure_tables()
+        self._load_from_db()
+
+    def _ensure_tables(self):
+        """Create today_payment tables if they don't exist yet."""
+        for table, ddl in [
+            ("tp_payments",  "CREATE TABLE tp_payments  (sn INT IDENTITY, date NVARCHAR(50), particulars NVARCHAR(MAX), payment NVARCHAR(100), col4 NVARCHAR(100), col5 NVARCHAR(200))"),
+            ("tp_pur_today", "CREATE TABLE tp_pur_today (sn INT IDENTITY, date NVARCHAR(50), particulars NVARCHAR(MAX), payment NVARCHAR(100), col4 NVARCHAR(100), col5 NVARCHAR(200))"),
+            ("tp_pur_upcoming", "CREATE TABLE tp_pur_upcoming (sn INT IDENTITY, date NVARCHAR(50), particulars NVARCHAR(MAX), payment NVARCHAR(100), col4 NVARCHAR(100), col5 NVARCHAR(200))"),
+            ("tp_accounts", "CREATE TABLE tp_accounts (sn INT IDENTITY, account_name NVARCHAR(200), remain_cash NVARCHAR(100), bank_cash NVARCHAR(100))"),
+            ("tp_limits",   "CREATE TABLE tp_limits   (sn INT IDENTITY, limit_type NVARCHAR(200), amount NVARCHAR(100), col3 NVARCHAR(100))"),
+            ("tp_dl",       "CREATE TABLE tp_dl       (sn INT IDENTITY, dl_no NVARCHAR(100), amount NVARCHAR(100), expiry_date NVARCHAR(50), days_left NVARCHAR(20), gap NVARCHAR(20))"),
+        ]:
+            self._db.ensure_table(self._db_name, table, ddl)
+
+    def _load_from_db(self):
+        """Replace table contents with data from the database."""
+        if not self._db_name:
+            return
+
+        def fetch(sql):
+            rows = self._db.execute_query(self._db_name, sql)
+            return [tuple(str(c) if c is not None else "" for c in row) for row in rows] if rows else []
+
+        pay_data      = fetch("SELECT date, particulars, payment, col4, col5 FROM tp_payments  ORDER BY sn")
+        pur_tod_data  = fetch("SELECT date, particulars, payment, col4, col5 FROM tp_pur_today  ORDER BY sn")
+        pur_upc_data  = fetch("SELECT date, particulars, payment, col4, col5 FROM tp_pur_upcoming ORDER BY sn")
+        acc_data      = fetch("SELECT account_name, remain_cash, bank_cash      FROM tp_accounts   ORDER BY sn")
+        lim_data      = fetch("SELECT limit_type, amount, col3                  FROM tp_limits     ORDER BY sn")
+        dl_data       = fetch("SELECT dl_no, amount, expiry_date, days_left, gap FROM tp_dl        ORDER BY sn")
+
+        def fill(t_obj, data, ncols):
+            t_obj.table.setRowCount(len(data))
+            for r, row in enumerate(data):
+                for c in range(ncols):
+                    t_obj.table.setItem(r, c, QTableWidgetItem(row[c] if c < len(row) else ""))
+            t_obj.recalculate_height()
+
+        fill(self.t_pay,     pay_data,     5)
+        fill(self.t_pur_tod, pur_tod_data, 5)
+        fill(self.t_pur_upc, pur_upc_data, 5)
+        fill(self.t_acc,     acc_data,     3)
+        fill(self.t_lim,     lim_data,     3)
+        # DL is 6 cols: SN (display), dl_no, amount, expiry_date, days_left, gap
+        self.t_dl.table.setRowCount(len(dl_data))
+        for r, row in enumerate(dl_data):
+            self.t_dl.table.setItem(r, 0, QTableWidgetItem(str(r + 1)))  # SN
+            for c, val in enumerate(row):
+                self.t_dl.table.setItem(r, c + 1, QTableWidgetItem(val))
+        self.t_dl.recalculate_height()
+
+    def save_section(self, table_name: str, t_obj, col_names: list[str]):
+        """Save a single _StyledTable section back to the database."""
+        if not self._db_name:
+            return
+        conn = self._db.get_connection(self._db_name)
+        if not conn:
+            return
+        cur = conn.cursor()
+        try:
+            cur.execute(f"DELETE FROM {table_name}")
+            for r in range(t_obj.table.rowCount()):
+                vals = []
+                for c in range(len(col_names)):
+                    it = t_obj.table.item(r, c)
+                    vals.append(it.text().strip() if it else "")
+                placeholders = ", ".join(["?"] * len(col_names))
+                cur.execute(f"INSERT INTO {table_name} ({', '.join(col_names)}) VALUES ({placeholders})", vals)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print(f"[ERROR] save_section({table_name}): {e}")
 
     def _switch_view(self, idx):
         self.stack.setCurrentIndex(idx)
@@ -979,7 +1061,8 @@ class TodayPaymentTab(QWidget):
                 self.grid.setSpan(0, start_c, 1, (end_c - start_c + 1))
 
     def _load_data(self):
-        # 1. Populate Column View
+        # Column View tables start empty — data is loaded from the DB via set_company_path.
+        # If no company is loaded yet, the tables remain empty.
         def pop(t_obj, arr):
             t_obj.table.setRowCount(len(arr))
             for r, row_data in enumerate(arr):
@@ -991,70 +1074,12 @@ class TodayPaymentTab(QWidget):
                         f.setBold(True)
                         item.setFont(f)
                     t_obj.table.setItem(r, c, item)
-        pay_data = [       ('', 'Macha Bank', '', 'macha', 'from jnk'),
-                ('', 'Macha Bank', '', 'macha', 'from brt'),
-                ('', 'Macha Bank', '', 'macha', 'from btm'),
-                ('', 'Macha Bank', '', 'macha', 'from ngt'),
-                ('2026-08-10', 'Car Loan Emi', '50000', '', ''),
-                ('2026-09-10', 'Home Loan Suman Mam', '0', '', ''),
-                ('2026-08-16', 'Interest-Macha Bank-QTR End', '0', '', ''),
-                ('2026-08-16', 'PWCL- Every 3 Month interest', '0', '', ''),
-                ('2026-09-14', 'PWCL- Every 3 Month', '0', '', ''),
-                ('2026-08-10', 'NEW LOAN 1013', '500000', '', ''),
-                ('2026-08-16', 'NEW LOAN 1013 interest', '0', '', ''),
-                ('', 'Rajkumar ji', '', '', ''),
-                ('fri', 'Chandrodaya, Brt', '', '', ''),
-                ('mon/tue', 'Chandrodaya, KTM', '650000', '', ''),
-                ('', 'ANIL SIR', '', '', ''),
-                ('2026-08-07', 'Kishan Pipe Product', '150000', '', ''),
-                ('fri', 'Dhiraj trading', '', '', ''),
-                ('thu', 'Priti valve & Fitting Ind, P. Ltd', '40000', '', ''),
-                ('sun', 'Tejas Tiwari Group Pvt.Ltd, Ktm', '', '', ''),
-                ('wed', 'Aarna International Pvt.Ltd, Kathmandu', '45000', '', ''),
-                ('fri', 'Sujita Paints Industries,Brt', '', '', ''),
-                ('wed', 'Jeen Mata Impex Pvt. Ltd.', '', '', ''),
-                ('', 'Jitu sir (machha credit card)', '', '', ''),
-                ('', 'Papa', '', '', ''),
-                ('', 'vat', '', '', ''),
-                (       '',
-                        'Brijwashi Products , Aligarh India',
-                        '241281.99',
-                        'M11548',
-                        'rtgs')]
-        pur_tod_data = [('2026-08-07', 'surendra joshi', '305395', '', 'cash brt')]
-        pur_upc_data = [       ('', 'jaipur', '800000', '', ''),
-                ('', 'Sri Maruti Mangal, Ktm', '460000', '', 'chq'),
-                ('', 'Lotus ,Ktm', '500000', '', ''),
-                ('', 'New Famous Tar Jali Udhyog ,Brj', '176200', '', '')]
-        acc_data = [       ('laxmi Bank', '3653.76', '3653.76'),
-                ('macha (dl settle)', '-732210.42', '1008184.58'),
-                ('Cash', '505395', '505395'),
-                ('btm', '430000', '430000'),
-                ('jnk', '0', '50000'),
-                ('Ngt', '0', '25000')]
-        lim_data = [       ('Remain Demand Loan Limit', '', ''),
-                ('Remain LC Limit', '', ''),
-                ('Used LC', '', '')]
-        dl_data = [('1', 'DL-995', '700000', '2026-08-25', '17', '17'),
-            ('2', 'DL-997', '700000', '2026-09-01', '24', '7'),
-            ('3', 'DL-1001', '700000', '2026-09-07', '30', '6'),
-            ('4', 'DL-1003', '700000', '2026-09-11', '34', '4'),
-            ('5', 'DL-1009', '700000', '2026-09-18', '41', '7'),
-            ('6', 'DL-1016', '700000', '2026-09-28', '51', '10'),
-            ('7', 'DL-1024', '700000', '2026-10-01', '54', '3'),
-            ('8', 'DL-1029', '700000', '2026-10-06', '59', '5'),
-            ('9', 'DL-1036', '700000', '2026-10-12', '65', '6'),
-            ('10', 'DL-1043', '700000', '2026-10-21', '74', '9'),
-            ('11', 'DL-1048', '700000', '2026-10-29', '82', '8'),
-            ('12', 'DL-1052', '700000', '2026-11-04', '88', '6'),
-            ('13', 'DL-1057', '700000', '2026-11-10', '94', '6'),
-            ('14', 'DL-1062', '700000', '2026-11-17', '101', '7'),
-            ('15', 'DL-1071', '700000', '2026-11-26', '110', '9'),
-            ('16', 'DL-10', '700000', '2026-12-02', '116', '6')]
-
-
-        
-
+        pay_data = []
+        pur_tod_data = []
+        pur_upc_data = []
+        acc_data = []
+        lim_data = []
+        dl_data = []
 
         pop(self.t_pay, pay_data)
         pop(self.t_pur_tod, pur_tod_data)
@@ -2287,6 +2312,10 @@ class SuppPaymentUI(QWidget):
         layout.addWidget(self.tabs)
 
     # ------------------------------------------------------------------ #
+    def set_company_path(self, path: str):
+        """Propagate the active company path to Today Payment tab."""
+        self._today_payment_tab.set_company_path(path)
+
     def add_new_sheet(self):
         if not self._can_edit:
             return

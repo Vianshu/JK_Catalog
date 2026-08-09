@@ -1015,6 +1015,12 @@ class MainWindow(QWidget):
             if hasattr(self, 'cheque_list_page'):
                 session.register("Cheque List", self.cheque_list_page,
                     lambda page, path: page.set_company_path(path))
+
+            # Register Supp. Payment (Today Payment tab loads from DB)
+            supp_widget = self.main_stack.widget(PageIndex.SUPP_PAYMENT)
+            if supp_widget and hasattr(supp_widget, 'set_company_path'):
+                session.register("Supp. Payment", supp_widget,
+                    lambda page, path: page.set_company_path(path))
         
             if hasattr(self, 'reports_page'):
                 session.register("Reports", self.reports_page,
