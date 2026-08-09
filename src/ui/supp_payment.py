@@ -1076,7 +1076,7 @@ class TodayPaymentTab(QWidget):
             for i, row_data in enumerate(data):
                 for j, val in enumerate(row_data):
                     item = QTableWidgetItem(val)
-                    if start_c == 8 and j == 4:  # DL days_left — read-only + bold
+                    if start_c == 8 and j == 3:  # DL days_left (no SN in grid) — read-only + bold
                         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                         f = item.font(); f.setBold(True); item.setFont(f)
                     self.grid.setItem(start_r + i, start_c + j, item)
@@ -1108,11 +1108,13 @@ class TodayPaymentTab(QWidget):
                          ["Limit Type", "Amount", ""], "#D84315")
         fill_block(r_acc + 2, 5, lim_data)
 
-        # Right Column: Demand Loans (SN already prepended in dl_data)
+        # Right Column: Demand Loans — grid only has 5 cols (8-12), so drop SN (implicit)
         r_dl = 1
-        paint_sub_header(r_dl, 8, 13, "Demand Loans (DL)",
-                         ["SN", "DL No.", "Amount", "Expiry Date", "Day's left", "Gap"], "#388E3C")
-        fill_block(r_dl + 2, 8, dl_data)
+        paint_sub_header(r_dl, 8, 12, "Demand Loans (DL)",
+                         ["DL No.", "Amount", "Expiry Date", "Day's left", "Gap"], "#388E3C")
+        # Strip the leading SN from each DL row before placing in grid
+        dl_for_grid = [row[1:] for row in dl_data] if dl_data and len(dl_data[0]) == 6 else dl_data
+        fill_block(r_dl + 2, 8, dl_for_grid)
 
         QTimer.singleShot(100, self._adjust_heights)
 
