@@ -438,34 +438,6 @@ class ChequeListUI(ExcelTableMixin, QWidget):
 
     def is_similar_bank(self, a: str, b: str, threshold=0.85) -> bool:
         return SequenceMatcher(None, a, b).ratio() >= threshold
-    def apply_filter(self):
-        idx = self.cmb_filter.currentIndex()
-        search_text = getattr(self, 'search_bar', QLineEdit()).text().strip().lower()
-        
-        for r in range(self.table.rowCount()):
-            clear_item = self.table.item(r, 8)
-            has_date = clear_item and clear_item.text().strip()
-            
-            show_row = False
-            if idx == 0:  # All cheques
-                show_row = True
-            elif idx == 1:  # Cleared Cheques
-                show_row = bool(has_date)
-            elif idx == 2:  # Uncleared Cheques
-                show_row = not bool(has_date)
-                
-            if show_row and search_text:
-                row_match = False
-                for c in range(self.table.columnCount()):
-                    it = self.table.item(r, c)
-                    if it and search_text in it.text().lower():
-                        row_match = True
-                        break
-                show_row = row_match
-                
-            self.table.setRowHidden(r, not show_row)
-        self.update_summary()
-
     def on_item_changed(self, item):
         if self.table.signalsBlocked(): return
         
@@ -515,21 +487,28 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         self.save_cheques_to_db()
     
     def apply_filter(self):
-        text = self.search_box.text().lower().strip()
-        is_currently_hiding = (self.cmb_filter.currentIndex() == 2)
-        
+        text = self.search_bar.text().lower().strip()
+        idx = self.cmb_filter.currentIndex()  # 0=All, 1=Cleared, 2=Uncleared
+
         for r in range(self.table.rowCount()):
             clear_date_item = self.table.item(r, 8)
             clear_date = clear_date_item.text().strip() if clear_date_item else ""
-            
-            if is_currently_hiding and clear_date:
-                self.table.setRowHidden(r, True)
-                continue
 
-            found = False
+            # First apply the dropdown filter
+            if idx == 1:   # Cleared only
+                if not clear_date:
+                    self.table.setRowHidden(r, True)
+                    continue
+            elif idx == 2:  # Uncleared only
+                if clear_date:
+                    self.table.setRowHidden(r, True)
+                    continue
+
+            # Then apply the text search filter
             if not text:
-                found = True
+                self.table.setRowHidden(r, False)
             else:
+                found = False
                 for c in range(self.table.columnCount()):
                     w = self.table.cellWidget(r, c)
                     if w and isinstance(w, QLineEdit):
@@ -537,12 +516,10 @@ class ChequeListUI(ExcelTableMixin, QWidget):
                     else:
                         it = self.table.item(r, c)
                         val = it.text().lower() if it else ""
-
                     if text in val:
                         found = True
                         break
-
-            self.table.setRowHidden(r, not found)
+                self.table.setRowHidden(r, not found)
 
         self.update_summary()
     

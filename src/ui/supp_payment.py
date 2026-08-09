@@ -889,7 +889,7 @@ class TodayPaymentTab(QWidget):
         col2.setContentsMargins(0, 0, 0, 0)
         col2.setSpacing(25)
         
-        self.t_dl = _StyledTable("Demand Loans (DL)", ["SN", "DL No.", "Amount", "Expiry Date", "Day's left"], [40, 100, 120, 120, 80], header_color="#388E3C")
+        self.t_dl = _StyledTable("Demand Loans (DL)", ["SN", "DL No.", "Amount", "Expiry Date", "Day's left", "Gap"], [40, 100, 100, 110, 75, 55], header_color="#388E3C")
         self.t_dl.btn_add.clicked.connect(self._add_dl_row)
         self.t_dl.table.itemChanged.connect(self._calc_days_left)
         self._tables.append(self.t_dl)
