@@ -1283,8 +1283,10 @@ class RecordTab(QWidget):
     def __init__(self):
         super().__init__()
         self._can_edit = True
-        self._n_accts = 2  # Changed to 2 accounts: Company and Personal
-        self._headers = ["SN", "A/C of", "Field", "Company Account", "", "Field", "Personal Account", ""]
+        self._n_company = 1
+        self._n_personal = 1
+        self._headers = []
+        self._update_headers()
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -1306,10 +1308,15 @@ class RecordTab(QWidget):
         self._add_row_btn.clicked.connect(self._add_supplier)
         tbar.addWidget(self._add_row_btn)
         
-        self._add_acct_btn = QPushButton("+ Add Account")
-        self._add_acct_btn.setFixedHeight(28)
-        self._add_acct_btn.clicked.connect(self._add_account)
-        tbar.addWidget(self._add_acct_btn)
+        self._add_co_btn = QPushButton("+ Add Company Acc")
+        self._add_co_btn.setFixedHeight(28)
+        self._add_co_btn.clicked.connect(self._add_company_acct)
+        tbar.addWidget(self._add_co_btn)
+
+        self._add_pe_btn = QPushButton("+ Add Personal Acc")
+        self._add_pe_btn.setFixedHeight(28)
+        self._add_pe_btn.clicked.connect(self._add_personal_acct)
+        tbar.addWidget(self._add_pe_btn)
         
         from PyQt6.QtWidgets import QComboBox, QStackedWidget
         self.view_selector = QComboBox()
@@ -1352,10 +1359,10 @@ class RecordTab(QWidget):
             QTableWidget { gridline-color: #A0A0A0; alternate-background-color: #f8f9fa; }
             QHeaderView::section:horizontal {
                 background-color: #1A2035;
-                border: 1px solid #dee2e6;
-                padding: 4px;
-                font-weight: bold;
                 color: #ffffff;
+                padding: 4px;
+                border: 1px solid #ced4da;
+                font-weight: bold;
             }
         """)
         self.table.setAlternatingRowColors(True)
@@ -1391,9 +1398,44 @@ class RecordTab(QWidget):
         self._load_data()
         self._build_detailed_view()
 
+    def _update_headers(self):
+        self._headers = ["SN", "A/C of"]
+        for i in range(self._n_company):
+            name = "Company Account" if self._n_company == 1 else f"Company Account {i+1}"
+            self._headers.extend(["Field", name, ""])
+        for i in range(self._n_personal):
+            name = "Personal Account" if self._n_personal == 1 else f"Personal Account {i+1}"
+            self._headers.extend(["Field", name, ""])
+
     def _switch_view(self, idx):
         self.stack.setCurrentIndex(idx)
         
+    def _build_detailed_table(self, r, a):
+        header_idx = 3 + (a * 3)
+        acc_name = self._headers[header_idx] if header_idx < len(self._headers) else f"Account {a+1}"
+        
+        from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem
+        t = QTableWidget(6, 2)
+        t.setHorizontalHeaderLabels(["Field", acc_name])
+        t.horizontalHeader().setStretchLastSection(True)
+        t.verticalHeader().setVisible(False)
+        t.setFixedHeight(210)
+        t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        t.setStyleSheet("QHeaderView::section:horizontal { background-color: #1A2035; color: #ffffff; padding: 4px; border: 1px solid #ced4da; font-weight: bold; }")
+        
+        for i in range(6):
+            lbl = self.table.item(r + i, _rec_col(a, 0))
+            val = self.table.item(r + i, _rec_col(a, 1))
+            
+            t.setItem(i, 0, QTableWidgetItem(lbl.text() if lbl else ""))
+            v_item = QTableWidgetItem(val.text() if val else "")
+            if val and val.font().bold():
+                f = v_item.font()
+                f.setBold(True)
+                v_item.setFont(f)
+            t.setItem(i, 1, v_item)
+        return t
+
     def _build_detailed_view(self):
         # Clear existing layout
         while self.c_lay.count():
@@ -1416,34 +1458,27 @@ class RecordTab(QWidget):
             group = QGroupBox(f"{sn}. {acof}")
             group.setFont(_H_BOLD)
             group.setStyleSheet("QGroupBox { border: 1px solid #ced4da; border-radius: 6px; margin-top: 10px; padding-top: 15px; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; color: #1976D2; }")
-            g_lay = QHBoxLayout(group)
+            g_lay = QVBoxLayout(group)
             
-            # For each account
-            for a in range(self._n_accts):
-                header_idx = 3 + (a * 3)
-                acc_name = self._headers[header_idx] if header_idx < len(self._headers) else f"Account {a+1}"
+            total_accts = self._n_company + self._n_personal
+            
+            # Company accounts row
+            if self._n_company > 0:
+                c_row = QWidget()
+                c_lay = QHBoxLayout(c_row)
+                c_lay.setContentsMargins(0,0,0,0)
+                for a in range(self._n_company):
+                    c_lay.addWidget(self._build_detailed_table(r, a))
+                g_lay.addWidget(c_row)
                 
-                t = QTableWidget(6, 2)
-                t.setHorizontalHeaderLabels(["Field", acc_name])
-                t.horizontalHeader().setStretchLastSection(True)
-                t.verticalHeader().setVisible(False)
-                t.setFixedHeight(210)
-                t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-                t.setStyleSheet("QHeaderView::section:horizontal { background-color: #1A2035; color: #ffffff; padding: 4px; border: 1px solid #ced4da; font-weight: bold; }")
-                
-                for i in range(6):
-                    lbl = self.table.item(r + i, _rec_col(a, 0))
-                    val = self.table.item(r + i, _rec_col(a, 1))
-                    
-                    t.setItem(i, 0, QTableWidgetItem(lbl.text() if lbl else ""))
-                    v_item = QTableWidgetItem(val.text() if val else "")
-                    if val and val.font().bold():
-                        f = v_item.font()
-                        f.setBold(True)
-                        v_item.setFont(f)
-                    t.setItem(i, 1, v_item)
-                
-                g_lay.addWidget(t)
+            # Personal accounts row
+            if self._n_personal > 0:
+                p_row = QWidget()
+                p_lay = QHBoxLayout(p_row)
+                p_lay.setContentsMargins(0,0,0,0)
+                for a in range(self._n_company, total_accts):
+                    p_lay.addWidget(self._build_detailed_table(r, a))
+                g_lay.addWidget(p_row)
             
             self.c_lay.addWidget(group)
             r += 6
@@ -1451,19 +1486,20 @@ class RecordTab(QWidget):
         self.c_lay.addStretch()
 
     def _total_cols(self) -> int:
-        return _REC_FIXED + self._n_accts * _REC_BLOCK
+        return _REC_FIXED + (self._n_company + self._n_personal) * _REC_BLOCK
 
     def _setup_columns(self):
         self.table.setColumnCount(self._total_cols())
         self.table.setColumnWidth(0, 40)
         self.table.setColumnWidth(1, 200)
-        for a in range(self._n_accts):
+        total_accts = self._n_company + self._n_personal
+        for a in range(total_accts):
             self.table.setColumnWidth(_rec_col(a, 0), _REC_LBL_W)
-            self.table.setColumnWidth(_rec_col(a, 1), 250) # Made value column slightly wider
-            if a < self._n_accts - 1:
+            self.table.setColumnWidth(_rec_col(a, 1), 250)
+            if a < total_accts - 1:
                 self.table.setColumnWidth(_rec_col(a, 2), _REC_SEP_W)
             else:
-                self.table.setColumnWidth(_rec_col(a, 2), 0) # No spacer after last
+                self.table.setColumnWidth(_rec_col(a, 2), 0)
 
     def _load_data(self):
         for sn, acof, accts in _RECORD_DATA:
@@ -1490,11 +1526,23 @@ class RecordTab(QWidget):
         self.table.setItem(r, 1, acof_item)
 
         # Fill in the data for each account
-        for a in range(self._n_accts):
-            d = accts[a] if a < len(accts) else {}
+        total_accts = self._n_company + self._n_personal
+        if isinstance(accts, dict):
+            c_list = accts.get("company", [])
+            p_list = accts.get("personal", [])
+        else:
+            c_list = [accts[0]] if len(accts) > 0 else []
+            p_list = [accts[1]] if len(accts) > 1 else []
+        
+        for a in range(total_accts):
+            if a < self._n_company:
+                d = c_list[a] if a < len(c_list) else {}
+            else:
+                p_idx = a - self._n_company
+                d = p_list[p_idx] if p_idx < len(p_list) else {}
             
             # Spacer column
-            if a < self._n_accts - 1:
+            if a < total_accts - 1:
                 self.table.setSpan(r, _rec_col(a, 2), 6, 1)
                 spacer = QTableWidgetItem("")
                 spacer.setFlags(Qt.ItemFlag.NoItemFlags)
@@ -1509,7 +1557,6 @@ class RecordTab(QWidget):
                 # Value cell
                 val = d.get(key, "")
                 val_item = QTableWidgetItem(val)
-                # bold the Rakham (amount) as in the sheet for better visibility
                 if key == "rakam" and val:
                     f = val_item.font()
                     f.setBold(True)
@@ -1523,54 +1570,75 @@ class RecordTab(QWidget):
         self.table.setSpan(gap_row, 0, 1, self._total_cols())
         gap_item = QTableWidgetItem("")
         gap_item.setFlags(Qt.ItemFlag.NoItemFlags)
-        # To mimic no grid lines on the gap, we can just let it be blank
         self.table.setItem(gap_row, 0, gap_item)
 
     def _add_supplier(self):
         if not self._can_edit: return
-        self._insert_row("", "", [{}, {}, {}])
+        self._insert_row("", "", {})
         self.table.scrollToBottom()
         self._build_detailed_view()
 
-    def _add_account(self):
+    def _add_company_acct(self):
         if not self._can_edit: return
+        insert_idx = _REC_FIXED + self._n_company * _REC_BLOCK
+        self._n_company += 1
+        self._update_headers()
+        self._setup_columns() 
         
-        from PyQt6.QtWidgets import QInputDialog
-        text, ok = QInputDialog.getText(self, "Add Account", "Enter Account Type (e.g., Company 2, Personal 2):")
-        if not ok or not text: return
-        
-        self._n_accts += 1
-        self._headers.extend(["Field", text, ""])
-        
-        # update columns
+        for i in range(3):
+            self.table.insertColumn(insert_idx + i)
+            
         self._setup_columns()
         self.table.setHorizontalHeaderLabels(self._headers)
-        self._build_detailed_view()
         
-        new_a = self._n_accts - 1
-        
-        # We need to fill the new columns for existing rows
-        r = 0
-        while r < self.table.rowCount():
-            # is it a gap row?
-            if self.table.rowSpan(r, 0) == 1 and not self.table.item(r, 0).text():
-                self.table.setSpan(r, 0, 1, self._total_cols())
-                r += 1
+        new_a = self._n_company - 1
+        for r in range(0, self.table.rowCount(), 7):
+            if self.table.rowSpan(r, 0) == 1 and not (self.table.item(r, 0) and self.table.item(r, 0).text()):
                 continue
             
-            # fix spacer of previous account
-            prev_a = new_a - 1
-            self.table.setSpan(r, _rec_col(prev_a, 2), 6, 1)
-            self.table.setColumnWidth(_rec_col(prev_a, 2), _REC_SEP_W)
-            
-            # add new account cells
             for i, key in enumerate(_REC_FIELD_KEYS):
                 lbl_item = QTableWidgetItem(_REC_FIELD_LABELS[i])
                 lbl_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                self.table.setItem(r + i, _rec_col(new_a, 0), lbl_item)
-                self.table.setItem(r + i, _rec_col(new_a, 1), QTableWidgetItem(""))
-                
-            r += 6 # skip the record rows
+                self.table.setItem(r + i, insert_idx, lbl_item)
+                self.table.setItem(r + i, insert_idx + 1, QTableWidgetItem(""))
+            
+            self.table.setSpan(r, insert_idx + 2, 6, 1)
+            spacer = QTableWidgetItem("")
+            spacer.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.table.setItem(r, insert_idx + 2, spacer)
+            
+        self._build_detailed_view()
+
+    def _add_personal_acct(self):
+        if not self._can_edit: return
+        insert_idx = _REC_FIXED + (self._n_company + self._n_personal) * _REC_BLOCK
+        self._n_personal += 1
+        self._update_headers()
+        self._setup_columns() 
+        
+        for i in range(3):
+            self.table.insertColumn(insert_idx + i)
+            
+        self._setup_columns()
+        self.table.setHorizontalHeaderLabels(self._headers)
+        
+        new_a = self._n_company + self._n_personal - 1
+        for r in range(0, self.table.rowCount(), 7):
+            if self.table.rowSpan(r, 0) == 1 and not (self.table.item(r, 0) and self.table.item(r, 0).text()):
+                continue
+            
+            for i, key in enumerate(_REC_FIELD_KEYS):
+                lbl_item = QTableWidgetItem(_REC_FIELD_LABELS[i])
+                lbl_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                self.table.setItem(r + i, insert_idx, lbl_item)
+                self.table.setItem(r + i, insert_idx + 1, QTableWidgetItem(""))
+            
+            self.table.setSpan(r, insert_idx + 2, 6, 1)
+            spacer = QTableWidgetItem("")
+            spacer.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.table.setItem(r, insert_idx + 2, spacer)
+            
+        self._build_detailed_view()
 
     def apply_edit_mode(self, can_edit: bool):
         self._can_edit = can_edit
@@ -1579,18 +1647,17 @@ class RecordTab(QWidget):
             if can_edit else QTableWidget.EditTrigger.NoEditTriggers
         )
         self._add_row_btn.setEnabled(can_edit)
-        self._add_acct_btn.setEnabled(can_edit)
+        self._add_co_btn.setEnabled(can_edit)
+        self._add_pe_btn.setEnabled(can_edit)
+
     def _show_grid_context_menu(self, pos):
         if getattr(self, "_can_edit", True) == False: return
-        
-        # Determine which grid we are targeting
         if hasattr(self, "grid"):
             grid = self.grid
         elif hasattr(self, "table"):
             grid = self.table
         else:
             return
-
         menu = QMenu(self)
         action_insert_row_above = menu.addAction("Insert Row Above")
         action_insert_row_below = menu.addAction("Insert Row Below")
@@ -1600,16 +1667,12 @@ class RecordTab(QWidget):
         menu.addSeparator()
         action_delete_row = menu.addAction("Delete Row")
         action_delete_col = menu.addAction("Delete Column")
-        
         item = grid.itemAt(pos)
         r = item.row() if item else grid.currentRow()
         c = item.column() if item else grid.currentColumn()
-        
         if r < 0: r = 0
         if c < 0: c = 0
-        
         action = menu.exec(grid.viewport().mapToGlobal(pos))
-        
         if action == action_insert_row_above:
             grid.insertRow(r)
         elif action == action_insert_row_below:
