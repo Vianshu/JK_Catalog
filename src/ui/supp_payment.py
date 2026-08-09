@@ -1053,6 +1053,40 @@ class TodayPaymentTab(QWidget):
                 ('16', 'DL-10', '700000', '2026-12-02', '116')]
 
         
+
+
+        pop(self.t_pay, pay_data)
+        pop(self.t_pur_tod, pur_tod_data)
+        pop(self.t_pur_upc, pur_upc_data)
+        pop(self.t_acc, acc_data)
+        pop(self.t_lim, lim_data)
+        pop(self.t_dl, dl_data)
+        
+        # 2. Populate Grid View
+        self.grid.clearContents()
+
+        def paint_sub_header(r, c_start, c_end, text, col_headers=None, bg="#1976D2"):
+            for c in range(c_start, c_end + 1):
+                item = QTableWidgetItem(text if c == c_start else "")
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                item.setBackground(QBrush(QColor(bg)))
+                item.setForeground(QBrush(QColor("#ffffff")))
+                item.setFont(_H_BOLD)
+                self.grid.setItem(r, c, item)
+            if c_start != c_end:
+                self.grid.setSpan(r, c_start, 1, c_end - c_start + 1)
+            
+            # Print column headers below
+            if col_headers:
+                for idx, h in enumerate(col_headers):
+                    if c_start + idx <= c_end:
+                        h_item = QTableWidgetItem(h)
+                        h_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                        h_item.setBackground(QBrush(QColor("#1A2035")))
+                        h_item.setForeground(QBrush(QColor("#ffffff")))
+                        h_item.setFont(_H_BOLD)
+                        self.grid.setItem(r + 1, c_start + idx, h_item)
+
         def fill_block(start_r, start_c, data):
             for i, row_data in enumerate(data):
                 for j, val in enumerate(row_data):
