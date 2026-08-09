@@ -1,0 +1,734 @@
+class TodayPaymentTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self._can_edit = True
+        self._tables = []
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # --- Top Bar (Toggle Switch) ---
+        top_bar = QWidget()
+        top_bar.setStyleSheet("background-color: #f1f3f5; border-bottom: 1px solid #dee2e6;")
+        top_lay = QHBoxLayout(top_bar)
+        top_lay.setContentsMargins(15, 8, 15, 8)
+        
+        title_lbl = QLabel("Today Payment")
+        title_lbl.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        title_lbl.setStyleSheet("color: #343a40; border: none;")
+        top_lay.addWidget(title_lbl)
+        
+        top_lay.addStretch()
+        
+        from PyQt6.QtWidgets import QComboBox, QStackedWidget
+        self.view_selector = QComboBox()
+        self.view_selector.addItems(["Detailed Column View", "Classic Excel Grid View"])
+        self.view_selector.setFont(QFont("Arial", 10))
+        self.view_selector.setStyleSheet("""
+            QComboBox {
+                padding: 4px 10px;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                background-color: white;
+            }
+        """)
+        self.view_selector.currentIndexChanged.connect(self._switch_view)
+        top_lay.addWidget(self.view_selector)
+        
+        main_layout.addWidget(top_bar)
+        
+        # --- Stacked Widget ---
+        self.stack = QStackedWidget()
+        
+        # --- VIEW 1: Column View ---
+        self.view1 = QWidget()
+        v1_layout = QVBoxLayout(self.view1)
+        v1_layout.setContentsMargins(0, 0, 0, 0)
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background-color: #fdfdfd; }")
+        
+        container = QWidget()
+        container.setStyleSheet("background-color: transparent;")
+        c_lay = QVBoxLayout(container)
+        c_lay.setContentsMargins(12, 12, 12, 12)
+        
+        from PyQt6.QtWidgets import QSplitter
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setStyleSheet("""
+            QSplitter::handle {
+                background-color: #dee2e6;
+                width: 2px;
+                margin: 0px 8px;
+            }
+        """)
+        
+        # Column 1
+        col1_w = QWidget()
+        col1 = QVBoxLayout(col1_w)
+        col1.setContentsMargins(0, 0, 0, 0)
+        col1.setSpacing(25)
+        
+        self.t_pay = _StyledTable("Payments", 
+                                 ["DATE", "Particulars", "Payment", "", ""],
+                                 [90, 220, 110, 80, 80], header_color="#1976D2")
+        self.t_pay.btn_add.clicked.connect(lambda: self._add_row(self.t_pay, 5))
+        self._tables.append(self.t_pay)
+        col1.addWidget(self.t_pay)
+
+        self.t_pur_tod = _StyledTable("Purchase (Today)", 
+                                 ["DATE", "Particulars", "Payment", "", ""],
+                                 [90, 220, 110, 80, 80], header_color="#1976D2")
+        self.t_pur_tod.btn_add.clicked.connect(lambda: self._add_row(self.t_pur_tod, 5))
+        self._tables.append(self.t_pur_tod)
+        col1.addWidget(self.t_pur_tod)
+
+        self.t_pur_upc = _StyledTable("Purchase (Upcoming)", 
+                                 ["DATE", "Particulars", "Payment", "", ""],
+                                 [90, 220, 110, 80, 80], header_color="#1976D2")
+        self.t_pur_upc.btn_add.clicked.connect(lambda: self._add_row(self.t_pur_upc, 5))
+        self._tables.append(self.t_pur_upc)
+        col1.addWidget(self.t_pur_upc)
+        col1.addStretch()
+        
+        # Column 2
+        col2_w = QWidget()
+        col2 = QVBoxLayout(col2_w)
+        col2.setContentsMargins(0, 0, 0, 0)
+        col2.setSpacing(25)
+        
+        self.t_dl = _StyledTable("Demand Loans (DL)", ["SN", "DL No.", "Amount", "Expiry Date", "Day's left"], [40, 100, 120, 120, 80], header_color="#388E3C")
+        self.t_dl.btn_add.clicked.connect(self._add_dl_row)
+        self.t_dl.table.itemChanged.connect(self._calc_days_left)
+        self._tables.append(self.t_dl)
+        col2.addWidget(self.t_dl)
+        
+        self.t_acc = _StyledTable("Account Table", ["Account Name", "Remain Cash", "Bank / Cash"], [200, 120, 120], header_color="#F57C00")
+        self.t_acc.btn_add.clicked.connect(lambda: self._add_row(self.t_acc, 3))
+        self._tables.append(self.t_acc)
+        col2.addWidget(self.t_acc)
+        
+        self.t_lim = _StyledTable("Limits & LC", ["Limit Type", "Amount"], [200, 150], header_color="#D84315")
+        self.t_lim.btn_add.clicked.connect(lambda: self._add_row(self.t_lim, 2))
+        self._tables.append(self.t_lim)
+        col2.addWidget(self.t_lim)
+        col2.addStretch()
+        
+        splitter.addWidget(col1_w)
+        splitter.addWidget(col2_w)
+        splitter.setStretchFactor(0, 5)
+        splitter.setStretchFactor(1, 5)
+        
+        c_lay.addWidget(splitter)
+        scroll.setWidget(container)
+        v1_layout.addWidget(scroll)
+        self.stack.addWidget(self.view1)
+        
+        # --- VIEW 2: Excel Grid View ---
+        self.view2 = QWidget()
+        v2_layout = QVBoxLayout(self.view2)
+        v2_layout.setContentsMargins(12, 12, 12, 12)
+        
+        # Removed spacer columns to make it one massive, tight table
+        grid_headers = [
+            "DATE", "Particulars", "Payment", "", "",
+            "Account Name", "Remain Cash", "Bank / Cash",
+            "SN", "DL No.", "Amount", "Expiry Date", "Day's left"
+        ]
+        self.grid = QTableWidget(50, len(grid_headers))
+        self.grid.setHorizontalHeaderLabels(grid_headers)
+        self.grid.setFont(_H_NORM)
+        self.grid.setAlternatingRowColors(True)
+        self.grid.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        self.grid.setStyleSheet("""
+            QTableWidget {
+                gridline-color: #dee2e6;
+                alternate-background-color: #f8f9fa;
+                border: 1px solid #ced4da;
+            }
+            QHeaderView::section {
+                background-color: #e9ecef;
+                padding: 4px;
+                border: 1px solid #ced4da;
+                font-weight: bold;
+            }
+        """)
+        
+        widths = [90, 220, 110, 80, 80, 180, 110, 110, 40, 90, 110, 100, 70]
+        for i, w in enumerate(widths):
+            self.grid.setColumnWidth(i, w)
+        
+        self.grid.itemChanged.connect(self._grid_item_changed)
+        v2_layout.addWidget(self.grid)
+        self.stack.addWidget(self.view2)
+        
+        main_layout.addWidget(self.stack)
+        self._load_data()
+
+    def _switch_view(self, idx):
+        self.stack.setCurrentIndex(idx)
+
+    def _paint_grid_headers(self):
+        self.grid.setRowHeight(0, 30)
+        headers = [
+            (0, 2, "PURCHASES", "#1976D2", "#ffffff"),
+            (3, 5, "ACCOUNTS & LIMITS", "#F57C00", "#ffffff"),
+            (6, 10, "DEMAND LOANS", "#388E3C", "#ffffff")
+        ]
+        for start_c, end_c, title, bg, fg in headers:
+            for c in range(start_c, end_c + 1):
+                item = QTableWidgetItem(title if c == start_c else "")
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                item.setFont(_H_BOLD)
+                item.setBackground(QBrush(QColor(bg)))
+                item.setForeground(QBrush(QColor(fg)))
+                self.grid.setItem(0, c, item)
+            if start_c != end_c:
+                self.grid.setSpan(0, start_c, 1, (end_c - start_c + 1))
+
+    def _load_data(self):
+        # 1. Populate Column View
+        def pop(t_obj, arr):
+            t_obj.table.setRowCount(len(arr))
+            for r, row_data in enumerate(arr):
+                for c, val in enumerate(row_data):
+                    item = QTableWidgetItem(val)
+                    if t_obj == self.t_dl and c == 4:
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                        f = item.font()
+                        f.setBold(True)
+                        item.setFont(f)
+                    t_obj.table.setItem(r, c, item)
+
+        pay_data = [
+            ('2026-08-10', 'Car Loan Emi', '50000', '', ''),
+            ('2026-09-10', 'Home Loan Suman Mam', '', '', ''),
+            ('2026-08-16', 'Interest-Macha Bank-QTR End', '', '', ''),
+            ('2026-08-16', 'PWCL- Every 3 Month interest', '', '', ''),
+            ('2026-08-10', 'NEW LOAN 1013', '500000', '', ''),
+            ('2026-08-16', 'NEW LOAN 1013 interest', '', '', ''),
+            ('fri', 'Chandrodaya, Brt', '', '', ''),
+            ('mon/tue', 'Chandrodaya, KTM  ', '650000', '', ''),
+            ('2026-08-07', 'Kishan Pipe Product', '150000', '', ''),
+        ]
+        pop(self.t_pay, pay_data)
+        
+        pur_tod_data = [
+            ('2026-08-07', 'surendra joshi', '305395', '', ''),
+            ('', 'Brijwashi Products , Aligarh India', '241281.99', '', '')
+        ]
+        pop(self.t_pur_tod, pur_tod_data)
+        
+        pur_upc_data = [
+            ('fri', 'Dhiraj trading', '', '', ''),
+            ('thu', 'Priti valve & Fitting Ind, P. Ltd', '40000', '', ''),
+            ('sun', 'Tejas Tiwari Group Pvt.Ltd, Ktm', '', '', ''),
+            ('wed', 'Aarna International Pvt.Ltd, Kathmandu', '45000', '', ''),
+            ('fri', 'Sujita Paints Industries,Brt', '', '', ''),
+            ('wed', 'Jeen Mata Impex Pvt. Ltd.', '', '', ''),
+        ]
+        pop(self.t_pur_upc, pur_upc_data)
+        
+        acc_data = [
+            ('laxmi Bank', '3653.76', '3653.76'),
+            ('macha (dl settle)', '-732210.42', '1008184.58'),
+            ('Cash', '505395', '505395'),
+            ('btm', '430000', '430000'),
+            ('jnk', '0', '50000'),
+            ('Ngt', '0', '25000')
+        ]
+        pop(self.t_acc, acc_data)
+        
+        dl_data = [
+            ('1', 'DL-995', '700000', '2026-08-25', '17'), 
+            ('2', 'DL-997', '700000', '2026-09-01', '24'), 
+            ('3', 'DL-1001', '700000', '2026-09-07', '30'), 
+            ('4', 'DL-1003', '700000', '2026-09-11', '34'), 
+            ('5', 'DL-1009', '700000', '2026-09-18', '41'), 
+            ('6', 'DL-1016', '700000', '2026-09-28', '51'), 
+            ('7', 'DL-1024', '700000', '2026-10-01', '54'), 
+            ('8', 'DL-1029', '700000', '2026-10-06', '59'), 
+            ('9', 'DL-1036', '700000', '2026-10-12', '65'), 
+            ('10', 'DL-1043', '700000', '2026-10-21', '74'), 
+            ('11', 'DL-1048', '700000', '2026-10-29', '82'), 
+            ('12', 'DL-1052', '700000', '2026-11-04', '88'), 
+            ('13', 'DL-1057', '700000', '2026-11-10', '94'), 
+            ('14', 'DL-1062', '700000', '2026-11-17', '101'), 
+            ('15', 'DL-1071', '700000', '2026-11-26', '110')
+        ]
+        pop(self.t_dl, dl_data)
+        
+        lim_data = [
+            ('Remain Demand Loan Limit', ''),
+            ('Remain LC Limit', ''),
+            ('Used LC', '')
+        ]
+        pop(self.t_lim, lim_data)
+        
+        # 2. Populate Grid View
+        self.grid.clearContents()
+        # Removed colored header painting
+        
+        def paint_sub_header(r, c_start, c_end, text, bg="#e9ecef"):
+            for c in range(c_start, c_end + 1):
+                item = QTableWidgetItem(text if c == c_start else "")
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                item.setBackground(QBrush(QColor(bg)))
+                item.setFont(_H_BOLD)
+                self.grid.setItem(r, c, item)
+            if c_start != c_end:
+                self.grid.setSpan(r, c_start, 1, c_end - c_start + 1)
+        
+        def fill_block(start_r, start_c, data):
+            for i, row_data in enumerate(data):
+                for j, val in enumerate(row_data):
+                    item = QTableWidgetItem(val)
+                    # DL day's left column
+                    if start_c == 8 and j == 4:
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                        f = item.font()
+                        f.setBold(True)
+                        item.setFont(f)
+                    self.grid.setItem(start_r + i, start_c + j, item)
+
+        # Left Column (Purchases)
+        r_pur = 1
+        paint_sub_header(r_pur, 0, 2, "Payments")
+        fill_block(r_pur + 1, 0, pay_data)
+        
+        r_pur += len(pay_data) + 2
+        paint_sub_header(r_pur, 0, 2, "Purchase (Today)")
+        fill_block(r_pur + 1, 0, pur_tod_data)
+        
+        r_pur += len(pur_tod_data) + 2
+        paint_sub_header(r_pur, 0, 2, "Purchase (Upcoming)")
+        fill_block(r_pur + 1, 0, pur_upc_data)
+        
+        # Middle Column (Accounts & Limits)
+        r_acc = 1
+        paint_sub_header(r_acc, 5, 7, "Account Table")
+        fill_block(r_acc + 1, 5, acc_data)
+        
+        r_acc += len(acc_data) + 2
+        paint_sub_header(r_acc, 5, 7, "Limits & LC")
+        fill_block(r_acc + 1, 5, lim_data)
+        
+        # Right Column (Demand Loans)
+        r_dl = 1
+        paint_sub_header(r_dl, 8, 12, "Demand Loans (DL)")
+        fill_block(r_dl + 1, 8, dl_data)
+        
+        QTimer.singleShot(100, self._adjust_heights)
+
+    def _adjust_heights(self):
+        for t in self._tables:
+            t.recalculate_height()
+
+    def _add_row(self, t_obj, num_cols):
+        r = t_obj.table.rowCount()
+        t_obj.table.insertRow(r)
+        for c in range(num_cols):
+            t_obj.table.setItem(r, c, QTableWidgetItem(""))
+        t_obj.recalculate_height()
+
+    def _add_dl_row(self):
+        r = self.t_dl.table.rowCount()
+        self.t_dl.table.insertRow(r)
+        for c in range(5):
+            item = QTableWidgetItem("")
+            if c == 4:
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+            self.t_dl.table.setItem(r, c, item)
+        self.t_dl.recalculate_height()
+            
+    def _calc_days_left(self, item):
+        if item.column() != 3: return
+        r = item.row()
+        date_str = item.text().strip()
+        self.t_dl.table.blockSignals(True)
+        try:
+            item4 = self.t_dl.table.item(r, 4)
+            if item4 is None:
+                item4 = QTableWidgetItem("")
+                font = item4.font()
+                font.setBold(True)
+                item4.setFont(font)
+                item4.setFlags(item4.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.t_dl.table.setItem(r, 4, item4)
+
+            if not date_str:
+                item4.setText("")
+                return
+            import datetime
+            try:
+                parts = date_str.replace('-','/').replace('.','/').split('/')
+                if len(parts) >= 3:
+                    if len(parts[0]) == 4:
+                        dt = datetime.date(int(parts[0]), int(parts[1]), int(parts[2]))
+                    else:
+                        if len(parts[2]) == 2: parts[2] = "20" + parts[2]
+                        dt = datetime.date(int(parts[2]), int(parts[1]), int(parts[0]))
+                    today = datetime.date.today()
+                    diff = (dt - today).days
+                    item4.setText(str(diff))
+                else:
+                    item4.setText("?")
+            except Exception:
+                item4.setText("?")
+        finally:
+            self.t_dl.table.blockSignals(False)
+
+    def _grid_item_changed(self, item):
+        # Grid day's left calc (Column 9 is Expiry Date, Column 10 is Day's left)
+        if item.column() != 11: return
+        r = item.row()
+        date_str = item.text().strip()
+        self.grid.blockSignals(True)
+        try:
+            item12 = self.grid.item(r, 12)
+            if item12 is None:
+                item12 = QTableWidgetItem("")
+                font = item12.font()
+                font.setBold(True)
+                item12.setFont(font)
+                item12.setFlags(item12.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.grid.setItem(r, 12, item12)
+
+            if not date_str:
+                item12.setText("")
+                return
+            import datetime
+            try:
+                parts = date_str.replace('-','/').replace('.','/').split('/')
+                if len(parts) >= 3:
+                    if len(parts[0]) == 4:
+                        dt = datetime.date(int(parts[0]), int(parts[1]), int(parts[2]))
+                    else:
+                        if len(parts[2]) == 2: parts[2] = "20" + parts[2]
+                        dt = datetime.date(int(parts[2]), int(parts[1]), int(parts[0]))
+                    today = datetime.date.today()
+                    diff = (dt - today).days
+                    item12.setText(str(diff))
+                else:
+                    item12.setText("?")
+            except Exception:
+                item12.setText("?")
+        finally:
+            self.grid.blockSignals(False)
+
+    def apply_edit_mode(self, can_edit: bool):
+        self._can_edit = can_edit
+        flags = (QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.AnyKeyPressed) if can_edit else QTableWidget.EditTrigger.NoEditTriggers
+        for t in self._tables:
+            t.table.setEditTriggers(flags)
+            t.btn_add.setEnabled(can_edit)
+        self.grid.setEditTriggers(flags)
+
+
+
+class RecordTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self._can_edit = True
+        self._n_accts = 2  # Changed to 2 accounts: Company and Personal
+        self._headers = ["SN", "A/C of", "Field", "Company Account", "", "Field", "Personal Account", ""]
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # --- Top Bar (Toggle Switch & Buttons) ---
+        top_bar = QWidget()
+        top_bar.setStyleSheet("background-color: #f1f3f5; border-bottom: 1px solid #dee2e6;")
+        tbar = QHBoxLayout(top_bar)
+        tbar.setContentsMargins(15, 8, 15, 8)
+        
+        lbl = QLabel("Supplier Bank Account Records")
+        lbl.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        lbl.setStyleSheet("color: #343a40; border: none;")
+        tbar.addWidget(lbl)
+        tbar.addStretch()
+        
+        self._add_row_btn = QPushButton("+ Add Supplier")
+        self._add_row_btn.setFixedHeight(28)
+        self._add_row_btn.clicked.connect(self._add_supplier)
+        tbar.addWidget(self._add_row_btn)
+        
+        self._add_acct_btn = QPushButton("+ Add Account")
+        self._add_acct_btn.setFixedHeight(28)
+        self._add_acct_btn.clicked.connect(self._add_account)
+        tbar.addWidget(self._add_acct_btn)
+        
+        from PyQt6.QtWidgets import QComboBox, QStackedWidget
+        self.view_selector = QComboBox()
+        self.view_selector.addItems(["Classic Excel Grid View", "Detailed Column View"])
+        self.view_selector.setFont(QFont("Arial", 10))
+        self.view_selector.setStyleSheet("""
+            QComboBox {
+                padding: 4px 10px;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                background-color: white;
+            }
+        """)
+        self.view_selector.currentIndexChanged.connect(self._switch_view)
+        tbar.addWidget(self.view_selector)
+        
+        main_layout.addWidget(top_bar)
+        
+        # --- Stacked Widget ---
+        self.stack = QStackedWidget()
+        
+        # --- VIEW 0: Excel Grid View (Default) ---
+        self.view0 = QWidget()
+        v0_layout = QVBoxLayout(self.view0)
+        v0_layout.setContentsMargins(8, 8, 8, 8)
+        v0_layout.setSpacing(6)
+        
+        # Table
+        self.table = QTableWidget(0, self._total_cols())
+        self.table.setObjectName("RecordTable")
+        self.table.setFont(_H_NORM)
+        
+        self.table.horizontalHeader().setVisible(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setShowGrid(True)
+        
+        self.table.setHorizontalHeaderLabels(self._headers)
+        
+        self.table.setStyleSheet("""
+            QTableWidget { gridline-color: #A0A0A0; alternate-background-color: #f8f9fa; }
+            QHeaderView::section {
+                background-color: #e9ecef;
+                border: 1px solid #dee2e6;
+                padding: 4px;
+                font-weight: bold;
+                color: #343a40;
+            }
+        """)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        v0_layout.addWidget(self.table)
+        self.stack.addWidget(self.view0)
+        
+        # --- VIEW 1: Detailed Column View ---
+        self.view1 = QWidget()
+        v1_layout = QVBoxLayout(self.view1)
+        v1_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setStyleSheet("QScrollArea { background-color: #fdfdfd; }")
+        
+        self.container = QWidget()
+        self.container.setStyleSheet("background-color: transparent;")
+        self.c_lay = QVBoxLayout(self.container)
+        self.c_lay.setContentsMargins(12, 12, 12, 12)
+        self.c_lay.setSpacing(25)
+        
+        self.scroll.setWidget(self.container)
+        v1_layout.addWidget(self.scroll)
+        self.stack.addWidget(self.view1)
+        
+        main_layout.addWidget(self.stack)
+
+        self._setup_columns()
+        self._load_data()
+        self._build_detailed_view()
+
+    def _switch_view(self, idx):
+        self.stack.setCurrentIndex(idx)
+        
+    def _build_detailed_view(self):
+        # Clear existing layout
+        while self.c_lay.count():
+            child = self.c_lay.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+                
+        # Build individual tables based on Grid View data
+        r = 0
+        while r < self.table.rowCount():
+            # Skip gaps
+            if self.table.rowSpan(r, 0) == 1 and not (self.table.item(r, 0) and self.table.item(r, 0).text()):
+                r += 1
+                continue
+                
+            sn = self.table.item(r, 0).text() if self.table.item(r, 0) else ""
+            acof = self.table.item(r, 1).text() if self.table.item(r, 1) else ""
+            
+            from PyQt6.QtWidgets import QGroupBox
+            group = QGroupBox(f"{sn}. {acof}")
+            group.setFont(_H_BOLD)
+            group.setStyleSheet("QGroupBox { border: 1px solid #ced4da; border-radius: 6px; margin-top: 10px; padding-top: 15px; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; color: #1976D2; }")
+            g_lay = QHBoxLayout(group)
+            
+            # For each account
+            for a in range(self._n_accts):
+                header_idx = 3 + (a * 3)
+                acc_name = self._headers[header_idx] if header_idx < len(self._headers) else f"Account {a+1}"
+                
+                t = QTableWidget(6, 2)
+                t.setHorizontalHeaderLabels(["Field", acc_name])
+                t.horizontalHeader().setStretchLastSection(True)
+                t.verticalHeader().setVisible(False)
+                t.setFixedHeight(210)
+                t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+                t.setStyleSheet("QHeaderView::section { background-color: #e9ecef; font-weight: bold; }")
+                
+                for i in range(6):
+                    lbl = self.table.item(r + i, _rec_col(a, 0))
+                    val = self.table.item(r + i, _rec_col(a, 1))
+                    
+                    t.setItem(i, 0, QTableWidgetItem(lbl.text() if lbl else ""))
+                    v_item = QTableWidgetItem(val.text() if val else "")
+                    if val and val.font().bold():
+                        f = v_item.font()
+                        f.setBold(True)
+                        v_item.setFont(f)
+                    t.setItem(i, 1, v_item)
+                
+                g_lay.addWidget(t)
+            
+            self.c_lay.addWidget(group)
+            r += 6
+            
+        self.c_lay.addStretch()
+
+    def _total_cols(self) -> int:
+        return _REC_FIXED + self._n_accts * _REC_BLOCK
+
+    def _setup_columns(self):
+        self.table.setColumnCount(self._total_cols())
+        self.table.setColumnWidth(0, 40)
+        self.table.setColumnWidth(1, 200)
+        for a in range(self._n_accts):
+            self.table.setColumnWidth(_rec_col(a, 0), _REC_LBL_W)
+            self.table.setColumnWidth(_rec_col(a, 1), 250) # Made value column slightly wider
+            if a < self._n_accts - 1:
+                self.table.setColumnWidth(_rec_col(a, 2), _REC_SEP_W)
+            else:
+                self.table.setColumnWidth(_rec_col(a, 2), 0) # No spacer after last
+
+    def _load_data(self):
+        for sn, acof, accts in _RECORD_DATA:
+            self._insert_row(sn, acof, accts)
+
+    def _insert_row(self, sn, acof, accts):
+        r = self.table.rowCount()
+        # insert 6 rows for fields
+        for i in range(6):
+            self.table.insertRow(r + i)
+            self.table.setRowHeight(r + i, _REC_ROW_H)
+
+        # Merge SN and A/C of across 6 rows
+        self.table.setSpan(r, 0, 6, 1)
+        self.table.setSpan(r, 1, 6, 1)
+        
+        # Set SN and A/C of text in the top-left cell of the span
+        sn_item = QTableWidgetItem(str(sn))
+        sn_item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        self.table.setItem(r, 0, sn_item)
+        
+        acof_item = QTableWidgetItem(acof)
+        acof_item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.table.setItem(r, 1, acof_item)
+
+        # Fill in the data for each account
+        for a in range(self._n_accts):
+            d = accts[a] if a < len(accts) else {}
+            
+            # Spacer column
+            if a < self._n_accts - 1:
+                self.table.setSpan(r, _rec_col(a, 2), 6, 1)
+                spacer = QTableWidgetItem("")
+                spacer.setFlags(Qt.ItemFlag.NoItemFlags)
+                self.table.setItem(r, _rec_col(a, 2), spacer)
+
+            for i, key in enumerate(_REC_FIELD_KEYS):
+                # Label cell
+                lbl_item = QTableWidgetItem(_REC_FIELD_LABELS[i])
+                lbl_item.setFlags(Qt.ItemFlag.ItemIsEnabled) # Read only labels
+                self.table.setItem(r + i, _rec_col(a, 0), lbl_item)
+
+                # Value cell
+                val = d.get(key, "")
+                val_item = QTableWidgetItem(val)
+                # bold the Rakham (amount) as in the sheet for better visibility
+                if key == "rakam" and val:
+                    f = val_item.font()
+                    f.setBold(True)
+                    val_item.setFont(f)
+                self.table.setItem(r + i, _rec_col(a, 1), val_item)
+
+        # Insert Gap row
+        gap_row = r + 6
+        self.table.insertRow(gap_row)
+        self.table.setRowHeight(gap_row, _REC_GAP_H)
+        self.table.setSpan(gap_row, 0, 1, self._total_cols())
+        gap_item = QTableWidgetItem("")
+        gap_item.setFlags(Qt.ItemFlag.NoItemFlags)
+        # To mimic no grid lines on the gap, we can just let it be blank
+        self.table.setItem(gap_row, 0, gap_item)
+
+    def _add_supplier(self):
+        if not self._can_edit: return
+        self._insert_row("", "", [{}, {}, {}])
+        self.table.scrollToBottom()
+        self._build_detailed_view()
+
+    def _add_account(self):
+        if not self._can_edit: return
+        
+        from PyQt6.QtWidgets import QInputDialog
+        text, ok = QInputDialog.getText(self, "Add Account", "Enter Account Type (e.g., Company 2, Personal 2):")
+        if not ok or not text: return
+        
+        self._n_accts += 1
+        self._headers.extend(["Field", text, ""])
+        
+        # update columns
+        self._setup_columns()
+        self.table.setHorizontalHeaderLabels(self._headers)
+        self._build_detailed_view()
+        
+        new_a = self._n_accts - 1
+        
+        # We need to fill the new columns for existing rows
+        r = 0
+        while r < self.table.rowCount():
+            # is it a gap row?
+            if self.table.rowSpan(r, 0) == 1 and not self.table.item(r, 0).text():
+                self.table.setSpan(r, 0, 1, self._total_cols())
+                r += 1
+                continue
+            
+            # fix spacer of previous account
+            prev_a = new_a - 1
+            self.table.setSpan(r, _rec_col(prev_a, 2), 6, 1)
+            self.table.setColumnWidth(_rec_col(prev_a, 2), _REC_SEP_W)
+            
+            # add new account cells
+            for i, key in enumerate(_REC_FIELD_KEYS):
+                lbl_item = QTableWidgetItem(_REC_FIELD_LABELS[i])
+                lbl_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                self.table.setItem(r + i, _rec_col(new_a, 0), lbl_item)
+                self.table.setItem(r + i, _rec_col(new_a, 1), QTableWidgetItem(""))
+                
+            r += 6 # skip the record rows
+
+    def apply_edit_mode(self, can_edit: bool):
+        self._can_edit = can_edit
+        self.table.setEditTriggers(
+            QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.AnyKeyPressed
+            if can_edit else QTableWidget.EditTrigger.NoEditTriggers
+        )
+        self._add_row_btn.setEnabled(can_edit)
+        self._add_acct_btn.setEnabled(can_edit)
+
+# ===========================================================================

@@ -1,0 +1,186 @@
+class AnilHisabTab(QWidget):
+    # Ledger: Balance auto-recalculates when DR or Cr. changes.
+    # Balance[0] = DR[0]
+    # Balance[n] = Balance[n-1] + DR[n] - Cr.[n]
+
+    def __init__(self):
+        super().__init__()
+        self._can_edit = True
+        self._blocking = False   # prevents recursive cellChanged signals
+
+        vlay = QVBoxLayout(self)
+        vlay.setContentsMargins(8, 8, 8, 8)
+        vlay.setSpacing(6)
+
+        # Toolbar
+        tbar = QHBoxLayout()
+        tbar.setContentsMargins(0, 0, 0, 0)
+        lbl = QLabel("Anil Dai Hisab  —  Running Balance Ledger")
+        lbl.setFont(_H_BOLD)
+        tbar.addWidget(lbl)
+        tbar.addStretch()
+
+        self._add_btn = QPushButton("+ Add Row")
+        self._add_btn.setObjectName("AnilAddRowBtn")
+        self._add_btn.setFixedHeight(28)
+        self._add_btn.clicked.connect(self._add_row)
+        tbar.addWidget(self._add_btn)
+        vlay.addLayout(tbar)
+
+        # Formula hint
+        hint = QLabel("  Balance = Previous Balance + DR  \u2212  Cr.   (auto-calculated)")
+        hint.setStyleSheet("color:#666; font-size:11px;")
+        vlay.addWidget(hint)
+
+        # Table
+        self.table = QTableWidget(0, len(_ANIL_COLS))
+        self.table.setObjectName("AnilHisabTable")
+        self.table.setFont(_H_NORM)
+        self.table.setHorizontalHeaderLabels([c[0] for c in _ANIL_COLS])
+        for c, (_, w, _a) in enumerate(_ANIL_COLS):
+            self.table.setColumnWidth(c, w)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.horizontalHeader().setHighlightSections(False)
+        self.table.verticalHeader().setDefaultSectionSize(25)
+        self.table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectItems)
+        vlay.addWidget(self.table)
+
+        # Status bar showing current outstanding balance
+        self._status = QLabel()
+        self._status.setStyleSheet(
+            "font-weight:bold; font-size:12px; padding:4px 8px;"
+            "background:#1A2035; color:#fff; border-radius:4px;"
+        )
+        vlay.addWidget(self._status)
+
+        self._load_data()
+        self.table.cellChanged.connect(self._on_cell_changed)
+
+    # ------------------------------------------------------------------ #
+    def _load_data(self):
+        self._blocking = True
+        for row_data in _ANIL_DATA:
+            start, end, days, part, dr, cr, bal = row_data
+            r = self.table.rowCount()
+            self.table.insertRow(r)
+
+            # Colour: DR rows warm-orange tint, Cr. rows green tint
+            if cr and not dr:
+                row_bg = QColor("#E8F5E9")   # green tint  - money received
+            elif dr and not cr:
+                row_bg = QColor("#FFF3E0")   # orange tint - interest/debit
+            else:
+                row_bg = None                 # both present (mixed row)
+
+            vals = [
+                (start, _C),
+                (end,   _C),
+                (_fmt(days) if days is not None else "", _C),
+                (part,  _L),
+                (_fmt(dr),  _R),
+                (_fmt(cr),  _R),
+                (_fmt(bal), _R),
+                ("",    _L),
+            ]
+            for c, (v, align) in enumerate(vals):
+                it = _anil_item(v, align)
+                if row_bg:
+                    it.setBackground(QBrush(row_bg))
+                self.table.setItem(r, c, it)
+
+        self._blocking = False
+        self._refresh_status()
+
+    def _add_row(self):
+        if not self._can_edit:
+            return
+        r = self.table.rowCount()
+        self.table.insertRow(r)
+        for c, (_, _w, align) in enumerate(_ANIL_COLS):
+            self.table.setItem(r, c, _anil_item("", align))
+        self.table.scrollToBottom()
+        self._recalc_from(r)
+
+    # ------------------------------------------------------------------ #
+    # Auto-recalculate balance for all rows from `start_row` downward
+    # ------------------------------------------------------------------ #
+    def _recalc_from(self, start_row: int):
+        self._blocking = True
+        rc = self.table.rowCount()
+        for r in range(start_row, rc):
+            # Get previous balance
+            if r == 0:
+                prev_bal = 0.0
+            else:
+                prev_item = self.table.item(r - 1, _ANIL_COL_BAL)
+                prev_text = prev_item.text().replace(",", "") if prev_item else ""
+                try:
+                    prev_bal = float(prev_text)
+                except ValueError:
+                    prev_bal = 0.0
+
+            dr_item = self.table.item(r, _ANIL_COL_DR)
+            cr_item = self.table.item(r, _ANIL_COL_CR)
+            dr_text = dr_item.text().replace(",", "") if dr_item else ""
+            cr_text = cr_item.text().replace(",", "") if cr_item else ""
+
+            try:
+                dr_val = float(dr_text) if dr_text else 0.0
+            except ValueError:
+                dr_val = 0.0
+            try:
+                cr_val = float(cr_text) if cr_text else 0.0
+            except ValueError:
+                cr_val = 0.0
+
+            # Special case: first data row, balance = DR (opening entry)
+            if r == 0:
+                new_bal = dr_val - cr_val
+            else:
+                new_bal = prev_bal + dr_val - cr_val
+
+            bal_text = _fmt(new_bal) if (dr_text or cr_text) else ""
+            bal_it = _anil_item(bal_text, _R)
+            # Colour the balance: red if negative, green if positive
+            if new_bal < 0:
+                bal_it.setForeground(QBrush(QColor("#C0392B")))
+            elif new_bal > 0:
+                bal_it.setForeground(QBrush(QColor("#1A6B3C")))
+            self.table.setItem(r, _ANIL_COL_BAL, bal_it)
+
+        self._blocking = False
+        self._refresh_status()
+
+    def _on_cell_changed(self, row: int, col: int):
+        if self._blocking:
+            return
+        if col in (_ANIL_COL_DR, _ANIL_COL_CR):
+            self._recalc_from(row)
+
+    def _refresh_status(self):
+        rc = self.table.rowCount()
+        if rc == 0:
+            self._status.setText("  Balance: —")
+            return
+        last = self.table.item(rc - 1, _ANIL_COL_BAL)
+        txt = last.text() if last else ""
+        # Walk up to find last non-empty balance
+        for r in range(rc - 1, -1, -1):
+            it = self.table.item(r, _ANIL_COL_BAL)
+            if it and it.text().strip():
+                txt = it.text()
+                break
+        self._status.setText(f"  Outstanding Balance:  Rs. {txt}")
+
+    def apply_edit_mode(self, can_edit: bool):
+        self._can_edit = can_edit
+        self.table.setEditTriggers(
+            QTableWidget.EditTrigger.DoubleClicked
+            | QTableWidget.EditTrigger.AnyKeyPressed
+            if can_edit else QTableWidget.EditTrigger.NoEditTriggers
+        )
+        self._add_btn.setEnabled(can_edit)
+
+
+# ===========================================================================

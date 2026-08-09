@@ -1,0 +1,81 @@
+class _InsTable(QWidget):
+    # One insurance section: coloured header + editable table + Add-Row btn.
+
+    def __init__(self, title: str, color: str, parent=None):
+        super().__init__(parent)
+        self._can_edit = True
+        vlay = QVBoxLayout(self)
+        vlay.setContentsMargins(0, 6, 0, 4)
+        vlay.setSpacing(4)
+
+        # Header + button row
+        hlay = QHBoxLayout()
+        hlay.setContentsMargins(0, 0, 0, 0)
+        lbl = QLabel(title)
+        lbl.setFont(_H_BOLD)
+        lbl.setStyleSheet(
+            f"background:{color}; color:#fff;"
+            "padding:6px 12px; border-radius:4px;"
+        )
+        hlay.addWidget(lbl)
+        hlay.addStretch()
+        self._add_btn = QPushButton("+ Add Row")
+        self._add_btn.setObjectName("InsAddRowBtn")
+        self._add_btn.setFixedHeight(28)
+        self._add_btn.clicked.connect(self._add_row)
+        hlay.addWidget(self._add_btn)
+        vlay.addLayout(hlay)
+
+        # Table
+        self.table = QTableWidget(0, len(_INS_COLS))
+        self.table.setObjectName("InsuranceTable")
+        self.table.setFont(_H_NORM)
+        self.table.setHorizontalHeaderLabels(_INS_COLS)
+        for c, w in enumerate(_INS_COL_W):
+            self.table.setColumnWidth(c, w)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.verticalHeader().setDefaultSectionSize(25)
+        self.table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectItems)
+        self.table.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self.table.setMinimumHeight(80)
+        vlay.addWidget(self.table)
+
+        # Divider
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        vlay.addWidget(line)
+
+    def load_rows(self, rows):
+        self.table.setRowCount(len(rows))
+        for r, row in enumerate(rows):
+            for c, val in enumerate(row):
+                self.table.setItem(r, c, _num(val) if c == 3 else _item(val))
+        self._fit_height()
+
+    def _fit_height(self):
+        h = self.table.horizontalHeader().height()
+        for r in range(self.table.rowCount()):
+            h += self.table.rowHeight(r)
+        self.table.setFixedHeight(max(80, h + 4))
+
+    def _add_row(self):
+        if not self._can_edit:
+            return
+        self.table.insertRow(self.table.rowCount())
+        self.table.scrollToBottom()
+        self._fit_height()
+
+    def set_edit_mode(self, can_edit: bool):
+        self._can_edit = can_edit
+        self.table.setEditTriggers(
+            QTableWidget.EditTrigger.DoubleClicked
+            | QTableWidget.EditTrigger.AnyKeyPressed
+            if can_edit else QTableWidget.EditTrigger.NoEditTriggers
+        )
+        self._add_btn.setEnabled(can_edit)
+
+
+class InsuranceTab

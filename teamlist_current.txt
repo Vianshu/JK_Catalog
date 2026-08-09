@@ -1,0 +1,309 @@
+class TeamListTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self._can_edit   = True
+        self._year_labels = list(_YEAR_LABELS)
+
+        vlay = QVBoxLayout(self)
+        vlay.setContentsMargins(8, 8, 8, 8)
+        vlay.setSpacing(6)
+
+        # Toolbar
+        tbar = QHBoxLayout()
+        tbar.setContentsMargins(0, 0, 0, 0)
+        lbl = QLabel("Team Salary History  (oldest → newest  ▶)")
+        lbl.setFont(_H_BOLD)
+        tbar.addWidget(lbl)
+        tbar.addStretch()
+        self._add_row_btn = QPushButton("+ Add Employee")
+        self._add_row_btn.setObjectName("TeamAddRowBtn")
+        self._add_row_btn.setFixedHeight(28)
+        self._add_row_btn.clicked.connect(self._add_employee_row)
+        tbar.addWidget(self._add_row_btn)
+        self._add_yr_btn = QPushButton("+ Add Year")
+        self._add_yr_btn.setObjectName("TeamAddYearBtn")
+        self._add_yr_btn.setFixedHeight(28)
+        self._add_yr_btn.clicked.connect(self._add_year)
+        tbar.addWidget(self._add_yr_btn)
+        vlay.addLayout(tbar)
+
+        # Hint label
+        hint = QLabel(
+            "  Each year block: Joining Month  |  Salary  "
+            "— scroll right to see newest year"
+        )
+        hint.setStyleSheet("color:#666; font-size:11px;")
+        vlay.addWidget(hint)
+
+        # Table
+        self.table = QTableWidget(0, _FIXED_N + len(self._year_labels) * 2)
+        self.table.setObjectName("TeamListTable")
+        self.table.setFont(_H_NORM)
+        self.table.verticalHeader().setDefaultSectionSize(25)
+        self.table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectItems)
+        self.table.horizontalHeader().setHighlightSections(False)
+        vlay.addWidget(self.table)
+
+        self._rebuild_headers()
+        self._load_data()
+
+    def _col_for_year(self, yr: str) -> int:
+        return _FIXED_N + self._year_labels.index(yr) * 2
+
+    def _rebuild_headers(self):
+        total = _FIXED_N + len(self._year_labels) * 2
+        self.table.setColumnCount(total)
+        labels = [n for n, _ in _FIXED_COLS]
+        for yr in self._year_labels:
+            labels += [yr, "Salary"]
+        self.table.setHorizontalHeaderLabels(labels)
+        for c, (_, w) in enumerate(_FIXED_COLS):
+            self.table.setColumnWidth(c, w)
+        for i in range(len(self._year_labels)):
+            base = _FIXED_N + i * 2
+            self.table.setColumnWidth(base,     80)
+            self.table.setColumnWidth(base + 1, 85)
+
+    def _load_data(self):
+        self.table.setRowCount(0)
+        for loc, post, name, yr_data in _TEAM_DATA:
+            r = self.table.rowCount()
+            self.table.insertRow(r)
+            bg = _TEAM_LOC_BG.get(loc)
+            self.table.setItem(r, 0, _item(loc, bg=bg))
+            self.table.setItem(r, 1, _item(post))
+            self.table.setItem(r, 2, _item(name, bold=True))
+            
+            spacer = QTableWidgetItem("")
+            spacer.setFlags(Qt.ItemFlag.NoItemFlags)
+            spacer.setBackground(QBrush(QColor("#f8f9fa")))
+            self.table.setItem(r, 3, spacer)
+            for yr, (yr_month, salary) in yr_data.items():
+                if yr in self._year_labels:
+                    bc = self._col_for_year(yr)
+                    self.table.setItem(r, bc,     _item(yr_month))
+                    self.table.setItem(r, bc + 1, _num(salary))
+
+    def _add_employee_row(self):
+        if not self._can_edit:
+            return
+        self.table.insertRow(self.table.rowCount())
+        self.table.scrollToBottom()
+
+    def _add_year(self):
+        if not self._can_edit:
+            return
+        yr, ok = QInputDialog.getText(
+            self, "Add Year",
+            "Nepali fiscal year (e.g. 83-84):"
+        )
+        if not ok or not yr.strip():
+            return
+        yr = yr.strip()
+        if yr in self._year_labels:
+            QMessageBox.information(self, "Exists", f"Year {yr} already exists.")
+            return
+        self._year_labels.append(yr)
+        c = self.table.columnCount()
+        self.table.insertColumn(c)
+        self.table.insertColumn(c + 1)
+        self.table.setHorizontalHeaderItem(c,     QTableWidgetItem(yr))
+        self.table.setHorizontalHeaderItem(c + 1, QTableWidgetItem("Salary"))
+        self.table.setColumnWidth(c,     80)
+        self.table.setColumnWidth(c + 1, 85)
+
+    def apply_edit_mode(self, can_edit: bool):
+        self._can_edit = can_edit
+        self.table.setEditTriggers(
+            QTableWidget.EditTrigger.DoubleClicked
+            | QTableWidget.EditTrigger.AnyKeyPressed
+            if can_edit else QTableWidget.EditTrigger.NoEditTriggers
+        )
+        self._add_row_btn.setEnabled(can_edit)
+        self._add_yr_btn.setEnabled(can_edit)
+
+
+# ===========================================================================
+# RECORD TAB  -  Supplier Bank Account Records (Vertical Format)
+# Layout: each record spans 6 rows.
+#   Col 0    : S.N. (spans 6 rows)
+#   Col 1    : A/C of (spans 6 rows)
+#   Col 2    : Acct 0 Label
+#   Col 3    : Acct 0 Value
+#   Col 4    : Spacer
+#   Col 5    : Acct 1 Label
+#   Col 6    : Acct 1 Value
+#   ...
+#   Row between records: 1 empty row for spacing
+# ===========================================================================
+_REC_FIELD_KEYS   = ["naam","thegana","baik","khata","rakam","jamma"]
+_REC_FIELD_LABELS = ["\u0928\u093e\u092e","\u0920\u0947\u0917\u093e\u0928\u093e","\u092c\u0948\u0915",
+                     "\u062e\u093e\u0924\u093e \u0928.","\u0930\u0915\u092e","\u091c\u092e\u094d\u092e\u093e \u0917\u0930\u094d\u0928\u0947"]
+_REC_FIXED        = 2          # SN + A/C of
+_REC_BLOCK        = 3          # Label + Value + Sep
+_REC_LBL_W        = 70
+_REC_VAL_W        = 220
+_REC_SEP_W        = 20
+_REC_ROW_H        = 24
+_REC_GAP_H        = 30
+
+# ---------------------------------------------------------------------------
+# All 39 supplier records parsed from the Excel workbook.
+# Each entry: (SN, "A/C of name", [acct0_dict, acct1_dict, acct2_dict])
+# acct dict keys: naam, thegana, baik, khata, rakam, jamma
+# ---------------------------------------------------------------------------
+_RECORD_DATA = [
+    (1,"Vishal nat bolt",[
+        {"naam":"\u0935\u093f\u0936\u093e\u0932 \u0928\u091f \u092c\u094b\u0932\u094d\u091f\u0941 \u0909\u0927\u094b\u0917","thegana":"\u092c\u093f\u0930\u0917\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"006001-05200842","rakam":"chq rs-65250.72","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Vishal Hardware","baik":"Everest Bank","khata":"00600-1052-00223","rakam":"chq rs- 57194.68","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {}]),
+    (2,"Salasar HW, ktm",[
+        {"naam":"Shri Salasar Hardware Traders","thegana":"\u0924\u094d\u0930\u093f\u092a\u0941\u0930\u0947\u0936\u094d\u0935\u0930","baik":"Siddath bank","khata":"0061-509-5161","rakam":"chq rs-100000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Khadak singh bista","thegana":"new baneshwor","baik":"nepal sbi","khata":"2031 5241 4093 60NPR","rakam":"cash rs- 194200","jamma":"personal name"},
+        {}]),
+    (3,"Rani sati, brj",[
+        {"naam":"\u0930\u094b\u092f\u0932 \u091f\u094d\u0930\u0947\u0921 \u0932\u093f\u0915","thegana":"\u092c\u093f\u0930\u0917\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"00600-1052-00537 CA","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"\u0930\u0941\u092c\u093f \u0930\u0941\u0917\u091f\u093e","thegana":"\u092c\u093f\u0930\u0917\u091c","baik":"Nepal investment bank ltd","khata":"003-0508-0263191","jamma":"jitendra"},
+        {"naam":"Global Metal Industries","thegana":"\u092c\u093f\u0930\u0917\u091c","baik":"Global Bank","khata":"0110-10100-06000","rakam":"chq rs- 366938.84","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"}]),
+    (4,"kk impex, brj",[
+        {"naam":"K.K. \u0908\u092e\u094d\u092a\u0947\u0915\u094d\u0938 \u092a\u094d\u0930\u093e. \u0932\u0940.","thegana":"\u092c\u093f\u0930\u0917\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"00600-10520-1088","rakam":"chq rs-7082.62","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"\u0928\u094d\u092f\u0941 \u092a\u0936\u0941\u092a\u0924\u093f \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930","thegana":"\u092c\u093f\u0930\u0902\u0917\u0928\u094d\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"00600-1050-00379","rakam":"chq rs- 11249.88","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {}]),
+    (5,"Universal trading, ktm",[
+        {"naam":"\u092f\u0941\u0928\u093f\u0935\u0930\u094d\u0938\u0932 \u091f\u094d\u0930\u0947\u0921\u093f\u0917\u093c \u0938\u0947\u0928\u094d\u091f\u0930 \u092a\u094d\u0930\u093e. \u0932\u0940.","thegana":"\u0915\u093e\u0920\u092e\u093e\u0928\u094d\u0921\u0941","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"01000-1052-00942","rakam":"chq rs- 92500","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"\u092f\u0941\u0928\u093f\u0935\u0930\u094d\u0938\u0932 \u091f\u094d\u0930\u0947\u0921\u093f\u0917\u093c \u0938\u0947\u0928\u094d\u091f\u0930 \u092a\u094d\u0930\u093e. \u0932\u0940.","thegana":"Tripureshwor","baik":"NMB BANK","khata":"0820-0698-2880-0016","rakam":"chq rs- 170000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {}]),
+    (10,"Manokamna ,brj",[
+        {"naam":"Manokamna overseas","thegana":"\u092c\u093f\u0930\u0917\u091c","baik":"\u0917\u094d\u0932\u094b\u092c\u0932 \u092c\u0948\u0915","khata":"110-1010-005203","rakam":"cash rs-300000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Pawan kumar Agrawal","thegana":"\u092c\u093f\u0930\u0917\u091c","baik":"\u0917\u094d\u0932\u094b\u092c\u0932 \u092c\u0948\u0915","khata":"110-70100-14846","jamma":"JITENDRA"},
+        {"naam":"Manokamna overseas","thegana":"\u092c\u093f\u0930\u0917\u091c","baik":"\u0917\u094d\u0932\u094b\u092c\u0932 \u092c\u0948\u0915","khata":"0110-10100-65362","rakam":"chq rs-78715.9","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"}]),
+    (11,"Kailashpati International, Brj",[
+        {"naam":"Kailashpati international","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"Macchapucchure bank Ltd","khata":"1870-990-5036-00015","rakam":"cash rs-96850","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {},{}]),
+    (12,"Balaji metal, Hetoda",[
+        {"naam":"Balaji Metal Industries","thegana":"Hetoda","baik":"mega bank","khata":"01000-1013-9993","rakam":"chq rs-120000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Om prakash Bajaj","thegana":"teku","baik":"Everest","khata":"0100-0501-0011-41","rakam":"cash rs- 215118","jamma":"jitendra"},
+        {}]),
+    (17,"\u0917\u0928\u0947\u0936 \u091f\u094d\u0930\u0947\u0921\u093f\u0917 \u0938\u0947\u0928\u094d\u091f\u0930",[
+        {"naam":"\u0917\u0928\u0947\u0936 \u091f\u094d\u0930\u0947\u0921\u093f\u0917 \u0938\u0947\u0928\u094d\u091f\u0930","thegana":"\u0935\u093f\u0930\u0917\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"00600-105200-347","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Atlantic Overseas","thegana":"\u0935\u093f\u0930\u0917\u091c","baik":"GLOBAL","khata":"110-101-000-6050","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {}]),
+    (18,"Bikash ji ,brj",[
+        {"naam":"Tulip Polymer Industries","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"Nabil Bank Ltd.","khata":"050-101-7500-991","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Kushagra International","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"0060-0105-2014-95","rakam":"chq rs-192106.78","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Win Win Hardware Products","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"Siddharth bank Ltd.","khata":"002-165-79101","rakam":"chq Rs. 12000.60","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"}]),
+    (19,"ASIA TOOLS",[
+        {"naam":"Asia Tools House","thegana":"ktm","baik":"Prabhu Bank","khata":"1140-106-1196-00011","rakam":"chq rs-50000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Mahadev Tiwari","thegana":"ktm","baik":"Prabhu Bank","khata":"1140-13880-8100-012","rakam":"cash rs- 63000","jamma":"jitendra"},
+        {}]),
+    (20,"Priya Impex",[
+        {"naam":"Priya Impex","thegana":"Druber Marg Branch","baik":"Nepal Investment Bank","khata":"00159-020-250-610","rakam":"chq rs-105000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Mukesh kumar singhal","thegana":"Tripureshwor branch","baik":"Global ime bank","khata":"34070-1000-2550","jamma":"jitendra agrawal"},
+        {"naam":"Aarna international pvt ltd","thegana":"Ktm","baik":"NIMB Bank","khata":"0010-10103-10505","rakam":"chq rs-150000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"}]),
+    (22,"Binayak Enterprises",[
+        {"naam":"Binayak Overseas Trade Pvt.Ltd","thegana":"ktm","baik":"Kumari Bank","khata":"0050-3018-7610-0001","rakam":"chq rs-184171.92","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"GANESH DATTA JOSHI","thegana":"TRIPURESHWOR","baik":"LUMBINI BIKAS BANK LTD.","khata":"0311-1020-3647-6400-0001","rakam":"RS-80000","jamma":"jitendra agrawal"},
+        {}]),
+    (23,"Start International",[
+        {"naam":"Star International","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"00600-105201511","rakam":"chq rs-141216/-","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {},{}]),
+    (24,"shruti enterprises",[
+        {"naam":"shruti enterprises","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"0060-0105-200689","rakam":"chq rs- 220000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, BRT"},
+        {"naam":"Vinay bansal","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"600-501-211-258","rakam":"cash rs- 100000","jamma":"jitendra agrawal"},
+        {}]),
+    (25,"shree om ji trade international",[
+        {"naam":"\u0936\u094d\u0930\u0940 \u0913\u092e \u091c\u0940 \u091f\u094d\u0930\u0947\u0921 \u0908\u0928\u094d\u091f\u0930\u0928\u0947\u0936\u0928\u0932","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"Nepal investment bank","khata":"003590-2025-0283","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"sangita kumari agrawal","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"laxmi bank","khata":"0011-9000-146","jamma":"jitnedra"},
+        {}]),
+    (26,"Lotus Plastic Udhyog",[
+        {"naam":"Lotus Plastic udhyog","thegana":"Kalimati","baik":"Nepal Investment bank","khata":"01759-01025-0221","rakam":"CHQ RS- 183791.86","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"tamanna traders","thegana":"Kalimati","baik":"Nepal Investment bank","khata":"01759-01025-0306","rakam":"chq rs- 665000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Lotus Plastic udhyog","thegana":"Kalimati","baik":"Everest Bank","khata":"0370-0105-2000-63","rakam":"CHQ RS- 183791.86","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"}]),
+    (27,"Kelash hw, brj",[
+        {"naam":"Nirika Traders","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"Nepal Investment bank","khata":"0030-10500-03615","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"nitesh kumar Agrawal","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"Nepal Investment bank","khata":"0030-509000-2652","jamma":"jitendra"},
+        {}]),
+    (28,"New Famous Tar Jali, Brj",[
+        {"naam":"New Famous Tar Jali Udhyog","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"Nepal invesment bank.","khata":"0030-1050-0029-98","rakam":"chq rs-135000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Ram Asis Prasad Kurmi","baik":"Kumari Bank","khata":"00300-7575-4200-001","rakam":"cash rs-90700.64","jamma":"jitendra"},
+        {}]),
+    (29,"icon, ktm",[
+        {"naam":"ICON Traders","thegana":"Teku Branch","baik":"Prabhu Bank Limited","khata":"1140-1137-9940-0011","rakam":"chq rs-102908.73","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Prashant Mahesheka","thegana":"Bhat Bateni Branch, Kathmandu","baik":"Laxmi Sunrise Bank Ltd","khata":"0142-4005-337","rakam":"cash rs-100000","jamma":"personal name"},
+        {}]),
+    (30,"omex, brj",[
+        {"naam":"New Omax international","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"NMB BANK","khata":"019-01168-3570-0016","rakam":"chq rs-140000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"OMAX MANUFACTURING","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"NMB BANK","khata":"019-0146-4318-0000-27","rakam":"chq rs- 50000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {}]),
+    (32,"Arvind bandhu",[
+        {"naam":"Arvind Bandhu","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"Everest Bank","khata":"0060-0105-2002-84","rakam":"chq rs- 96182.77","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Nirmal Kumar agrawal","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"NMB bank","khata":"01900-5268-1300-011","rakam":"cash rs- 131150","jamma":"jitendra"},
+        {}]),
+    (33,"Satyam Techno",[
+        {"naam":"Satyam Techno Packs Pvt. Ltd.","thegana":"Halchowk Branch","baik":"Nabil Bank LTD.","khata":"320 101 7500 654","rakam":"chq rs- 92449.82","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Rajesh Paudel","thegana":"Halchowk Branch","baik":"Nabil bank ltd.","khata":"032 0101 7500 806","rakam":"cash rs- 15500","jamma":"jitendra"},
+        {}]),
+    (34,"Jagdamba Metal, Brj",[
+        {"naam":"Jagdamba Metal Udhyog","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"00600-1052-01353","rakam":"chq rs- 233765.92","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {},{}]),
+    (35,"Shiv Enterprises, Brj",[
+        {"naam":"Shiv Enterprises","thegana":"Birgunj","baik":"Machhapuchhre bank ltd","khata":"0040 0235 5550  0017","rakam":"chq rs- 275000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Jay Ma Vaishno Enterprises","thegana":"Birgunj","baik":"Machhapuchhre bank ltd","khata":"0040 0533 8430 0011","rakam":"chq rs-115938","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Rajendra Sharma","thegana":"Birgunj","baik":"Machhapuchhre bank ltd","khata":"0040-0004-2980-0011","rakam":"Rs-","jamma":"Jitendra"}]),
+    (36,"Rani sati, Brj",[
+        {"naam":"Royal Hardware pvt ltd","thegana":"Birgunj","baik":"global bank","khata":"1101 0100 63407","rakam":"chq rs- 67636.63","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Krishna Gopal Keyal","baik":"Siddhartha Bank","khata":"0021-5129-121","rakam":"cash rs-49615","jamma":"Jitendra"},
+        {}]),
+    (37,"Pashupati plastic Ind, Ktm",[
+        {"naam":"Pashupati Plastic Industries","baik":"Prabhu Bank","khata":"1880 1524 8870 0013","rakam":"chq rs- 57600","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {},{}]),
+    (38,"Sri Maruti Mangal, hattiguda",[
+        {"naam":"Shree Maruti Mangal","thegana":"Hattigauda","baik":"Prabhu Bank","khata":"1000 1346 7050 0016","rakam":"chq rs- 180000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Touchstone Multipurpose Co-operative ltd","thegana":"New road","baik":"Global Ime Bank","khata":"3020 1010 0021 50","rakam":"cash rs-71180","jamma":"personal name"},
+        {}]),
+    (40,"Bimal Spark House Pvt. Ltd.,Lalitpur",[
+        {"naam":"Bimal Spark House Pvt. Ltd.","thegana":"Lalitpur","baik":"Nabil Bank","khata":"2380 1017 5002 49","rakam":"chq rs- 800000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Future Exim Pvt.Ltd","thegana":"Dhobighat","baik":"Global Bank","khata":"1050-1010-0027-69","rakam":"chq rs- 500000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Future Exim Pvt.Ltd","thegana":"Dhobighat","baik":"Sanima Bank","khata":"9030-1001-0000-134","rakam":"chq rs- 400000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"}]),
+    (41,"R R Hardware Center, Brj",[
+        {"naam":"R R Hardware Center, Brj","baik":"Machhapuchchhre bank limited","khata":"0040 0002 0350 0042","rakam":"chq rs- 45007.9","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {},{}]),
+    (42,"Crystal Trade Link",[
+        {"naam":"Crystal Trade Link","baik":"Prabhu Bank Limited","khata":"0320-1529-2630-0016","rakam":"chq rs-40755","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Crystal Trade Link","baik":"Everest Bank Limited","khata":"0100-0105-2013-84","rakam":"chq rs-","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Pradip Agrawal","baik":"Everest Bank Limited","khata":"0020-0501-0062-40","rakam":"cash rs-54000","jamma":"personal name"}]),
+    (43,"Gahawamai Enterprises,Brj",[
+        {"naam":"Gahawamai Enterprises,Brj","baik":"Machhapuchhre","khata":"0040-0533-6560-0017","rakam":"chq rs-255390","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {},{}]),
+    (44,"R R Hardware Center, Brj (2)",[
+        {"naam":"R.R Hardware Center","thegana":"Birgunj","baik":"Machhapuchhre","khata":"0040-0002-0350-0042","rakam":"chq rs-76496.48","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {},{}]),
+    (45,"Tara Paint & Chemical Industries",[
+        {"naam":"TARA PAINTS & CHEMICAL INDUSTRIES PVT LTD","thegana":"Birgunj","baik":"Kumari","khata":"0030-2488-9300-0021","rakam":"chq rs-100000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {},{}]),
+    (46,"Himal Wire Netting Industrirs",[
+        {"naam":"Himal Wire Netting Industrirs","thegana":"Birgunj","baik":"Machhapuchhre","khata":"0040-9905-5340-0025","rakam":"chq rs-114319.25","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {},{}]),
+    (47,"Global Marketing, Brj",[
+        {"naam":"Global Marketing","thegana":"Birgunj","baik":"Everest Bank Ltd","khata":"0060-0105-2010-70","rakam":"chq rs-43758.6","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {"naam":"Bharat Bhushan Sarraf","thegana":"Birgunj","baik":"Everest Bank Ltd","khata":"0060-0501-2013-95","rakam":"cash rs- 49741.4","jamma":"personal name"},
+        {}]),
+    (48,"Rituraaj Impex",[
+        {"naam":"Rituraaj Impex","thegana":"Birgunj","baik":"prabhu bank","khata":"1880-1534-6760-0010","rakam":"chq no-33840","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {},{}]),
+    (49,"LAXMI BANK",[
+        {"naam":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt","thegana":"Brt","baik":"Laxmi Bank","khata":"0061-1036-434","rakam":"chq no-10,85,000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {},{}]),
+    (50,"Salasar Tools and Hardware",[
+        {"naam":"SALASAR TOOLS AND HARDWARE","thegana":"Teku","baik":"Laxmi Bank","khata":"1661-6948-0201-1079","rakam":"chq no-145000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
+        {},{}]),
+]
+
+def _rec_col(acct: int, part: int) -> int:
+    # part: 0=Label, 1=Value, 2=Spacer
+    return _REC_FIXED + acct * _REC_BLOCK + part
+
+# ===========================================================================
+# TODAY PAYMENT TAB
+# ===========================================================================

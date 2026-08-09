@@ -1359,7 +1359,7 @@ class TodayPaymentTab(QWidget):
                     self.grid.setItem(start_r + i, start_c + j, item)
 
         # Left Column: Payments, Purchase Today, Purchase Upcoming
-        r_pur = 1
+        r_pur = 0
         paint_sub_header(r_pur, 0, 4, "Payments",
                          ["DATE", "Particulars", "Payment", "", ""], "#1976D2")
         fill_block(r_pur + 2, 0, pay_data)
@@ -1375,7 +1375,7 @@ class TodayPaymentTab(QWidget):
         fill_block(r_pur + 2, 0, pur_upc_data)
 
         # Middle Column: Accounts & Limits
-        r_acc = 1
+        r_acc = 0
         paint_sub_header(r_acc, 5, 7, "Account Table",
                          ["Account Name", "Remain Cash", "Bank / Cash"], "#F57C00")
         fill_block(r_acc + 2, 5, acc_data)
@@ -1386,7 +1386,7 @@ class TodayPaymentTab(QWidget):
         fill_block(r_acc + 2, 5, lim_data)
 
         # Right Column: Demand Loans — grid only has 5 cols (8-12), so drop SN (implicit)
-        r_dl = 1
+        r_dl = 0
         paint_sub_header(r_dl, 8, 12, "Demand Loans (DL)",
                          ["DL No.", "Amount", "Expiry Date", "Day's left", "Gap"], "#388E3C")
         # Strip the leading SN from each DL row before placing in grid
@@ -1405,22 +1405,9 @@ class TodayPaymentTab(QWidget):
         self.stack.setCurrentIndex(idx)
 
     def _paint_grid_headers(self):
-        self.grid.setRowHeight(0, 30)
-        headers = [
-            (0, 2, "PURCHASES", "#1976D2", "#ffffff"),
-            (3, 5, "ACCOUNTS & LIMITS", "#F57C00", "#ffffff"),
-            (6, 10, "DEMAND LOANS", "#388E3C", "#ffffff")
-        ]
-        for start_c, end_c, title, bg, fg in headers:
-            for c in range(start_c, end_c + 1):
-                item = QTableWidgetItem(title if c == start_c else "")
-                item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                item.setFont(_H_BOLD)
-                item.setBackground(QBrush(QColor(bg)))
-                item.setForeground(QBrush(QColor(fg)))
-                self.grid.setItem(0, c, item)
-            if start_c != end_c:
-                self.grid.setSpan(0, start_c, 1, (end_c - start_c + 1))
+        # User requested to remove the very first row with the main headers 
+        # ("Purchases", "Accounts", etc) inside the Today Payment excel view.
+        pass
 
     def _load_data(self):
         """Initialize both views with empty data on startup.

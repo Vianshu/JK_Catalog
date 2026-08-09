@@ -308,6 +308,16 @@ def main():
     # --- Load stylesheet with absolute path (works in EXE too) ---
     style_path = get_asset_path("style.qss")
     load_stylesheet(app, style_path)
+    
+    # Global fix: Cell selection should just be a thick border, leaving color visible
+    existing_style = app.styleSheet()
+    app.setStyleSheet(existing_style + """
+    QTableWidget::item:selected {
+        background-color: transparent;
+        color: #000000;
+        border: 2px solid #0055ff;
+    }
+    """)
 
     # --- Disable QComboBox Wheel Scrolling Globally ---
     from PyQt6.QtWidgets import QComboBox

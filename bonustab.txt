@@ -1,0 +1,147 @@
+class BonusTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self._can_edit = True
+
+        vlay = QVBoxLayout(self)
+        vlay.setContentsMargins(8, 8, 8, 8)
+        vlay.setSpacing(6)
+
+        # Toolbar
+        tbar = QHBoxLayout()
+        tbar.setContentsMargins(0, 0, 0, 0)
+        lbl = QLabel("Bonus Details")
+        lbl.setFont(_H_BOLD)
+        tbar.addWidget(lbl)
+        tbar.addStretch()
+        self._add_row_btn = QPushButton("+ Add Row")
+        self._add_row_btn.setObjectName("BonusAddRowBtn")
+        self._add_row_btn.setFixedHeight(28)
+        self._add_row_btn.clicked.connect(self._add_row)
+        tbar.addWidget(self._add_row_btn)
+        self._add_col_btn = QPushButton("+ Add Column")
+        self._add_col_btn.setObjectName("BonusAddColBtn")
+        self._add_col_btn.setFixedHeight(28)
+        self._add_col_btn.clicked.connect(self._add_column)
+        tbar.addWidget(self._add_col_btn)
+        vlay.addLayout(tbar)
+
+        # Table
+        self.table = QTableWidget(0, len(_BONUS_BASE_COLS))
+        self.table.setObjectName("BonusTable")
+        self.table.setFont(_H_NORM)
+        self.table.setHorizontalHeaderLabels(_BONUS_BASE_COLS)
+        for c, w in enumerate(_BONUS_BASE_W):
+            self.table.setColumnWidth(c, w)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.verticalHeader().setDefaultSectionSize(25)
+        self.table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectItems)
+        vlay.addWidget(self.table)
+
+        self._load_data()
+
+    def _load_data(self):
+        for loc, post, name, bonus, note in _BONUS_DATA:
+            r = self.table.rowCount()
+            self.table.insertRow(r)
+            bg = _BONUS_LOC_BG.get(loc)
+            self.table.setItem(r, 0, _item(loc, bg=bg))
+            self.table.setItem(r, 1, _item(post))
+            self.table.setItem(r, 2, _item(name))
+            self.table.setItem(r, 3, _num(bonus))
+            # fill any extra cols
+            for ec in range(len(_BONUS_BASE_COLS), self.table.columnCount()):
+                self.table.setItem(r, ec, _item(""))
+
+    def _add_row(self):
+        if not self._can_edit:
+            return
+        self.table.insertRow(self.table.rowCount())
+        self.table.scrollToBottom()
+
+    def _add_column(self):
+        if not self._can_edit:
+            return
+        name, ok = QInputDialog.getText(self, "Add Column", "Column name:")
+        if not ok or not name.strip():
+            return
+        col = self.table.columnCount()
+        self.table.insertColumn(col)
+        self.table.setHorizontalHeaderItem(col, QTableWidgetItem(name.strip()))
+        self.table.setColumnWidth(col, 120)
+
+    def apply_edit_mode(self, can_edit: bool):
+        self._can_edit = can_edit
+        self.table.setEditTriggers(
+            QTableWidget.EditTrigger.DoubleClicked
+            | QTableWidget.EditTrigger.AnyKeyPressed
+            if can_edit else QTableWidget.EditTrigger.NoEditTriggers
+        )
+        self._add_row_btn.setEnabled(can_edit)
+        self._add_col_btn.setEnabled(can_edit)
+
+
+# ===========================================================================
+# C) TEAM-LIST TAB  –  fixed left cols + year pairs (oldest -> newest ->)
+# ===========================================================================
+_YEAR_LABELS = ["75-76","76-77","77-78","78-79","79-80","80-81","81-82","82-83"]
+
+# (location, post, name, {yr_label: (yr_month, salary)})
+_TEAM_DATA = [
+    ("HO",  "MANAGER",       "Team--Neeraj Ji",
+     {"82-83":("2082-04",100000),"78-79":("2078-04",75000),"77-78":("2077-04",50000)}),
+    ("HO",  "CRM",           "Team-Madhav Ghimire",
+     {"79-80":("2079-11",40000)}),
+    ("HO",  "CRM",           "Team-Naresh Kushwaha",
+     {"80-81":("2080-04",40000),"78-79":("2078-04",30000),"77-78":("2077-08",25000)}),
+    ("HO",  "ADMIN",         "Team-Harsana",
+     {"82-83":("2082-04",40000),"78-79":("2078-01",30000),
+      "76-77":("2076-05",10000),"75-76":("2075-11",7000)}),
+    ("HO",  "Office Member", "Team--Srijana Giri",
+     {"82-83":("2082-12",20000)}),
+    ("HO",  "Office Member", "Team--Puja Sharma", {}),
+    ("HO",  "Office Member", "Team-Roman Rajbanshi",
+     {"82-83":("2082-04",24000),"81-82":("2081-02",20000),"78-79":("2078-12",15000)}),
+    ("HO",  "Office Member", "Team-Surendra Paswan",
+     {"82-83":("2082-04",19000),"80-81":("2081-01",17000),"79-80":("2079-04",15000)}),
+    ("HO",  "Office Member", "Team-Manish Sharma",
+     {"82-83":("2082-04",19000),"80-81":("2080-04",17000),"78-79":("2078-05",15000)}),
+    ("HO",  "Office Member", "Team--Ashok Sahani",
+     {"81-82":("2082-01",17000),"77-78":("2077-11",15000)}),
+    ("HO",  "Office Member", "Team--Dinesh Chaurasiya",
+     {"82-83":("2082-04",20000)}),
+    ("HO",  "Office Member", "Team--Ram Chandra Guard",
+     {"78-79":("2078-04",16000),"77-78":("2075-11",14000),"76-77":("2074-00",12000)}),
+    ("HO",  "CRM",           "Team--Rabindra Yadav",
+     {"82-83":("2082-08","25-30k")}),
+    ("HO",  "Office Member", "Team--Raushan Kumar Yadav",
+     {"82-83":("2082-07",30000)}),
+    ("BTM", "BM",            "Team--Nikhil Singh",
+     {"79-80":("2079-05",32000)}),
+    ("BTM", "CRM",           "Team-Rajeev Kr.Chaurasiya",
+     {"79-80":("2078-09",50000),"78-79":("2078-01",40000),"77-78":("2077-10",25000)}),
+    ("BTM", "CRM",           "Team- Santosh Singh",
+     {"81-82":("2081-12",30000),"80-81":("2080-09",24000),
+      "78-79":("2078-04",20000),"77-78":("2077-10",15000)}),
+    ("BTM", "Office Member", "Team- Ram Pujan Shah", {}),
+    ("JNK", "CRM",           "Team--Shailendra Shrivastav",
+     {"78-79":("2079-03",30000),"77-78":("2078-01",25000)}),
+    ("JNK", "Office Member", "Team--Bijay Kumar Das",
+     {"82-83":("2082-08",20000)}),
+    ("NGT", "BM",            "Team--Vivek Singh",
+     {"78-79":("2078-07",24000)}),
+    ("NGT", "CRM",           "Team--Ashwini Gupta",
+     {"81-82":("2081-04",30000),"80-81":("2081-02",25000)}),
+    ("NGT", "CRM",           "Team--Pramendra Karn", {}),
+    ("NGT", "Office Member", "Team--Basistha  Chaurasiya",
+     {"82-83":("2082-07",20000)}),
+    ("NGT", "Office Member", "Team--Manish Barnwal",
+     {"82-83":("2082-06",20000)}),
+]
+
+_TEAM_LOC_BG = {"HO":"#E3F2FD","BTM":"#FFF9C4","JNK":"#F3E5F5","NGT":"#E8F5E9"}
+_FIXED_COLS  = [("Location",70),("Post",110),("Name",200)]
+_FIXED_N     = len(_FIXED_COLS)
+
+

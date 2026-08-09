@@ -1,0 +1,126 @@
+class InsuranceTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self._can_edit = True
+        self._tables: list[_InsTable] = []
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # --- Top Bar (Toggle Switch) ---
+        top_bar = QWidget()
+        top_bar.setStyleSheet("background-color: #f1f3f5; border-bottom: 1px solid #dee2e6;")
+        top_lay = QHBoxLayout(top_bar)
+        top_lay.setContentsMargins(15, 8, 15, 8)
+        
+        title_lbl = QLabel("Insurance Details")
+        title_lbl.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        title_lbl.setStyleSheet("color: #343a40; border: none;")
+        top_lay.addWidget(title_lbl)
+        
+        top_lay.addStretch()
+        
+        from PyQt6.QtWidgets import QComboBox, QStackedWidget
+        self.view_selector = QComboBox()
+        self.view_selector.addItems(["Detailed Column View", "Classic Excel Grid View"])
+        self.view_selector.setFont(QFont("Arial", 10))
+        self.view_selector.setStyleSheet("""
+            QComboBox {
+                padding: 4px 10px;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                background-color: white;
+            }
+        """)
+        self.view_selector.currentIndexChanged.connect(self._switch_view)
+        top_lay.addWidget(self.view_selector)
+        
+        main_layout.addWidget(top_bar)
+        
+        # --- Stacked Widget ---
+        self.stack = QStackedWidget()
+        
+        # --- VIEW 1: Detailed Column View ---
+        self.view1 = QWidget()
+        v1_layout = QVBoxLayout(self.view1)
+        v1_layout.setContentsMargins(0, 0, 0, 0)
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        container = QWidget()
+        vlay = QVBoxLayout(container)
+        vlay.setContentsMargins(12, 8, 12, 8)
+        vlay.setSpacing(10)
+
+        for title, color in _INS_SECTIONS:
+            t = _InsTable(title, color)
+            self._tables.append(t)
+            vlay.addWidget(t)
+
+        vlay.addStretch()
+        scroll.setWidget(container)
+        v1_layout.addWidget(scroll)
+        self.stack.addWidget(self.view1)
+        
+        # --- VIEW 2: Excel Grid View ---
+        self.view2 = QWidget()
+        v2_layout = QVBoxLayout(self.view2)
+        v2_layout.setContentsMargins(12, 12, 12, 12)
+        
+        self.grid = QTableWidget(50, len(_INS_COLS))
+        self.grid.setObjectName("InsuranceGridTable")
+        self.grid.setFont(_H_NORM)
+        self.grid.setHorizontalHeaderLabels(_INS_COLS)
+        for c, w in enumerate(_INS_COL_W):
+            self.grid.setColumnWidth(c, w)
+            
+        self.grid.verticalHeader().setDefaultSectionSize(25)
+        self.grid.horizontalHeader().setHighlightSections(False)
+        self.grid.horizontalHeader().setStretchLastSection(True)
+        self.grid.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        
+        self.grid.setStyleSheet("""
+            QTableWidget {
+                gridline-color: #dee2e6;
+                alternate-background-color: #f8f9fa;
+                border: 1px solid #ced4da;
+            }
+            QHeaderView::section {
+                background-color: #e9ecef;
+                padding: 4px;
+                border: 1px solid #ced4da;
+                font-weight: bold;
+            }
+        """)
+        
+        # Paint colored sections
+        for row, (label, bg) in enumerate(_INS_SECTIONS):
+            r = row * 10 # Spread sections out by 10 rows
+            for col in range(len(_INS_COLS)):
+                it = QTableWidgetItem(label if col == 0 else "")
+                it.setFont(_H_BOLD)
+                it.setBackground(QBrush(QColor(bg)))
+                it.setForeground(QBrush(QColor("#ffffff")))
+                it.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                self.grid.setItem(r, col, it)
+            self.grid.setRowHeight(r, 28)
+            
+        v2_layout.addWidget(self.grid)
+        self.stack.addWidget(self.view2)
+        
+        main_layout.addWidget(self.stack)
+
+    def _switch_view(self, idx):
+        self.stack.setCurrentIndex(idx)
+
+    def apply_edit_mode(self, can_edit: bool):
+        self._can_edit = can_edit
+        flags = (QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.AnyKeyPressed) if can_edit else QTableWidget.EditTrigger.NoEditTriggers
+        for t in self._tables:
+            t.set_edit_mode(can_edit)
+        self.grid.setEditTriggers(flags)
+
+
+# ===========================================================================
