@@ -1499,30 +1499,33 @@ class RecordTab(QWidget):
             g_lay.setSpacing(4)
             
             total_accts = self._n_company + self._n_personal
-            
-            # Company accounts row
-            if self._n_company > 0:
-                c_row = QWidget()
-                c_lay = QHBoxLayout(c_row)
-                c_lay.setContentsMargins(0, 0, 0, 0)
-                c_lay.setSpacing(6)
-                for a in range(self._n_company):
-                    c_lay.addWidget(self._build_detailed_table(r, a))
-                g_lay.addWidget(c_row)
-                
-            # Personal accounts row
-            if self._n_personal > 0:
-                p_row = QWidget()
-                p_lay = QHBoxLayout(p_row)
-                p_lay.setContentsMargins(0, 0, 0, 0)
-                p_lay.setSpacing(6)
-                for a in range(self._n_company, total_accts):
-                    p_lay.addWidget(self._build_detailed_table(r, a))
-                g_lay.addWidget(p_row)
-            
+
+            # Single horizontal row: company tables | separator | personal tables
+            all_row = QWidget()
+            all_lay = QHBoxLayout(all_row)
+            all_lay.setContentsMargins(0, 0, 0, 0)
+            all_lay.setSpacing(6)
+
+            for a in range(self._n_company):
+                all_lay.addWidget(self._build_detailed_table(r, a))
+
+            # Thin vertical divider between company and personal groups
+            if self._n_company > 0 and self._n_personal > 0:
+                sep = QFrame()
+                sep.setFrameShape(QFrame.Shape.VLine)
+                sep.setFrameShadow(QFrame.Shadow.Sunken)
+                sep.setStyleSheet("color: #ced4da;")
+                all_lay.addWidget(sep)
+
+            for a in range(self._n_company, total_accts):
+                all_lay.addWidget(self._build_detailed_table(r, a))
+
+            all_lay.addStretch()
+            g_lay.addWidget(all_row)
+
             self.c_lay.addWidget(group)
             r += 6
-            
+
         self.c_lay.addStretch()
 
     def _total_cols(self) -> int:
