@@ -66,12 +66,15 @@ class HeaderEditFilter(QObject):
         self._update_stylesheet()
 
     def eventFilter(self, obj, event):
-        if obj == self.header.viewport() and event.type() == QEvent.Type.MouseButtonDblClick:
-            pos = event.position().toPoint()
-            col = self.header.logicalIndexAt(pos)
-            if col >= 0:
-                self._start_editing(col)
-                return True
+        try:
+            if obj == self.header.viewport() and event.type() == QEvent.Type.MouseButtonDblClick:
+                pos = event.position().toPoint()
+                col = self.header.logicalIndexAt(pos)
+                if col >= 0:
+                    self._start_editing(col)
+                    return True
+        except RuntimeError:
+            pass
         return super().eventFilter(obj, event)
         
     def _start_editing(self, col):
