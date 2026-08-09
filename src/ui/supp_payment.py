@@ -329,8 +329,20 @@ class InsuranceTab(QWidget):
         self.grid.verticalHeader().setDefaultSectionSize(25)
         self.grid.horizontalHeader().setHighlightSections(False)
         self.grid.horizontalHeader().setStretchLastSection(True)
+        # Context menu for color / add row / add col
         self.grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.grid.customContextMenuRequested.connect(self._show_grid_context_menu)
+        
+        # Monkey-patch keyPressEvent to support Delete/Backspace for clearing cells
+        original_key_press = self.grid.keyPressEvent
+        def grid_key_press(event):
+            if getattr(self, "_can_edit", True) and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+                for item in self.grid.selectedItems():
+                    item.setText("")
+                    self._grid_item_changed(item)
+            else:
+                original_key_press(event)
+        self.grid.keyPressEvent = grid_key_press
         self.grid.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         
         self.grid.setStyleSheet("""
@@ -1093,6 +1105,17 @@ class TodayPaymentTab(QWidget):
         self.grid.setAlternatingRowColors(True)
         self.grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.grid.customContextMenuRequested.connect(self._show_grid_context_menu)
+        
+        # Monkey-patch keyPressEvent to support Delete/Backspace for clearing cells
+        original_key_press_today = self.grid.keyPressEvent
+        def grid_key_press_today(event):
+            if getattr(self, "_can_edit", True) and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+                for item in self.grid.selectedItems():
+                    item.setText("")
+                    self._grid_item_changed(item)
+            else:
+                original_key_press_today(event)
+        self.grid.keyPressEvent = grid_key_press_today
         self.grid.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.grid.setStyleSheet("""
             QTableWidget {
@@ -1281,9 +1304,9 @@ class TodayPaymentTab(QWidget):
         # We just register the cells so context menu recognises them.
         sections = [
             # (row, c_start, c_end, default_name, default_color)
-            (1,  0,  4, "Payments",           "#1976D2"),
-            (1,  5,  7, "Account Table",       "#F57C00"),
-            (1,  8, 12, "Demand Loans (DL)",   "#388E3C"),
+            (0,  0,  4, "Payments",           "#1976D2"),
+            (0,  5,  7, "Account Table",       "#F57C00"),
+            (0,  8, 12, "Demand Loans (DL)",   "#388E3C"),
         ]
         for r, c_start, c_end, name, color in sections:
             key = f"{r}_{c_start}"
@@ -1632,16 +1655,22 @@ class TodayPaymentTab(QWidget):
 
         elif action == action_insert_row_above:
             grid.insertRow(r)
+            self._grid_item_changed_save()
         elif action == action_insert_row_below:
             grid.insertRow(r + 1)
+            self._grid_item_changed_save()
         elif action == action_insert_col_left:
             grid.insertColumn(c)
+            self._grid_item_changed_save()
         elif action == action_insert_col_right:
             grid.insertColumn(c + 1)
+            self._grid_item_changed_save()
         elif action == action_delete_row:
             grid.removeRow(r)
+            self._grid_item_changed_save()
         elif action == action_delete_col:
             grid.removeColumn(c)
+            self._grid_item_changed_save()
 
 
 class RecordTab(QWidget):
@@ -2255,13 +2284,9 @@ class AnilHisabTab(QWidget):
             QAbstractItemView.SelectionBehavior.SelectItems)
         vlay.addWidget(self.table)
 
-        # Status bar showing current outstanding balance
+        # Status bar showing current outstanding balance (removed per user request)
         self._status = QLabel()
-        self._status.setStyleSheet(
-            "font-weight:bold; font-size:12px; padding:4px 8px;"
-            "background:#1A2035; color:#fff; border-radius:4px;"
-        )
-        vlay.addWidget(self._status)
+        self._status.hide()
 
         self._load_data()
         self.table.cellChanged.connect(self._on_cell_changed)
