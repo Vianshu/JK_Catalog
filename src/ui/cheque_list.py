@@ -2,6 +2,7 @@ import os
 from src.ui.table_nav_mixin import ExcelTableMixin
 import pandas as pd
 from PyQt6.QtWidgets import (
+    QComboBox,
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
     QTableWidgetItem, QLineEdit, QLabel, QHeaderView,
     QPushButton, QCompleter, QMessageBox, QFileDialog,
@@ -284,24 +285,12 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         top_bar.setSpacing(6)
 
         # 1. Left Side: Clear Button + Search
-        self.btn_clear = QPushButton("✅ Clear Chq Unhide")
-        self.btn_clear.setObjectName("BtnClearChq")
-        self.btn_clear.clicked.connect(self.toggle_clear_visibility)
-
-        self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("🔍 Search")
-        self.search_box.setFixedWidth(220)
-        self.search_box.textChanged.connect(self.apply_filter)
-
-        # "Unclear Chq. Hide" — hides rows where Clear Date is empty
-        self.btn_unclear_hide = QPushButton("⏳ Unclear Chq. Hide")
-        self.btn_unclear_hide.setObjectName("BtnClearChq")
-        self.btn_unclear_hide.setCheckable(True)
-        self.btn_unclear_hide.clicked.connect(self.toggle_unclear_visibility)
-
-        top_bar.addWidget(self.btn_clear)
-        top_bar.addWidget(self.search_box)
-        top_bar.addWidget(self.btn_unclear_hide)
+        self.cmb_filter = QComboBox()
+        self.cmb_filter.addItems(["All cheques", "Cleared Cheques", "Uncleared Cheques"])
+        self.cmb_filter.currentIndexChanged.connect(self.apply_filter)
+        self.cmb_filter.setMinimumWidth(150)
+        
+        top_bar.addWidget(self.cmb_filter)
 
         # 2. Middle: Summary Labels
         top_bar.addStretch()
@@ -309,8 +298,8 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         # Font size controlled via #ChqSummaryLabel in style.qss
         _sum_font = QFont()
         _sum_font.setBold(True)
-        self.lbl_count = QLabel("Total No. of Chq.: 0")
-        self.lbl_total = QLabel("Amount: 0.00")
+        self.lbl_count = QLabel("Chq. Count: 0")
+        self.lbl_total = QLabel("₹ 0.00")
         self.lbl_count.setObjectName("ChqSummaryLabel")
         self.lbl_total.setObjectName("ChqSummaryLabel")
         self.lbl_count.setFont(_sum_font)
@@ -443,56 +432,19 @@ class ChequeListUI(ExcelTableMixin, QWidget):
 
     def is_similar_bank(self, a: str, b: str, threshold=0.85) -> bool:
         return SequenceMatcher(None, a, b).ratio() >= threshold
-    
-    def toggle_unclear_visibility(self):
-        """Hide/show rows where Clear Date is empty (unclear/pending cheques)."""
-        hiding = self.btn_unclear_hide.isChecked()
+    def apply_filter(self):
+        idx = self.cmb_filter.currentIndex()
         for r in range(self.table.rowCount()):
             clear_item = self.table.item(r, 8)
             has_date = clear_item and clear_item.text().strip()
-            if hiding and not has_date:
-                self.table.setRowHidden(r, True)
-            elif not hiding:
-                # Restore — respect the existing clear-chq-hide state
-                is_clear_hiding = "Unhide" in self.btn_clear.text()
-                if is_clear_hiding and has_date:
-                    self.table.setRowHidden(r, True)
-                else:
-                    self.table.setRowHidden(r, False)
-        self.btn_unclear_hide.setText(
-            "✅ Unclear Shown" if not hiding else "⏳ Unclear Chq. Hide"
-        )
+            if idx == 0:  # All cheques
+                self.table.setRowHidden(r, False)
+            elif idx == 1:  # Cleared Cheques
+                self.table.setRowHidden(r, not has_date)
+            elif idx == 2:  # Uncleared Cheques
+                self.table.setRowHidden(r, bool(has_date))
         self.update_summary()
 
-    def toggle_clear_visibility(self):
-        is_currently_hidden = "Unhide" in self.btn_clear.text()
-        
-        for r in range(self.table.rowCount()):
-            clear_date_item = self.table.item(r, 8)
-            has_date = clear_date_item and clear_date_item.text().strip()
-            
-            if is_currently_hidden:
-                # Ab sab dikhana hai
-                self.table.setRowHidden(r, False)
-            else:
-                # Ab chhupana hai
-                if has_date: 
-                    self.table.setRowHidden(r, True)
-        
-        # Button update
-        if is_currently_hidden:
-            self.btn_clear.setText("🚫 Clear Chq Hide")
-            self.btn_clear.setProperty("state", "inactive")
-        else:
-            self.btn_clear.setText("✅ Clear Chq Unhide")
-            self.btn_clear.setProperty("state", "active")
-        self.btn_clear.style().unpolish(self.btn_clear)
-        self.btn_clear.style().polish(self.btn_clear)
-            
-        # 🔥 Sabse important: click ke baad summary update trigger karein
-        self.update_summary()
-        
-     # ================= TABLE LOGIC =================
     def on_item_changed(self, item):
         if self.table.signalsBlocked(): return
         
@@ -543,7 +495,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
     
     def apply_filter(self):
         text = self.search_box.text().lower().strip()
-        is_currently_hiding = "Unhide" in self.btn_clear.text()
+        is_currently_hiding = (self.cmb_filter.currentIndex() == 2)
         
         for r in range(self.table.rowCount()):
             clear_date_item = self.table.item(r, 8)
@@ -661,29 +613,23 @@ class ChequeListUI(ExcelTableMixin, QWidget):
 
     # ================= SUMMARY =================
     def update_summary(self):
-        """Count and sum ALL uncleared pending cheques — irrespective of row visibility.
-
-        The summary always reflects the true total of pending cheques in the
-        database, regardless of which hide/show buttons are currently active.
-
-        A row counts when:
-          - Party Name (col 2) is filled  → it's a real entry, not a buffer row
-          - Clear Date (col 8) is blank   → cheque is still pending / uncleared
-        """
+        """Count and sum cheques based on the current filter selection."""
         total = 0.0
         count = 0
+        idx = self.cmb_filter.currentIndex() if hasattr(self, 'cmb_filter') else 0
         for r in range(self.table.rowCount()):
-            # NOTE: isRowHidden is intentionally NOT checked here.
-            # The summary always shows the full picture regardless of filters.
-
-            # Skip rows that are already cleared
-            clear_item = self.table.item(r, 8)
-            if clear_item and clear_item.text().strip():
-                continue
-
             # A row "exists" when Party Name is filled
             party = self.table.item(r, 2)
             if not (party and party.text().strip()):
+                continue
+
+            clear_item = self.table.item(r, 8)
+            has_date = clear_item and clear_item.text().strip()
+
+            # Apply filter logic
+            if idx == 1 and not has_date:  # Viewing Cleared -> skip Uncleared
+                continue
+            if idx == 2 and has_date:      # Viewing Uncleared -> skip Cleared
                 continue
 
             count += 1
@@ -693,8 +639,8 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             except Exception:
                 pass
 
-        self.lbl_count.setText(f"Total No. of Chq.: {count}")
-        self.lbl_total.setText(f"Amount: {total:,.2f}")
+        self.lbl_count.setText(f"Chq. Count: {count}")
+        self.lbl_total.setText(f"₹ {total:,.2f}")
         self.update_bank_counts()
 
 
