@@ -1035,22 +1035,23 @@ class TodayPaymentTab(QWidget):
         lim_data = [       ('Remain Demand Loan Limit', '', ''),
                 ('Remain LC Limit', '', ''),
                 ('Used LC', '', '')]
-        dl_data = [       ('1', 'DL-995', '700000', '2026-08-25', '17'),
-                ('2', 'DL-997', '700000', '2026-09-01', '24'),
-                ('3', 'DL-1001', '700000', '2026-09-07', '30'),
-                ('4', 'DL-1003', '700000', '2026-09-11', '34'),
-                ('5', 'DL-1009', '700000', '2026-09-18', '41'),
-                ('6', 'DL-1016', '700000', '2026-09-28', '51'),
-                ('7', 'DL-1024', '700000', '2026-10-01', '54'),
-                ('8', 'DL-1029', '700000', '2026-10-06', '59'),
-                ('9', 'DL-1036', '700000', '2026-10-12', '65'),
-                ('10', 'DL-1043', '700000', '2026-10-21', '74'),
-                ('11', 'DL-1048', '700000', '2026-10-29', '82'),
-                ('12', 'DL-1052', '700000', '2026-11-04', '88'),
-                ('13', 'DL-1057', '700000', '2026-11-10', '94'),
-                ('14', 'DL-1062', '700000', '2026-11-17', '101'),
-                ('15', 'DL-1071', '700000', '2026-11-26', '110'),
-                ('16', 'DL-10', '700000', '2026-12-02', '116')]
+        dl_data = [('1', 'DL-995', '700000', '2026-08-25', '17', '17'),
+            ('2', 'DL-997', '700000', '2026-09-01', '24', '7'),
+            ('3', 'DL-1001', '700000', '2026-09-07', '30', '6'),
+            ('4', 'DL-1003', '700000', '2026-09-11', '34', '4'),
+            ('5', 'DL-1009', '700000', '2026-09-18', '41', '7'),
+            ('6', 'DL-1016', '700000', '2026-09-28', '51', '10'),
+            ('7', 'DL-1024', '700000', '2026-10-01', '54', '3'),
+            ('8', 'DL-1029', '700000', '2026-10-06', '59', '5'),
+            ('9', 'DL-1036', '700000', '2026-10-12', '65', '6'),
+            ('10', 'DL-1043', '700000', '2026-10-21', '74', '9'),
+            ('11', 'DL-1048', '700000', '2026-10-29', '82', '8'),
+            ('12', 'DL-1052', '700000', '2026-11-04', '88', '6'),
+            ('13', 'DL-1057', '700000', '2026-11-10', '94', '6'),
+            ('14', 'DL-1062', '700000', '2026-11-17', '101', '7'),
+            ('15', 'DL-1071', '700000', '2026-11-26', '110', '9'),
+            ('16', 'DL-10', '700000', '2026-12-02', '116', '6')]
+
 
         
 
@@ -1123,7 +1124,7 @@ class TodayPaymentTab(QWidget):
         
         # Right Column (Demand Loans)
         r_dl = 1
-        paint_sub_header(r_dl, 8, 12, "Demand Loans (DL)", ["SN", "DL No.", "Amount", "Expiry Date", "Day's left"], "#388E3C")
+        paint_sub_header(r_dl, 8, 13, "Demand Loans (DL)", ["SN", "DL No.", "Amount", "Expiry Date", "Day's left", "Gap"], "#388E3C")
         fill_block(r_dl + 2, 8, dl_data)
         
         QTimer.singleShot(100, self._adjust_heights)
@@ -1142,7 +1143,7 @@ class TodayPaymentTab(QWidget):
     def _add_dl_row(self):
         r = self.t_dl.table.rowCount()
         self.t_dl.table.insertRow(r)
-        for c in range(5):
+        for c in range(6):
             item = QTableWidgetItem("")
             if c == 4:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -1428,7 +1429,7 @@ class RecordTab(QWidget):
                 t.verticalHeader().setVisible(False)
                 t.setFixedHeight(210)
                 t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-                t.setStyleSheet("QHeaderView::section:horizontal { background-color: #e9ecef; font-weight: bold; }")
+                t.setStyleSheet("QHeaderView::section:horizontal { background-color: #1A2035; color: #ffffff; padding: 4px; border: 1px solid #ced4da; font-weight: bold; }")
                 
                 for i in range(6):
                     lbl = self.table.item(r + i, _rec_col(a, 0))
