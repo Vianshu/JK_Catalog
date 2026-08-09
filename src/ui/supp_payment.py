@@ -114,24 +114,42 @@ class HeaderEditFilter(QObject):
         
         from PyQt6.QtWidgets import QMenu, QColorDialog
         menu = QMenu(self.table)
-        action_color = menu.addAction("🎨 Change Header Color")
+        action_bg_color = menu.addAction("🎨 Change Background Color")
+        action_text_color = menu.addAction("🔤 Change Text Color")
         action = menu.exec(self.header.viewport().mapToGlobal(pos))
         
-        if action == action_color:
+        if action == action_bg_color or action == action_text_color:
             color = QColorDialog.getColor()
             if color.isValid():
                 key = str(col)
                 if key not in self.customs: self.customs[key] = {}
-                self.customs[key]["color"] = color.name()
+                
+                if action == action_bg_color:
+                    self.customs[key]["color"] = color.name()
+                else:
+                    self.customs[key]["text_color"] = color.name()
+                    
                 self.settings.setValue(self.settings_key, self.customs)
                 self._update_stylesheet()
                 
     def _update_stylesheet(self):
-        style = ""
+        # We append to the table's stylesheet so it overrides existing styles with higher specificity
+        base_style = getattr(self, "_base_style", None)
+        if base_style is None:
+            self._base_style = self.table.styleSheet()
+            base_style = self._base_style
+            
+        dynamic_style = ""
         for col_str, custom in self.customs.items():
-            if "color" in custom:
-                style += f"QHeaderView::section:horizontal:logicalIndex({col_str}) {{ background-color: {custom['color']}; color: #ffffff; }}\n"
-        self.header.setStyleSheet(style)
+            bg = custom.get("color", "")
+            fg = custom.get("text_color", "")
+            if bg or fg:
+                dynamic_style += f"QHeaderView::section:horizontal:logicalIndex({col_str}) {{"
+                if bg: dynamic_style += f" background-color: {bg} !important;"
+                if fg: dynamic_style += f" color: {fg} !important;"
+                dynamic_style += " }\n"
+                
+        self.table.setStyleSheet(base_style + "\n" + dynamic_style)
 
 # ===========================================================================
 # A) INSURANCE TAB  –  three separate scrollable sub-tables
@@ -1302,6 +1320,7 @@ class TodayPaymentTab(QWidget):
             custom = self._header_customizations.get(key, {})
             actual_text = custom.get("name", text)
             actual_bg   = custom.get("color", bg)
+            actual_fg   = custom.get("text_color", "#ffffff")
             for c in range(c_start, c_end + 1):
                 item = QTableWidgetItem(actual_text if c == c_start else "")
                 # Anchor cell is editable so the user can type directly
@@ -1310,7 +1329,7 @@ class TodayPaymentTab(QWidget):
                 else:
                     item.setFlags(Qt.ItemFlag.ItemIsEnabled)
                 item.setBackground(QBrush(QColor(actual_bg)))
-                item.setForeground(QBrush(QColor("#ffffff")))
+                item.setForeground(QBrush(QColor(actual_fg)))
                 item.setFont(_H_BOLD)
                 self.grid.setItem(r, c, item)
                 # Register this cell as a header
@@ -1565,7 +1584,8 @@ class TodayPaymentTab(QWidget):
         menu = QMenu(self)
 
         # — Color picker available for every cell —
-        action_color = menu.addAction("🎨  Change Cell Color")
+        action_bg_color = menu.addAction("🎨  Change Cell Color")
+        action_text_color = menu.addAction("🔤  Change Text Color")
         menu.addSeparator()
         action_insert_row_above = menu.addAction("Insert Row Above")
         action_insert_row_below = menu.addAction("Insert Row Below")
@@ -1578,29 +1598,47 @@ class TodayPaymentTab(QWidget):
 
         action = menu.exec(grid.viewport().mapToGlobal(pos))
 
-        if action == action_color:
+        if action == action_bg_color or action == action_text_color:
             from PyQt6.QtWidgets import QColorDialog
             it = grid.item(r, c)
-            cur_color = it.background().color() if it else QColor("#ffffff")
-            color = QColorDialog.getColor(cur_color, self, "Pick Cell Color")
+            if action == action_bg_color:
+                cur_color = it.background().color() if it else QColor("#ffffff")
+                dlg_title = "Pick Background Color"
+            else:
+                cur_color = it.foreground().color() if it else QColor("#000000")
+                dlg_title = "Pick Text Color"
+                
+            color = QColorDialog.getColor(cur_color, self, dlg_title)
             if color.isValid():
                 if it is None:
                     it = QTableWidgetItem("")
                     grid.setItem(r, c, it)
-                it.setBackground(QBrush(color))
+                    
+                if action == action_bg_color:
+                    it.setBackground(QBrush(color))
+                else:
+                    it.setForeground(QBrush(color))
+                    
                 # If it's a header anchor cell, also save the color
                 hdr_info = self._header_registry.get((r, c))
                 if hdr_info:
                     key = hdr_info["key"]
                     new_hex = color.name()
-                    self._header_customizations.setdefault(key, {})["color"] = new_hex
+                    if action == action_bg_color:
+                        self._header_customizations.setdefault(key, {})["color"] = new_hex
+                    else:
+                        self._header_customizations.setdefault(key, {})["text_color"] = new_hex
                     self._hdr_settings.setValue("customizations", self._header_customizations)
                     # Apply to all cells in the span
                     c_start, c_end = hdr_info["cols"]
                     for col in range(c_start, c_end + 1):
                         span_it = grid.item(r, col)
                         if span_it:
-                            span_it.setBackground(QBrush(color))
+                            if action == action_bg_color:
+                                span_it.setBackground(QBrush(color))
+                            else:
+                                span_it.setForeground(QBrush(color))
+                self._grid_item_changed(it)
 
         elif action == action_insert_row_above:
             grid.insertRow(r)
