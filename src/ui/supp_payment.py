@@ -1350,10 +1350,8 @@ class TodayPaymentTab(QWidget):
             for c in range(c_start, c_end + 1):
                 item = QTableWidgetItem(actual_text if c == c_start else "")
                 # Anchor cell is editable so the user can type directly
-                if c == c_start:
-                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsSelectable)
-                else:
-                    item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                # (User request: all headers are just cells, so they should all be editable and selectable)
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsSelectable)
                 item.setBackground(QBrush(QColor(actual_bg)))
                 item.setForeground(QBrush(QColor(actual_fg)))
                 item.setFont(_H_BOLD)
@@ -1369,7 +1367,7 @@ class TodayPaymentTab(QWidget):
                 for idx, h in enumerate(col_headers):
                     if c_start + idx <= c_end:
                         h_item = QTableWidgetItem(h)
-                        h_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                        h_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsSelectable)
                         h_item.setBackground(QBrush(QColor("#1A2035")))
                         h_item.setForeground(QBrush(QColor("#ffffff")))
                         h_item.setFont(_H_BOLD)
