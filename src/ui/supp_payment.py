@@ -794,6 +794,17 @@ class TodayPaymentTab(QWidget):
         super().__init__()
         self._can_edit = True
         self._tables = []
+        # Registry: (row, col) → {"key": str, "cols": (c_start, c_end), "row": int}
+        # Used to detect header cells and apply customizations
+        self._header_registry: dict[tuple, dict] = {}
+        # Persisted header customizations: {key → {"color": str, "name": str}}
+        from PyQt6.QtCore import QSettings
+        self._hdr_settings = QSettings("JKCatalog", "TodayPaymentHeaders")
+        self._header_customizations: dict[str, dict] = {}
+        # Load saved customizations
+        raw = self._hdr_settings.value("customizations", {})
+        if isinstance(raw, dict):
+            self._header_customizations = raw
         
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -1051,15 +1062,26 @@ class TodayPaymentTab(QWidget):
     def _populate_grid(self, pay_data, pur_tod_data, pur_upc_data, acc_data, lim_data, dl_data):
         """Paint section headers and fill data into the Excel Grid View."""
         self.grid.clearContents()
+        self._header_registry.clear()  # Reset registry before repainting
 
         def paint_sub_header(r, c_start, c_end, text, col_headers=None, bg="#1976D2"):
+            # Apply any saved customizations for this header block
+            key = f"{r}_{c_start}"
+            custom = self._header_customizations.get(key, {})
+            actual_text = custom.get("name", text)
+            actual_bg   = custom.get("color", bg)
             for c in range(c_start, c_end + 1):
-                item = QTableWidgetItem(text if c == c_start else "")
+                item = QTableWidgetItem(actual_text if c == c_start else "")
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                item.setBackground(QBrush(QColor(bg)))
+                item.setBackground(QBrush(QColor(actual_bg)))
                 item.setForeground(QBrush(QColor("#ffffff")))
                 item.setFont(_H_BOLD)
                 self.grid.setItem(r, c, item)
+                # Register this cell as a header
+                self._header_registry[(r, c)] = {
+                    "key": key, "cols": (c_start, c_end), "row": r,
+                    "default_name": text, "default_color": bg
+                }
             if c_start != c_end:
                 self.grid.setSpan(r, c_start, 1, c_end - c_start + 1)
             if col_headers:
@@ -1252,34 +1274,89 @@ class TodayPaymentTab(QWidget):
         self.grid.setEditTriggers(flags)
     def _show_grid_context_menu(self, pos):
         if getattr(self, "_can_edit", True) == False: return
-        
-        # Determine which grid we are targeting
-        if hasattr(self, "grid"):
-            grid = self.grid
-        elif hasattr(self, "table"):
-            grid = self.table
-        else:
+
+        grid = self.grid if hasattr(self, "grid") else getattr(self, "table", None)
+        if not grid:
             return
 
+        item = grid.itemAt(pos)
+        r = item.row() if item else grid.currentRow()
+        c = item.column() if item else grid.currentColumn()
+        if r < 0: r = 0
+        if c < 0: c = 0
+
         menu = QMenu(self)
+
+        # ── Header cell detected: offer rename + color change ─────────────────
+        hdr_info = self._header_registry.get((r, c))
+        if hdr_info:
+            action_rename = menu.addAction("✏️  Rename Header")
+            action_color  = menu.addAction("🎨  Change Color")
+            action_reset  = menu.addAction("↩️  Reset to Default")
+            menu.addSeparator()
+
+            action = menu.exec(grid.viewport().mapToGlobal(pos))
+
+            if action == action_rename:
+                from PyQt6.QtWidgets import QInputDialog
+                key  = hdr_info["key"]
+                cur  = self._header_customizations.get(key, {}).get("name", hdr_info["default_name"])
+                new_name, ok = QInputDialog.getText(
+                    self, "Rename Header", "Header name:", text=cur
+                )
+                if ok and new_name.strip():
+                    self._header_customizations.setdefault(key, {})["name"] = new_name.strip()
+                    self._hdr_settings.setValue("customizations", self._header_customizations)
+                    # Update the anchor cell immediately
+                    c_start = hdr_info["cols"][0]
+                    it = grid.item(r, c_start)
+                    if it:
+                        it.setText(new_name.strip())
+
+            elif action == action_color:
+                from PyQt6.QtWidgets import QColorDialog
+                key     = hdr_info["key"]
+                cur_hex = self._header_customizations.get(key, {}).get("color", hdr_info["default_color"])
+                color   = QColorDialog.getColor(QColor(cur_hex), self, "Pick Header Color")
+                if color.isValid():
+                    new_hex = color.name()
+                    self._header_customizations.setdefault(key, {})["color"] = new_hex
+                    self._hdr_settings.setValue("customizations", self._header_customizations)
+                    # Apply new color to all cells in this header span
+                    c_start, c_end = hdr_info["cols"]
+                    for col in range(c_start, c_end + 1):
+                        it = grid.item(r, col)
+                        if it:
+                            it.setBackground(QBrush(QColor(new_hex)))
+
+            elif action == action_reset:
+                key = hdr_info["key"]
+                self._header_customizations.pop(key, None)
+                self._hdr_settings.setValue("customizations", self._header_customizations)
+                # Repaint the header cell with its default values
+                c_start, c_end = hdr_info["cols"]
+                default_name  = hdr_info["default_name"]
+                default_color = hdr_info["default_color"]
+                for col in range(c_start, c_end + 1):
+                    it = grid.item(r, col)
+                    if it:
+                        if col == c_start:
+                            it.setText(default_name)
+                        it.setBackground(QBrush(QColor(default_color)))
+            return
+
+        # ── Normal cell: standard row/column operations ───────────────────────
         action_insert_row_above = menu.addAction("Insert Row Above")
         action_insert_row_below = menu.addAction("Insert Row Below")
         menu.addSeparator()
-        action_insert_col_left = menu.addAction("Insert Column Left")
+        action_insert_col_left  = menu.addAction("Insert Column Left")
         action_insert_col_right = menu.addAction("Insert Column Right")
         menu.addSeparator()
         action_delete_row = menu.addAction("Delete Row")
         action_delete_col = menu.addAction("Delete Column")
-        
-        item = grid.itemAt(pos)
-        r = item.row() if item else grid.currentRow()
-        c = item.column() if item else grid.currentColumn()
-        
-        if r < 0: r = 0
-        if c < 0: c = 0
-        
+
         action = menu.exec(grid.viewport().mapToGlobal(pos))
-        
+
         if action == action_insert_row_above:
             grid.insertRow(r)
         elif action == action_insert_row_below:
@@ -1501,24 +1578,44 @@ class RecordTab(QWidget):
             total_accts = self._n_company + self._n_personal
 
             # Single horizontal row: company tables | separator | personal tables
+            # Skip any account slot whose value cells are all empty (supplier has fewer accounts)
             all_row = QWidget()
             all_lay = QHBoxLayout(all_row)
             all_lay.setContentsMargins(0, 0, 0, 0)
             all_lay.setSpacing(6)
 
+            company_tables_added = 0
             for a in range(self._n_company):
-                all_lay.addWidget(self._build_detailed_table(r, a))
+                # Check if this account slot has any data
+                has_data = any(
+                    self.table.item(r + i, _rec_col(a, 1)) and
+                    self.table.item(r + i, _rec_col(a, 1)).text().strip()
+                    for i in range(6)
+                )
+                if has_data:
+                    all_lay.addWidget(self._build_detailed_table(r, a))
+                    company_tables_added += 1
 
-            # Thin vertical divider between company and personal groups
-            if self._n_company > 0 and self._n_personal > 0:
+            personal_tables = []
+            for a in range(self._n_company, total_accts):
+                has_data = any(
+                    self.table.item(r + i, _rec_col(a, 1)) and
+                    self.table.item(r + i, _rec_col(a, 1)).text().strip()
+                    for i in range(6)
+                )
+                if has_data:
+                    personal_tables.append(self._build_detailed_table(r, a))
+
+            # Only add separator if both sides have content
+            if company_tables_added > 0 and personal_tables:
                 sep = QFrame()
                 sep.setFrameShape(QFrame.Shape.VLine)
                 sep.setFrameShadow(QFrame.Shadow.Sunken)
                 sep.setStyleSheet("color: #ced4da;")
                 all_lay.addWidget(sep)
 
-            for a in range(self._n_company, total_accts):
-                all_lay.addWidget(self._build_detailed_table(r, a))
+            for tbl in personal_tables:
+                all_lay.addWidget(tbl)
 
             all_lay.addStretch()
             g_lay.addWidget(all_row)
