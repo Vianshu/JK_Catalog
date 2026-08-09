@@ -982,7 +982,7 @@ class TodayPaymentTab(QWidget):
             self._db.ensure_table(self._db_name, table, ddl)
 
     def _load_from_db(self):
-        """Replace table contents with data from the database."""
+        """Load data from DB and populate both Column View and Grid View."""
         if not self._db_name:
             return
 
@@ -990,13 +990,16 @@ class TodayPaymentTab(QWidget):
             rows = self._db.execute_query(self._db_name, sql)
             return [tuple(str(c) if c is not None else "" for c in row) for row in rows] if rows else []
 
-        pay_data      = fetch("SELECT date, particulars, payment, col4, col5 FROM tp_payments  ORDER BY sn")
-        pur_tod_data  = fetch("SELECT date, particulars, payment, col4, col5 FROM tp_pur_today  ORDER BY sn")
-        pur_upc_data  = fetch("SELECT date, particulars, payment, col4, col5 FROM tp_pur_upcoming ORDER BY sn")
-        acc_data      = fetch("SELECT account_name, remain_cash, bank_cash      FROM tp_accounts   ORDER BY sn")
-        lim_data      = fetch("SELECT limit_type, amount, col3                  FROM tp_limits     ORDER BY sn")
-        dl_data       = fetch("SELECT dl_no, amount, expiry_date, days_left, gap FROM tp_dl        ORDER BY sn")
+        pay_data     = fetch("SELECT date, particulars, payment, col4, col5 FROM tp_payments  ORDER BY sn")
+        pur_tod_data = fetch("SELECT date, particulars, payment, col4, col5 FROM tp_pur_today  ORDER BY sn")
+        pur_upc_data = fetch("SELECT date, particulars, payment, col4, col5 FROM tp_pur_upcoming ORDER BY sn")
+        acc_data     = fetch("SELECT account_name, remain_cash, bank_cash     FROM tp_accounts  ORDER BY sn")
+        lim_data     = fetch("SELECT limit_type, amount, col3                 FROM tp_limits    ORDER BY sn")
+        dl_raw       = fetch("SELECT dl_no, amount, expiry_date, days_left, gap FROM tp_dl      ORDER BY sn")
+        # Prepend display SN — grid expects 6-tuple: (sn, dl_no, amount, expiry_date, days_left, gap)
+        dl_data      = [(str(i + 1),) + row for i, row in enumerate(dl_raw)]
 
+        # 1. Fill Column View
         def fill(t_obj, data, ncols):
             t_obj.table.setRowCount(len(data))
             for r, row in enumerate(data):
@@ -1009,13 +1012,19 @@ class TodayPaymentTab(QWidget):
         fill(self.t_pur_upc, pur_upc_data, 5)
         fill(self.t_acc,     acc_data,     3)
         fill(self.t_lim,     lim_data,     3)
-        # DL is 6 cols: SN (display), dl_no, amount, expiry_date, days_left, gap
+        # DL Column View: 6 cols with SN prepended
         self.t_dl.table.setRowCount(len(dl_data))
         for r, row in enumerate(dl_data):
-            self.t_dl.table.setItem(r, 0, QTableWidgetItem(str(r + 1)))  # SN
             for c, val in enumerate(row):
-                self.t_dl.table.setItem(r, c + 1, QTableWidgetItem(val))
+                item = QTableWidgetItem(val)
+                if c == 4:  # days_left — read-only + bold
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    f = item.font(); f.setBold(True); item.setFont(f)
+                self.t_dl.table.setItem(r, c, item)
         self.t_dl.recalculate_height()
+
+        # 2. Also refresh Grid (Excel) View
+        self._populate_grid(pay_data, pur_tod_data, pur_upc_data, acc_data, lim_data, dl_data)
 
     def save_section(self, table_name: str, t_obj, col_names: list[str]):
         """Save a single _StyledTable section back to the database."""
@@ -1039,6 +1048,74 @@ class TodayPaymentTab(QWidget):
             conn.rollback()
             print(f"[ERROR] save_section({table_name}): {e}")
 
+    def _populate_grid(self, pay_data, pur_tod_data, pur_upc_data, acc_data, lim_data, dl_data):
+        """Paint section headers and fill data into the Excel Grid View."""
+        self.grid.clearContents()
+
+        def paint_sub_header(r, c_start, c_end, text, col_headers=None, bg="#1976D2"):
+            for c in range(c_start, c_end + 1):
+                item = QTableWidgetItem(text if c == c_start else "")
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                item.setBackground(QBrush(QColor(bg)))
+                item.setForeground(QBrush(QColor("#ffffff")))
+                item.setFont(_H_BOLD)
+                self.grid.setItem(r, c, item)
+            if c_start != c_end:
+                self.grid.setSpan(r, c_start, 1, c_end - c_start + 1)
+            if col_headers:
+                for idx, h in enumerate(col_headers):
+                    if c_start + idx <= c_end:
+                        h_item = QTableWidgetItem(h)
+                        h_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                        h_item.setBackground(QBrush(QColor("#1A2035")))
+                        h_item.setForeground(QBrush(QColor("#ffffff")))
+                        h_item.setFont(_H_BOLD)
+                        self.grid.setItem(r + 1, c_start + idx, h_item)
+
+        def fill_block(start_r, start_c, data):
+            for i, row_data in enumerate(data):
+                for j, val in enumerate(row_data):
+                    item = QTableWidgetItem(val)
+                    if start_c == 8 and j == 4:  # DL days_left — read-only + bold
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                        f = item.font(); f.setBold(True); item.setFont(f)
+                    self.grid.setItem(start_r + i, start_c + j, item)
+
+        # Left Column: Payments, Purchase Today, Purchase Upcoming
+        r_pur = 1
+        paint_sub_header(r_pur, 0, 4, "Payments",
+                         ["DATE", "Particulars", "Payment", "", ""], "#1976D2")
+        fill_block(r_pur + 2, 0, pay_data)
+
+        r_pur += len(pay_data) + 3
+        paint_sub_header(r_pur, 0, 4, "Purchase (Today)",
+                         ["DATE", "Particulars", "Payment", "", ""], "#1976D2")
+        fill_block(r_pur + 2, 0, pur_tod_data)
+
+        r_pur += len(pur_tod_data) + 3
+        paint_sub_header(r_pur, 0, 4, "Purchase (Upcoming)",
+                         ["DATE", "Particulars", "Payment", "", ""], "#1976D2")
+        fill_block(r_pur + 2, 0, pur_upc_data)
+
+        # Middle Column: Accounts & Limits
+        r_acc = 1
+        paint_sub_header(r_acc, 5, 7, "Account Table",
+                         ["Account Name", "Remain Cash", "Bank / Cash"], "#F57C00")
+        fill_block(r_acc + 2, 5, acc_data)
+
+        r_acc += len(acc_data) + 3
+        paint_sub_header(r_acc, 5, 7, "Limits & LC",
+                         ["Limit Type", "Amount", ""], "#D84315")
+        fill_block(r_acc + 2, 5, lim_data)
+
+        # Right Column: Demand Loans (SN already prepended in dl_data)
+        r_dl = 1
+        paint_sub_header(r_dl, 8, 13, "Demand Loans (DL)",
+                         ["SN", "DL No.", "Amount", "Expiry Date", "Day's left", "Gap"], "#388E3C")
+        fill_block(r_dl + 2, 8, dl_data)
+
+        QTimer.singleShot(100, self._adjust_heights)
+
     def _switch_view(self, idx):
         self.stack.setCurrentIndex(idx)
 
@@ -1061,98 +1138,9 @@ class TodayPaymentTab(QWidget):
                 self.grid.setSpan(0, start_c, 1, (end_c - start_c + 1))
 
     def _load_data(self):
-        # Column View tables start empty — data is loaded from the DB via set_company_path.
-        # If no company is loaded yet, the tables remain empty.
-        def pop(t_obj, arr):
-            t_obj.table.setRowCount(len(arr))
-            for r, row_data in enumerate(arr):
-                for c, val in enumerate(row_data):
-                    item = QTableWidgetItem(val)
-                    if t_obj == self.t_dl and c == 4:
-                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                        f = item.font()
-                        f.setBold(True)
-                        item.setFont(f)
-                    t_obj.table.setItem(r, c, item)
-        pay_data = []
-        pur_tod_data = []
-        pur_upc_data = []
-        acc_data = []
-        lim_data = []
-        dl_data = []
-
-        pop(self.t_pay, pay_data)
-        pop(self.t_pur_tod, pur_tod_data)
-        pop(self.t_pur_upc, pur_upc_data)
-        pop(self.t_acc, acc_data)
-        pop(self.t_lim, lim_data)
-        pop(self.t_dl, dl_data)
-        
-        # 2. Populate Grid View
-        self.grid.clearContents()
-
-        def paint_sub_header(r, c_start, c_end, text, col_headers=None, bg="#1976D2"):
-            for c in range(c_start, c_end + 1):
-                item = QTableWidgetItem(text if c == c_start else "")
-                item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                item.setBackground(QBrush(QColor(bg)))
-                item.setForeground(QBrush(QColor("#ffffff")))
-                item.setFont(_H_BOLD)
-                self.grid.setItem(r, c, item)
-            if c_start != c_end:
-                self.grid.setSpan(r, c_start, 1, c_end - c_start + 1)
-            
-            # Print column headers below
-            if col_headers:
-                for idx, h in enumerate(col_headers):
-                    if c_start + idx <= c_end:
-                        h_item = QTableWidgetItem(h)
-                        h_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                        h_item.setBackground(QBrush(QColor("#1A2035")))
-                        h_item.setForeground(QBrush(QColor("#ffffff")))
-                        h_item.setFont(_H_BOLD)
-                        self.grid.setItem(r + 1, c_start + idx, h_item)
-
-        def fill_block(start_r, start_c, data):
-            for i, row_data in enumerate(data):
-                for j, val in enumerate(row_data):
-                    item = QTableWidgetItem(val)
-                    # DL day's left column
-                    if start_c == 8 and j == 4:
-                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                        f = item.font()
-                        f.setBold(True)
-                        item.setFont(f)
-                    self.grid.setItem(start_r + i, start_c + j, item)
-
-        # Left Column (Purchases)
-        r_pur = 1
-        paint_sub_header(r_pur, 0, 4, "Payments", ["DATE", "Particulars", "Payment", "", ""], "#1976D2")
-        fill_block(r_pur + 2, 0, pay_data)
-        
-        r_pur += len(pay_data) + 3
-        paint_sub_header(r_pur, 0, 4, "Purchase (Today)", ["DATE", "Particulars", "Payment", "", ""], "#1976D2")
-        fill_block(r_pur + 2, 0, pur_tod_data)
-        
-        r_pur += len(pur_tod_data) + 3
-        paint_sub_header(r_pur, 0, 4, "Purchase (Upcoming)", ["DATE", "Particulars", "Payment", "", ""], "#1976D2")
-        fill_block(r_pur + 2, 0, pur_upc_data)
-        
-        # Middle Column (Accounts & Limits)
-        r_acc = 1
-        paint_sub_header(r_acc, 5, 7, "Account Table", ["Account Name", "Remain Cash", "Bank / Cash"], "#F57C00")
-        fill_block(r_acc + 2, 5, acc_data)
-        
-        r_acc += len(acc_data) + 3
-        paint_sub_header(r_acc, 5, 7, "Limits & LC", ["Limit Type", "Amount", ""], "#D84315")
-        fill_block(r_acc + 2, 5, lim_data)
-        
-        # Right Column (Demand Loans)
-        r_dl = 1
-        paint_sub_header(r_dl, 8, 13, "Demand Loans (DL)", ["SN", "DL No.", "Amount", "Expiry Date", "Day's left", "Gap"], "#388E3C")
-        fill_block(r_dl + 2, 8, dl_data)
-        
-        QTimer.singleShot(100, self._adjust_heights)
+        """Initialize both views with empty data on startup.
+        Real data is loaded via _load_from_db() after set_company_path() is called."""
+        self._populate_grid([], [], [], [], [], [])
 
     def _adjust_heights(self):
         for t in self._tables:

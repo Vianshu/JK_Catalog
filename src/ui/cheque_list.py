@@ -487,38 +487,47 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         self.save_cheques_to_db()
     
     def apply_filter(self):
+        # Build Alias Reverse Lookup
+        alias_map = {}
+        for r in range(self.bank_table.rowCount()):
+            name_it = self.bank_table.item(r, 1)
+            if name_it:
+                name = name_it.text().strip()
+                if name: alias_map[self.normalize_bank_name(name)] = name
+        
         text = self.search_bar.text().lower().strip()
-        idx = self.cmb_filter.currentIndex()  # 0=All, 1=Cleared, 2=Uncleared
+        idx = self.cmb_filter.currentIndex()
 
         for r in range(self.table.rowCount()):
             clear_date_item = self.table.item(r, 8)
             clear_date = clear_date_item.text().strip() if clear_date_item else ""
 
-            # First apply the dropdown filter
-            if idx == 1:   # Cleared only
-                if not clear_date:
-                    self.table.setRowHidden(r, True)
-                    continue
-            elif idx == 2:  # Uncleared only
-                if clear_date:
-                    self.table.setRowHidden(r, True)
-                    continue
+            # Dropdown filter
+            if idx == 1 and not clear_date:
+                self.table.setRowHidden(r, True)
+                continue
+            elif idx == 2 and clear_date:
+                self.table.setRowHidden(r, True)
+                continue
 
-            # Then apply the text search filter
+            # Text Search
             if not text:
                 self.table.setRowHidden(r, False)
             else:
                 found = False
+                # Check normal contents
                 for c in range(self.table.columnCount()):
-                    w = self.table.cellWidget(r, c)
-                    if w and isinstance(w, QLineEdit):
-                        val = w.text().lower()
-                    else:
-                        it = self.table.item(r, c)
-                        val = it.text().lower() if it else ""
+                    it = self.table.item(r, c)
+                    val = it.text().lower() if it else ""
                     if text in val:
+                        found = True; break
+                
+                # Check bank alias
+                if not found and c == 3:
+                    norm = self.normalize_bank_name(val)
+                    if any(text in k for k in alias_map.keys() if norm in k):
                         found = True
-                        break
+                
                 self.table.setRowHidden(r, not found)
 
         self.update_summary()
