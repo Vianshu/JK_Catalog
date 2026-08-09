@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QMenu, QMessageBox, QHeaderView, QAbstractItemView,
     QLabel, QScrollArea, QFrame, QSizePolicy,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QObject, QEvent
 from PyQt6.QtGui import QFont, QColor, QBrush
 from src.logic.db_manager import get_db_manager, build_logical_name
 
