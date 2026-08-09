@@ -989,6 +989,8 @@ class TodayPaymentTab(QWidget):
             ("tp_accounts", "CREATE TABLE tp_accounts (sn INT IDENTITY, account_name NVARCHAR(200), remain_cash NVARCHAR(100), bank_cash NVARCHAR(100))"),
             ("tp_limits",   "CREATE TABLE tp_limits   (sn INT IDENTITY, limit_type NVARCHAR(200), amount NVARCHAR(100), col3 NVARCHAR(100))"),
             ("tp_dl",       "CREATE TABLE tp_dl       (sn INT IDENTITY, dl_no NVARCHAR(100), amount NVARCHAR(100), expiry_date NVARCHAR(50), days_left NVARCHAR(20), gap NVARCHAR(20))"),
+            # Independent grid storage — decoupled from column view tables
+            ("tp_grid_data", "CREATE TABLE tp_grid_data (row_idx INT NOT NULL, col_idx INT NOT NULL, cell_text NVARCHAR(MAX), bg_color NVARCHAR(20), PRIMARY KEY (row_idx, col_idx))"),
         ]:
             self._db.ensure_table(self._db_name, table, ddl)
 
@@ -1010,7 +1012,7 @@ class TodayPaymentTab(QWidget):
         # Prepend display SN — grid expects 6-tuple: (sn, dl_no, amount, expiry_date, days_left, gap)
         dl_data      = [(str(i + 1),) + row for i, row in enumerate(dl_raw)]
 
-        # 1. Fill Column View
+        # 1. Fill Column View only — Grid View is independent
         def fill(t_obj, data, ncols):
             t_obj.table.setRowCount(len(data))
             for r, row in enumerate(data):
@@ -1034,8 +1036,16 @@ class TodayPaymentTab(QWidget):
                 self.t_dl.table.setItem(r, c, item)
         self.t_dl.recalculate_height()
 
-        # 2. Also refresh Grid (Excel) View
-        self._populate_grid(pay_data, pur_tod_data, pur_upc_data, acc_data, lim_data, dl_data)
+        # 2. Load Grid View from its own DB table.
+        #    If tp_grid_data is empty this is the first run — seed from column view data.
+        grid_rows = self._db.execute_query(self._db_name, "SELECT COUNT(*) FROM tp_grid_data")
+        grid_count = grid_rows[0][0] if grid_rows else 0
+        if grid_count == 0:
+            # First-time seed
+            self._populate_grid(pay_data, pur_tod_data, pur_upc_data, acc_data, lim_data, dl_data)
+            self._save_grid_to_db()           # persist the seeded state
+        else:
+            self._load_grid_from_db()         # restore previously saved grid state
 
     def save_section(self, table_name: str, t_obj, col_names: list[str]):
         """Save a single _StyledTable section back to the database."""
@@ -1058,6 +1068,98 @@ class TodayPaymentTab(QWidget):
         except Exception as e:
             conn.rollback()
             print(f"[ERROR] save_section({table_name}): {e}")
+
+    # ── Grid persistence helpers ───────────────────────────────────────────────
+
+    def _save_grid_to_db(self):
+        """Persist all non-empty grid cells to tp_grid_data."""
+        if not self._db_name:
+            return
+        conn = self._db.get_connection(self._db_name)
+        if not conn:
+            return
+        cur = conn.cursor()
+        try:
+            cur.execute("DELETE FROM tp_grid_data")
+            for r in range(self.grid.rowCount()):
+                for c in range(self.grid.columnCount()):
+                    it = self.grid.item(r, c)
+                    if it is None:
+                        continue
+                    text = it.text()
+                    bg   = it.background().color().name() if it.background().style() != 0 else ""
+                    if text or bg:
+                        cur.execute(
+                            "INSERT INTO tp_grid_data (row_idx, col_idx, cell_text, bg_color) VALUES (?,?,?,?)",
+                            (r, c, text, bg)
+                        )
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print(f"[ERROR] _save_grid_to_db: {e}")
+
+    def _load_grid_from_db(self):
+        """Restore the grid from tp_grid_data, then repaint section headers on top."""
+        if not self._db_name:
+            return
+        rows = self._db.execute_query(
+            self._db_name,
+            "SELECT row_idx, col_idx, cell_text, bg_color FROM tp_grid_data"
+        )
+        self.grid.blockSignals(True)
+        self.grid.clearContents()
+        self._header_registry.clear()
+        for row_idx, col_idx, text, bg_color in (rows or []):
+            it = QTableWidgetItem(text or "")
+            if bg_color and bg_color != "#000000":
+                it.setBackground(QBrush(QColor(bg_color)))
+            self.grid.setItem(int(row_idx), int(col_idx), it)
+        self.grid.blockSignals(False)
+        # Repaint header rows on top so they stay styled + editable
+        # We call _paint_grid_headers which only sets the very first row (row 0)
+        self._paint_grid_headers()
+        # Re-register header cells by running paint_sub_header logic with no data
+        self._restore_header_registry()
+
+    def _restore_header_registry(self):
+        """Scan the loaded grid and rebuild _header_registry from QSettings customizations.
+        Called after _load_grid_from_db so right-click rename/color still works."""
+        self._header_registry.clear()
+        # Re-invoke paint_sub_header for the known fixed header positions.
+        # We don't touch cell text/color — they were already restored from DB.
+        # We just register the cells so context menu recognises them.
+        sections = [
+            # (row, c_start, c_end, default_name, default_color)
+            (1,  0,  4, "Payments",           "#1976D2"),
+            (1,  5,  7, "Account Table",       "#F57C00"),
+            (1,  8, 12, "Demand Loans (DL)",   "#388E3C"),
+        ]
+        for r, c_start, c_end, name, color in sections:
+            key = f"{r}_{c_start}"
+            for c in range(c_start, c_end + 1):
+                self._header_registry[(r, c)] = {
+                    "key": key, "cols": (c_start, c_end), "row": r,
+                    "default_name": name, "default_color": color
+                }
+            # Also register dynamic rows (Purchase Today, Upcoming, Limits) if present
+        # Scan all rows for colored cells that look like section headers
+        for r in range(self.grid.rowCount()):
+            for c in range(self.grid.columnCount()):
+                it = self.grid.item(r, c)
+                if it is None:
+                    continue
+                bg = it.background().color()
+                # If it has a dark non-white background and bold font → likely a header
+                if bg.isValid() and bg.name() not in ("#000000", "#ffffff", "", "#1a2035") \
+                        and (r, c) not in self._header_registry:
+                    # Use the cell's text as both key and default name
+                    key = f"{r}_{c}"
+                    self._header_registry[(r, c)] = {
+                        "key": key, "cols": (c, c), "row": r,
+                        "default_name": it.text(), "default_color": bg.name()
+                    }
+                    # Make anchor editable
+                    it.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsSelectable)
 
     def _populate_grid(self, pay_data, pur_tod_data, pur_upc_data, acc_data, lim_data, dl_data):
         """Paint section headers and fill data into the Excel Grid View."""
@@ -1143,6 +1245,12 @@ class TodayPaymentTab(QWidget):
         fill_block(r_dl + 2, 8, dl_for_grid)
 
         QTimer.singleShot(100, self._adjust_heights)
+
+    def _grid_item_changed_save(self):
+        """Debounced: save the entire grid to DB after any cell change."""
+        if not self._db_name:
+            return
+        self._save_grid_to_db()
 
     def _switch_view(self, idx):
         self.stack.setCurrentIndex(idx)
@@ -1240,7 +1348,12 @@ class TodayPaymentTab(QWidget):
             key = hdr_info["key"]
             self._header_customizations.setdefault(key, {})["name"] = item.text().strip()
             self._hdr_settings.setValue("customizations", self._header_customizations)
-            return  # no further processing needed
+            # Also persist grid so renamed header survives reload
+            QTimer.singleShot(300, self._grid_item_changed_save)
+            return
+
+        # Persist grid data change
+        QTimer.singleShot(300, self._grid_item_changed_save)
 
         # Grid day's left calc (Column 11 is Expiry Date, Column 12 is Day's left)
         if c != 11:
@@ -1281,11 +1394,30 @@ class TodayPaymentTab(QWidget):
 
     def apply_edit_mode(self, can_edit: bool):
         self._can_edit = can_edit
-        flags = (QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.AnyKeyPressed) if can_edit else QTableWidget.EditTrigger.NoEditTriggers
+        col_flags = (QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.AnyKeyPressed) if can_edit else QTableWidget.EditTrigger.NoEditTriggers
         for t in self._tables:
-            t.table.setEditTriggers(flags)
+            t.table.setEditTriggers(col_flags)
             t.btn_add.setEnabled(can_edit)
-        self.grid.setEditTriggers(flags)
+        # Grid: always keep DoubleClicked so header anchor cells can be renamed.
+        # Data cells are non-editable in view mode via their item flags.
+        grid_flags = (QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.AnyKeyPressed) if can_edit else QTableWidget.EditTrigger.DoubleClicked
+        self.grid.setEditTriggers(grid_flags)
+        # In view mode, strip ItemIsEditable from data cells (non-header cells)
+        if not can_edit:
+            for row in range(self.grid.rowCount()):
+                for col in range(self.grid.columnCount()):
+                    if (row, col) not in self._header_registry:
+                        it = self.grid.item(row, col)
+                        if it:
+                            it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        else:
+            # Restore ItemIsEditable on all data cells in edit mode
+            for row in range(self.grid.rowCount()):
+                for col in range(self.grid.columnCount()):
+                    if (row, col) not in self._header_registry:
+                        it = self.grid.item(row, col)
+                        if it and not (it.flags() & Qt.ItemFlag.ItemIsEditable):
+                            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsSelectable)
     def _show_grid_context_menu(self, pos):
         if not getattr(self, "_can_edit", True):
             return
