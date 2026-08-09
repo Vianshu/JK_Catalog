@@ -33,6 +33,106 @@ def _num(val):
                  align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
 
+class HeaderEditFilter(QObject):
+    """Makes a QTableWidget's QHeaderView editable on double-click and colorable on right-click."""
+    def __init__(self, table: QTableWidget, settings_key: str):
+        super().__init__(table)
+        self.table = table
+        self.settings_key = settings_key
+        self.header = table.horizontalHeader()
+        self.header.viewport().installEventFilter(self)
+        self.header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.header.customContextMenuRequested.connect(self._on_context_menu)
+        
+        self.editor = None
+        self.edit_col = -1
+
+        from PyQt6.QtCore import QSettings
+        self.settings = QSettings("JKCatalog", "HeaderCustomizations")
+        self.customs = self.settings.value(self.settings_key, {})
+        if not isinstance(self.customs, dict):
+            self.customs = {}
+            
+    def apply_customs(self):
+        for col in range(self.table.columnCount()):
+            key = str(col)
+            if key in self.customs:
+                if "name" in self.customs[key]:
+                    it = self.table.horizontalHeaderItem(col)
+                    if not it:
+                        it = QTableWidgetItem()
+                        self.table.setHorizontalHeaderItem(col, it)
+                    it.setText(self.customs[key]["name"])
+        self._update_stylesheet()
+
+    def eventFilter(self, obj, event):
+        if obj == self.header.viewport() and event.type() == QEvent.Type.MouseButtonDblClick:
+            pos = event.position().toPoint()
+            col = self.header.logicalIndexAt(pos)
+            if col >= 0:
+                self._start_editing(col)
+                return True
+        return super().eventFilter(obj, event)
+        
+    def _start_editing(self, col):
+        from PyQt6.QtWidgets import QLineEdit
+        self.edit_col = col
+        rect = self.header.sectionViewportPosition(col)
+        width = self.header.sectionSize(col)
+        height = self.header.height()
+        
+        self.editor = QLineEdit(self.header.viewport())
+        self.editor.setGeometry(rect, 0, width, height)
+        it = self.table.horizontalHeaderItem(col)
+        self.editor.setText(it.text() if it else "")
+        self.editor.selectAll()
+        self.editor.setFocus()
+        self.editor.show()
+        
+        self.editor.editingFinished.connect(self._finish_editing)
+        
+    def _finish_editing(self):
+        if self.editor:
+            new_text = self.editor.text()
+            it = self.table.horizontalHeaderItem(self.edit_col)
+            if not it:
+                it = QTableWidgetItem()
+                self.table.setHorizontalHeaderItem(self.edit_col, it)
+            it.setText(new_text)
+            
+            key = str(self.edit_col)
+            if key not in self.customs: self.customs[key] = {}
+            self.customs[key]["name"] = new_text
+            self.settings.setValue(self.settings_key, self.customs)
+            
+            self.editor.deleteLater()
+            self.editor = None
+
+    def _on_context_menu(self, pos):
+        col = self.header.logicalIndexAt(pos)
+        if col < 0: return
+        
+        from PyQt6.QtWidgets import QMenu, QColorDialog
+        menu = QMenu(self.table)
+        action_color = menu.addAction("🎨 Change Header Color")
+        action = menu.exec(self.header.viewport().mapToGlobal(pos))
+        
+        if action == action_color:
+            color = QColorDialog.getColor()
+            if color.isValid():
+                key = str(col)
+                if key not in self.customs: self.customs[key] = {}
+                self.customs[key]["color"] = color.name()
+                self.settings.setValue(self.settings_key, self.customs)
+                self._update_stylesheet()
+                
+    def _update_stylesheet(self):
+        style = ""
+        for col_str, custom in self.customs.items():
+            if "color" in custom:
+                style += f"QHeaderView::section:horizontal:logicalIndex({col_str}) {{ background-color: {custom['color']}; color: #ffffff; }}\n"
+        self.header.setStyleSheet(style)
+
 # ===========================================================================
 # A) INSURANCE TAB  –  three separate scrollable sub-tables
 # ===========================================================================
@@ -621,7 +721,7 @@ class TeamListTab(QWidget):
 # ===========================================================================
 _REC_FIELD_KEYS   = ["naam","thegana","baik","khata","rakam","jamma"]
 _REC_FIELD_LABELS = ["\u0928\u093e\u092e","\u0920\u0947\u0917\u093e\u0928\u093e","\u092c\u0948\u0915",
-                     "\u062e\u093e\u0924\u093e \u0928.","\u0930\u0915\u092e","\u091c\u092e\u094d\u092e\u093e \u0917\u0930\u094d\u0928\u0947"]
+                     "\u0916\u093e\u0924\u093e \u0928.","\u0930\u0915\u092e","\u091c\u092e\u094d\u092e\u093e \u0917\u0930\u094d\u0928\u0947"]
 _REC_FIXED        = 2          # SN + A/C of
 _REC_BLOCK        = 3          # Label + Value + Sep
 _REC_LBL_W        = 70
@@ -873,23 +973,32 @@ class TodayPaymentTab(QWidget):
         col1.setContentsMargins(0, 0, 0, 0)
         col1.setSpacing(25)
         
-        self.t_pay = _StyledTable("Payments", 
-                                 ["DATE", "Particulars", "Payment", "", ""],
-                                 [90, 220, 110, 80, 80], header_color="#1976D2")
+        self.t_pay = _StyledTable(
+            ["DATE", "Particulars", "Payment", "", ""],
+            "Payments", "#1976D2",
+            col_widths=[100, 200, 100, 80, 80],
+            settings_key="TodayPay_Pay"
+        )
         self.t_pay.btn_add.clicked.connect(lambda: self._add_row(self.t_pay, 5))
         self._tables.append(self.t_pay)
         col1.addWidget(self.t_pay)
 
-        self.t_pur_tod = _StyledTable("Purchase (Today)", 
-                                 ["DATE", "Particulars", "Payment", "", ""],
-                                 [90, 220, 110, 80, 80], header_color="#1976D2")
+        self.t_pur_tod = _StyledTable(
+            ["DATE", "Particulars", "Payment", "", ""],
+            "Purchase (Today)", "#1976D2",
+            col_widths=[100, 200, 100, 80, 80],
+            settings_key="TodayPay_PurTod"
+        )
         self.t_pur_tod.btn_add.clicked.connect(lambda: self._add_row(self.t_pur_tod, 5))
         self._tables.append(self.t_pur_tod)
         col1.addWidget(self.t_pur_tod)
 
-        self.t_pur_upc = _StyledTable("Purchase (Upcoming)", 
-                                 ["DATE", "Particulars", "Payment", "", ""],
-                                 [90, 220, 110, 80, 80], header_color="#1976D2")
+        self.t_pur_upc = _StyledTable(
+            ["DATE", "Particulars", "Payment", "", ""],
+            "Purchase (Upcoming)", "#1976D2",
+            col_widths=[100, 200, 100, 80, 80],
+            settings_key="TodayPay_PurUpc"
+        )
         self.t_pur_upc.btn_add.clicked.connect(lambda: self._add_row(self.t_pur_upc, 5))
         self._tables.append(self.t_pur_upc)
         col1.addWidget(self.t_pur_upc)
@@ -901,18 +1010,33 @@ class TodayPaymentTab(QWidget):
         col2.setContentsMargins(0, 0, 0, 0)
         col2.setSpacing(25)
         
-        self.t_dl = _StyledTable("Demand Loans (DL)", ["SN", "DL No.", "Amount", "Expiry Date", "Day's left", "Gap"], [40, 100, 100, 110, 75, 55], header_color="#388E3C")
+        self.t_dl = _StyledTable(
+            ["SN", "DL No.", "Amount", "Expiry Date", "Day's left", "Gap"],
+            "Demand Loans (DL)", "#388E3C",
+            col_widths=[40, 100, 100, 110, 75, 55],
+            settings_key="TodayPay_DL"
+        )
         self.t_dl.btn_add.clicked.connect(self._add_dl_row)
         self.t_dl.table.itemChanged.connect(self._calc_days_left)
         self._tables.append(self.t_dl)
         col2.addWidget(self.t_dl)
         
-        self.t_acc = _StyledTable("Account Table", ["Account Name", "Remain Cash", "Bank / Cash"], [200, 120, 120], header_color="#F57C00")
+        self.t_acc = _StyledTable(
+            ["Account Name", "Remain Cash", "Bank / Cash"],
+            "Account Table", "#F57C00",
+            col_widths=[200, 120, 120],
+            settings_key="TodayPay_Acc"
+        )
         self.t_acc.btn_add.clicked.connect(lambda: self._add_row(self.t_acc, 3))
         self._tables.append(self.t_acc)
         col2.addWidget(self.t_acc)
         
-        self.t_lim = _StyledTable("Limits & LC", ["Limit Type", "Amount"], [200, 150], header_color="#D84315")
+        self.t_lim = _StyledTable(
+            ["Limit Type", "Amount"],
+            "Limits & LC", "#D84315",
+            col_widths=[200, 150],
+            settings_key="TodayPay_Lim"
+        )
         self.t_lim.btn_add.clicked.connect(lambda: self._add_row(self.t_lim, 2))
         self._tables.append(self.t_lim)
         col2.addWidget(self.t_lim)
@@ -1493,6 +1617,7 @@ class RecordTab(QWidget):
         self._n_company = 1
         self._n_personal = 1
         self._headers = []
+        self.header_filter = None
         self._update_headers()
 
         main_layout = QVBoxLayout(self)
@@ -1600,6 +1725,8 @@ class RecordTab(QWidget):
         self.stack.addWidget(self.view1)
         
         main_layout.addWidget(self.stack)
+        self.header_filter = HeaderEditFilter(self.table, "RecordTable")
+        self.header_filter.apply_customs()
 
         self._setup_columns()
         self._load_data()
@@ -1613,6 +1740,11 @@ class RecordTab(QWidget):
         for i in range(self._n_personal):
             name = "Personal Account" if self._n_personal == 1 else f"Personal Account {i+1}"
             self._headers.extend(["Field", name, ""])
+        # Update horizontalHeaderLabels if table exists and reapply custom names/colors
+        if getattr(self, "table", None):
+            self.table.setHorizontalHeaderLabels(self._headers)
+            if self.header_filter:
+                self.header_filter.apply_customs()
 
     def _switch_view(self, idx):
         self.stack.setCurrentIndex(idx)
@@ -1845,6 +1977,8 @@ class RecordTab(QWidget):
             
         self._setup_columns()
         self.table.setHorizontalHeaderLabels(self._headers)
+        if getattr(self, "header_filter", None):
+            self.header_filter.apply_customs()
         
         new_a = self._n_company - 1
         for r in range(0, self.table.rowCount(), 7):
@@ -1876,6 +2010,8 @@ class RecordTab(QWidget):
             
         self._setup_columns()
         self.table.setHorizontalHeaderLabels(self._headers)
+        if getattr(self, "header_filter", None):
+            self.header_filter.apply_customs()
         
         new_a = self._n_company + self._n_personal - 1
         for r in range(0, self.table.rowCount(), 7):
