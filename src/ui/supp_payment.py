@@ -974,9 +974,10 @@ class TodayPaymentTab(QWidget):
         col1.setSpacing(25)
         
         self.t_pay = _StyledTable(
+            "Payments", 
             ["DATE", "Particulars", "Payment", "", ""],
-            "Payments", "#1976D2",
             col_widths=[100, 200, 100, 80, 80],
+            header_color="#1976D2",
             settings_key="TodayPay_Pay"
         )
         self.t_pay.btn_add.clicked.connect(lambda: self._add_row(self.t_pay, 5))
@@ -984,9 +985,10 @@ class TodayPaymentTab(QWidget):
         col1.addWidget(self.t_pay)
 
         self.t_pur_tod = _StyledTable(
+            "Purchase (Today)", 
             ["DATE", "Particulars", "Payment", "", ""],
-            "Purchase (Today)", "#1976D2",
             col_widths=[100, 200, 100, 80, 80],
+            header_color="#1976D2",
             settings_key="TodayPay_PurTod"
         )
         self.t_pur_tod.btn_add.clicked.connect(lambda: self._add_row(self.t_pur_tod, 5))
@@ -994,9 +996,10 @@ class TodayPaymentTab(QWidget):
         col1.addWidget(self.t_pur_tod)
 
         self.t_pur_upc = _StyledTable(
+            "Purchase (Upcoming)", 
             ["DATE", "Particulars", "Payment", "", ""],
-            "Purchase (Upcoming)", "#1976D2",
             col_widths=[100, 200, 100, 80, 80],
+            header_color="#1976D2",
             settings_key="TodayPay_PurUpc"
         )
         self.t_pur_upc.btn_add.clicked.connect(lambda: self._add_row(self.t_pur_upc, 5))
@@ -1011,9 +1014,10 @@ class TodayPaymentTab(QWidget):
         col2.setSpacing(25)
         
         self.t_dl = _StyledTable(
+            "Demand Loans (DL)", 
             ["SN", "DL No.", "Amount", "Expiry Date", "Day's left", "Gap"],
-            "Demand Loans (DL)", "#388E3C",
             col_widths=[40, 100, 100, 110, 75, 55],
+            header_color="#388E3C",
             settings_key="TodayPay_DL"
         )
         self.t_dl.btn_add.clicked.connect(self._add_dl_row)
@@ -1022,9 +1026,10 @@ class TodayPaymentTab(QWidget):
         col2.addWidget(self.t_dl)
         
         self.t_acc = _StyledTable(
+            "Account Table", 
             ["Account Name", "Remain Cash", "Bank / Cash"],
-            "Account Table", "#F57C00",
             col_widths=[200, 120, 120],
+            header_color="#F57C00",
             settings_key="TodayPay_Acc"
         )
         self.t_acc.btn_add.clicked.connect(lambda: self._add_row(self.t_acc, 3))
@@ -1032,9 +1037,10 @@ class TodayPaymentTab(QWidget):
         col2.addWidget(self.t_acc)
         
         self.t_lim = _StyledTable(
+            "Limits & LC", 
             ["Limit Type", "Amount"],
-            "Limits & LC", "#D84315",
             col_widths=[200, 150],
+            header_color="#D84315",
             settings_key="TodayPay_Lim"
         )
         self.t_lim.btn_add.clicked.connect(lambda: self._add_row(self.t_lim, 2))
@@ -2359,7 +2365,7 @@ _SHEET_CONFIGS = [
 
 
 class _StyledTable(QWidget):
-    def __init__(self, title, headers, col_widths=None, header_color="#2b579a"):
+    def __init__(self, title, headers, col_widths=None, header_color="#2b579a", settings_key="StyledTable"):
         super().__init__()
         
         layout = QVBoxLayout(self)
@@ -2449,6 +2455,10 @@ class _StyledTable(QWidget):
         frame_layout.addWidget(self.table)
         layout.addWidget(table_frame)
         
+        self.header_filter = HeaderEditFilter(self.table, settings_key)
+        self.header_filter.apply_customs()
+
+    def recalculate_height(self):
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     
