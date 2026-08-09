@@ -487,48 +487,61 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         self.save_cheques_to_db()
     
     def apply_filter(self):
-        # Build Alias Reverse Lookup
-        alias_map = {}
-        for r in range(self.bank_table.rowCount()):
-            name_it = self.bank_table.item(r, 1)
-            if name_it:
-                name = name_it.text().strip()
-                if name: alias_map[self.normalize_bank_name(name)] = name
-        
         text = self.search_bar.text().lower().strip()
-        idx = self.cmb_filter.currentIndex()
+        idx  = self.cmb_filter.currentIndex()  # 0=All, 1=Cleared, 2=Uncleared
+
+        # Build inverted alias index: {hindi_name_lower → [alias_lower, ...]}
+        # party_mapping is  {alias → canonical_name, name → canonical_name}
+        # We need the reverse: canonical_name → all aliases that point to it
+        name_to_aliases: dict[str, list[str]] = {}
+        for alias, canonical in self.party_mapping.items():
+            key = canonical.lower()
+            if alias.lower() != key:            # only add true aliases, not self-maps
+                name_to_aliases.setdefault(key, []).append(alias.lower())
 
         for r in range(self.table.rowCount()):
             clear_date_item = self.table.item(r, 8)
             clear_date = clear_date_item.text().strip() if clear_date_item else ""
 
-            # Dropdown filter
-            if idx == 1 and not clear_date:
+            # ── Dropdown (status) filter ──────────────────────────────────────
+            if idx == 1 and not clear_date:   # Cleared only → hide uncleared
                 self.table.setRowHidden(r, True)
                 continue
-            elif idx == 2 and clear_date:
+            if idx == 2 and clear_date:        # Uncleared only → hide cleared
                 self.table.setRowHidden(r, True)
                 continue
 
-            # Text Search
+            # ── Text search ───────────────────────────────────────────────────
             if not text:
                 self.table.setRowHidden(r, False)
-            else:
-                found = False
-                # Check normal contents
-                for c in range(self.table.columnCount()):
+                continue
+
+            found = False
+
+            # 1. Direct match in any visible cell (works for Hindi, numbers, dates, etc.)
+            for c in range(self.table.columnCount()):
+                w = self.table.cellWidget(r, c)
+                if w and isinstance(w, QLineEdit):
+                    cell_val = w.text().lower()
+                else:
                     it = self.table.item(r, c)
-                    val = it.text().lower() if it else ""
-                    if text in val:
-                        found = True; break
-                
-                # Check bank alias
-                if not found and c == 3:
-                    norm = self.normalize_bank_name(val)
-                    if any(text in k for k in alias_map.keys() if norm in k):
-                        found = True
-                
-                self.table.setRowHidden(r, not found)
+                    cell_val = it.text().lower() if it else ""
+                if text in cell_val:
+                    found = True
+                    break
+
+            # 2. Alias fallback for Party Name (col 2):
+            #    If the party name in the cell is Hindi, try English aliases
+            if not found:
+                party_it = self.table.item(r, 2)
+                party_name_lower = party_it.text().strip().lower() if party_it else ""
+                if party_name_lower:
+                    for alias in name_to_aliases.get(party_name_lower, []):
+                        if text in alias:
+                            found = True
+                            break
+
+            self.table.setRowHidden(r, not found)
 
         self.update_summary()
     

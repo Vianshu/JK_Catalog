@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, 
     QFrame, QStackedWidget, QMenu, QMessageBox, QProgressDialog, QApplication
 )
-from PyQt6.QtCore import Qt, QTimer, QSettings, pyqtSignal, QObject, QEvent
+from PyQt6.QtCore import Qt, QTimer, QSettings, QThread, pyqtSignal, QObject, QEvent
 from PyQt6.QtGui import QShortcut, QKeySequence, QIcon
 import pandas as pd
 import re
@@ -506,6 +506,39 @@ class MainWindow(QWidget):
         
         self.content_layout.addWidget(self.main_stack)
         self.main_stack.currentChanged.connect(self.on_main_stack_change)
+
+        # ── Backup status toast (slim bar at the bottom, hidden by default) ──
+        self._backup_toast = QWidget(self.content_container)
+        self._backup_toast.setObjectName("BackupToast")
+        self._backup_toast.setFixedHeight(28)
+        toast_lay = QHBoxLayout(self._backup_toast)
+        toast_lay.setContentsMargins(12, 0, 12, 0)
+        toast_lay.setSpacing(8)
+        self._toast_icon = QLabel("")
+        self._toast_msg  = QLabel("")
+        self._toast_icon.setFixedWidth(18)
+        toast_lay.addWidget(self._toast_icon)
+        toast_lay.addWidget(self._toast_msg, 1)
+        self._backup_toast.setStyleSheet("""
+            QWidget#BackupToast {
+                background: #1e3a5f;
+                border-top: 1px solid #2d5f9e;
+            }
+            QLabel { color: #cce0ff; font-size: 12px; }
+        """)
+        self._backup_toast.hide()
+        self._toast_timer = QTimer(self)
+        self._toast_timer.setSingleShot(True)
+        self._toast_timer.timeout.connect(self._backup_toast.hide)
+        # Spinner tick timer for animation
+        self._spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        self._spinner_idx = 0
+        self._spinner_timer = QTimer(self)
+        self._spinner_timer.setInterval(100)
+        self._spinner_timer.timeout.connect(self._tick_spinner)
+        self._backup_worker = None
+
+        self.content_layout.addWidget(self._backup_toast)
         self.root_layout.addWidget(self.content_container, 1)
 
     def init_nav_menus(self):
@@ -1748,110 +1781,176 @@ class MainWindow(QWidget):
                 f"{elapsed/3600:.1f}h ago — no startup backup needed."
             )
 
+    # ─── BACKUP WORKER ────────────────────────────────────────────────────────
+
+    class _BackupWorker(QThread):
+        """Background thread that runs export_data_path without blocking the UI."""
+        finished = pyqtSignal(bool, str)   # (success, message)
+
+        def __init__(self, data_path, output_file, company_key, lock_name, parent=None):
+            super().__init__(parent)
+            self.data_path   = data_path
+            self.output_file = output_file
+            self.company_key = company_key
+            self.lock_name   = lock_name
+
+        def run(self):
+            from src.logic.db_manager import get_db_manager
+            from src.logic.data_transfer import export_data_path
+            db = get_db_manager()
+            # Acquire the SQL Server app-lock (non-blocking: skip if another user holds it)
+            if not db.acquire_app_lock(self.lock_name, timeout_ms=0):
+                self.finished.emit(False, "skipped:locked")
+                return
+            try:
+                success, msg = export_data_path(self.data_path, self.output_file)
+                self.finished.emit(success, msg)
+            except Exception as exc:
+                self.finished.emit(False, str(exc))
+            finally:
+                db.release_app_lock(self.lock_name)
+
+    # ─── TOAST HELPERS ────────────────────────────────────────────────────────
+
+    def _tick_spinner(self):
+        self._spinner_idx = (self._spinner_idx + 1) % len(self._spinner_frames)
+        self._toast_icon.setText(self._spinner_frames[self._spinner_idx])
+
+    def _show_backup_toast(self, message: str, running: bool = True):
+        """Show the slim backup toast bar with an optional spinner."""
+        self._toast_timer.stop()
+        if running:
+            self._spinner_timer.start()
+            self._toast_icon.setText(self._spinner_frames[0])
+        else:
+            self._spinner_timer.stop()
+        self._toast_msg.setText(message)
+        self._backup_toast.show()
+
+    def _hide_backup_toast_after(self, ms: int = 5000):
+        """Hide the toast after a delay."""
+        self._spinner_timer.stop()
+        self._toast_timer.start(ms)
+
+    def _on_backup_done(self, success: bool, msg: str):
+        """Slot called when the background backup thread finishes."""
+        from datetime import datetime, timezone
+        company_key = getattr(self, '_pending_backup_key', '')
+
+        if msg == "skipped:locked":
+            logger.info(f"[AutoBackup] Skipped — another user is already backing up.")
+            self._show_backup_toast("⏭ Auto-backup skipped (another user is running it)", running=False)
+        elif success:
+            logger.info(f"[AutoBackup] Backup complete for '{company_key}'.")
+            self._show_backup_toast("✅  Auto-backup complete", running=False)
+            # Record timestamp so next login can check elapsed time
+            ts_key = f"last_backup/{company_key}"
+            self._backup_settings.setValue(ts_key, datetime.now(timezone.utc).timestamp())
+            # Audit log
+            if self._security_mgr and self.user_session:
+                self._security_mgr.log_action(
+                    self.user_session, "auto_backup", module="system",
+                    detail=f"Auto-backup: {getattr(self, '_pending_backup_file', '')}"
+                )
+            # Prune: keep only the 7 most recent backups for this company
+            try:
+                folder = getattr(self, '_pending_backup_dir', '')
+                prefix = f"JK_AutoBackup_{company_key}_"
+                backups = sorted(
+                    f for f in os.listdir(folder)
+                    if f.startswith(prefix) and f.endswith(".jkbackup")
+                )
+                for old in backups[:max(0, len(backups) - 7)]:
+                    try:
+                        os.remove(os.path.join(folder, old))
+                        logger.info(f"[AutoBackup] Pruned: {old}")
+                    except OSError as e:
+                        logger.warning(f"[AutoBackup] Could not delete {old}: {e}")
+            except Exception as e:
+                logger.warning(f"[AutoBackup] Pruning failed: {e}")
+        else:
+            logger.error(f"[AutoBackup] Backup FAILED: {msg}")
+            self._show_backup_toast(f"❌  Auto-backup failed: {msg[:60]}", running=False)
+
+        self._hide_backup_toast_after(5000)
+        self._backup_worker = None
+
+    # ─── AUTO-BACKUP TRIGGER ─────────────────────────────────────────────────
+
     def _run_auto_backup(self):
-        """Silent per-company automatic backup.
+        """Fire the per-company automatic backup on a background thread.
 
-        Called by the 24-hour QTimer AND on login if the last backup is stale.
-        Creates a timestamped .jkbackup for the CURRENT company only and saves it
-        into the user-chosen backup folder (set via '📂 Backup Location').
-
-        File pattern:
-            <backup_folder>/<company_name>/JK_AutoBackup_YYYY-MM-DD_HH-MM.jkbackup
-
-        Keeps the 7 most recent backups per company; older ones are pruned.
-        All errors are logged — no popups are shown to the user.
+        Guards:
+          1. Same-day file check  — if today's .jkbackup already exists in the
+             backup folder, skip entirely (works cross-user via shared FS).
+          2. SQL Server app-lock  — prevents two instances from starting backup
+             simultaneously even if the file check races.
+          3. QThread worker       — backup never blocks the UI thread.
+          4. Toast bar            — non-intrusive progress indicator at the bottom.
         """
-        company_path = getattr(self, 'current_company_path', '')
-        if not company_path or not os.path.isdir(company_path):
-            logger.warning("[AutoBackup] Skipped — no company is loaded.")
+        if getattr(self, '_backup_worker', None) is not None:
+            logger.info("[AutoBackup] Backup already in progress — skipping.")
             return
 
+        company_path = getattr(self, 'current_company_path', '')
+        if not company_path or not os.path.isdir(company_path):
+            logger.warning("[AutoBackup] Skipped — no company loaded.")
+            return
+
+        # Load backup folder from config.json
         backup_folder = ""
         from src.utils.path_utils import get_app_dir
         config_file = os.path.join(get_app_dir(), "config.json")
         if os.path.exists(config_file):
             try:
-                import json
+                import json as _json
                 with open(config_file, 'r', encoding='utf-8') as f:
-                    d = json.load(f)
-                    backup_folder = d.get("backup_path", "").strip()
+                    backup_folder = _json.load(f).get("backup_path", "").strip()
             except Exception:
                 pass
 
         if not backup_folder or not os.path.isdir(backup_folder):
-            logger.warning(
-                "[AutoBackup] Skipped — backup location not set or folder missing. "
-                "Set it on the main startup screen using '📂 Set Backup Path'."
-            )
+            logger.warning("[AutoBackup] Skipped — backup folder not set or missing.")
             return
 
-        from datetime import datetime, timezone
-        from src.logic.data_transfer import export_data_path
-
-        company_key  = os.path.basename(os.path.normpath(company_path))
-        data_path    = os.path.dirname(company_path)   # parent of the company folder
-        timestamp    = datetime.now().strftime("%Y-%m-%d_%H-%M")
-
-        # Each company gets its own subfolder inside the chosen backup root
+        from datetime import datetime
+        company_key = os.path.basename(os.path.normpath(company_path))
+        data_path   = os.path.dirname(company_path)
+        today_str   = datetime.now().strftime("%Y-%m-%d")
         company_backup_dir = os.path.join(backup_folder, company_key)
+
         try:
             os.makedirs(company_backup_dir, exist_ok=True)
         except OSError as e:
             logger.error(f"[AutoBackup] Could not create backup folder: {e}")
             return
 
-        output_file = os.path.join(
-            company_backup_dir,
-            f"JK_AutoBackup_{company_key}_{timestamp}.jkbackup"
+        # Guard 1: same-day file check (cross-user)
+        prefix = f"JK_AutoBackup_{company_key}_{today_str}"
+        existing = [f for f in os.listdir(company_backup_dir)
+                    if f.startswith(prefix) and f.endswith(".jkbackup")]
+        if existing:
+            logger.info(f"[AutoBackup] Today's backup already exists: {existing[0]} — skipping.")
+            return
+
+        timestamp   = datetime.now().strftime("%Y-%m-%d_%H-%M")
+        output_file = os.path.join(company_backup_dir,
+                                   f"JK_AutoBackup_{company_key}_{timestamp}.jkbackup")
+        lock_name   = f"JK_AutoBackup_{company_key}"
+
+        # Stash for use in the done-callback
+        self._pending_backup_key  = company_key
+        self._pending_backup_file = os.path.basename(output_file)
+        self._pending_backup_dir  = company_backup_dir
+
+        logger.info(f"[AutoBackup] Launching background backup: {output_file}")
+        self._show_backup_toast(f"🔄  Auto-backup running for {company_key}…")
+
+        self._backup_worker = self._BackupWorker(
+            data_path, output_file, company_key, lock_name, parent=self
         )
-        logger.info(f"[AutoBackup] Starting backup for '{company_key}' → {output_file}")
-
-        try:
-            # export_data_path backs up the whole data_path but the company folder
-            # is the only subfolder that will match company_info.json in practice
-            # when company_path IS the data_path root.
-            # We pass the data_path so shared DBs (security, super, calendar) are
-            # included; the output file is labelled by company for clarity.
-            success, msg = export_data_path(data_path, output_file)
-            if success:
-                logger.info(f"[AutoBackup] Backup complete: {output_file}")
-
-                # Record the timestamp so _check_startup_backup can skip next login
-                ts_key = f"last_backup/{company_key}"
-                self._backup_settings.setValue(
-                    ts_key, datetime.now(timezone.utc).timestamp()
-                )
-
-                # Audit log
-                if self._security_mgr and self.user_session:
-                    self._security_mgr.log_action(
-                        self.user_session, "auto_backup",
-                        module="system",
-                        detail=f"Auto-backup: {os.path.basename(output_file)}"
-                    )
-
-                # Prune: keep only the 7 most recent backups for this company
-                try:
-                    prefix = f"JK_AutoBackup_{company_key}_"
-                    backups = sorted(
-                        f for f in os.listdir(company_backup_dir)
-                        if f.startswith(prefix) and f.endswith(".jkbackup")
-                    )
-                    MAX_KEEP = 7
-                    for old in backups[: max(0, len(backups) - MAX_KEEP)]:
-                        try:
-                            os.remove(os.path.join(company_backup_dir, old))
-                            logger.info(f"[AutoBackup] Pruned: {old}")
-                        except OSError as del_err:
-                            logger.warning(f"[AutoBackup] Could not delete {old}: {del_err}")
-                except Exception as prune_err:
-                    logger.warning(f"[AutoBackup] Pruning failed: {prune_err}")
-            else:
-                logger.error(f"[AutoBackup] Backup FAILED: {msg}")
-        except Exception as exc:
-            logger.error(f"[AutoBackup] Unexpected error: {exc}", exc_info=True)
-
-
+        self._backup_worker.finished.connect(self._on_backup_done)
+        self._backup_worker.start()
 
 
     def handle_export_data(self):

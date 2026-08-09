@@ -900,6 +900,71 @@ class DBManager:
                 pass
             return [] if fetch else 0
 
+    # ─── APPLICATION LOCK (cross-user mutex via SQL Server) ───────────────────
+
+    def acquire_app_lock(self, lock_name: str, timeout_ms: int = 0) -> bool:
+        """Try to acquire a named SQL Server application lock (session-scoped).
+
+        Uses sp_getapplock on the shared 'master' connection so all users/processes
+        on the same SQL Server instance participate in the same mutex.
+
+        Args:
+            lock_name:  Logical name for the lock (max 255 chars).
+            timeout_ms: How long to wait (ms). 0 = return immediately if locked.
+
+        Returns:
+            True  — lock acquired (we own it now).
+            False — lock is held by another session (or error).
+        """
+        conn = self.get_master_connection()
+        if not conn:
+            return False
+        try:
+            cursor = conn.cursor()
+            # sp_getapplock returns:
+            #   0 = granted synchronously
+            #   1 = granted after waiting
+            #  -1 = timed out
+            #  -2 = cancelled
+            #  -3 = deadlock victim
+            #  -999 = error
+            cursor.execute(
+                "DECLARE @rc INT; "
+                "EXEC @rc = sp_getapplock @Resource=?, @LockMode='Exclusive', "
+                "@LockOwner='Session', @LockTimeout=?; "
+                "SELECT @rc;",
+                (lock_name[:255], timeout_ms)
+            )
+            row = cursor.fetchone()
+            rc = row[0] if row else -999
+            return rc in (0, 1)
+        except Exception as e:
+            logger.warning(f"[AppLock] acquire_app_lock('{lock_name}') error: {e}")
+            return False
+
+    def release_app_lock(self, lock_name: str) -> bool:
+        """Release a previously acquired SQL Server application lock.
+
+        Args:
+            lock_name: Must match the name passed to acquire_app_lock.
+
+        Returns:
+            True if released successfully, False on error.
+        """
+        conn = self.get_master_connection()
+        if not conn:
+            return False
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "EXEC sp_releaseapplock @Resource=?, @LockOwner='Session';",
+                (lock_name[:255],)
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"[AppLock] release_app_lock('{lock_name}') error: {e}")
+            return False
+
     # ─── UTILITY ──────────────────────────────────────────────────────────────
 
     def get_all_tables(self, logical_name):
