@@ -1,4 +1,5 @@
 from PyQt6.QtWidgets import (
+    QColorDialog, QGridLayout,
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
     QTableWidgetItem, QPushButton, QTabWidget, QInputDialog,
     QMenu, QMessageBox, QHeaderView, QAbstractItemView,
@@ -168,126 +169,37 @@ _INS_SECTIONS = [
 ]
 
 
-class _InsTable(QWidget):
-    # One insurance section: coloured header + editable table + Add-Row btn.
-
-    def __init__(self, title: str, color: str, parent=None):
-        super().__init__(parent)
-        self._can_edit = True
-        vlay = QVBoxLayout(self)
-        vlay.setContentsMargins(0, 6, 0, 4)
-        vlay.setSpacing(4)
-
-        # Header + button row
-        hlay = QHBoxLayout()
-        hlay.setContentsMargins(0, 0, 0, 0)
-        lbl = QLabel(title)
-        lbl.setFont(_H_BOLD)
-        lbl.setStyleSheet(
-            f"background:{color}; color:#fff;"
-            "padding:6px 12px; border-radius:4px;"
-        )
-        hlay.addWidget(lbl)
-        hlay.addStretch()
-        self._add_btn = QPushButton("+ Add Row")
-        self._add_btn.setObjectName("InsAddRowBtn")
-        self._add_btn.setFixedHeight(28)
-        self._add_btn.clicked.connect(self._add_row)
-        hlay.addWidget(self._add_btn)
-        vlay.addLayout(hlay)
-
-        # Table
-        self.table = QTableWidget(0, len(_INS_COLS))
-        self.table.setObjectName("InsuranceTable")
-        self.table.setFont(_H_NORM)
-        self.table.setHorizontalHeaderLabels(_INS_COLS)
-        for c, w in enumerate(_INS_COL_W):
-            self.table.setColumnWidth(c, w)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.verticalHeader().setDefaultSectionSize(25)
-        self.table.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectItems)
-        self.table.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-        self.table.setMinimumHeight(80)
-        vlay.addWidget(self.table)
-
-        # Divider
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setFrameShadow(QFrame.Shadow.Sunken)
-        vlay.addWidget(line)
-
-    def load_rows(self, rows):
-        self.table.setRowCount(len(rows))
-        for r, row in enumerate(rows):
-            for c, val in enumerate(row):
-                self.table.setItem(r, c, _num(val) if c == 3 else _item(val))
-        self._fit_height()
-
-    def _fit_height(self):
-        h = self.table.horizontalHeader().height()
-        for r in range(self.table.rowCount()):
-            h += self.table.rowHeight(r)
-        self.table.setFixedHeight(max(80, h + 4))
-
-    def _add_row(self):
-        if not self._can_edit:
-            return
-        self.table.insertRow(self.table.rowCount())
-        self.table.scrollToBottom()
-        self._fit_height()
-
-    def set_edit_mode(self, can_edit: bool):
-        self._can_edit = can_edit
-        self.table.setEditTriggers(
-            QTableWidget.EditTrigger.DoubleClicked
-            | QTableWidget.EditTrigger.AnyKeyPressed
-            if can_edit else QTableWidget.EditTrigger.NoEditTriggers
-        )
-        self._add_btn.setEnabled(can_edit)
-
-
 class InsuranceTab(QWidget):
     def __init__(self):
         super().__init__()
         self._can_edit = True
-        self._tables: list[_InsTable] = []
+        self._tables = []
         
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         
-        # --- Top Bar (Toggle Switch) ---
+        # --- Top Bar ---
         top_bar = QWidget()
         top_bar.setStyleSheet("background-color: #f1f3f5; border-bottom: 1px solid #dee2e6;")
         top_lay = QHBoxLayout(top_bar)
         top_lay.setContentsMargins(15, 8, 15, 8)
         
         title_lbl = QLabel("Insurance Details")
-        title_lbl.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        title_lbl.setFont(_H_BOLD)
         title_lbl.setStyleSheet("color: #343a40; border: none;")
         top_lay.addWidget(title_lbl)
-        
         top_lay.addStretch()
         
         from PyQt6.QtWidgets import QComboBox, QStackedWidget
         self.view_selector = QComboBox()
         self.view_selector.addItems(["Detailed Column View", "Classic Excel Grid View"])
-        self.view_selector.setFont(QFont("Arial", 10))
-        self.view_selector.setStyleSheet("""
-            QComboBox {
-                padding: 4px 10px;
-                border: 1px solid #ced4da;
-                border-radius: 4px;
-                background-color: white;
-            }
-        """)
+        self.view_selector.setFont(_H_NORM)
+        self.view_selector.setStyleSheet("padding: 4px 10px; border: 1px solid #ced4da; border-radius: 4px; background-color: white;")
         self.view_selector.currentIndexChanged.connect(self._switch_view)
         top_lay.addWidget(self.view_selector)
         
         main_layout.addWidget(top_bar)
         
-        # --- Stacked Widget ---
         self.stack = QStackedWidget()
         
         # --- VIEW 1: Detailed Column View ---
@@ -304,10 +216,31 @@ class InsuranceTab(QWidget):
         vlay.setContentsMargins(12, 8, 12, 8)
         vlay.setSpacing(10)
 
-        for title, color in _INS_SECTIONS:
-            t = _InsTable(title, color)
-            self._tables.append(t)
-            vlay.addWidget(t)
+        # 3 Independent Grids for Detailed View
+        self.human_grid = UniversalExcelGrid("ins_human", cols=6, excel_mode=False)
+        self.vehicle_grid = UniversalExcelGrid("ins_vehicle", cols=6, excel_mode=False)
+        self.stock_grid = UniversalExcelGrid("ins_stock", cols=6, excel_mode=False)
+        
+        self._tables = [self.human_grid, self.vehicle_grid, self.stock_grid]
+        
+        for grid, (title, color) in zip(self._tables, _INS_SECTIONS):
+            # Create a section header
+            lbl = QLabel(title)
+            lbl.setFont(_H_BOLD)
+            lbl.setStyleSheet(f"background:{color}; color:#fff; padding:6px 12px; border-radius:4px;")
+            
+            grid.setHorizontalHeaderLabels(_INS_COLS)
+            for c, w in enumerate(_INS_COL_W):
+                grid.setColumnWidth(c, w)
+            grid.setMinimumHeight(150)
+                
+            vlay.addWidget(lbl)
+            vlay.addWidget(grid)
+            
+            line = QFrame()
+            line.setFrameShape(QFrame.Shape.HLine)
+            line.setFrameShadow(QFrame.Shadow.Sunken)
+            vlay.addWidget(line)
 
         vlay.addStretch()
         scroll.setWidget(container)
@@ -319,59 +252,7 @@ class InsuranceTab(QWidget):
         v2_layout = QVBoxLayout(self.view2)
         v2_layout.setContentsMargins(12, 12, 12, 12)
         
-        self.grid = QTableWidget(50, len(_INS_COLS))
-        self.grid.setObjectName("InsuranceGridTable")
-        self.grid.setFont(_H_NORM)
-        self.grid.setHorizontalHeaderLabels(_INS_COLS)
-        for c, w in enumerate(_INS_COL_W):
-            self.grid.setColumnWidth(c, w)
-            
-        self.grid.verticalHeader().setDefaultSectionSize(25)
-        self.grid.horizontalHeader().setHighlightSections(False)
-        self.grid.horizontalHeader().setStretchLastSection(True)
-        # Context menu for color / add row / add col
-        self.grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.grid.customContextMenuRequested.connect(self._show_grid_context_menu)
-        
-        # Monkey-patch keyPressEvent to support Delete/Backspace for clearing cells
-        original_key_press = self.grid.keyPressEvent
-        def grid_key_press(event):
-            if getattr(self, "_can_edit", True) and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
-                for item in self.grid.selectedItems():
-                    item.setText("")
-                    self._grid_item_changed(item)
-            else:
-                original_key_press(event)
-        self.grid.keyPressEvent = grid_key_press
-        self.grid.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
-        
-        self.grid.setStyleSheet("""
-            QTableWidget {
-                gridline-color: #dee2e6;
-                alternate-background-color: #f8f9fa;
-                border: 1px solid #ced4da;
-            }
-            QHeaderView::section:horizontal {
-                background-color: #1A2035;
-                color: #ffffff;
-                padding: 4px;
-                border: 1px solid #ced4da;
-                font-weight: bold;
-            }
-        """)
-        
-        # Paint colored sections
-        for row, (label, bg) in enumerate(_INS_SECTIONS):
-            r = row * 10 # Spread sections out by 10 rows
-            for col in range(len(_INS_COLS)):
-                it = QTableWidgetItem(label if col == 0 else "")
-                it.setFont(_H_BOLD)
-                it.setBackground(QBrush(QColor(bg)))
-                it.setForeground(QBrush(QColor("#ffffff")))
-                it.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                self.grid.setItem(r, col, it)
-            self.grid.setRowHeight(r, 28)
-            
+        self.grid = UniversalExcelGrid("ins_grid_data", cols=10, excel_mode=True)
         v2_layout.addWidget(self.grid)
         self.stack.addWidget(self.view2)
         
@@ -380,12 +261,24 @@ class InsuranceTab(QWidget):
     def _switch_view(self, idx):
         self.stack.setCurrentIndex(idx)
 
+    def set_company_path(self, path: str):
+        import os
+        from src.logic.db_manager import build_logical_name
+        company_name = os.path.basename(os.path.normpath(path))
+        self._db_name = build_logical_name(company_name, company_path=path)
+        
+        # Hook up all grids to DB
+        self.grid.set_db_name(self._db_name)
+        for t in self._tables:
+            t.set_db_name(self._db_name)
+
     def apply_edit_mode(self, can_edit: bool):
         self._can_edit = can_edit
-        flags = (QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.AnyKeyPressed) if can_edit else QTableWidget.EditTrigger.NoEditTriggers
+        if hasattr(self.grid, 'apply_edit_mode'):
+            self.grid.apply_edit_mode(can_edit)
         for t in self._tables:
-            t.set_edit_mode(can_edit)
-        self.grid.setEditTriggers(flags)
+            if hasattr(t, 'apply_edit_mode'):
+                t.apply_edit_mode(can_edit)
     def _show_grid_context_menu(self, pos):
         if getattr(self, "_can_edit", True) == False: return
         
@@ -434,29 +327,6 @@ class InsuranceTab(QWidget):
 # B) BONUS DETAILS TAB
 # ===========================================================================
 _BONUS_DATA = [
-    ("HO",  "MANAGER",       "Team--Neeraj Ji",              15000, "for holi"),
-    ("HO",  "CRM",           "Team-Madhav Ghimire",          10000, "chocolate and colors"),
-    ("HO",  "CRM",           "Team-Naresh Kushwaha",         10000, ""),
-    ("HO",  "CRM",           "Team-Anjay Mishra",            10000, ""),
-    ("HO",  "ADMIN",         "Team-Harsana",                 10000, ""),
-    ("HO",  "Office Member", "Team-Roman Rajbanshi",          3000, ""),
-    ("HO",  "Office Member", "Team-Surendra Paswan",          3000, ""),
-    ("HO",  "Office Member", "Team-Manish Sharma",            3000, ""),
-    ("HO",  "Office Member", "Team--Ashok Sahani",            3000, ""),
-    ("HO",  "Office Member", "Team--Dinesh Chaurasiya",       1100, ""),
-    ("HO",  "Office Member", "Team--Ram Chandra Guard",       3000, ""),
-    ("HO",  "Office Member", "Team--Rabindra Yadav",          "",   ""),
-    ("HO",  "Office Member", "Team--Raushan Kumar Yadav",     "",   ""),
-    ("BTM", "BM",            "Team--Nikhil Singh",           10000, ""),
-    ("BTM", "CRM",           "Team-Rajeev Kr.Chaurasiya",   10000, ""),
-    ("BTM", "CRM",           "Team- Santosh Singh",          10000, ""),
-    ("BTM", "Office Member", "Team- Ram Pujan Shah",           "",   ""),
-    ("JNK", "CRM",           "Team--Shailendra Shrivastav", 10000, ""),
-    ("JNK", "Office Member", "Team--Bijay Kumar Das",          "",   ""),
-    ("NGT", "BM",            "Team--Vivek Singh",              "",   ""),
-    ("NGT", "CRM",           "Team--Ashwini Gupta",            "",   ""),
-    ("NGT", "CRM",           "Team--Pramendra Karn",           "",   ""),
-    ("NGT", "Office Member", "Team--Basistha  Chaurasiya",     "",   ""),
 ]
 
 _BONUS_BASE_COLS = ["Location", "Post", "Employee Name", "Diwali Bonus", "Remarks"]
@@ -469,84 +339,32 @@ class BonusTab(QWidget):
     def __init__(self):
         super().__init__()
         self._can_edit = True
-
         vlay = QVBoxLayout(self)
         vlay.setContentsMargins(8, 8, 8, 8)
-        vlay.setSpacing(6)
-
-        # Toolbar
-        tbar = QHBoxLayout()
-        tbar.setContentsMargins(0, 0, 0, 0)
-        lbl = QLabel("Bonus Details")
-        lbl.setFont(_H_BOLD)
-        tbar.addWidget(lbl)
-        tbar.addStretch()
-        self._add_row_btn = QPushButton("+ Add Row")
-        self._add_row_btn.setObjectName("BonusAddRowBtn")
-        self._add_row_btn.setFixedHeight(28)
-        self._add_row_btn.clicked.connect(self._add_row)
-        tbar.addWidget(self._add_row_btn)
-        self._add_col_btn = QPushButton("+ Add Column")
-        self._add_col_btn.setObjectName("BonusAddColBtn")
-        self._add_col_btn.setFixedHeight(28)
-        self._add_col_btn.clicked.connect(self._add_column)
-        tbar.addWidget(self._add_col_btn)
-        vlay.addLayout(tbar)
-
-        # Table
-        self.table = QTableWidget(0, len(_BONUS_BASE_COLS))
-        self.table.setObjectName("BonusTable")
-        self.table.setFont(_H_NORM)
-        self.table.setHorizontalHeaderLabels(_BONUS_BASE_COLS)
-        for c, w in enumerate(_BONUS_BASE_W):
-            self.table.setColumnWidth(c, w)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.verticalHeader().setDefaultSectionSize(25)
-        self.table.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectItems)
+        self.table = UniversalExcelGrid('bonus_grid_data', cols=15, excel_mode=False)
+        
+        headers = ['Location', 'Post', 'Name of Employee', 'Diwali Bonus', '', 'Notes']
+        headers += [""] * (15 - len(headers))
+        self.table.setHorizontalHeaderLabels(headers)
+        self.table.setColumnWidth(0, 70)
+        self.table.setColumnWidth(1, 100)
+        self.table.setColumnWidth(2, 180)
+        self.table.setColumnWidth(3, 120)
+        self.table.setColumnWidth(5, 200)
+        
         vlay.addWidget(self.table)
-
-        self._load_data()
-
-    def _load_data(self):
-        for loc, post, name, bonus, note in _BONUS_DATA:
-            r = self.table.rowCount()
-            self.table.insertRow(r)
-            bg = _BONUS_LOC_BG.get(loc)
-            self.table.setItem(r, 0, _item(loc, bg=bg))
-            self.table.setItem(r, 1, _item(post))
-            self.table.setItem(r, 2, _item(name))
-            self.table.setItem(r, 3, _num(bonus))
-            # fill any extra cols
-            for ec in range(len(_BONUS_BASE_COLS), self.table.columnCount()):
-                self.table.setItem(r, ec, _item(""))
-
-    def _add_row(self):
-        if not self._can_edit:
-            return
-        self.table.insertRow(self.table.rowCount())
-        self.table.scrollToBottom()
-
-    def _add_column(self):
-        if not self._can_edit:
-            return
-        name, ok = QInputDialog.getText(self, "Add Column", "Column name:")
-        if not ok or not name.strip():
-            return
-        col = self.table.columnCount()
-        self.table.insertColumn(col)
-        self.table.setHorizontalHeaderItem(col, QTableWidgetItem(name.strip()))
-        self.table.setColumnWidth(col, 120)
-
+        
+    def set_company_path(self, path: str):
+        import os
+        from src.logic.db_manager import build_logical_name
+        company_name = os.path.basename(os.path.normpath(path))
+        self._db_name = build_logical_name(company_name, company_path=path)
+        self.table.set_db_name(self._db_name)
+        
     def apply_edit_mode(self, can_edit: bool):
         self._can_edit = can_edit
-        self.table.setEditTriggers(
-            QTableWidget.EditTrigger.DoubleClicked
-            | QTableWidget.EditTrigger.AnyKeyPressed
-            if can_edit else QTableWidget.EditTrigger.NoEditTriggers
-        )
-        self._add_row_btn.setEnabled(can_edit)
-        self._add_col_btn.setEnabled(can_edit)
+        if hasattr(self.table, 'apply_edit_mode'):
+            self.table.apply_edit_mode(can_edit)
 
 
 # ===========================================================================
@@ -556,55 +374,6 @@ _YEAR_LABELS = []
 
 # (location, post, name, {yr_label: (yr_month, salary)})
 _TEAM_DATA = [
-    ("HO",  "MANAGER",       "Team--Neeraj Ji",
-     {"82-83":("2082-04",100000),"78-79":("2078-04",75000),"77-78":("2077-04",50000)}),
-    ("HO",  "CRM",           "Team-Madhav Ghimire",
-     {"79-80":("2079-11",40000)}),
-    ("HO",  "CRM",           "Team-Naresh Kushwaha",
-     {"80-81":("2080-04",40000),"78-79":("2078-04",30000),"77-78":("2077-08",25000)}),
-    ("HO",  "ADMIN",         "Team-Harsana",
-     {"82-83":("2082-04",40000),"78-79":("2078-01",30000),
-      "76-77":("2076-05",10000),"75-76":("2075-11",7000)}),
-    ("HO",  "Office Member", "Team--Srijana Giri",
-     {"82-83":("2082-12",20000)}),
-    ("HO",  "Office Member", "Team--Puja Sharma", {}),
-    ("HO",  "Office Member", "Team-Roman Rajbanshi",
-     {"82-83":("2082-04",24000),"81-82":("2081-02",20000),"78-79":("2078-12",15000)}),
-    ("HO",  "Office Member", "Team-Surendra Paswan",
-     {"82-83":("2082-04",19000),"80-81":("2081-01",17000),"79-80":("2079-04",15000)}),
-    ("HO",  "Office Member", "Team-Manish Sharma",
-     {"82-83":("2082-04",19000),"80-81":("2080-04",17000),"78-79":("2078-05",15000)}),
-    ("HO",  "Office Member", "Team--Ashok Sahani",
-     {"81-82":("2082-01",17000),"77-78":("2077-11",15000)}),
-    ("HO",  "Office Member", "Team--Dinesh Chaurasiya",
-     {"82-83":("2082-04",20000)}),
-    ("HO",  "Office Member", "Team--Ram Chandra Guard",
-     {"78-79":("2078-04",16000),"77-78":("2075-11",14000),"76-77":("2074-00",12000)}),
-    ("HO",  "CRM",           "Team--Rabindra Yadav",
-     {"82-83":("2082-08","25-30k")}),
-    ("HO",  "Office Member", "Team--Raushan Kumar Yadav",
-     {"82-83":("2082-07",30000)}),
-    ("BTM", "BM",            "Team--Nikhil Singh",
-     {"79-80":("2079-05",32000)}),
-    ("BTM", "CRM",           "Team-Rajeev Kr.Chaurasiya",
-     {"79-80":("2078-09",50000),"78-79":("2078-01",40000),"77-78":("2077-10",25000)}),
-    ("BTM", "CRM",           "Team- Santosh Singh",
-     {"81-82":("2081-12",30000),"80-81":("2080-09",24000),
-      "78-79":("2078-04",20000),"77-78":("2077-10",15000)}),
-    ("BTM", "Office Member", "Team- Ram Pujan Shah", {}),
-    ("JNK", "CRM",           "Team--Shailendra Shrivastav",
-     {"78-79":("2079-03",30000),"77-78":("2078-01",25000)}),
-    ("JNK", "Office Member", "Team--Bijay Kumar Das",
-     {"82-83":("2082-08",20000)}),
-    ("NGT", "BM",            "Team--Vivek Singh",
-     {"78-79":("2078-07",24000)}),
-    ("NGT", "CRM",           "Team--Ashwini Gupta",
-     {"81-82":("2081-04",30000),"80-81":("2081-02",25000)}),
-    ("NGT", "CRM",           "Team--Pramendra Karn", {}),
-    ("NGT", "Office Member", "Team--Basistha  Chaurasiya",
-     {"82-83":("2082-07",20000)}),
-    ("NGT", "Office Member", "Team--Manish Barnwal",
-     {"82-83":("2082-06",20000)}),
 ]
 
 _TEAM_LOC_BG = {"HO":"#E3F2FD","BTM":"#FFF9C4","JNK":"#F3E5F5","NGT":"#E8F5E9"}
@@ -615,128 +384,86 @@ _FIXED_N     = len(_FIXED_COLS)
 class TeamListTab(QWidget):
     def __init__(self):
         super().__init__()
-        self._can_edit   = True
-        # Reversed order for newest on left
-        self._year_labels = ["82-83","81-82","80-81","79-80","78-79","77-78","76-77","75-76"]
-
+        self._can_edit = True
         vlay = QVBoxLayout(self)
         vlay.setContentsMargins(8, 8, 8, 8)
-        vlay.setSpacing(6)
-
+        
         # Toolbar
         tbar = QHBoxLayout()
         tbar.setContentsMargins(0, 0, 0, 0)
-        lbl = QLabel("Team Salary History  (◀ newest → oldest)")
+        lbl = QLabel("Team List (Excel View)")
         lbl.setFont(_H_BOLD)
         tbar.addWidget(lbl)
         tbar.addStretch()
-        self._add_row_btn = QPushButton("+ Add Employee")
-        self._add_row_btn.setObjectName("TeamAddRowBtn")
-        self._add_row_btn.setFixedHeight(28)
-        self._add_row_btn.clicked.connect(self._add_employee_row)
-        tbar.addWidget(self._add_row_btn)
         self._add_yr_btn = QPushButton("+ Add Year")
-        self._add_yr_btn.setObjectName("TeamAddYearBtn")
         self._add_yr_btn.setFixedHeight(28)
         self._add_yr_btn.clicked.connect(self._add_year)
         tbar.addWidget(self._add_yr_btn)
         vlay.addLayout(tbar)
-
-        # Hint label
-        hint = QLabel(
-            "  Each year block: Joining Month  |  Salary  "
-            "— newest years on the left"
-        )
-        hint.setStyleSheet("color:#666; font-size:11px;")
-        vlay.addWidget(hint)
-
-        # Table
-        self.table = QTableWidget(0, _FIXED_N + len(self._year_labels) * 3)
-        self.table.setObjectName("TeamListTable")
-        self.table.setFont(_H_NORM)
-        self.table.verticalHeader().setDefaultSectionSize(25)
-        self.table.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectItems)
-        self.table.horizontalHeader().setHighlightSections(False)
-        vlay.addWidget(self.table)
-
+        
+        # Determine total cols
+        self._year_labels = ["2082-83","2081-82","2080-81","2079-80","2078-79","2077-78","2076-77","2075-76"]
+        total_cols = 4 + len(self._year_labels) * 3
+        self.table = UniversalExcelGrid('teamlist_grid_data', cols=total_cols, excel_mode=False)
+        
         self._rebuild_headers()
-        self._load_data()
-
-    def _col_for_year(self, yr: str) -> int:
-        return _FIXED_N + self._year_labels.index(yr) * 3 + 1
-
+        vlay.addWidget(self.table)
+        
     def _rebuild_headers(self):
-        total = _FIXED_N + len(self._year_labels) * 3
-        self.table.setColumnCount(total)
-        labels = [n for n, _ in _FIXED_COLS]
+        labels = ["S.N", "Location", "Post", "Name of Employee"]
         for yr in self._year_labels:
             labels += ["", yr, "Salary"]
+        
+        if self.table.columnCount() < len(labels):
+            self.table.setColumnCount(len(labels))
+            
         self.table.setHorizontalHeaderLabels(labels)
-        for c, (_, w) in enumerate(_FIXED_COLS):
-            self.table.setColumnWidth(c, w)
+        self.table.setColumnWidth(0, 40)
+        self.table.setColumnWidth(1, 70)
+        self.table.setColumnWidth(2, 100)
+        self.table.setColumnWidth(3, 180)
         for i in range(len(self._year_labels)):
-            base = _FIXED_N + i * 3
-            self.table.setColumnWidth(base,     30)
+            base = 4 + i * 3
+            self.table.setColumnWidth(base, 30)
             self.table.setColumnWidth(base + 1, 80)
             self.table.setColumnWidth(base + 2, 85)
-
-    def _load_data(self):
-        self.table.setRowCount(0)
-        for loc, post, name, yr_data in _TEAM_DATA:
-            r = self.table.rowCount()
-            self.table.insertRow(r)
-            bg = _TEAM_LOC_BG.get(loc)
-            self.table.setItem(r, 0, _item(loc, bg=bg))
-            self.table.setItem(r, 1, _item(post))
-            self.table.setItem(r, 2, _item(name, bold=True))
             
-            for i in range(len(self._year_labels)):
-                base = _FIXED_N + i * 3
-                spacer = QTableWidgetItem("")
-                spacer.setFlags(Qt.ItemFlag.NoItemFlags)
-                spacer.setBackground(QBrush(QColor("#f8f9fa")))
-                self.table.setItem(r, base, spacer)
-                
-            for yr, (yr_month, salary) in yr_data.items():
-                if yr in self._year_labels:
-                    bc = self._col_for_year(yr)
-                    self.table.setItem(r, bc,     _item(yr_month))
-                    self.table.setItem(r, bc + 1, _num(salary))
-
-    def _add_employee_row(self):
-        if not self._can_edit:
-            return
-        self.table.insertRow(self.table.rowCount())
-        self.table.scrollToBottom()
-
-    def _add_year(self):
-        if not self._can_edit:
-            return
-        yr, ok = QInputDialog.getText(
-            self, "Add Year",
-            "Nepali fiscal year (e.g. 83-84):"
-        )
-        if not ok or not yr.strip():
-            return
-        yr = yr.strip()
-        if yr in self._year_labels:
-            QMessageBox.information(self, "Exists", f"Year {yr} already exists.")
-            return
+    def set_company_path(self, path: str):
+        import os
+        from src.logic.db_manager import build_logical_name
+        company_name = os.path.basename(os.path.normpath(path))
+        self._db_name = build_logical_name(company_name, company_path=path)
+        self.table.set_db_name(self._db_name)
         
-        self._year_labels.insert(0, yr)
-        self._rebuild_headers()
-        self._load_data()
-
     def apply_edit_mode(self, can_edit: bool):
         self._can_edit = can_edit
-        self.table.setEditTriggers(
-            QTableWidget.EditTrigger.DoubleClicked
-            | QTableWidget.EditTrigger.AnyKeyPressed
-            if can_edit else QTableWidget.EditTrigger.NoEditTriggers
-        )
-        self._add_row_btn.setEnabled(can_edit)
         self._add_yr_btn.setEnabled(can_edit)
+        if hasattr(self.table, 'apply_edit_mode'):
+            self.table.apply_edit_mode(can_edit)
+            
+    def _add_year(self):
+        if not self._can_edit: return
+        
+        latest_yr = "2082-83"
+        if self._year_labels:
+            latest_yr = self._year_labels[0]
+            parts = latest_yr.split('-')
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                latest_yr = f"{int(parts[0])+1}-{int(parts[1])+1}"
+                
+        self._year_labels.insert(0, latest_yr)
+        
+        self.table.blockSignals(True)
+        # Insert at index 4 (right after S.N, Location, Post, Name)
+        self.table.insertColumn(4)
+        self.table.insertColumn(4)
+        self.table.insertColumn(4)
+        
+        self._rebuild_headers()
+        
+        self.table.blockSignals(False)
+        if hasattr(self.table, 'save_to_db'):
+            self.table.save_to_db()
 
 
 # ===========================================================================
@@ -769,150 +496,6 @@ _REC_GAP_H        = 30
 # acct dict keys: naam, thegana, baik, khata, rakam, jamma
 # ---------------------------------------------------------------------------
 _RECORD_DATA = [
-    (1,"Vishal nat bolt",[
-        {"naam":"\u0935\u093f\u0936\u093e\u0932 \u0928\u091f \u092c\u094b\u0932\u094d\u091f\u0941 \u0909\u0927\u094b\u0917","thegana":"\u092c\u093f\u0930\u0917\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"006001-05200842","rakam":"chq rs-65250.72","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Vishal Hardware","baik":"Everest Bank","khata":"00600-1052-00223","rakam":"chq rs- 57194.68","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {}]),
-    (2,"Salasar HW, ktm",[
-        {"naam":"Shri Salasar Hardware Traders","thegana":"\u0924\u094d\u0930\u093f\u092a\u0941\u0930\u0947\u0936\u094d\u0935\u0930","baik":"Siddath bank","khata":"0061-509-5161","rakam":"chq rs-100000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Khadak singh bista","thegana":"new baneshwor","baik":"nepal sbi","khata":"2031 5241 4093 60NPR","rakam":"cash rs- 194200","jamma":"personal name"},
-        {}]),
-    (3,"Rani sati, brj",[
-        {"naam":"\u0930\u094b\u092f\u0932 \u091f\u094d\u0930\u0947\u0921 \u0932\u093f\u0915","thegana":"\u092c\u093f\u0930\u0917\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"00600-1052-00537 CA","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"\u0930\u0941\u092c\u093f \u0930\u0941\u0917\u091f\u093e","thegana":"\u092c\u093f\u0930\u0917\u091c","baik":"Nepal investment bank ltd","khata":"003-0508-0263191","jamma":"jitendra"},
-        {"naam":"Global Metal Industries","thegana":"\u092c\u093f\u0930\u0917\u091c","baik":"Global Bank","khata":"0110-10100-06000","rakam":"chq rs- 366938.84","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"}]),
-    (4,"kk impex, brj",[
-        {"naam":"K.K. \u0908\u092e\u094d\u092a\u0947\u0915\u094d\u0938 \u092a\u094d\u0930\u093e. \u0932\u0940.","thegana":"\u092c\u093f\u0930\u0917\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"00600-10520-1088","rakam":"chq rs-7082.62","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"\u0928\u094d\u092f\u0941 \u092a\u0936\u0941\u092a\u0924\u093f \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930","thegana":"\u092c\u093f\u0930\u0902\u0917\u0928\u094d\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"00600-1050-00379","rakam":"chq rs- 11249.88","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {}]),
-    (5,"Universal trading, ktm",[
-        {"naam":"\u092f\u0941\u0928\u093f\u0935\u0930\u094d\u0938\u0932 \u091f\u094d\u0930\u0947\u0921\u093f\u0917\u093c \u0938\u0947\u0928\u094d\u091f\u0930 \u092a\u094d\u0930\u093e. \u0932\u0940.","thegana":"\u0915\u093e\u0920\u092e\u093e\u0928\u094d\u0921\u0941","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"01000-1052-00942","rakam":"chq rs- 92500","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"\u092f\u0941\u0928\u093f\u0935\u0930\u094d\u0938\u0932 \u091f\u094d\u0930\u0947\u0921\u093f\u0917\u093c \u0938\u0947\u0928\u094d\u091f\u0930 \u092a\u094d\u0930\u093e. \u0932\u0940.","thegana":"Tripureshwor","baik":"NMB BANK","khata":"0820-0698-2880-0016","rakam":"chq rs- 170000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {}]),
-    (10,"Manokamna ,brj",[
-        {"naam":"Manokamna overseas","thegana":"\u092c\u093f\u0930\u0917\u091c","baik":"\u0917\u094d\u0932\u094b\u092c\u0932 \u092c\u0948\u0915","khata":"110-1010-005203","rakam":"cash rs-300000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Pawan kumar Agrawal","thegana":"\u092c\u093f\u0930\u0917\u091c","baik":"\u0917\u094d\u0932\u094b\u092c\u0932 \u092c\u0948\u0915","khata":"110-70100-14846","jamma":"JITENDRA"},
-        {"naam":"Manokamna overseas","thegana":"\u092c\u093f\u0930\u0917\u091c","baik":"\u0917\u094d\u0932\u094b\u092c\u0932 \u092c\u0948\u0915","khata":"0110-10100-65362","rakam":"chq rs-78715.9","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"}]),
-    (11,"Kailashpati International, Brj",[
-        {"naam":"Kailashpati international","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"Macchapucchure bank Ltd","khata":"1870-990-5036-00015","rakam":"cash rs-96850","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {},{}]),
-    (12,"Balaji metal, Hetoda",[
-        {"naam":"Balaji Metal Industries","thegana":"Hetoda","baik":"mega bank","khata":"01000-1013-9993","rakam":"chq rs-120000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Om prakash Bajaj","thegana":"teku","baik":"Everest","khata":"0100-0501-0011-41","rakam":"cash rs- 215118","jamma":"jitendra"},
-        {}]),
-    (17,"\u0917\u0928\u0947\u0936 \u091f\u094d\u0930\u0947\u0921\u093f\u0917 \u0938\u0947\u0928\u094d\u091f\u0930",[
-        {"naam":"\u0917\u0928\u0947\u0936 \u091f\u094d\u0930\u0947\u0921\u093f\u0917 \u0938\u0947\u0928\u094d\u091f\u0930","thegana":"\u0935\u093f\u0930\u0917\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"00600-105200-347","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Atlantic Overseas","thegana":"\u0935\u093f\u0930\u0917\u091c","baik":"GLOBAL","khata":"110-101-000-6050","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {}]),
-    (18,"Bikash ji ,brj",[
-        {"naam":"Tulip Polymer Industries","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"Nabil Bank Ltd.","khata":"050-101-7500-991","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Kushagra International","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"0060-0105-2014-95","rakam":"chq rs-192106.78","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Win Win Hardware Products","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"Siddharth bank Ltd.","khata":"002-165-79101","rakam":"chq Rs. 12000.60","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"}]),
-    (19,"ASIA TOOLS",[
-        {"naam":"Asia Tools House","thegana":"ktm","baik":"Prabhu Bank","khata":"1140-106-1196-00011","rakam":"chq rs-50000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Mahadev Tiwari","thegana":"ktm","baik":"Prabhu Bank","khata":"1140-13880-8100-012","rakam":"cash rs- 63000","jamma":"jitendra"},
-        {}]),
-    (20,"Priya Impex",[
-        {"naam":"Priya Impex","thegana":"Druber Marg Branch","baik":"Nepal Investment Bank","khata":"00159-020-250-610","rakam":"chq rs-105000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Mukesh kumar singhal","thegana":"Tripureshwor branch","baik":"Global ime bank","khata":"34070-1000-2550","jamma":"jitendra agrawal"},
-        {"naam":"Aarna international pvt ltd","thegana":"Ktm","baik":"NIMB Bank","khata":"0010-10103-10505","rakam":"chq rs-150000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"}]),
-    (22,"Binayak Enterprises",[
-        {"naam":"Binayak Overseas Trade Pvt.Ltd","thegana":"ktm","baik":"Kumari Bank","khata":"0050-3018-7610-0001","rakam":"chq rs-184171.92","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"GANESH DATTA JOSHI","thegana":"TRIPURESHWOR","baik":"LUMBINI BIKAS BANK LTD.","khata":"0311-1020-3647-6400-0001","rakam":"RS-80000","jamma":"jitendra agrawal"},
-        {}]),
-    (23,"Start International",[
-        {"naam":"Star International","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"00600-105201511","rakam":"chq rs-141216/-","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {},{}]),
-    (24,"shruti enterprises",[
-        {"naam":"shruti enterprises","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"0060-0105-200689","rakam":"chq rs- 220000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, BRT"},
-        {"naam":"Vinay bansal","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"600-501-211-258","rakam":"cash rs- 100000","jamma":"jitendra agrawal"},
-        {}]),
-    (25,"shree om ji trade international",[
-        {"naam":"\u0936\u094d\u0930\u0940 \u0913\u092e \u091c\u0940 \u091f\u094d\u0930\u0947\u0921 \u0908\u0928\u094d\u091f\u0930\u0928\u0947\u0936\u0928\u0932","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"Nepal investment bank","khata":"003590-2025-0283","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"sangita kumari agrawal","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"laxmi bank","khata":"0011-9000-146","jamma":"jitnedra"},
-        {}]),
-    (26,"Lotus Plastic Udhyog",[
-        {"naam":"Lotus Plastic udhyog","thegana":"Kalimati","baik":"Nepal Investment bank","khata":"01759-01025-0221","rakam":"CHQ RS- 183791.86","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"tamanna traders","thegana":"Kalimati","baik":"Nepal Investment bank","khata":"01759-01025-0306","rakam":"chq rs- 665000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Lotus Plastic udhyog","thegana":"Kalimati","baik":"Everest Bank","khata":"0370-0105-2000-63","rakam":"CHQ RS- 183791.86","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"}]),
-    (27,"Kelash hw, brj",[
-        {"naam":"Nirika Traders","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"Nepal Investment bank","khata":"0030-10500-03615","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"nitesh kumar Agrawal","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"Nepal Investment bank","khata":"0030-509000-2652","jamma":"jitendra"},
-        {}]),
-    (28,"New Famous Tar Jali, Brj",[
-        {"naam":"New Famous Tar Jali Udhyog","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"Nepal invesment bank.","khata":"0030-1050-0029-98","rakam":"chq rs-135000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Ram Asis Prasad Kurmi","baik":"Kumari Bank","khata":"00300-7575-4200-001","rakam":"cash rs-90700.64","jamma":"jitendra"},
-        {}]),
-    (29,"icon, ktm",[
-        {"naam":"ICON Traders","thegana":"Teku Branch","baik":"Prabhu Bank Limited","khata":"1140-1137-9940-0011","rakam":"chq rs-102908.73","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Prashant Mahesheka","thegana":"Bhat Bateni Branch, Kathmandu","baik":"Laxmi Sunrise Bank Ltd","khata":"0142-4005-337","rakam":"cash rs-100000","jamma":"personal name"},
-        {}]),
-    (30,"omex, brj",[
-        {"naam":"New Omax international","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"NMB BANK","khata":"019-01168-3570-0016","rakam":"chq rs-140000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"OMAX MANUFACTURING","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"NMB BANK","khata":"019-0146-4318-0000-27","rakam":"chq rs- 50000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {}]),
-    (32,"Arvind bandhu",[
-        {"naam":"Arvind Bandhu","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"Everest Bank","khata":"0060-0105-2002-84","rakam":"chq rs- 96182.77","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Nirmal Kumar agrawal","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"NMB bank","khata":"01900-5268-1300-011","rakam":"cash rs- 131150","jamma":"jitendra"},
-        {}]),
-    (33,"Satyam Techno",[
-        {"naam":"Satyam Techno Packs Pvt. Ltd.","thegana":"Halchowk Branch","baik":"Nabil Bank LTD.","khata":"320 101 7500 654","rakam":"chq rs- 92449.82","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Rajesh Paudel","thegana":"Halchowk Branch","baik":"Nabil bank ltd.","khata":"032 0101 7500 806","rakam":"cash rs- 15500","jamma":"jitendra"},
-        {}]),
-    (34,"Jagdamba Metal, Brj",[
-        {"naam":"Jagdamba Metal Udhyog","thegana":"\u092c\u0940\u0930\u0917\u091c","baik":"\u090f\u092d\u0930\u0947\u0937\u094d\u091f \u092c\u0948\u0915 \u0932\u093f\u092e\u093f\u091f\u0947\u0921\u093c","khata":"00600-1052-01353","rakam":"chq rs- 233765.92","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {},{}]),
-    (35,"Shiv Enterprises, Brj",[
-        {"naam":"Shiv Enterprises","thegana":"Birgunj","baik":"Machhapuchhre bank ltd","khata":"0040 0235 5550  0017","rakam":"chq rs- 275000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Jay Ma Vaishno Enterprises","thegana":"Birgunj","baik":"Machhapuchhre bank ltd","khata":"0040 0533 8430 0011","rakam":"chq rs-115938","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Rajendra Sharma","thegana":"Birgunj","baik":"Machhapuchhre bank ltd","khata":"0040-0004-2980-0011","rakam":"Rs-","jamma":"Jitendra"}]),
-    (36,"Rani sati, Brj",[
-        {"naam":"Royal Hardware pvt ltd","thegana":"Birgunj","baik":"global bank","khata":"1101 0100 63407","rakam":"chq rs- 67636.63","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Krishna Gopal Keyal","baik":"Siddhartha Bank","khata":"0021-5129-121","rakam":"cash rs-49615","jamma":"Jitendra"},
-        {}]),
-    (37,"Pashupati plastic Ind, Ktm",[
-        {"naam":"Pashupati Plastic Industries","baik":"Prabhu Bank","khata":"1880 1524 8870 0013","rakam":"chq rs- 57600","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {},{}]),
-    (38,"Sri Maruti Mangal, hattiguda",[
-        {"naam":"Shree Maruti Mangal","thegana":"Hattigauda","baik":"Prabhu Bank","khata":"1000 1346 7050 0016","rakam":"chq rs- 180000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Touchstone Multipurpose Co-operative ltd","thegana":"New road","baik":"Global Ime Bank","khata":"3020 1010 0021 50","rakam":"cash rs-71180","jamma":"personal name"},
-        {}]),
-    (40,"Bimal Spark House Pvt. Ltd.,Lalitpur",[
-        {"naam":"Bimal Spark House Pvt. Ltd.","thegana":"Lalitpur","baik":"Nabil Bank","khata":"2380 1017 5002 49","rakam":"chq rs- 800000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Future Exim Pvt.Ltd","thegana":"Dhobighat","baik":"Global Bank","khata":"1050-1010-0027-69","rakam":"chq rs- 500000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Future Exim Pvt.Ltd","thegana":"Dhobighat","baik":"Sanima Bank","khata":"9030-1001-0000-134","rakam":"chq rs- 400000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"}]),
-    (41,"R R Hardware Center, Brj",[
-        {"naam":"R R Hardware Center, Brj","baik":"Machhapuchchhre bank limited","khata":"0040 0002 0350 0042","rakam":"chq rs- 45007.9","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {},{}]),
-    (42,"Crystal Trade Link",[
-        {"naam":"Crystal Trade Link","baik":"Prabhu Bank Limited","khata":"0320-1529-2630-0016","rakam":"chq rs-40755","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Crystal Trade Link","baik":"Everest Bank Limited","khata":"0100-0105-2013-84","rakam":"chq rs-","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Pradip Agrawal","baik":"Everest Bank Limited","khata":"0020-0501-0062-40","rakam":"cash rs-54000","jamma":"personal name"}]),
-    (43,"Gahawamai Enterprises,Brj",[
-        {"naam":"Gahawamai Enterprises,Brj","baik":"Machhapuchhre","khata":"0040-0533-6560-0017","rakam":"chq rs-255390","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {},{}]),
-    (44,"R R Hardware Center, Brj (2)",[
-        {"naam":"R.R Hardware Center","thegana":"Birgunj","baik":"Machhapuchhre","khata":"0040-0002-0350-0042","rakam":"chq rs-76496.48","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {},{}]),
-    (45,"Tara Paint & Chemical Industries",[
-        {"naam":"TARA PAINTS & CHEMICAL INDUSTRIES PVT LTD","thegana":"Birgunj","baik":"Kumari","khata":"0030-2488-9300-0021","rakam":"chq rs-100000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {},{}]),
-    (46,"Himal Wire Netting Industrirs",[
-        {"naam":"Himal Wire Netting Industrirs","thegana":"Birgunj","baik":"Machhapuchhre","khata":"0040-9905-5340-0025","rakam":"chq rs-114319.25","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {},{}]),
-    (47,"Global Marketing, Brj",[
-        {"naam":"Global Marketing","thegana":"Birgunj","baik":"Everest Bank Ltd","khata":"0060-0105-2010-70","rakam":"chq rs-43758.6","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {"naam":"Bharat Bhushan Sarraf","thegana":"Birgunj","baik":"Everest Bank Ltd","khata":"0060-0501-2013-95","rakam":"cash rs- 49741.4","jamma":"personal name"},
-        {}]),
-    (48,"Rituraaj Impex",[
-        {"naam":"Rituraaj Impex","thegana":"Birgunj","baik":"prabhu bank","khata":"1880-1534-6760-0010","rakam":"chq no-33840","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {},{}]),
-    (49,"LAXMI BANK",[
-        {"naam":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt","thegana":"Brt","baik":"Laxmi Bank","khata":"0061-1036-434","rakam":"chq no-10,85,000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {},{}]),
-    (50,"Salasar Tools and Hardware",[
-        {"naam":"SALASAR TOOLS AND HARDWARE","thegana":"Teku","baik":"Laxmi Bank","khata":"1661-6948-0201-1079","rakam":"chq no-145000","jamma":"\u091c\u0947.\u0915\u0947. \u0939\u093e\u0930\u094d\u0921\u0935\u0947\u092f\u0930 \u0026 \u0915\u092e\u094d\u092a\u0928\u0940, Brt"},
-        {},{}]),
 ]
 
 def _rec_col(acct: int, part: int) -> int:
@@ -922,206 +505,46 @@ def _rec_col(acct: int, part: int) -> int:
 # ===========================================================================
 # TODAY PAYMENT TAB
 # ===========================================================================
-class TodayPaymentTab(QWidget):
-    def __init__(self):
-        super().__init__()
+
+class UniversalExcelGrid(QTableWidget):
+    """A generic, fully-featured Excel-like grid widget for all tabs."""
+    def __init__(self, table_name: str, rows=50, cols=15, parent=None, excel_mode=False):
+        super().__init__(rows, cols, parent)
+        self._excel_mode = excel_mode  # True = always A,B,C... no DB-backed header names
+        self.table_name = table_name
+        self._db = get_db_manager()
+        self._db_name = ""
         self._can_edit = True
-        self._tables = []
-        # Registry: (row, col) → {"key": str, "cols": (c_start, c_end), "row": int}
-        # Used to detect header cells and apply customizations
-        self._header_registry: dict[tuple, dict] = {}
-        # Persisted header customizations: {key → {"color": str, "name": str}}
-        from PyQt6.QtCore import QSettings
-        self._hdr_settings = QSettings("JKCatalog", "TodayPaymentHeaders")
-        self._header_customizations: dict[str, dict] = {}
-        # Load saved customizations
-        raw = self._hdr_settings.value("customizations", {})
-        if isinstance(raw, dict):
-            self._header_customizations = raw
         
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        self.setFont(_H_NORM)
+        self.setAlternatingRowColors(True)
+        self.horizontalHeader().setVisible(True)
+        def excel_col(n):
+            res = ""
+            while n >= 0:
+                res = chr(65 + (n % 26)) + res
+                n = n // 26 - 1
+            return res
+        self.setHorizontalHeaderLabels([excel_col(i) for i in range(cols)])
+        self.verticalHeader().setDefaultSectionSize(25)
+        self.horizontalHeader().setHighlightSections(False)
+        self.horizontalHeader().setStretchLastSection(True)
         
-        # --- Top Bar (Toggle Switch) ---
-        top_bar = QWidget()
-        top_bar.setStyleSheet("background-color: #f1f3f5; border-bottom: 1px solid #dee2e6;")
-        top_lay = QHBoxLayout(top_bar)
-        top_lay.setContentsMargins(15, 8, 15, 8)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_grid_context_menu)
+        self.horizontalHeader().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.horizontalHeader().customContextMenuRequested.connect(self._show_header_context_menu)
+        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         
-        title_lbl = QLabel("Today Payment")
-        title_lbl.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-        title_lbl.setStyleSheet("color: #343a40; border: none;")
-        top_lay.addWidget(title_lbl)
-        
-        top_lay.addStretch()
-        
-        from PyQt6.QtWidgets import QComboBox, QStackedWidget
-        self.view_selector = QComboBox()
-        self.view_selector.addItems(["Detailed Column View", "Classic Excel Grid View"])
-        self.view_selector.setFont(QFont("Arial", 10))
-        self.view_selector.setStyleSheet("""
-            QComboBox {
-                padding: 4px 10px;
-                border: 1px solid #ced4da;
-                border-radius: 4px;
-                background-color: white;
-            }
-        """)
-        self.view_selector.currentIndexChanged.connect(self._switch_view)
-        top_lay.addWidget(self.view_selector)
-        
-        main_layout.addWidget(top_bar)
-        
-        # --- Stacked Widget ---
-        self.stack = QStackedWidget()
-        
-        # --- VIEW 1: Column View ---
-        self.view1 = QWidget()
-        v1_layout = QVBoxLayout(self.view1)
-        v1_layout.setContentsMargins(0, 0, 0, 0)
-        
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setStyleSheet("QScrollArea { background-color: #fdfdfd; }")
-        
-        container = QWidget()
-        container.setStyleSheet("background-color: transparent;")
-        c_lay = QVBoxLayout(container)
-        c_lay.setContentsMargins(12, 12, 12, 12)
-        
-        from PyQt6.QtWidgets import QSplitter
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setStyleSheet("""
-            QSplitter::handle {
-                background-color: #dee2e6;
-                width: 2px;
-                margin: 0px 8px;
-            }
-        """)
-        
-        # Column 1
-        col1_w = QWidget()
-        col1 = QVBoxLayout(col1_w)
-        col1.setContentsMargins(0, 0, 0, 0)
-        col1.setSpacing(25)
-        
-        self.t_pay = _StyledTable(
-            "Payments", 
-            ["DATE", "Particulars", "Payment", "", ""],
-            col_widths=[100, 200, 100, 80, 80],
-            header_color="#1976D2",
-            settings_key="TodayPay_Pay"
-        )
-        self.t_pay.btn_add.clicked.connect(lambda: self._add_row(self.t_pay, 5))
-        self._tables.append(self.t_pay)
-        col1.addWidget(self.t_pay)
-
-        self.t_pur_tod = _StyledTable(
-            "Purchase (Today)", 
-            ["DATE", "Particulars", "Payment", "", ""],
-            col_widths=[100, 200, 100, 80, 80],
-            header_color="#1976D2",
-            settings_key="TodayPay_PurTod"
-        )
-        self.t_pur_tod.btn_add.clicked.connect(lambda: self._add_row(self.t_pur_tod, 5))
-        self._tables.append(self.t_pur_tod)
-        col1.addWidget(self.t_pur_tod)
-
-        self.t_pur_upc = _StyledTable(
-            "Purchase (Upcoming)", 
-            ["DATE", "Particulars", "Payment", "", ""],
-            col_widths=[100, 200, 100, 80, 80],
-            header_color="#1976D2",
-            settings_key="TodayPay_PurUpc"
-        )
-        self.t_pur_upc.btn_add.clicked.connect(lambda: self._add_row(self.t_pur_upc, 5))
-        self._tables.append(self.t_pur_upc)
-        col1.addWidget(self.t_pur_upc)
-        col1.addStretch()
-        
-        # Column 2
-        col2_w = QWidget()
-        col2 = QVBoxLayout(col2_w)
-        col2.setContentsMargins(0, 0, 0, 0)
-        col2.setSpacing(25)
-        
-        self.t_dl = _StyledTable(
-            "Demand Loans (DL)", 
-            ["SN", "DL No.", "Amount", "Expiry Date", "Day's left", "Gap"],
-            col_widths=[40, 100, 100, 110, 75, 55],
-            header_color="#388E3C",
-            settings_key="TodayPay_DL"
-        )
-        self.t_dl.btn_add.clicked.connect(self._add_dl_row)
-        self.t_dl.table.itemChanged.connect(self._calc_days_left)
-        self._tables.append(self.t_dl)
-        col2.addWidget(self.t_dl)
-        
-        self.t_acc = _StyledTable(
-            "Account Table", 
-            ["Account Name", "Remain Cash", "Bank / Cash"],
-            col_widths=[200, 120, 120],
-            header_color="#F57C00",
-            settings_key="TodayPay_Acc"
-        )
-        self.t_acc.btn_add.clicked.connect(lambda: self._add_row(self.t_acc, 3))
-        self._tables.append(self.t_acc)
-        col2.addWidget(self.t_acc)
-        
-        self.t_lim = _StyledTable(
-            "Limits & LC", 
-            ["Limit Type", "Amount"],
-            col_widths=[200, 150],
-            header_color="#D84315",
-            settings_key="TodayPay_Lim"
-        )
-        self.t_lim.btn_add.clicked.connect(lambda: self._add_row(self.t_lim, 2))
-        self._tables.append(self.t_lim)
-        col2.addWidget(self.t_lim)
-        col2.addStretch()
-        
-        splitter.addWidget(col1_w)
-        splitter.addWidget(col2_w)
-        splitter.setStretchFactor(0, 5)
-        splitter.setStretchFactor(1, 5)
-        
-        c_lay.addWidget(splitter)
-        scroll.setWidget(container)
-        v1_layout.addWidget(scroll)
-        self.stack.addWidget(self.view1)
-        
-        # --- VIEW 2: Excel Grid View ---
-        self.view2 = QWidget()
-        v2_layout = QVBoxLayout(self.view2)
-        v2_layout.setContentsMargins(12, 12, 12, 12)
-        
-        # Removed spacer columns to make it one massive, tight table
-        grid_headers = [""] * 13
-        self.grid = QTableWidget(50, len(grid_headers))
-        self.grid.setHorizontalHeaderLabels(grid_headers)
-        self.grid.horizontalHeader().setVisible(False)
-        self.grid.setFont(_H_NORM)
-        self.grid.setAlternatingRowColors(True)
-        self.grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.grid.customContextMenuRequested.connect(self._show_grid_context_menu)
-        
-        # Monkey-patch keyPressEvent to support Delete/Backspace for clearing cells
-        original_key_press_today = self.grid.keyPressEvent
-        def grid_key_press_today(event):
-            if getattr(self, "_can_edit", True) and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
-                for item in self.grid.selectedItems():
-                    item.setText("")
-                    self._grid_item_changed(item)
-            else:
-                original_key_press_today(event)
-        self.grid.keyPressEvent = grid_key_press_today
-        self.grid.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
-        self.grid.setStyleSheet("""
+        self.setStyleSheet('''
             QTableWidget {
                 gridline-color: #dee2e6;
                 alternate-background-color: #f8f9fa;
                 border: 1px solid #ced4da;
+            }
+            QTableWidget::item:selected {
+                background-color: rgba(0, 0, 0, 0);
+                border: 2px solid #0055ff;
             }
             QHeaderView::section:horizontal {
                 background-color: #1A2035;
@@ -1130,545 +553,1016 @@ class TodayPaymentTab(QWidget):
                 border: 1px solid #ced4da;
                 font-weight: bold;
             }
-        """)
+        ''')
         
-        widths = [90, 220, 110, 80, 80, 180, 110, 110, 40, 90, 110, 100, 70]
-        for i, w in enumerate(widths):
-            self.grid.setColumnWidth(i, w)
+        for i in range(cols):
+            self.setColumnWidth(i, 110)
+                
+        self.itemChanged.connect(self._grid_item_changed)
+        self.horizontalHeader().sectionResized.connect(self._save_dragged_col_width)
         
-        self.grid.itemChanged.connect(self._grid_item_changed)
-        v2_layout.addWidget(self.grid)
-        self.stack.addWidget(self.view2)
-        
-        main_layout.addWidget(self.stack)
-        self._db = get_db_manager()
-        self._db_name = ""  # Set via set_company_path when company is loaded
-        self._load_data()
-
-    def set_company_path(self, path: str):
-        """Called by SuppPaymentUI when the company session is activated."""
-        import os
-        company_name = os.path.basename(os.path.normpath(path))
-        self._db_name = build_logical_name(company_name, company_path=path)
-        self._db.ensure_database_exists(self._db_name, path)
-        self._ensure_tables()
-        self._load_from_db()
-
-    def _ensure_tables(self):
-        """Create today_payment tables if they don't exist yet."""
-        for table, ddl in [
-            ("tp_payments",  "CREATE TABLE tp_payments  (sn INT IDENTITY, date NVARCHAR(50), particulars NVARCHAR(MAX), payment NVARCHAR(100), col4 NVARCHAR(100), col5 NVARCHAR(200))"),
-            ("tp_pur_today", "CREATE TABLE tp_pur_today (sn INT IDENTITY, date NVARCHAR(50), particulars NVARCHAR(MAX), payment NVARCHAR(100), col4 NVARCHAR(100), col5 NVARCHAR(200))"),
-            ("tp_pur_upcoming", "CREATE TABLE tp_pur_upcoming (sn INT IDENTITY, date NVARCHAR(50), particulars NVARCHAR(MAX), payment NVARCHAR(100), col4 NVARCHAR(100), col5 NVARCHAR(200))"),
-            ("tp_accounts", "CREATE TABLE tp_accounts (sn INT IDENTITY, account_name NVARCHAR(200), remain_cash NVARCHAR(100), bank_cash NVARCHAR(100))"),
-            ("tp_limits",   "CREATE TABLE tp_limits   (sn INT IDENTITY, limit_type NVARCHAR(200), amount NVARCHAR(100), col3 NVARCHAR(100))"),
-            ("tp_dl",       "CREATE TABLE tp_dl       (sn INT IDENTITY, dl_no NVARCHAR(100), amount NVARCHAR(100), expiry_date NVARCHAR(50), days_left NVARCHAR(20), gap NVARCHAR(20))"),
-            # Independent grid storage — decoupled from column view tables
-            ("tp_grid_data", "CREATE TABLE tp_grid_data (row_idx INT NOT NULL, col_idx INT NOT NULL, cell_text NVARCHAR(MAX), bg_color NVARCHAR(20), PRIMARY KEY (row_idx, col_idx))"),
-        ]:
-            self._db.ensure_table(self._db_name, table, ddl)
-
-    def _load_from_db(self):
-        """Load data from DB and populate both Column View and Grid View."""
-        if not self._db_name:
-            return
-
-        def fetch(sql):
-            rows = self._db.execute_query(self._db_name, sql)
-            return [tuple(str(c) if c is not None else "" for c in row) for row in rows] if rows else []
-
-        pay_data     = fetch("SELECT date, particulars, payment, col4, col5 FROM tp_payments  ORDER BY sn")
-        pur_tod_data = fetch("SELECT date, particulars, payment, col4, col5 FROM tp_pur_today  ORDER BY sn")
-        pur_upc_data = fetch("SELECT date, particulars, payment, col4, col5 FROM tp_pur_upcoming ORDER BY sn")
-        acc_data     = fetch("SELECT account_name, remain_cash, bank_cash     FROM tp_accounts  ORDER BY sn")
-        lim_data     = fetch("SELECT limit_type, amount, col3                 FROM tp_limits    ORDER BY sn")
-        dl_raw       = fetch("SELECT dl_no, amount, expiry_date, days_left, gap FROM tp_dl      ORDER BY sn")
-        # Prepend display SN — grid expects 6-tuple: (sn, dl_no, amount, expiry_date, days_left, gap)
-        dl_data      = [(str(i + 1),) + row for i, row in enumerate(dl_raw)]
-
-        # 1. Fill Column View only — Grid View is independent
-        def fill(t_obj, data, ncols):
-            t_obj.table.setRowCount(len(data))
-            for r, row in enumerate(data):
-                for c in range(ncols):
-                    t_obj.table.setItem(r, c, QTableWidgetItem(row[c] if c < len(row) else ""))
-            t_obj.recalculate_height()
-
-        fill(self.t_pay,     pay_data,     5)
-        fill(self.t_pur_tod, pur_tod_data, 5)
-        fill(self.t_pur_upc, pur_upc_data, 5)
-        fill(self.t_acc,     acc_data,     3)
-        fill(self.t_lim,     lim_data,     3)
-        # DL Column View: 6 cols with SN prepended
-        self.t_dl.table.setRowCount(len(dl_data))
-        for r, row in enumerate(dl_data):
-            for c, val in enumerate(row):
-                item = QTableWidgetItem(val)
-                if c == 4:  # days_left — read-only + bold
-                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    f = item.font(); f.setBold(True); item.setFont(f)
-                self.t_dl.table.setItem(r, c, item)
-        self.t_dl.recalculate_height()
-
-        # 2. Load Grid View from its own DB table.
-        #    If tp_grid_data is empty this is the first run — seed from column view data.
-        grid_rows = self._db.execute_query(self._db_name, "SELECT COUNT(*) FROM tp_grid_data")
-        grid_count = grid_rows[0][0] if grid_rows else 0
-        if grid_count == 0:
-            # First-time seed
-            self._populate_grid(pay_data, pur_tod_data, pur_upc_data, acc_data, lim_data, dl_data)
-            self._save_grid_to_db()           # persist the seeded state
-        else:
-            self._load_grid_from_db()         # restore previously saved grid state
-
-    def save_section(self, table_name: str, t_obj, col_names: list[str]):
-        """Save a single _StyledTable section back to the database."""
-        if not self._db_name:
-            return
+    def _save_dragged_col_width(self, logicalIndex, oldSize, newSize):
+        if not self._db_name: return
+        # Save to DB so column widths are portable to client machines
         conn = self._db.get_connection(self._db_name)
-        if not conn:
-            return
+        if not conn: return
         cur = conn.cursor()
         try:
-            cur.execute(f"DELETE FROM {table_name}")
-            for r in range(t_obj.table.rowCount()):
-                vals = []
-                for c in range(len(col_names)):
-                    it = t_obj.table.item(r, c)
-                    vals.append(it.text().strip() if it else "")
-                placeholders = ", ".join(["?"] * len(col_names))
-                cur.execute(f"INSERT INTO {table_name} ({', '.join(col_names)}) VALUES ({placeholders})", vals)
+            cur.execute(
+                "DELETE FROM " + self.table_name + " WHERE row_idx=-2 AND col_idx=?",
+                (logicalIndex,))
+            cur.execute(
+                "INSERT INTO " + self.table_name +
+                " (row_idx, col_idx, cell_text, bg_color) VALUES (-2,?,?,'')",
+                (logicalIndex, str(newSize)))
             conn.commit()
         except Exception as e:
             conn.rollback()
-            print(f"[ERROR] save_section({table_name}): {e}")
-
-    # ── Grid persistence helpers ───────────────────────────────────────────────
-
-    def _save_grid_to_db(self):
-        """Persist all non-empty grid cells to tp_grid_data."""
-        if not self._db_name:
-            return
-        conn = self._db.get_connection(self._db_name)
-        if not conn:
-            return
-        cur = conn.cursor()
-        try:
-            cur.execute("DELETE FROM tp_grid_data")
-            for r in range(self.grid.rowCount()):
-                for c in range(self.grid.columnCount()):
-                    it = self.grid.item(r, c)
-                    if it is None:
-                        continue
-                    text = it.text()
-                    bg   = it.background().color().name() if it.background().style() != 0 else ""
-                    if text or bg:
-                        cur.execute(
-                            "INSERT INTO tp_grid_data (row_idx, col_idx, cell_text, bg_color) VALUES (?,?,?,?)",
-                            (r, c, text, bg)
-                        )
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
-            print(f"[ERROR] _save_grid_to_db: {e}")
-
-    def _load_grid_from_db(self):
-        """Restore the grid from tp_grid_data, then repaint section headers on top."""
-        if not self._db_name:
-            return
-        rows = self._db.execute_query(
-            self._db_name,
-            "SELECT row_idx, col_idx, cell_text, bg_color FROM tp_grid_data"
-        )
-        self.grid.blockSignals(True)
-        self.grid.clearContents()
-        self._header_registry.clear()
-        for row_idx, col_idx, text, bg_color in (rows or []):
-            it = QTableWidgetItem(text or "")
-            if bg_color and bg_color != "#000000":
-                it.setBackground(QBrush(QColor(bg_color)))
-            self.grid.setItem(int(row_idx), int(col_idx), it)
-        self.grid.blockSignals(False)
-        # Repaint header rows on top so they stay styled + editable
-        # We call _paint_grid_headers which only sets the very first row (row 0)
-        self._paint_grid_headers()
-        # Re-register header cells by running paint_sub_header logic with no data
-        self._restore_header_registry()
-
-    def _restore_header_registry(self):
-        """Scan the loaded grid and rebuild _header_registry from QSettings customizations.
-        Called after _load_grid_from_db so right-click rename/color still works."""
-        self._header_registry.clear()
-        # Re-invoke paint_sub_header for the known fixed header positions.
-        # We don't touch cell text/color — they were already restored from DB.
-        # We just register the cells so context menu recognises them.
-        sections = [
-            # (row, c_start, c_end, default_name, default_color)
-            (0,  0,  4, "Payments",           "#1976D2"),
-            (0,  5,  7, "Account Table",       "#F57C00"),
-            (0,  8, 12, "Demand Loans (DL)",   "#388E3C"),
-        ]
-        for r, c_start, c_end, name, color in sections:
-            key = f"{r}_{c_start}"
-            for c in range(c_start, c_end + 1):
-                self._header_registry[(r, c)] = {
-                    "key": key, "cols": (c_start, c_end), "row": r,
-                    "default_name": name, "default_color": color
-                }
-            # Also register dynamic rows (Purchase Today, Upcoming, Limits) if present
-        # Scan all rows for colored cells that look like section headers
-        for r in range(self.grid.rowCount()):
-            for c in range(self.grid.columnCount()):
-                it = self.grid.item(r, c)
-                if it is None:
-                    continue
-                bg = it.background().color()
-                # If it has a dark non-white background and bold font → likely a header
-                if bg.isValid() and bg.name() not in ("#000000", "#ffffff", "", "#1a2035") \
-                        and (r, c) not in self._header_registry:
-                    # Use the cell's text as both key and default name
-                    key = f"{r}_{c}"
-                    self._header_registry[(r, c)] = {
-                        "key": key, "cols": (c, c), "row": r,
-                        "default_name": it.text(), "default_color": bg.name()
-                    }
-                    # Make anchor editable
-                    it.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsSelectable)
-
-    def _populate_grid(self, pay_data, pur_tod_data, pur_upc_data, acc_data, lim_data, dl_data):
-        """Paint section headers and fill data into the Excel Grid View."""
-        self.grid.clearContents()
-        self._header_registry.clear()  # Reset registry before repainting
-
-        def paint_sub_header(r, c_start, c_end, text, col_headers=None, bg="#1976D2"):
-            # Apply any saved customizations for this header block
-            key = f"{r}_{c_start}"
-            custom = self._header_customizations.get(key, {})
-            actual_text = custom.get("name", text)
-            actual_bg   = custom.get("color", bg)
-            actual_fg   = custom.get("text_color", "#ffffff")
-            for c in range(c_start, c_end + 1):
-                item = QTableWidgetItem(actual_text if c == c_start else "")
-                # Anchor cell is editable so the user can type directly
-                # (User request: all headers are just cells, so they should all be editable and selectable)
-                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsSelectable)
-                item.setBackground(QBrush(QColor(actual_bg)))
-                item.setForeground(QBrush(QColor(actual_fg)))
-                item.setFont(_H_BOLD)
-                self.grid.setItem(r, c, item)
-                # Register this cell as a header
-                self._header_registry[(r, c)] = {
-                    "key": key, "cols": (c_start, c_end), "row": r,
-                    "default_name": text, "default_color": bg
-                }
-            if c_start != c_end:
-                self.grid.setSpan(r, c_start, 1, c_end - c_start + 1)
-            if col_headers:
-                for idx, h in enumerate(col_headers):
-                    if c_start + idx <= c_end:
-                        h_item = QTableWidgetItem(h)
-                        h_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsSelectable)
-                        h_item.setBackground(QBrush(QColor("#1A2035")))
-                        h_item.setForeground(QBrush(QColor("#ffffff")))
-                        h_item.setFont(_H_BOLD)
-                        self.grid.setItem(r + 1, c_start + idx, h_item)
-
-        def fill_block(start_r, start_c, data):
-            for i, row_data in enumerate(data):
-                for j, val in enumerate(row_data):
-                    item = QTableWidgetItem(val)
-                    if start_c == 8 and j == 3:  # DL days_left (no SN in grid) — read-only + bold
-                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                        f = item.font(); f.setBold(True); item.setFont(f)
-                    self.grid.setItem(start_r + i, start_c + j, item)
-
-        # Left Column: Payments, Purchase Today, Purchase Upcoming
-        r_pur = 0
-        paint_sub_header(r_pur, 0, 4, "Payments",
-                         ["DATE", "Particulars", "Payment", "", ""], "#1976D2")
-        fill_block(r_pur + 2, 0, pay_data)
-
-        r_pur += len(pay_data) + 3
-        paint_sub_header(r_pur, 0, 4, "Purchase (Today)",
-                         ["DATE", "Particulars", "Payment", "", ""], "#1976D2")
-        fill_block(r_pur + 2, 0, pur_tod_data)
-
-        r_pur += len(pur_tod_data) + 3
-        paint_sub_header(r_pur, 0, 4, "Purchase (Upcoming)",
-                         ["DATE", "Particulars", "Payment", "", ""], "#1976D2")
-        fill_block(r_pur + 2, 0, pur_upc_data)
-
-        # Middle Column: Accounts & Limits
-        r_acc = 0
-        paint_sub_header(r_acc, 5, 7, "Account Table",
-                         ["Account Name", "Remain Cash", "Bank / Cash"], "#F57C00")
-        fill_block(r_acc + 2, 5, acc_data)
-
-        r_acc += len(acc_data) + 3
-        paint_sub_header(r_acc, 5, 7, "Limits & LC",
-                         ["Limit Type", "Amount", ""], "#D84315")
-        fill_block(r_acc + 2, 5, lim_data)
-
-        # Right Column: Demand Loans — grid only has 5 cols (8-12), so drop SN (implicit)
-        r_dl = 0
-        paint_sub_header(r_dl, 8, 12, "Demand Loans (DL)",
-                         ["DL No.", "Amount", "Expiry Date", "Day's left", "Gap"], "#388E3C")
-        # Strip the leading SN from each DL row before placing in grid
-        dl_for_grid = [row[1:] for row in dl_data] if dl_data and len(dl_data[0]) == 6 else dl_data
-        fill_block(r_dl + 2, 8, dl_for_grid)
-
-        QTimer.singleShot(100, self._adjust_heights)
-
-    def _grid_item_changed_save(self):
-        """Debounced: save the entire grid to DB after any cell change."""
-        if not self._db_name:
-            return
-        self._save_grid_to_db()
-
-    def _switch_view(self, idx):
-        self.stack.setCurrentIndex(idx)
-
-    def _paint_grid_headers(self):
-        # User requested to remove the very first row with the main headers 
-        # ("Purchases", "Accounts", etc) inside the Today Payment excel view.
-        pass
-
-    def _load_data(self):
-        """Initialize both views with empty data on startup.
-        Real data is loaded via _load_from_db() after set_company_path() is called."""
-        self._populate_grid([], [], [], [], [], [])
-
-    def _adjust_heights(self):
-        for t in self._tables:
-            t.recalculate_height()
-
-    def _add_row(self, t_obj, num_cols):
-        r = t_obj.table.rowCount()
-        t_obj.table.insertRow(r)
-        for c in range(num_cols):
-            t_obj.table.setItem(r, c, QTableWidgetItem(""))
-        t_obj.recalculate_height()
-
-    def _add_dl_row(self):
-        r = self.t_dl.table.rowCount()
-        self.t_dl.table.insertRow(r)
-        for c in range(6):
-            item = QTableWidgetItem("")
-            if c == 4:
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                font = item.font()
-                font.setBold(True)
-                item.setFont(font)
-            self.t_dl.table.setItem(r, c, item)
-        self.t_dl.recalculate_height()
-            
-    def _calc_days_left(self, item):
-        if item.column() != 3: return
-        r = item.row()
-        date_str = item.text().strip()
-        self.t_dl.table.blockSignals(True)
-        try:
-            item4 = self.t_dl.table.item(r, 4)
-            if item4 is None:
-                item4 = QTableWidgetItem("")
-                font = item4.font()
-                font.setBold(True)
-                item4.setFont(font)
-                item4.setFlags(item4.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.t_dl.table.setItem(r, 4, item4)
-
-            if not date_str:
-                item4.setText("")
-                return
-            import datetime
-            try:
-                parts = date_str.replace('-','/').replace('.','/').split('/')
-                if len(parts) >= 3:
-                    if len(parts[0]) == 4:
-                        dt = datetime.date(int(parts[0]), int(parts[1]), int(parts[2]))
-                    else:
-                        if len(parts[2]) == 2: parts[2] = "20" + parts[2]
-                        dt = datetime.date(int(parts[2]), int(parts[1]), int(parts[0]))
-                    today = datetime.date.today()
-                    diff = (dt - today).days
-                    item4.setText(str(diff))
-                else:
-                    item4.setText("?")
-            except Exception:
-                item4.setText("?")
-        finally:
-            self.t_dl.table.blockSignals(False)
-
-    def _grid_item_changed(self, item):
-        r, c = item.row(), item.column()
-
-        # Auto-save header renames (user typed directly into the anchor cell)
-        hdr_info = self._header_registry.get((r, c))
-        if hdr_info and c == hdr_info["cols"][0]:
-            key = hdr_info["key"]
-            self._header_customizations.setdefault(key, {})["name"] = item.text().strip()
-            self._hdr_settings.setValue("customizations", self._header_customizations)
-            # Also persist grid so renamed header survives reload
-            QTimer.singleShot(300, self._grid_item_changed_save)
-            return
-
-        # Persist grid data change
-        QTimer.singleShot(300, self._grid_item_changed_save)
-
-        # Grid day's left calc (Column 11 is Expiry Date, Column 12 is Day's left)
-        if c != 11:
-            return
-        date_str = item.text().strip()
-        self.grid.blockSignals(True)
-        try:
-            item12 = self.grid.item(r, 12)
-            if item12 is None:
-                item12 = QTableWidgetItem("")
-                font = item12.font()
-                font.setBold(True)
-                item12.setFont(font)
-                item12.setFlags(item12.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.grid.setItem(r, 12, item12)
-
-            if not date_str:
-                item12.setText("")
-                return
-            import datetime
-            try:
-                parts = date_str.replace('-','/').replace('.','/').split('/')
-                if len(parts) >= 3:
-                    if len(parts[0]) == 4:
-                        dt = datetime.date(int(parts[0]), int(parts[1]), int(parts[2]))
-                    else:
-                        if len(parts[2]) == 2: parts[2] = "20" + parts[2]
-                        dt = datetime.date(int(parts[2]), int(parts[1]), int(parts[0]))
-                    today = datetime.date.today()
-                    diff = (dt - today).days
-                    item12.setText(str(diff))
-                else:
-                    item12.setText("?")
-            except Exception:
-                item12.setText("?")
-        finally:
-            self.grid.blockSignals(False)
-
+        
+    def set_db_name(self, db_name: str):
+        self._db_name = db_name
+        self._ensure_table()
+        self.load_from_db()
+        
     def apply_edit_mode(self, can_edit: bool):
         self._can_edit = can_edit
-        col_flags = (QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.AnyKeyPressed) if can_edit else QTableWidget.EditTrigger.NoEditTriggers
-        for t in self._tables:
-            t.table.setEditTriggers(col_flags)
-            t.btn_add.setEnabled(can_edit)
-        # Grid: always keep DoubleClicked so header anchor cells can be renamed.
-        # Data cells are non-editable in view mode via their item flags.
-        grid_flags = (QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.AnyKeyPressed) if can_edit else QTableWidget.EditTrigger.DoubleClicked
-        self.grid.setEditTriggers(grid_flags)
-        # In view mode, strip ItemIsEditable from data cells (non-header cells)
-        if not can_edit:
-            for row in range(self.grid.rowCount()):
-                for col in range(self.grid.columnCount()):
-                    if (row, col) not in self._header_registry:
-                        it = self.grid.item(row, col)
-                        if it:
-                            it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self.setEditTriggers(
+            QTableWidget.EditTrigger.DoubleClicked
+            | QTableWidget.EditTrigger.AnyKeyPressed
+            if can_edit else QTableWidget.EditTrigger.NoEditTriggers
+        )
+        
+    def _ensure_table(self):
+        if not self._db_name: return
+        ddl = f"CREATE TABLE {self.table_name} (row_idx INT NOT NULL, col_idx INT NOT NULL, cell_text NVARCHAR(MAX), bg_color NVARCHAR(20), PRIMARY KEY (row_idx, col_idx))"
+        self._db.ensure_table(self._db_name, self.table_name, ddl)
+        
+    def keyPressEvent(self, event):
+        if self._can_edit and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            for item in self.selectedItems():
+                item.setText("")
+                self._grid_item_changed(item)
         else:
-            # Restore ItemIsEditable on all data cells in edit mode
-            for row in range(self.grid.rowCount()):
-                for col in range(self.grid.columnCount()):
-                    if (row, col) not in self._header_registry:
-                        it = self.grid.item(row, col)
-                        if it and not (it.flags() & Qt.ItemFlag.ItemIsEditable):
-                            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsSelectable)
+            super().keyPressEvent(event)
+            
+    def contextMenuEvent(self, event):
+        if not getattr(self, '_can_edit', True): return
+        menu = QMenu(self)
+        a_bg = menu.addAction("Change Background Color")
+        a_fg = menu.addAction("Change Text Color")
+        a_clear = menu.addAction("Clear Colors")
+        act = menu.exec(event.globalPos())
+        if not act: return
+        
+        ranges = self.selectedRanges()
+        if not ranges: return
+        
+        if act == a_bg:
+            c = QColorDialog.getColor(Qt.GlobalColor.white, self, "Background Color")
+            if c.isValid():
+                for r in ranges:
+                    for row in range(r.topRow(), r.bottomRow() + 1):
+                        for col in range(r.leftColumn(), r.rightColumn() + 1):
+                            it = self.item(row, col)
+                            if not it:
+                                it = QTableWidgetItem("")
+                                self.setItem(row, col, it)
+                            it.setBackground(QBrush(c))
+                self.save_to_db()
+        elif act == a_fg:
+            c = QColorDialog.getColor(Qt.GlobalColor.black, self, "Text Color")
+            if c.isValid():
+                for r in ranges:
+                    for row in range(r.topRow(), r.bottomRow() + 1):
+                        for col in range(r.leftColumn(), r.rightColumn() + 1):
+                            it = self.item(row, col)
+                            if not it:
+                                it = QTableWidgetItem("")
+                                self.setItem(row, col, it)
+                            it.setForeground(QBrush(c))
+                self.save_to_db()
+        elif act == a_clear:
+            for r in ranges:
+                for row in range(r.topRow(), r.bottomRow() + 1):
+                    for col in range(r.leftColumn(), r.rightColumn() + 1):
+                        it = self.item(row, col)
+                        if it:
+                            it.setBackground(QBrush(Qt.GlobalColor.transparent))
+                            it.setForeground(QBrush(Qt.GlobalColor.black))
+            self.save_to_db()
+
+            
+    def _grid_item_changed(self, item):
+        if getattr(self, '_loading', False): return
+        if not self._can_edit: return
+        QTimer.singleShot(300, self.save_to_db)
+        
+    def save_to_db(self):
+        if not self._db_name: return
+        conn = self._db.get_connection(self._db_name)
+        if not conn: return
+        cur = conn.cursor()
+        try:
+            cur.execute("DELETE FROM " + self.table_name)
+
+            # row_idx = -1 : column names (skipped in excel_mode)
+            if not self._excel_mode:
+                for c in range(self.columnCount()):
+                    h = self.horizontalHeaderItem(c)
+                    name = h.text() if h else ""
+                    if name:
+                        cur.execute(
+                            "INSERT INTO " + self.table_name +
+                            " (row_idx, col_idx, cell_text, bg_color) VALUES (-1,?,?,'')",
+                            (c, name))
+
+            # row_idx = -2 : column widths
+            for c in range(self.columnCount()):
+                w = self.columnWidth(c)
+                cur.execute(
+                    "INSERT INTO " + self.table_name +
+                    " (row_idx, col_idx, cell_text, bg_color) VALUES (-2,?,?,'')",
+                    (c, str(w)))
+
+            # row_idx >= 0 : cell data
+            for r in range(self.rowCount()):
+                for c in range(self.columnCount()):
+                    it = self.item(r, c)
+                    if it is None: continue
+                    text = it.text()
+                    bg = ""
+                    if (it.background().style() != Qt.BrushStyle.NoBrush
+                            and it.background().color().alpha() > 0):
+                        h2 = it.background().color().name()
+                        if h2 != '#000000': bg = h2
+                    fg = ""
+                    if (it.foreground().style() != Qt.BrushStyle.NoBrush
+                            and it.foreground().color().alpha() > 0):
+                        h2 = it.foreground().color().name()
+                        if h2 != '#000000': fg = h2
+                    packed_color = (bg + ";" + fg) if (bg or fg) else ""
+                    if text or packed_color:
+                        cur.execute(
+                            "INSERT INTO " + self.table_name +
+                            " (row_idx, col_idx, cell_text, bg_color) VALUES (?,?,?,?)",
+                            (r, c, text, packed_color))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print("[ERROR] save_to_db(" + self.table_name + "):", e)
+            
+    def load_from_db(self):
+        if not self._db_name: return
+        self._loading = True
+        all_rows = self._db.execute_query(
+            self._db_name,
+            "SELECT row_idx, col_idx, cell_text, bg_color FROM " + self.table_name
+        ) or []
+        self.blockSignals(True)
+        self.clearContents()
+
+        # Separate metadata rows from data rows
+        col_names   = {}  # ci -> name  (row_idx = -1)
+        col_widths  = {}  # ci -> width (row_idx = -2)
+        data_rows   = []
+        for r, c, txt, packed in all_rows:
+            ri, ci = int(r), int(c)
+            if ri == -1:
+                col_names[ci]  = txt or ""
+            elif ri == -2:
+                try: col_widths[ci] = int(txt)
+                except: pass
+            elif ri >= 0:
+                data_rows.append((ri, ci, txt, packed))
+
+        # Apply column names from DB (skipped in excel_mode — always A,B,C...)
+        if col_names and not self._excel_mode:
+            for ci, name in col_names.items():
+                while self.columnCount() <= ci:
+                    self.insertColumn(self.columnCount())
+                if name:
+                    self.setHorizontalHeaderItem(ci, QTableWidgetItem(name))
+
+        # Apply column widths from DB (fallback to default 110)
+        for ci in range(self.columnCount()):
+            w = col_widths.get(ci, 110)
+            self.setColumnWidth(ci, w)
+
+        # Reset row count so we don't have 50 empty rows artificially inflating the height
+        self.setRowCount(0)
+
+        # Load data rows
+        for ri, ci, txt, packed in data_rows:
+            while self.rowCount() <= ri:
+                self.insertRow(self.rowCount())
+            while self.columnCount() <= ci:
+                self.insertColumn(self.columnCount())
+            it = QTableWidgetItem(txt or "")
+            if packed:
+                parts = packed.split(';')
+                bg = parts[0] if len(parts) > 0 else ""
+                fg = parts[1] if len(parts) > 1 else ""
+                if bg and bg != '#000000':
+                    it.setBackground(QBrush(QColor(bg)))
+                if fg and fg != '#000000':
+                    it.setForeground(QBrush(QColor(fg)))
+            self.setItem(ri, ci, it)
+
+        # Always ensure at least 1 empty row at the bottom for new entries
+        self.insertRow(self.rowCount())
+
+        self.blockSignals(False)
+        self._loading = False
+        
+    def _show_header_context_menu(self, pos):
+        if not self._can_edit or self._excel_mode: return
+        c = self.horizontalHeader().logicalIndexAt(pos)
+        if c < 0: return
+        
+        menu = QMenu(self)
+        menu.setStyleSheet("QMenu { background-color: white; border: 1px solid #ccc; padding: 4px; }")
+        
+        action_rename_col = menu.addAction("✏️ Rename Column Header")
+        menu.addSeparator()
+        action_insert_left = menu.addAction("Insert Column Left")
+        action_insert_right = menu.addAction("Insert Column Right")
+        menu.addSeparator()
+        action_delete = menu.addAction("Delete Column")
+        
+        action = menu.exec(self.horizontalHeader().viewport().mapToGlobal(pos))
+        if not action: return
+        
+        if action == action_rename_col:
+            from PyQt6.QtWidgets import QInputDialog
+            h = self.horizontalHeaderItem(c)
+            curr = h.text() if h else ""
+            new_name, ok = QInputDialog.getText(self, "Rename Column", "New header name:", text=curr)
+            if ok:
+                if not h:
+                    h = QTableWidgetItem(new_name)
+                    self.setHorizontalHeaderItem(c, h)
+                else:
+                    h.setText(new_name)
+                self.save_to_db()
+        elif action == action_insert_left:
+            self.insertColumn(c)
+            self.save_to_db()
+        elif action == action_insert_right:
+            self.insertColumn(c + 1)
+            self.save_to_db()
+        elif action == action_delete:
+            self.removeColumn(c)
+            self.save_to_db()
+
     def _show_grid_context_menu(self, pos):
-        if not getattr(self, "_can_edit", True):
-            return
-
-        grid = self.grid if hasattr(self, "grid") else getattr(self, "table", None)
-        if not grid:
-            return
-
-        item = grid.itemAt(pos)
-        r = item.row() if item else grid.currentRow()
-        c = item.column() if item else grid.currentColumn()
-        if r < 0: r = 0
-        if c < 0: c = 0
+        if not self._can_edit: return
+        
+        item = self.itemAt(pos)
+        r = item.row() if item else self.currentRow()
+        c = item.column() if item else self.currentColumn()
+        if r < 0 or c < 0: return
 
         menu = QMenu(self)
-
-        # — Color picker available for every cell —
-        action_bg_color = menu.addAction("🎨  Change Cell Color")
-        action_text_color = menu.addAction("🔤  Change Text Color")
+        menu.setStyleSheet("QMenu { background-color: white; border: 1px solid #ccc; padding: 4px; }")
+        
+        action_bg = menu.addAction("Change Background Color")
+        action_fg = menu.addAction("🔤 Change Text Color")
+        menu.addSeparator()
+        action_set_width = menu.addAction("↔️ Set Column Width")
+        action_rename_col = menu.addAction("✏️ Rename Column Header")
         menu.addSeparator()
         action_insert_row_above = menu.addAction("Insert Row Above")
         action_insert_row_below = menu.addAction("Insert Row Below")
         menu.addSeparator()
-        action_insert_col_left  = menu.addAction("Insert Column Left")
+        action_insert_col_left = menu.addAction("Insert Column Left")
         action_insert_col_right = menu.addAction("Insert Column Right")
         menu.addSeparator()
         action_delete_row = menu.addAction("Delete Row")
         action_delete_col = menu.addAction("Delete Column")
 
-        action = menu.exec(grid.viewport().mapToGlobal(pos))
+        action = menu.exec(self.viewport().mapToGlobal(pos))
+        if not action: return
 
-        if action == action_bg_color or action == action_text_color:
-            from PyQt6.QtWidgets import QColorDialog
-            it = grid.item(r, c)
-            if action == action_bg_color:
-                cur_color = it.background().color() if it else QColor("#ffffff")
-                dlg_title = "Pick Background Color"
-            else:
-                cur_color = it.foreground().color() if it else QColor("#000000")
-                dlg_title = "Pick Text Color"
-                
-            color = QColorDialog.getColor(cur_color, self, dlg_title)
-            if color.isValid():
-                if it is None:
-                    it = QTableWidgetItem("")
-                    grid.setItem(r, c, it)
-                    
-                if action == action_bg_color:
-                    it.setBackground(QBrush(color))
+        if action == action_set_width:
+            from PyQt6.QtWidgets import QInputDialog
+            current_width = self.columnWidth(c)
+            new_width, ok = QInputDialog.getInt(self, "Set Column Width", "Width:", current_width, 10, 2000)
+            if ok:
+                self.setColumnWidth(c, new_width)
+                if self._db_name:
+                    from PyQt6.QtCore import QSettings
+                    settings = QSettings("JKCatalog", "GridWidths")
+                    settings.setValue(f"{self._db_name}_{self.table_name}_col_{c}", new_width)
+        elif action == action_rename_col:
+            from PyQt6.QtWidgets import QInputDialog
+            h = self.horizontalHeaderItem(c)
+            curr = h.text() if h else ""
+            new_name, ok = QInputDialog.getText(self, "Rename Column", "New header name:", text=curr)
+            if ok:
+                if not h:
+                    h = QTableWidgetItem(new_name)
+                    self.setHorizontalHeaderItem(c, h)
                 else:
-                    it.setForeground(QBrush(color))
-                    
-                # If it's a header anchor cell, also save the color
-                hdr_info = self._header_registry.get((r, c))
-                if hdr_info:
-                    key = hdr_info["key"]
-                    new_hex = color.name()
-                    if action == action_bg_color:
-                        self._header_customizations.setdefault(key, {})["color"] = new_hex
-                    else:
-                        self._header_customizations.setdefault(key, {})["text_color"] = new_hex
-                    self._hdr_settings.setValue("customizations", self._header_customizations)
-                    # Apply to all cells in the span
-                    c_start, c_end = hdr_info["cols"]
-                    for col in range(c_start, c_end + 1):
-                        span_it = grid.item(r, col)
-                        if span_it:
-                            if action == action_bg_color:
-                                span_it.setBackground(QBrush(color))
-                            else:
-                                span_it.setForeground(QBrush(color))
-                self._grid_item_changed(it)
-
+                    h.setText(new_name)
+                self.save_to_db()
+        elif action == action_bg:
+            color = QColorDialog.getColor(Qt.GlobalColor.white, self, "Select Background Color")
+            if color.isValid():
+                for sel_item in self.selectedItems():
+                    if sel_item is None:
+                        sel_item = QTableWidgetItem("")
+                        self.setItem(sel_item.row(), sel_item.column(), sel_item)
+                    sel_item.setBackground(QBrush(color))
+                self.save_to_db()
+        elif action == action_fg:
+            color = QColorDialog.getColor(Qt.GlobalColor.black, self, "Select Text Color")
+            if color.isValid():
+                for sel_item in self.selectedItems():
+                    if sel_item is None:
+                        sel_item = QTableWidgetItem("")
+                        self.setItem(sel_item.row(), sel_item.column(), sel_item)
+                    self.blockSignals(True)
+                    sel_item.setForeground(QBrush(color))
+                    self.blockSignals(False)
+                self.save_to_db()
         elif action == action_insert_row_above:
-            grid.insertRow(r)
-            self._grid_item_changed_save()
+            self.insertRow(r)
+            self.save_to_db()
         elif action == action_insert_row_below:
-            grid.insertRow(r + 1)
-            self._grid_item_changed_save()
+            self.insertRow(r + 1)
+            self.save_to_db()
         elif action == action_insert_col_left:
-            grid.insertColumn(c)
-            self._grid_item_changed_save()
+            self.insertColumn(c)
+            self.save_to_db()
         elif action == action_insert_col_right:
-            grid.insertColumn(c + 1)
-            self._grid_item_changed_save()
+            self.insertColumn(c + 1)
+            self.save_to_db()
         elif action == action_delete_row:
-            grid.removeRow(r)
-            self._grid_item_changed_save()
+            self.removeRow(r)
+            self.save_to_db()
         elif action == action_delete_col:
-            grid.removeColumn(c)
-            self._grid_item_changed_save()
+            self.removeColumn(c)
+            self.save_to_db()
+
+
+
+
+# ===========================================================================
+# SECTION WIDGET  -  a single named section in the Today Payment detailed view
+# ===========================================================================
+class SectionWidget(QWidget):
+    """Colored header bar + user-managed QTableWidget (columns and rows)."""
+
+    def __init__(self, section_id, name, color, db_manager, db_name, parent=None):
+        super().__init__(parent)
+        self.section_id = section_id
+        self._db        = db_manager
+        self._db_name   = db_name
+        self._can_edit  = True
+        self._saving    = False
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Header bar
+        self._hdr = QWidget()
+        self._hdr.setStyleSheet(
+            "background-color:" + color + "; border-radius:4px 4px 0 0;")
+        hlay = QHBoxLayout(self._hdr)
+        hlay.setContentsMargins(10, 5, 6, 5)
+        hlay.setSpacing(4)
+
+        self.title_lbl = QLabel(name)
+        self.title_lbl.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        self.title_lbl.setStyleSheet(
+            "color:white; border:none; background:transparent;")
+        hlay.addWidget(self.title_lbl)
+        hlay.addStretch()
+
+        _bs = (
+            "QPushButton{"
+            "background:rgba(255,255,255,.18);color:white;"
+            "border:1px solid rgba(255,255,255,.35);border-radius:3px;"
+            "padding:0 7px;font-size:11px;}"
+            "QPushButton:hover{background:rgba(255,255,255,.32);}"
+        )
+        self._btn_col  = QPushButton("+ Col")
+        self._btn_col.setFixedHeight(22)
+        self._btn_row  = QPushButton("+ Row")
+        self._btn_row.setFixedHeight(22)
+        self._btn_gear = QPushButton("\u2699")
+        self._btn_gear.setFixedSize(26, 22)
+        for b in (self._btn_col, self._btn_row, self._btn_gear):
+            b.setStyleSheet(_bs)
+            hlay.addWidget(b)
+        self._btn_col.clicked.connect(self._add_column)
+        self._btn_row.clicked.connect(self._add_row)
+        self._btn_gear.clicked.connect(self._show_gear)
+        outer.addWidget(self._hdr)
+
+        # Table
+        self.table = QTableWidget(0, 0)
+        self.table.setFont(QFont("Arial", 10))
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setDefaultSectionSize(24)
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectItems)
+        self.table.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self.table.setMinimumHeight(50)
+        self.table.setStyleSheet(
+            "QTableWidget{border:1px solid #dee2e6;border-top:none;"
+            "gridline-color:#e9ecef;background:white;}"
+            "QHeaderView::section:horizontal{background:#f8f9fa;color:#343a40;"
+            "padding:4px;border:none;border-bottom:2px solid #dee2e6;"
+            "border-right:1px solid #e0e0e0;font-weight:bold;}"
+        )
+
+        self.table.horizontalHeader().setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.horizontalHeader().customContextMenuRequested.connect(
+            self._hdr_ctx)
+        self.table.horizontalHeader().sectionDoubleClicked.connect(
+            self._rename_col)
+        self.table.horizontalHeader().sectionResized.connect(
+            lambda *_: QTimer.singleShot(500, self._save_cols))
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._row_ctx)
+        self.table.itemChanged.connect(self._on_change)
+        outer.addWidget(self.table)
+        outer.addStretch()
+
+        self._load()
+
+    # ------------------------------------------------------------------ DB --
+    def _load(self):
+        if not self._db_name:
+            return
+        self.table.blockSignals(True)
+        cols = self._db.execute_query(
+            self._db_name,
+            "SELECT col_index, col_name, col_width FROM tp_section_cols "
+            "WHERE section_id=" + str(self.section_id) +
+            " ORDER BY col_index") or []
+        if cols:
+            self.table.setColumnCount(len(cols))
+            for idx, (ci, cname, cw) in enumerate(cols):
+                self.table.setHorizontalHeaderItem(
+                    idx, QTableWidgetItem(cname or ""))
+                self.table.setColumnWidth(idx, cw or 120)
+
+        data = self._db.execute_query(
+            self._db_name,
+            "SELECT row_idx, col_idx, cell_text, bg_color "
+            "FROM tp_section_data WHERE section_id=" +
+            str(self.section_id) +
+            " ORDER BY row_idx, col_idx") or []
+        if data:
+            max_r = max(r[0] for r in data)
+            self.table.setRowCount(max_r + 1)
+            for ri, ci, txt, packed in data:
+                it = QTableWidgetItem(txt or "")
+                if packed:
+                    parts = packed.split(';')
+                    bg = parts[0] if len(parts) > 0 else ""
+                    fg = parts[1] if len(parts) > 1 else ""
+                    if bg and bg != '#000000':
+                        it.setBackground(QBrush(QColor(bg)))
+                    if fg and fg != '#000000':
+                        it.setForeground(QBrush(QColor(fg)))
+                self.table.setItem(ri, ci, it)
+        self.table.blockSignals(False)
+        self._recalc()
+
+    def _save_data(self):
+        if not self._db_name or self._saving:
+            return
+        conn = self._db.get_connection(self._db_name)
+        if not conn:
+            return
+        self._saving = True
+        cur = conn.cursor()
+        try:
+            cur.execute("DELETE FROM tp_section_data WHERE section_id=?",
+                        (self.section_id,))
+            for r in range(self.table.rowCount()):
+                for c in range(self.table.columnCount()):
+                    it = self.table.item(r, c)
+                    if not it:
+                        continue
+                    txt = it.text()
+                    bg = fg = ""
+                    if (it.background().style() != Qt.BrushStyle.NoBrush
+                            and it.background().color().alpha() > 0):
+                        h = it.background().color().name()
+                        if h != '#000000':
+                            bg = h
+                    if (it.foreground().style() != Qt.BrushStyle.NoBrush
+                            and it.foreground().color().alpha() > 0):
+                        h = it.foreground().color().name()
+                        if h != '#000000':
+                            fg = h
+                    packed = (bg + ";" + fg) if (bg or fg) else ""
+                    if txt or packed:
+                        cur.execute(
+                            "INSERT INTO tp_section_data "
+                            "(section_id, row_idx, col_idx, cell_text, bg_color)"
+                            " VALUES(?,?,?,?,?)",
+                            (self.section_id, r, c, txt, packed))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print("[ERROR] SectionWidget._save_data:", e)
+        finally:
+            self._saving = False
+
+    def _save_cols(self):
+        if not self._db_name:
+            return
+        conn = self._db.get_connection(self._db_name)
+        if not conn:
+            return
+        cur = conn.cursor()
+        try:
+            cur.execute("DELETE FROM tp_section_cols WHERE section_id=?",
+                        (self.section_id,))
+            for c in range(self.table.columnCount()):
+                h = self.table.horizontalHeaderItem(c)
+                cur.execute(
+                    "INSERT INTO tp_section_cols"
+                    "(section_id, col_index, col_name, col_width)"
+                    " VALUES(?,?,?,?)",
+                    (self.section_id, c,
+                     h.text() if h else "", self.table.columnWidth(c)))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print("[ERROR] SectionWidget._save_cols:", e)
+
+    def _update_db(self, field, value):
+        if not self._db_name:
+            return
+        conn = self._db.get_connection(self._db_name)
+        if not conn:
+            return
+        cur = conn.cursor()
+        try:
+            cur.execute("UPDATE tp_sections SET " + field + "=? WHERE id=?",
+                        (value, self.section_id))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+
+    def _delete_from_db(self):
+        if not self._db_name:
+            return
+        conn = self._db.get_connection(self._db_name)
+        if not conn:
+            return
+        cur = conn.cursor()
+        try:
+            cur.execute("DELETE FROM tp_section_data WHERE section_id=?",
+                        (self.section_id,))
+            cur.execute("DELETE FROM tp_section_cols WHERE section_id=?",
+                        (self.section_id,))
+            cur.execute("DELETE FROM tp_sections WHERE id=?",
+                        (self.section_id,))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+
+    # --------------------------------------------------------------- Actions --
+    def _on_change(self, _item):
+        QTimer.singleShot(300, self._save_data)
+
+    def _add_column(self):
+        if not self._can_edit:
+            return
+        c = self.table.columnCount()
+        self.table.insertColumn(c)
+        self.table.setHorizontalHeaderItem(c, QTableWidgetItem("Column " + str(c + 1)))
+        self.table.setColumnWidth(c, 120)
+        self._save_cols()
+        self._recalc()
+
+    def _add_row(self):
+        if not self._can_edit:
+            return
+        if self.table.columnCount() == 0:
+            QMessageBox.information(self, "No Columns",
+                "Add at least one column first (+ Col).")
+            return
+        r = self.table.rowCount()
+        self.table.blockSignals(True)
+        self.table.insertRow(r)
+        for c in range(self.table.columnCount()):
+            self.table.setItem(r, c, QTableWidgetItem(""))
+        self.table.blockSignals(False)
+        self._save_data()
+        self._recalc()
+
+    def _rename_col(self, col):
+        if not self._can_edit:
+            return
+        h = self.table.horizontalHeaderItem(col)
+        old = h.text() if h else ""
+        new, ok = QInputDialog.getText(
+            self, "Rename Column", "Column name:", text=old)
+        if ok and new.strip():
+            if not h:
+                h = QTableWidgetItem()
+                self.table.setHorizontalHeaderItem(col, h)
+            h.setText(new.strip())
+            self._save_cols()
+
+    def _hdr_ctx(self, pos):
+        if not self._can_edit:
+            return
+        col = self.table.horizontalHeader().logicalIndexAt(pos)
+        if col < 0:
+            return
+        menu = QMenu(self)
+        a_ren = menu.addAction("Rename Column")
+        a_del = menu.addAction("Delete Column")
+        act = menu.exec(
+            self.table.horizontalHeader().viewport().mapToGlobal(pos))
+        if act == a_ren:
+            self._rename_col(col)
+        elif act == a_del:
+            self.table.removeColumn(col)
+            self._save_cols()
+            self._save_data()
+            self._recalc()
+
+    def _row_ctx(self, pos):
+        if not self._can_edit:
+            return
+        item = self.table.itemAt(pos)
+        r = item.row() if item else self.table.currentRow()
+        menu = QMenu(self)
+        a_del = menu.addAction("Delete Row")
+        menu.addSeparator()
+        a_bg = menu.addAction("Change Cell Color")
+        a_fg = menu.addAction("Change Text Color")
+        act = menu.exec(self.table.viewport().mapToGlobal(pos))
+        if act == a_del and r >= 0:
+            self.table.removeRow(r)
+            self._save_data()
+            self._recalc()
+        elif act in (a_bg, a_fg):
+            default = Qt.GlobalColor.white if act == a_bg else Qt.GlobalColor.black
+            title = "Background Color" if act == a_bg else "Text Color"
+            color = QColorDialog.getColor(default, self, title)
+            if color.isValid():
+                for s in self.table.selectedItems():
+                    if act == a_bg:
+                        s.setBackground(QBrush(color))
+                    else:
+                        s.setForeground(QBrush(color))
+                self._save_data()
+
+    def _show_gear(self):
+        menu = QMenu(self)
+        a_ren = menu.addAction("Rename Section")
+        a_col = menu.addAction("Change Header Color")
+        menu.addSeparator()
+        a_up  = menu.addAction("Move Left / Up")
+        a_dn  = menu.addAction("Move Right / Down")
+        menu.addSeparator()
+        a_del = menu.addAction("Delete Section")
+        act = menu.exec(
+            self._btn_gear.mapToGlobal(self._btn_gear.rect().bottomLeft()))
+        if act == a_ren:
+            new, ok = QInputDialog.getText(
+                self, "Rename Section", "Name:", text=self.title_lbl.text())
+            if ok and new.strip():
+                self.title_lbl.setText(new.strip())
+                self._update_db("name", new.strip())
+        elif act == a_col:
+            c = QColorDialog.getColor(Qt.GlobalColor.blue, self, "Header Color")
+            if c.isValid():
+                self._hdr.setStyleSheet(
+                    "background-color:" + c.name() +
+                    "; border-radius:4px 4px 0 0;")
+                self._update_db("header_color", c.name())
+        elif act == a_up:
+            self._move_section(-1)
+        elif act == a_dn:
+            self._move_section(+1)
+        elif act == a_del:
+            if QMessageBox.question(
+                    self, "Delete Section",
+                    "Delete '" + self.title_lbl.text() + "'?\nAll data will be lost.",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            ) == QMessageBox.StandardButton.Yes:
+                self._delete_from_db()
+                p = self.parent()
+                for _ in range(12):
+                    if isinstance(p, DynamicSectionView):
+                        break
+                    p = p.parent() if p else None
+                if isinstance(p, DynamicSectionView):
+                    self.deleteLater()
+                    p._rebuild()
+
+    def _move_section(self, direction):
+        """Swap sort_order with the adjacent section (direction = -1 or +1)."""
+        if not self._db_name:
+            return
+        # Get my current sort_order
+        res = self._db.execute_query(
+            self._db_name,
+            "SELECT sort_order FROM tp_sections WHERE id=" + str(self.section_id))
+        if not res:
+            return
+        my_order = res[0][0]
+        target_order = my_order + direction
+
+        # Find the section with target_order
+        res2 = self._db.execute_query(
+            self._db_name,
+            "SELECT id FROM tp_sections WHERE sort_order=" + str(target_order))
+        if not res2:
+            return  # Already at the edge
+        other_id = res2[0][0]
+
+        conn = self._db.get_connection(self._db_name)
+        if not conn:
+            return
+        cur = conn.cursor()
+        try:
+            # Swap the two sort_orders
+            cur.execute(
+                "UPDATE tp_sections SET sort_order=? WHERE id=?",
+                (target_order, self.section_id))
+            cur.execute(
+                "UPDATE tp_sections SET sort_order=? WHERE id=?",
+                (my_order, other_id))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            return
+
+        # Rebuild the parent DynamicSectionView
+        p = self.parent()
+        for _ in range(12):
+            if isinstance(p, DynamicSectionView):
+                break
+            p = p.parent() if p else None
+        if isinstance(p, DynamicSectionView):
+            p._rebuild()
+
+    def _recalc(self):
+        cols = self.table.columnCount()
+        hh = self.table.horizontalHeader().sizeHint().height() if cols else 0
+        rh = sum(self.table.rowHeight(r) for r in range(self.table.rowCount()))
+        
+        # Calculate strict height to fit exactly the rows, capped at 500px (so it scrolls if too large)
+        h = hh + rh + 6
+        h = min(max(h, 50), 500)
+        
+        self.table.setMinimumHeight(h)
+        self.table.setMaximumHeight(h)
+
+    def set_edit_mode(self, can_edit):
+        self._can_edit = can_edit
+        self.table.setEditTriggers(
+            QTableWidget.EditTrigger.DoubleClicked
+            | QTableWidget.EditTrigger.AnyKeyPressed
+            if can_edit else QTableWidget.EditTrigger.NoEditTriggers)
+        for b in (self._btn_col, self._btn_row, self._btn_gear):
+            b.setEnabled(can_edit)
+
+
+# ===========================================================================
+# DYNAMIC SECTION VIEW  -  2-column grid of SectionWidgets
+# ===========================================================================
+class DynamicSectionView(QWidget):
+
+    _DEFAULTS = [
+        ("Payments",             "#1565C0"),
+        ("Demand Loans (DL)",    "#2E7D32"),
+        ("Purchase (Today)",     "#1565C0"),
+        ("Account Table",        "#E65100"),
+        ("Purchase (Upcoming)",  "#1565C0"),
+        ("Limits & LC",          "#B71C1C"),
+    ]
+
+    def __init__(self, db_manager, parent=None):
+        super().__init__(parent)
+        self._db       = db_manager
+        self._db_name  = ""
+        self._can_edit = True
+        self._widgets  = []
+
+        vlay = QVBoxLayout(self)
+        vlay.setContentsMargins(12, 12, 12, 12)
+        vlay.setSpacing(16)
+
+        self._grid_w = QWidget()
+        self._grid_l = QGridLayout(self._grid_w)
+        self._grid_l.setSpacing(16)
+        self._grid_l.setContentsMargins(0, 0, 0, 0)
+        vlay.addWidget(self._grid_w)
+
+        self.btn_add = QPushButton("+ Add New Section")
+        self.btn_add.setFixedHeight(34)
+        self.btn_add.setStyleSheet(
+            "QPushButton{background:#f1f3f5;color:#495057;"
+            "border:2px dashed #adb5bd;border-radius:6px;"
+            "font-weight:bold;font-size:12px;}"
+            "QPushButton:hover{background:#e9ecef;border-color:#6c757d;}"
+        )
+        self.btn_add.clicked.connect(self._add_section)
+        vlay.addWidget(self.btn_add)
+        vlay.addStretch()
+
+    def set_db_name(self, db_name):
+        self._db_name = db_name
+        self._rebuild()
+
+    def _rebuild(self):
+        for w in self._widgets:
+            try:
+                w.deleteLater()
+            except RuntimeError:
+                pass
+        self._widgets.clear()
+        while self._grid_l.count():
+            item = self._grid_l.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+        if not self._db_name:
+            return
+        rows = self._db.execute_query(
+            self._db_name,
+            "SELECT id, name, header_color FROM tp_sections "
+            "ORDER BY sort_order, id") or []
+        for idx, (sid, name, color) in enumerate(rows):
+            sw = SectionWidget(
+                sid, name or "Section", color or "#1565C0",
+                self._db, self._db_name, parent=self._grid_w)
+            sw.set_edit_mode(self._can_edit)
+            self._widgets.append(sw)
+            self._grid_l.addWidget(sw, idx // 2, idx % 2, Qt.AlignmentFlag.AlignTop)
+
+    def _add_section(self):
+        if not self._can_edit or not self._db_name:
+            return
+        name, ok = QInputDialog.getText(self, "Add Section", "Section name:")
+        if not ok or not name.strip():
+            return
+        res = self._db.execute_query(
+            self._db_name,
+            "SELECT ISNULL(MAX(sort_order), 0) FROM tp_sections")
+        max_ord = (res[0][0] if res else 0) + 1
+        conn = self._db.get_connection(self._db_name)
+        if not conn:
+            return
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO tp_sections(sort_order, name, header_color)"
+                " VALUES(?,?,?)",
+                (max_ord, name.strip(), "#1565C0"))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            return
+        self._rebuild()
+
+    def set_edit_mode(self, can_edit):
+        self._can_edit = can_edit
+        self.btn_add.setEnabled(can_edit)
+        for w in self._widgets:
+            w.set_edit_mode(can_edit)
+
+
+# ===========================================================================
+# TODAY PAYMENT TAB
+# ===========================================================================
+class TodayPaymentTab(QWidget):
+
+    def __init__(self):
+        super().__init__()
+        self._can_edit = True
+        self._db       = get_db_manager()
+        self._db_name  = ""
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Top bar
+        top_bar = QWidget()
+        top_bar.setStyleSheet(
+            "background-color:#f1f3f5; border-bottom:1px solid #dee2e6;")
+        top_lay = QHBoxLayout(top_bar)
+        top_lay.setContentsMargins(15, 8, 15, 8)
+        title_lbl = QLabel("Today Payment")
+        title_lbl.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        title_lbl.setStyleSheet("color:#343a40; border:none;")
+        top_lay.addWidget(title_lbl)
+        top_lay.addStretch()
+
+        from PyQt6.QtWidgets import QComboBox, QStackedWidget
+        self.view_selector = QComboBox()
+        self.view_selector.addItems(
+            ["Detailed Column View", "Classic Excel Grid View"])
+        self.view_selector.setFont(QFont("Arial", 10))
+        self.view_selector.setStyleSheet(
+            "QComboBox{padding:4px 10px;border:1px solid #ced4da;"
+            "border-radius:4px;background:white;}")
+        self.view_selector.currentIndexChanged.connect(
+            lambda i: self.stack.setCurrentIndex(i))
+        top_lay.addWidget(self.view_selector)
+        main_layout.addWidget(top_bar)
+
+        # Stacked widget
+        self.stack = QStackedWidget()
+
+        # VIEW 0: Dynamic section view (2-col grid of user-managed sections)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea{background:#fdfdfd;}")
+        self.section_view = DynamicSectionView(self._db)
+        scroll.setWidget(self.section_view)
+        self.stack.addWidget(scroll)
+
+        # VIEW 1: Freeform Excel grid (blank, user-defined)
+        self.view2 = QWidget()
+        v2 = QVBoxLayout(self.view2)
+        v2.setContentsMargins(12, 12, 12, 12)
+        self.grid = UniversalExcelGrid("tp_grid_data", cols=26, excel_mode=True)
+        v2.addWidget(self.grid)
+        self.stack.addWidget(self.view2)
+
+        main_layout.addWidget(self.stack)
+
+    def set_company_path(self, path):
+        import os
+        company_name = os.path.basename(os.path.normpath(path))
+        self._db_name = build_logical_name(company_name, company_path=path)
+        self._db.ensure_database_exists(self._db_name, path)
+        self._ensure_tables()
+        self._seed_if_empty()
+        self.section_view.set_db_name(self._db_name)
+        self.grid.set_db_name(self._db_name)
+
+    def _ensure_tables(self):
+        for tname, ddl in [
+            ("tp_sections",
+             "CREATE TABLE tp_sections (id INT IDENTITY PRIMARY KEY, "
+             "sort_order INT, name NVARCHAR(200), header_color NVARCHAR(20))"),
+            ("tp_section_cols",
+             "CREATE TABLE tp_section_cols (id INT IDENTITY PRIMARY KEY, "
+             "section_id INT, col_index INT, col_name NVARCHAR(200), "
+             "col_width INT)"),
+            ("tp_section_data",
+             "CREATE TABLE tp_section_data (section_id INT, row_idx INT, "
+             "col_idx INT, cell_text NVARCHAR(MAX), bg_color NVARCHAR(40), "
+             "PRIMARY KEY (section_id, row_idx, col_idx))"),
+            ("tp_grid_data",
+             "CREATE TABLE tp_grid_data (row_idx INT NOT NULL, "
+             "col_idx INT NOT NULL, cell_text NVARCHAR(MAX), "
+             "bg_color NVARCHAR(40), "
+             "PRIMARY KEY (row_idx, col_idx))"),
+        ]:
+            self._db.ensure_table(self._db_name, tname, ddl)
+
+    def _seed_if_empty(self):
+        res = self._db.execute_query(
+            self._db_name, "SELECT COUNT(*) FROM tp_sections")
+        if (res[0][0] if res else 0) > 0:
+            return
+        defaults = [
+            ("Payments",             "#1565C0"),
+            ("Demand Loans (DL)",    "#2E7D32"),
+            ("Purchase (Today)",     "#1565C0"),
+            ("Account Table",        "#E65100"),
+            ("Purchase (Upcoming)",  "#1565C0"),
+            ("Limits & LC",          "#B71C1C"),
+        ]
+        conn = self._db.get_connection(self._db_name)
+        if not conn:
+            return
+        cur = conn.cursor()
+        try:
+            for i, (name, color) in enumerate(defaults):
+                cur.execute(
+                    "INSERT INTO tp_sections(sort_order, name, header_color)"
+                    " VALUES(?,?,?)", (i, name, color))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+
+    def apply_edit_mode(self, can_edit):
+        self._can_edit = can_edit
+        self.section_view.set_edit_mode(can_edit)
+        self.grid.apply_edit_mode(can_edit)
 
 
 class RecordTab(QWidget):
@@ -1710,6 +1604,20 @@ class RecordTab(QWidget):
         self._add_pe_btn.setFixedHeight(28)
         self._add_pe_btn.clicked.connect(self._add_personal_acct)
         tbar.addWidget(self._add_pe_btn)
+        btn_style = """
+            QPushButton {
+                background-color: #1976D2; color: white;
+                border: none; border-radius: 4px; padding: 0px 10px; font-weight: bold;
+            }
+            QPushButton:hover { background-color: #1565C0; }
+        """
+        self._add_row_btn.setStyleSheet(btn_style)
+        self._add_co_btn.setStyleSheet(btn_style)
+        self._add_pe_btn.setStyleSheet(btn_style)
+        self._add_row_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._add_co_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._add_pe_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
         
         from PyQt6.QtWidgets import QComboBox, QStackedWidget
         self.view_selector = QComboBox()
@@ -1737,31 +1645,8 @@ class RecordTab(QWidget):
         v0_layout.setContentsMargins(8, 8, 8, 8)
         v0_layout.setSpacing(6)
         
-        # Table
-        self.table = QTableWidget(0, self._total_cols())
-        self.table.setObjectName("RecordTable")
-        self.table.setFont(_H_NORM)
-        
+        self.table = UniversalExcelGrid("record_grid_data", cols=self._total_cols(), excel_mode=True)
         self.table.horizontalHeader().setVisible(True)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setShowGrid(True)
-        
-        self.table.setHorizontalHeaderLabels(self._headers)
-        
-        self.table.setStyleSheet("""
-            QTableWidget { gridline-color: #A0A0A0; alternate-background-color: #f8f9fa; }
-            QHeaderView::section:horizontal {
-                background-color: #1A2035;
-                color: #ffffff;
-                padding: 4px;
-                border: 1px solid #ced4da;
-                font-weight: bold;
-            }
-        """)
-        self.table.setAlternatingRowColors(True)
-        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self._show_grid_context_menu)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         v0_layout.addWidget(self.table)
         self.stack.addWidget(self.view0)
         
@@ -1783,14 +1668,30 @@ class RecordTab(QWidget):
         
         self.scroll.setWidget(self.container)
         v1_layout.addWidget(self.scroll)
+        
+        # --- Hidden Detailed Data Grid ---
+        self.detailed_table = UniversalExcelGrid("record_detailed_data", cols=self._total_cols())
+        self.detailed_table.hide()
+        v1_layout.addWidget(self.detailed_table)
+        
         self.stack.addWidget(self.view1)
         
         main_layout.addWidget(self.stack)
-        self.header_filter = HeaderEditFilter(self.table, "RecordTable")
+        self.header_filter = HeaderEditFilter(self.detailed_table, "RecordTable")
         self.header_filter.apply_customs()
 
         self._setup_columns()
-        self._load_data()
+        self.table.load_from_db()
+        self.detailed_table.load_from_db()
+        self._build_detailed_view()
+
+    def set_company_path(self, path: str):
+        import os
+        from src.logic.db_manager import build_logical_name
+        company_name = os.path.basename(os.path.normpath(path))
+        self._db_name = build_logical_name(company_name, company_path=path)
+        self.table.set_db_name(self._db_name)
+        self.detailed_table.set_db_name(self._db_name)
         self._build_detailed_view()
 
     def _update_headers(self):
@@ -1802,133 +1703,217 @@ class RecordTab(QWidget):
             name = "Personal Account" if self._n_personal == 1 else f"Personal Account {i+1}"
             self._headers.extend(["Field", name, ""])
         # Update horizontalHeaderLabels if table exists and reapply custom names/colors
-        if getattr(self, "table", None):
-            self.table.setHorizontalHeaderLabels(self._headers)
+        if getattr(self, "detailed_table", None):
+            self.detailed_table.setHorizontalHeaderLabels(self._headers)
             if self.header_filter:
                 self.header_filter.apply_customs()
 
     def _switch_view(self, idx):
         self.stack.setCurrentIndex(idx)
         
-    def _build_detailed_table(self, r, a):
-        header_idx = 3 + (a * 3)
-        acc_name = self._headers[header_idx] if header_idx < len(self._headers) else f"Account {a+1}"
-        
-        from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QAbstractScrollArea
-        NUM_ROWS = 6
-        t = QTableWidget(NUM_ROWS, 2)
-        t.setHorizontalHeaderLabels(["Field", acc_name])
-        t.horizontalHeader().setStretchLastSection(True)
-        t.verticalHeader().setVisible(False)
-        t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        # Disable both scroll bars — the table will auto-expand to show all rows
-        t.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        t.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        t.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustToContents)
-        t.setStyleSheet(
-            "QTableWidget { border: none; }"
-            "QHeaderView::section:horizontal { background-color: #1A2035; color: #ffffff; "
-            "padding: 4px; border: 1px solid #ced4da; font-weight: bold; }"
-        )
-        # Compact row heights
-        for i in range(NUM_ROWS):
-            t.setRowHeight(i, 24)
-        
-        for i in range(NUM_ROWS):
-            lbl = self.table.item(r + i, _rec_col(a, 0))
-            val = self.table.item(r + i, _rec_col(a, 1))
-            
-            t.setItem(i, 0, QTableWidgetItem(lbl.text() if lbl else ""))
-            v_item = QTableWidgetItem(val.text() if val else "")
-            if val and val.font().bold():
-                f = v_item.font()
-                f.setBold(True)
-                v_item.setFont(f)
-            t.setItem(i, 1, v_item)
-        
-        # Calculate exact height: header + (NUM_ROWS * row_height) + 2px border
-        header_h = t.horizontalHeader().sizeHint().height()
-        rows_h   = sum(t.rowHeight(i) for i in range(NUM_ROWS))
-        t.setFixedHeight(header_h + rows_h + 2)
-        return t
-
     def _build_detailed_view(self):
-        # Clear existing layout
+        # Clear existing items
         while self.c_lay.count():
             child = self.c_lay.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
                 
-        # Build individual tables based on Grid View data
+        # Styling constants
+        CARD_STYLE = """
+            QFrame#SupplierCard {
+                background-color: #ffffff;
+                border: 1px solid #e0e4e8;
+                border-radius: 12px;
+            }
+        """
+        
+        INPUT_STYLE = """
+            QLineEdit {
+                background-color: #f4f6f8;
+                border: 1px solid transparent;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-size: 13px;
+                color: #2c3e50;
+            }
+            QLineEdit:focus {
+                background-color: #ffffff;
+                border: 1px solid #3498db;
+            }
+            QLineEdit:read-only {
+                background-color: transparent;
+                color: #7f8c8d;
+            }
+        """
+        
+        LABEL_STYLE = """
+            QLabel {
+                font-size: 12px;
+                font-weight: 500;
+                color: #7f8c8d;
+            }
+        """
+        
+        from PyQt6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QFormLayout, QWidget, QGraphicsDropShadowEffect
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QColor, QFont
+        
         r = 0
-        while r < self.table.rowCount():
+        total_accts = self._n_company + self._n_personal
+        
+        while r < self.detailed_table.rowCount():
             # Skip gaps
-            if self.table.rowSpan(r, 0) == 1 and not (self.table.item(r, 0) and self.table.item(r, 0).text()):
+            if self.detailed_table.rowSpan(r, 0) == 1 and not (self.detailed_table.item(r, 0) and self.detailed_table.item(r, 0).text()):
                 r += 1
                 continue
                 
-            sn = self.table.item(r, 0).text() if self.table.item(r, 0) else ""
-            acof = self.table.item(r, 1).text() if self.table.item(r, 1) else ""
+            sn = self.detailed_table.item(r, 0).text() if self.detailed_table.item(r, 0) else ""
+            acof = self.detailed_table.item(r, 1).text() if self.detailed_table.item(r, 1) else ""
             
-            from PyQt6.QtWidgets import QGroupBox
-            group = QGroupBox(f"{sn}. {acof}")
-            group.setFont(_H_BOLD)
-            group.setStyleSheet(
-                "QGroupBox { border: 1px solid #ced4da; border-radius: 6px; "
-                "margin-top: 8px; padding-top: 8px; padding-bottom: 4px; } "
-                "QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; "
-                "padding: 0 5px; color: #1976D2; }"
-            )
-            g_lay = QVBoxLayout(group)
-            g_lay.setContentsMargins(6, 4, 6, 4)
-            g_lay.setSpacing(4)
+            # --- CARD ---
+            card = QFrame()
+            card.setObjectName("SupplierCard")
+            card.setStyleSheet(CARD_STYLE)
             
-            total_accts = self._n_company + self._n_personal
+            shadow = QGraphicsDropShadowEffect()
+            shadow.setBlurRadius(15)
+            shadow.setColor(QColor(0, 0, 0, 15))
+            shadow.setOffset(0, 2)
+            card.setGraphicsEffect(shadow)
+            
+            card_lay = QVBoxLayout(card)
+            card_lay.setContentsMargins(20, 20, 20, 20)
+            card_lay.setSpacing(15)
+            
+            # --- HEADER ROW (SN + NAME) ---
+            header_row = QHBoxLayout()
+            header_row.setSpacing(15)
+            
+            sn_label = QLabel(f"#{sn}" if sn else "#")
+            sn_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #bdc3c7;")
+            header_row.addWidget(sn_label)
+            
+            name_edit = QLineEdit(acof)
+            name_edit.setPlaceholderText("Enter Supplier Name...")
+            name_edit.setStyleSheet(INPUT_STYLE + "QLineEdit { font-size: 18px; font-weight: bold; background-color: transparent; padding: 0px; }")
+            name_edit.setReadOnly(not self._can_edit)
+            
+            def on_name_changed(text, r_idx=r):
+                self.detailed_table.blockSignals(True)
+                it = self.detailed_table.item(r_idx, 1)
+                if not it:
+                    it = self.detailed_table.QTableWidgetItem(text)
+                    self.detailed_table.setItem(r_idx, 1, it)
+                else:
+                    it.setText(text)
+                self.detailed_table.blockSignals(False)
+            
+            def on_name_finished():
+                if hasattr(self.detailed_table, 'save_to_db'):
+                    self.detailed_table.save_to_db()
+                    
+            name_edit.textEdited.connect(on_name_changed)
+            name_edit.editingFinished.connect(on_name_finished)
+            
+            header_row.addWidget(name_edit, 1)
+            card_lay.addLayout(header_row)
+            
+            # --- ACCOUNTS GRID ---
+            accts_row = QHBoxLayout()
+            accts_row.setSpacing(30)
+            
+            # Helper to build a form block
+            def build_account_form(a_idx, title_text, badge_color):
+                has_data = any(
+                    self.detailed_table.item(r + i, _rec_col(a_idx, 1)) and
+                    self.detailed_table.item(r + i, _rec_col(a_idx, 1)).text().strip()
+                    for i in range(6)
+                )
+                
+                # If overall supplier has no data in ANY account, we show all forms so they can be filled out.
+                supplier_has_data = any(
+                    self.detailed_table.item(r + i, _rec_col(x, 1)) and self.detailed_table.item(r + i, _rec_col(x, 1)).text().strip()
+                    for x in range(total_accts) for i in range(6)
+                )
+                
+                if supplier_has_data and not has_data and not self._can_edit:
+                    return None # Hide empty accounts in read mode if at least one account exists
+                    
+                form_widget = QWidget()
+                form_lay = QVBoxLayout(form_widget)
+                form_lay.setContentsMargins(0, 0, 0, 0)
+                form_lay.setSpacing(10)
+                
+                # Title Badge
+                title_lbl = QLabel(title_text)
+                title_lbl.setStyleSheet(f"""
+                    font-size: 12px; font-weight: bold; color: {badge_color};
+                    background-color: {badge_color}1A; padding: 4px 8px; border-radius: 4px;
+                """)
+                form_lay.addWidget(title_lbl, 0, Qt.AlignmentFlag.AlignLeft)
+                
+                # Form Fields
+                fields_container = QWidget()
+                flay = QFormLayout(fields_container)
+                flay.setContentsMargins(0, 5, 0, 0)
+                flay.setHorizontalSpacing(15)
+                flay.setVerticalSpacing(8)
+                
+                for i, key in enumerate(_REC_FIELD_KEYS):
+                    val_item = self.detailed_table.item(r + i, _rec_col(a_idx, 1))
+                    val_text = val_item.text() if val_item else ""
+                    
+                    lbl = QLabel(_REC_FIELD_LABELS[i])
+                    lbl.setStyleSheet(LABEL_STYLE)
+                    
+                    edit = QLineEdit(val_text)
+                    edit.setStyleSheet(INPUT_STYLE)
+                    edit.setReadOnly(not self._can_edit)
+                    
+                    if key == "rakam":
+                        edit.setStyleSheet(INPUT_STYLE + "QLineEdit { font-weight: bold; }")
+                        
+                    def on_val_edited(text, r_idx=r+i, c_idx=_rec_col(a_idx, 1)):
+                        self.detailed_table.blockSignals(True)
+                        it = self.detailed_table.item(r_idx, c_idx)
+                        if not it:
+                            from PyQt6.QtWidgets import QTableWidgetItem
+                            it = QTableWidgetItem(text)
+                            self.detailed_table.setItem(r_idx, c_idx, it)
+                        else:
+                            it.setText(text)
+                        self.detailed_table.blockSignals(False)
+                        
+                    def on_val_finished():
+                        if hasattr(self.detailed_table, 'save_to_db'):
+                            self.detailed_table.save_to_db()
+                            
+                    edit.textEdited.connect(on_val_edited)
+                    edit.editingFinished.connect(on_val_finished)
+                    
+                    flay.addRow(lbl, edit)
+                    
+                form_lay.addWidget(fields_container)
+                return form_widget
 
-            # Single horizontal row: company tables | separator | personal tables
-            # Skip any account slot whose value cells are all empty (supplier has fewer accounts)
-            all_row = QWidget()
-            all_lay = QHBoxLayout(all_row)
-            all_lay.setContentsMargins(0, 0, 0, 0)
-            all_lay.setSpacing(6)
-
-            company_tables_added = 0
+            # Build Company Accounts
             for a in range(self._n_company):
-                # Check if this account slot has any data
-                has_data = any(
-                    self.table.item(r + i, _rec_col(a, 1)) and
-                    self.table.item(r + i, _rec_col(a, 1)).text().strip()
-                    for i in range(6)
-                )
-                if has_data:
-                    all_lay.addWidget(self._build_detailed_table(r, a))
-                    company_tables_added += 1
-
-            personal_tables = []
+                title = "Company Account" if self._n_company == 1 else f"Company Account {a+1}"
+                form_w = build_account_form(a, title, "#2980b9") # Blue badge
+                if form_w:
+                    accts_row.addWidget(form_w)
+                    
+            # Build Personal Accounts
             for a in range(self._n_company, total_accts):
-                has_data = any(
-                    self.table.item(r + i, _rec_col(a, 1)) and
-                    self.table.item(r + i, _rec_col(a, 1)).text().strip()
-                    for i in range(6)
-                )
-                if has_data:
-                    personal_tables.append(self._build_detailed_table(r, a))
-
-            # Only add separator if both sides have content
-            if company_tables_added > 0 and personal_tables:
-                sep = QFrame()
-                sep.setFrameShape(QFrame.Shape.VLine)
-                sep.setFrameShadow(QFrame.Shadow.Sunken)
-                sep.setStyleSheet("color: #ced4da;")
-                all_lay.addWidget(sep)
-
-            for tbl in personal_tables:
-                all_lay.addWidget(tbl)
-
-            all_lay.addStretch()
-            g_lay.addWidget(all_row)
-
-            self.c_lay.addWidget(group)
+                title = "Personal Account" if self._n_personal == 1 else f"Personal Account {a - self._n_company + 1}"
+                form_w = build_account_form(a, title, "#27ae60") # Green badge
+                if form_w:
+                    accts_row.addWidget(form_w)
+                    
+            accts_row.addStretch()
+            card_lay.addLayout(accts_row)
+            
+            self.c_lay.addWidget(card)
             r += 6
 
         self.c_lay.addStretch()
@@ -1937,41 +1922,41 @@ class RecordTab(QWidget):
         return _REC_FIXED + (self._n_company + self._n_personal) * _REC_BLOCK
 
     def _setup_columns(self):
-        self.table.setColumnCount(self._total_cols())
-        self.table.setColumnWidth(0, 40)
-        self.table.setColumnWidth(1, 200)
+        self.detailed_table.setColumnCount(self._total_cols())
+        self.detailed_table.setColumnWidth(0, 40)
+        self.detailed_table.setColumnWidth(1, 200)
         total_accts = self._n_company + self._n_personal
         for a in range(total_accts):
-            self.table.setColumnWidth(_rec_col(a, 0), _REC_LBL_W)
-            self.table.setColumnWidth(_rec_col(a, 1), 250)
+            self.detailed_table.setColumnWidth(_rec_col(a, 0), _REC_LBL_W)
+            self.detailed_table.setColumnWidth(_rec_col(a, 1), 250)
             if a < total_accts - 1:
-                self.table.setColumnWidth(_rec_col(a, 2), _REC_SEP_W)
+                self.detailed_table.setColumnWidth(_rec_col(a, 2), _REC_SEP_W)
             else:
-                self.table.setColumnWidth(_rec_col(a, 2), 0)
+                self.detailed_table.setColumnWidth(_rec_col(a, 2), 0)
 
     def _load_data(self):
         for sn, acof, accts in _RECORD_DATA:
             self._insert_row(sn, acof, accts)
 
     def _insert_row(self, sn, acof, accts):
-        r = self.table.rowCount()
+        r = self.detailed_table.rowCount()
         # insert 6 rows for fields
         for i in range(6):
-            self.table.insertRow(r + i)
-            self.table.setRowHeight(r + i, _REC_ROW_H)
+            self.detailed_table.insertRow(r + i)
+            self.detailed_table.setRowHeight(r + i, _REC_ROW_H)
 
         # Merge SN and A/C of across 6 rows
-        self.table.setSpan(r, 0, 6, 1)
-        self.table.setSpan(r, 1, 6, 1)
+        self.detailed_table.setSpan(r, 0, 6, 1)
+        self.detailed_table.setSpan(r, 1, 6, 1)
         
         # Set SN and A/C of text in the top-left cell of the span
         sn_item = QTableWidgetItem(str(sn))
         sn_item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-        self.table.setItem(r, 0, sn_item)
+        self.detailed_table.setItem(r, 0, sn_item)
         
         acof_item = QTableWidgetItem(acof)
         acof_item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        self.table.setItem(r, 1, acof_item)
+        self.detailed_table.setItem(r, 1, acof_item)
 
         # Fill in the data for each account
         total_accts = self._n_company + self._n_personal
@@ -1991,16 +1976,16 @@ class RecordTab(QWidget):
             
             # Spacer column
             if a < total_accts - 1:
-                self.table.setSpan(r, _rec_col(a, 2), 6, 1)
+                self.detailed_table.setSpan(r, _rec_col(a, 2), 6, 1)
                 spacer = QTableWidgetItem("")
                 spacer.setFlags(Qt.ItemFlag.NoItemFlags)
-                self.table.setItem(r, _rec_col(a, 2), spacer)
+                self.detailed_table.setItem(r, _rec_col(a, 2), spacer)
 
             for i, key in enumerate(_REC_FIELD_KEYS):
                 # Label cell
                 lbl_item = QTableWidgetItem(_REC_FIELD_LABELS[i])
                 lbl_item.setFlags(Qt.ItemFlag.ItemIsEnabled) # Read only labels
-                self.table.setItem(r + i, _rec_col(a, 0), lbl_item)
+                self.detailed_table.setItem(r + i, _rec_col(a, 0), lbl_item)
 
                 # Value cell
                 val = d.get(key, "")
@@ -2009,21 +1994,21 @@ class RecordTab(QWidget):
                     f = val_item.font()
                     f.setBold(True)
                     val_item.setFont(f)
-                self.table.setItem(r + i, _rec_col(a, 1), val_item)
+                self.detailed_table.setItem(r + i, _rec_col(a, 1), val_item)
 
         # Insert Gap row
         gap_row = r + 6
-        self.table.insertRow(gap_row)
-        self.table.setRowHeight(gap_row, _REC_GAP_H)
-        self.table.setSpan(gap_row, 0, 1, self._total_cols())
+        self.detailed_table.insertRow(gap_row)
+        self.detailed_table.setRowHeight(gap_row, _REC_GAP_H)
+        self.detailed_table.setSpan(gap_row, 0, 1, self._total_cols())
         gap_item = QTableWidgetItem("")
         gap_item.setFlags(Qt.ItemFlag.NoItemFlags)
-        self.table.setItem(gap_row, 0, gap_item)
+        self.detailed_table.setItem(gap_row, 0, gap_item)
 
     def _add_supplier(self):
         if not self._can_edit: return
         self._insert_row("", "", {})
-        self.table.scrollToBottom()
+        self.detailed_table.scrollToBottom()
         self._build_detailed_view()
 
     def _add_company_acct(self):
@@ -2031,32 +2016,33 @@ class RecordTab(QWidget):
         insert_idx = _REC_FIXED + self._n_company * _REC_BLOCK
         self._n_company += 1
         self._update_headers()
-        self._setup_columns() 
-        
+
+        # Insert 3 new columns (Label, Value, Spacer)
         for i in range(3):
-            self.table.insertColumn(insert_idx + i)
-            
+            self.detailed_table.insertColumn(insert_idx + i)
+
         self._setup_columns()
-        self.table.setHorizontalHeaderLabels(self._headers)
-        if getattr(self, "header_filter", None):
-            self.header_filter.apply_customs()
-        
-        new_a = self._n_company - 1
-        for r in range(0, self.table.rowCount(), 7):
-            if self.table.rowSpan(r, 0) == 1 and not (self.table.item(r, 0) and self.table.item(r, 0).text()):
+
+        # Fill in field labels and empty values for every existing supplier row
+        self.detailed_table.blockSignals(True)
+        for r in range(0, self.detailed_table.rowCount(), 6):
+            # Skip gap rows (rows without SN text and no row span)
+            if self.detailed_table.rowSpan(r, 0) == 1 and not (self.detailed_table.item(r, 0) and self.detailed_table.item(r, 0).text()):
                 continue
-            
             for i, key in enumerate(_REC_FIELD_KEYS):
                 lbl_item = QTableWidgetItem(_REC_FIELD_LABELS[i])
                 lbl_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                self.table.setItem(r + i, insert_idx, lbl_item)
-                self.table.setItem(r + i, insert_idx + 1, QTableWidgetItem(""))
-            
-            self.table.setSpan(r, insert_idx + 2, 6, 1)
+                self.detailed_table.setItem(r + i, insert_idx, lbl_item)
+                self.detailed_table.setItem(r + i, insert_idx + 1, QTableWidgetItem(""))
+            # Spacer column spans all 6 rows
+            self.detailed_table.setSpan(r, insert_idx + 2, 6, 1)
             spacer = QTableWidgetItem("")
             spacer.setFlags(Qt.ItemFlag.NoItemFlags)
-            self.table.setItem(r, insert_idx + 2, spacer)
-            
+            self.detailed_table.setItem(r, insert_idx + 2, spacer)
+        self.detailed_table.blockSignals(False)
+
+        if hasattr(self.detailed_table, 'save_to_db'):
+            self.detailed_table.save_to_db()
         self._build_detailed_view()
 
     def _add_personal_acct(self):
@@ -2064,32 +2050,32 @@ class RecordTab(QWidget):
         insert_idx = _REC_FIXED + (self._n_company + self._n_personal) * _REC_BLOCK
         self._n_personal += 1
         self._update_headers()
-        self._setup_columns() 
-        
+
+        # Insert 3 new columns (Label, Value, Spacer)
         for i in range(3):
-            self.table.insertColumn(insert_idx + i)
-            
+            self.detailed_table.insertColumn(insert_idx + i)
+
         self._setup_columns()
-        self.table.setHorizontalHeaderLabels(self._headers)
-        if getattr(self, "header_filter", None):
-            self.header_filter.apply_customs()
-        
-        new_a = self._n_company + self._n_personal - 1
-        for r in range(0, self.table.rowCount(), 7):
-            if self.table.rowSpan(r, 0) == 1 and not (self.table.item(r, 0) and self.table.item(r, 0).text()):
+
+        # Fill in field labels and empty values for every existing supplier row
+        self.detailed_table.blockSignals(True)
+        for r in range(0, self.detailed_table.rowCount(), 6):
+            if self.detailed_table.rowSpan(r, 0) == 1 and not (self.detailed_table.item(r, 0) and self.detailed_table.item(r, 0).text()):
                 continue
-            
             for i, key in enumerate(_REC_FIELD_KEYS):
                 lbl_item = QTableWidgetItem(_REC_FIELD_LABELS[i])
                 lbl_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                self.table.setItem(r + i, insert_idx, lbl_item)
-                self.table.setItem(r + i, insert_idx + 1, QTableWidgetItem(""))
-            
-            self.table.setSpan(r, insert_idx + 2, 6, 1)
+                self.detailed_table.setItem(r + i, insert_idx, lbl_item)
+                self.detailed_table.setItem(r + i, insert_idx + 1, QTableWidgetItem(""))
+            # Spacer column spans all 6 rows
+            self.detailed_table.setSpan(r, insert_idx + 2, 6, 1)
             spacer = QTableWidgetItem("")
             spacer.setFlags(Qt.ItemFlag.NoItemFlags)
-            self.table.setItem(r, insert_idx + 2, spacer)
-            
+            self.detailed_table.setItem(r, insert_idx + 2, spacer)
+        self.detailed_table.blockSignals(False)
+
+        if hasattr(self.detailed_table, 'save_to_db'):
+            self.detailed_table.save_to_db()
         self._build_detailed_view()
 
     def apply_edit_mode(self, can_edit: bool):
@@ -2150,53 +2136,6 @@ _ANIL_COL_BAL = 6   # column index of Balance
 # Actual data from the Excel sheet (rows 2-48, excluding header)
 # (start_date, end_date, days, particular, dr, cr, balance)
 _ANIL_DATA = [
-    ("2021-02-01","2021-02-24", 23,  "Cash Payment",      4000000,    None,    4000000   ),
-    (None,        "2021-02-24", None,"Cash Recived",       None,       800000,  3200000   ),
-    (None,        "2021-03-02", None,"Cash Recived",       None,       700000,  2500000   ),
-    ("2021-01-31","2021-04-30", 89,  "Interest",          109726,     None,    2609726   ),
-    ("2021-05-01","2021-07-31", 91,  "Interest",          117116,     None,    2726842   ),
-    ("2021-08-01","2021-10-30", 90,  "Interest",          134474,     None,    2861316   ),
-    ("2021-11-01","2022-01-31", 91,  "Interest",          128406,     None,    2989722   ),
-    ("2022-02-01","2022-04-30", 88,  "Interest",          129746,     None,    3119468   ),
-    ("2022-05-01","2022-07-31", 91,  "Interest",          116916,     None,    3236384   ),
-    ("2022-07-27", None,        None, None,                None,       150000,  3086384   ),
-    ("2022-08-21", None,        None, None,                None,       50000,   3036384   ),
-    ("2022-08-31", None,        None, None,                None,       500000,  2536384   ),
-    ("2022-08-01","2022-11-15", 106, "Interest",          158724,     None,    2695108   ),
-    ("2022-11-16","2023-02-14", 90,  "Interest",          119619,     None,    2814727   ),
-    (None,        None,         None,"Cash Recived",       None,       314727,  2500000   ),
-    ("2023-02-15","2023-03-22", 35,  "Cash Recived",      43150.68,   50000,   2493150.68),
-    ("2023-03-23","2023-04-23", 31,  "Cash Recived",      38114.47,   50000,   2481265.15),
-    ("2023-04-24","2023-05-21", 27,  "Cash Recived",      33038.22,   50000,   2464303.37),
-    ("2023-05-22","2023-06-22", 31,  "Cash Recived",      37673.46,   75000,   2426976.83),
-    ("2023-06-23","2023-10-20", 119, "Cash Recived",      142426.97,  100000,  2469403.80),
-    ("2023-10-21","2023-11-26", 36,  "Cash Recived",      43840.37,   75000,   2438244.17),
-    ("2023-11-27","2024-01-16", 50,  "Cash Recived",      60121.09,   75000,   2423365.26),
-    ("2024-01-17","2024-02-27", 41,  "Cash Recived",      48998.45,   75000,   2397363.71),
-    ("2024-02-28","2024-04-15", 47,  "Cash Recived",      55566.29,   39592,   2413338.01),
-    ("2024-04-16","2024-06-04", 49,  "Cash Recived",      58316.83,   45000,   2426654.83),
-    ("2024-06-05","2024-06-05", 0,   "Cash Recived",      0,          76655,   2349999.83),
-    ("2024-06-06","2024-06-12", 6,   "Cash Recived",      6953.42,    76954,   2279999.26),
-    ("2024-06-13","2024-07-15", 32,  "Cash Recived",      35980.26,   15980,   2299999.52),
-    ("2024-07-16","2024-08-13", 28,  "Cash Recived",      31758.90,   13000,   2318758.42),
-    ("2024-08-14","2024-09-16", 33,  "Cash Recived",      37735.41,   75000,   2281493.83),
-    ("2024-09-17","2024-10-17", 30,  "Cash Recived",      33753.61,   75247,   2240000.43),
-    ("2024-10-18","2024-12-09", 52,  "Cash Recived",      57442.20,   97443,   2199999.64),
-    ("2024-12-10","2024-12-20", 10,  "Cash Recived",      10849.31,  -1000000, 3210848.95),
-    ("2024-12-21","2025-02-12", 53,  "account",           83921.92,   119435,  3175335.87),
-    ("2025-02-13","2025-03-19", 34,  "account",           53241.25,   103577,  3125000.11),
-    ("2025-03-20","2025-04-28", 39,  "account",           60102.74,   75103,   3109999.86),
-    ("2025-04-29","2025-06-06", 38,  "account",           58280.55,   78281,   3089999.40),
-    ("2025-06-07","2025-07-07", 30,  "account",           45715.06,   75716,   3059998.46),
-    ("2025-07-08","2025-08-27", 50,  "account",           75452.02,   85450,   3050000.48),
-    ("2025-08-28","2025-11-09", 73,  "account",           109800.02,  139800,  3020000.49),
-    ("2025-11-10","2025-11-10", None,"Cash Recived",       None,       800000,  2220000.49),
-    ("2025-11-11","2025-12-10", 29,  "account",           43190.14,   75680,   2187510.64),
-    ("2025-12-11","2026-01-12", 32,  "account",           34520.72,   86169,   2135862.35),
-    ("2026-01-13","2026-03-20", 66,  "account",           69517.93,   99016,   2106364.29),
-    ("2026-03-21","2026-04-22", 32,  "account",           33240.16,   76506,   2063098.45),
-    ("2026-04-23","2026-06-08", 46,  "account",           46801.25,   75900,   2033999.69),
-    ("2026-06-09","2026-07-14", 35,  "account",           35107.39,   75107,   1994000.08),
 ]
 
 _C  = Qt.AlignmentFlag.AlignCenter  | Qt.AlignmentFlag.AlignVCenter
@@ -2264,12 +2203,10 @@ class AnilHisabTab(QWidget):
         vlay.addLayout(tbar)
 
         # Formula hint
-        hint = QLabel("  Balance = Previous Balance + DR  \u2212  Cr.   (auto-calculated)")
-        hint.setStyleSheet("color:#666; font-size:11px;")
-        vlay.addWidget(hint)
+
 
         # Table
-        self.table = QTableWidget(0, len(_ANIL_COLS))
+        self.table = UniversalExcelGrid('anil_grid_data', cols=len(_ANIL_COLS))
         self.table.setObjectName("AnilHisabTable")
         self.table.setFont(_H_NORM)
         self.table.setHorizontalHeaderLabels([c[0] for c in _ANIL_COLS])
@@ -2316,8 +2253,18 @@ class AnilHisabTab(QWidget):
 
         self._blocking = False
         self._refresh_status()
+        if hasattr(self.table, 'save_to_db'):
+            self.table.save_to_db()
+
+    def set_company_path(self, path: str):
+        import os
+        from src.logic.db_manager import build_logical_name
+        company_name = os.path.basename(os.path.normpath(path))
+        self._db_name = build_logical_name(company_name, company_path=path)
+        self.table.set_db_name(self._db_name)
 
     def _add_row(self):
+
         if not self._can_edit:
             return
         r = self.table.rowCount()
@@ -2376,6 +2323,8 @@ class AnilHisabTab(QWidget):
 
         self._blocking = False
         self._refresh_status()
+        if hasattr(self.table, 'save_to_db'):
+            self.table.save_to_db()
 
     def _on_cell_changed(self, row: int, col: int):
         if self._blocking:
@@ -2413,118 +2362,6 @@ class AnilHisabTab(QWidget):
 # ===========================================================================
 _SHEET_CONFIGS = [
 ]
-
-
-class _StyledTable(QWidget):
-    def __init__(self, title, headers, col_widths=None, header_color="#2b579a", settings_key="StyledTable"):
-        super().__init__()
-        
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-        
-        hlay = QHBoxLayout()
-        hlay.setContentsMargins(4, 4, 4, 0)
-        
-        lbl = QLabel(title)
-        lbl.setFont(_H_BOLD)
-        lbl.setStyleSheet(f"""
-            QLabel {{
-                background-color: {header_color}; 
-                color: white; 
-                padding: 6px 14px; 
-                border-radius: 4px;
-            }}
-        """)
-        hlay.addWidget(lbl)
-        hlay.addStretch()
-        
-        self.btn_add = QPushButton("+ Add Row")
-        self.btn_add.setFixedHeight(28)
-        self.btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_add.setStyleSheet("""
-            QPushButton {
-                background-color: #f1f3f5;
-                color: #333;
-                border: 1px solid #ced4da;
-                border-radius: 4px;
-                padding: 0px 10px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #e9ecef;
-                border: 1px solid #adb5bd;
-            }
-            QPushButton:pressed {
-                background-color: #dee2e6;
-            }
-        """)
-        hlay.addWidget(self.btn_add)
-        layout.addLayout(hlay)
-        
-        table_frame = QFrame()
-        table_frame.setStyleSheet("""
-            QFrame {
-                border: 1px solid #dee2e6;
-                border-radius: 6px;
-                background-color: white;
-            }
-        """)
-        frame_layout = QVBoxLayout(table_frame)
-        frame_layout.setContentsMargins(1, 1, 1, 1)
-        
-        self.table = QTableWidget(0, len(headers))
-        self.table.setHorizontalHeaderLabels(headers)
-        self.table.setFont(_H_NORM)
-        self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        
-        self.table.setStyleSheet("""
-            QTableWidget {
-                border: none;
-                gridline-color: #f1f3f5;
-                background-color: transparent;
-                alternate-background-color: #f8f9fa;
-            }
-            QHeaderView::section:horizontal {
-                background-color: #1A2035;
-                border: none;
-                border-bottom: 2px solid #dee2e6;
-                border-right: 1px solid #e9ecef;
-                padding: 4px;
-                font-weight: bold;
-                color: #ffffff;
-            }
-        """)
-        
-        if col_widths:
-            for i, w in enumerate(col_widths):
-                self.table.setColumnWidth(i, w)
-        else:
-            self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-            
-        frame_layout.addWidget(self.table)
-        layout.addWidget(table_frame)
-        
-        self.header_filter = HeaderEditFilter(self.table, settings_key)
-        self.header_filter.apply_customs()
-
-    def recalculate_height(self):
-        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    
-    def recalculate_height(self):
-        h = self.table.horizontalHeader().height()
-        rows = self.table.rowCount()
-        for i in range(rows):
-            h += self.table.rowHeight(i)
-        
-        if h < 50 and rows > 0:
-            h = 30 + (rows * 24)
-            
-        h += 6
-        self.table.setMinimumHeight(h)
-        self.table.setMaximumHeight(h)
 
 
 class PaymentSheet(QWidget):
@@ -2608,7 +2445,10 @@ class PaymentSheet(QWidget):
         v2_layout = QVBoxLayout(self.view2)
         v2_layout.setContentsMargins(12, 12, 12, 12)
         
-        self.grid = QTableWidget(cfg.get("rows", 50), len(cols))
+        import hashlib
+        tab_key = hashlib.md5(cfg.get("tab", "sheet").encode()).hexdigest()[:8]
+        grid_table_name = f"sheet_{tab_key}_grid"
+        self.grid = UniversalExcelGrid(grid_table_name, rows=cfg.get("rows", 50), cols=len(cols))
         self.grid.setObjectName("PaymentSheetTable")
         self._numeric = cfg.get("numeric_cols", set())
         self.grid.setFont(_H_NORM)
@@ -2644,7 +2484,16 @@ class PaymentSheet(QWidget):
         
     def _switch_view(self, idx):
         self.stack.setCurrentIndex(idx)
-        
+
+    def set_company_path(self, path: str):
+        import os
+        from src.logic.db_manager import build_logical_name
+        company_name = os.path.basename(os.path.normpath(path))
+        db_name = build_logical_name(company_name, company_path=path)
+        # If grid is a UniversalExcelGrid, hook it up to the DB
+        if hasattr(self.grid, 'set_db_name'):
+            self.grid.set_db_name(db_name)
+
     def _paint_sections(self, sections: dict):
         for row, (label, bg, fg) in sections.items():
             if row >= self.grid.rowCount():
@@ -2740,8 +2589,11 @@ class SuppPaymentUI(QWidget):
 
     # ------------------------------------------------------------------ #
     def set_company_path(self, path: str):
-        """Propagate the active company path to Today Payment tab."""
-        self._today_payment_tab.set_company_path(path)
+        """Propagate the active company path to all tabs."""
+        for i in range(self.tabs.count()):
+            w = self.tabs.widget(i)
+            if hasattr(w, 'set_company_path'):
+                w.set_company_path(path)
 
     def add_new_sheet(self):
         if not self._can_edit:
