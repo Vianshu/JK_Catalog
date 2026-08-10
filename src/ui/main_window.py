@@ -585,7 +585,7 @@ class MainWindow(QWidget):
             ("🔑 Change &Password", self.handle_change_password, False, None, "settings.manage_users"),
             ("🔒 &Admin Panel", self.handle_admin_panel, False, None, "settings.manage_users"),
             ("📅 Ca&lendar", self.handle_calendar_mapping, False, None, "tab.calendar"),
-            ("📤 &Export Data", self.handle_export_data, False, None, "data.export"),
+            ("💾 &Backup Data", self.handle_export_data, False, None, "data.export"),
             ("📥 &Import Data", self.handle_import_data, False, None, "data.import"),
             ("🗓️ &Year End",    self.handle_year_end,   False, None, "settings.year_end"),
         ])
@@ -1753,25 +1753,23 @@ class MainWindow(QWidget):
     def _check_startup_backup(self, company_path: str):
         """Run a backup immediately on login if the last backup is >24 hours old.
 
-        Since one backup covers the ENTIRE data folder (all companies), we track
-        the timestamp per-data-folder, not per-company. This means:
-        - If User A (Company X) backs up at 9am, User B (Company Y) logging in
-          at 10am will correctly see that today's backup is done and skip it.
+        Reads the per-company last-backup timestamp from QSettings and triggers
+        _run_auto_backup if needed.  Uses a short QTimer.singleShot delay so the
+        main window has fully painted before the (potentially slow) backup starts.
         """
         from datetime import datetime, timezone
         _24H = 24 * 60 * 60  # seconds
 
-        # Key is based on the DATA FOLDER so it covers all companies inside it
-        data_path        = os.path.dirname(os.path.normpath(company_path))
-        data_folder_key  = os.path.basename(data_path)
-        ts_key = f"last_backup_data/{data_folder_key}"
+        # Key is based on the company folder name so each company is tracked independently
+        company_key = os.path.basename(os.path.normpath(company_path))
+        ts_key = f"last_backup/{company_key}"
         last_ts = self._backup_settings.value(ts_key, 0, type=float)
         now_ts  = datetime.now(timezone.utc).timestamp()
 
         elapsed = now_ts - last_ts
         if elapsed >= _24H:
             logger.info(
-                f"[AutoBackup] Data folder '{data_folder_key}' last backed up "
+                f"[AutoBackup] Last backup for '{company_key}' was "
                 f"{elapsed/3600:.1f}h ago — running startup backup."
             )
             # Delay 3 s so the UI is fully ready before the backup thread blocks disk I/O
@@ -1779,10 +1777,9 @@ class MainWindow(QWidget):
             _QT.singleShot(3_000, self._run_auto_backup)
         else:
             logger.info(
-                f"[AutoBackup] '{data_folder_key}' backed up "
+                f"[AutoBackup] '{company_key}' backed up "
                 f"{elapsed/3600:.1f}h ago — no startup backup needed."
             )
-
 
     # ─── BACKUP WORKER ────────────────────────────────────────────────────────
 
@@ -1844,10 +1841,10 @@ class MainWindow(QWidget):
             logger.info(f"[AutoBackup] Skipped — another user is already backing up.")
             self._show_backup_toast("⏭ Auto-backup skipped (another user is running it)", running=False)
         elif success:
-            logger.info(f"[AutoBackup] Backup complete for data folder '{company_key}'.")
-            self._show_backup_toast("\u2705  Auto-backup complete (all companies)", running=False)
-            # Record timestamp keyed to data folder so ALL company logins skip next time
-            ts_key = f"last_backup_data/{company_key}"
+            logger.info(f"[AutoBackup] Backup complete for '{company_key}'.")
+            self._show_backup_toast("✅  Auto-backup complete", running=False)
+            # Record timestamp so next login can check elapsed time
+            ts_key = f"last_backup/{company_key}"
             self._backup_settings.setValue(ts_key, datetime.now(timezone.utc).timestamp())
             # Audit log
             if self._security_mgr and self.user_session:
@@ -1881,7 +1878,7 @@ class MainWindow(QWidget):
     # ─── AUTO-BACKUP TRIGGER ─────────────────────────────────────────────────
 
     def _run_auto_backup(self):
-        """Fire the data-folder-wide automatic backup on a background thread.
+        """Fire the per-company automatic backup on a background thread.
 
         Guards:
           1. Same-day file check  — if today's .jkbackup already exists in the
@@ -1890,9 +1887,6 @@ class MainWindow(QWidget):
              simultaneously even if the file check races.
           3. QThread worker       — backup never blocks the UI thread.
           4. Toast bar            — non-intrusive progress indicator at the bottom.
-
-        NOTE: One backup file covers ALL companies in the data folder. The guard
-        and naming therefore use the DATA FOLDER key, not the current company key.
         """
         if getattr(self, '_backup_worker', None) is not None:
             logger.info("[AutoBackup] Backup already in progress — skipping.")
@@ -1920,42 +1914,40 @@ class MainWindow(QWidget):
             return
 
         from datetime import datetime
-        data_path        = os.path.dirname(os.path.normpath(company_path))
-        data_folder_key  = os.path.basename(data_path)   # e.g. "JK Data" — covers ALL companies
-        today_str        = datetime.now().strftime("%Y-%m-%d")
-
-        # Single backup dir for the entire data folder
-        data_backup_dir = os.path.join(backup_folder, data_folder_key)
+        company_key = os.path.basename(os.path.normpath(company_path))
+        data_path   = os.path.dirname(company_path)
+        today_str   = datetime.now().strftime("%Y-%m-%d")
+        company_backup_dir = os.path.join(backup_folder, company_key)
 
         try:
-            os.makedirs(data_backup_dir, exist_ok=True)
+            os.makedirs(company_backup_dir, exist_ok=True)
         except OSError as e:
             logger.error(f"[AutoBackup] Could not create backup folder: {e}")
             return
 
-        # Guard 1: same-day file check (cross-user via shared filesystem)
-        prefix = f"JK_AutoBackup_{data_folder_key}_{today_str}"
-        existing = [f for f in os.listdir(data_backup_dir)
+        # Guard 1: same-day file check (cross-user)
+        prefix = f"JK_AutoBackup_{company_key}_{today_str}"
+        existing = [f for f in os.listdir(company_backup_dir)
                     if f.startswith(prefix) and f.endswith(".jkbackup")]
         if existing:
             logger.info(f"[AutoBackup] Today's backup already exists: {existing[0]} — skipping.")
             return
 
         timestamp   = datetime.now().strftime("%Y-%m-%d_%H-%M")
-        output_file = os.path.join(data_backup_dir,
-                                   f"JK_AutoBackup_{data_folder_key}_{timestamp}.jkbackup")
-        lock_name   = f"JK_AutoBackup_{data_folder_key}"
+        output_file = os.path.join(company_backup_dir,
+                                   f"JK_AutoBackup_{company_key}_{timestamp}.jkbackup")
+        lock_name   = f"JK_AutoBackup_{company_key}"
 
         # Stash for use in the done-callback
-        self._pending_backup_key  = data_folder_key
+        self._pending_backup_key  = company_key
         self._pending_backup_file = os.path.basename(output_file)
-        self._pending_backup_dir  = data_backup_dir
+        self._pending_backup_dir  = company_backup_dir
 
         logger.info(f"[AutoBackup] Launching background backup: {output_file}")
-        self._show_backup_toast("\U0001f504  Auto-backup running for all companies...")
+        self._show_backup_toast(f"🔄  Auto-backup running for {company_key}…")
 
         self._backup_worker = self._BackupWorker(
-            data_path, output_file, data_folder_key, lock_name, parent=self
+            data_path, output_file, company_key, lock_name, parent=self
         )
         self._backup_worker.finished.connect(self._on_backup_done)
         self._backup_worker.start()
@@ -1963,7 +1955,7 @@ class MainWindow(QWidget):
 
     def handle_export_data(self):
         """Export the current data path to a .jkbackup file (RBAC-protected)."""
-        if not self._check_permission("data.export", "Export Data"):
+        if not self._check_permission("data.export", "Backup Data"):
             return
         if not hasattr(self, 'current_company_path') or not self.current_company_path:
             QMessageBox.warning(self, "No Company", "No company is currently loaded.")
@@ -1976,7 +1968,7 @@ class MainWindow(QWidget):
 
         from PyQt6.QtWidgets import QFileDialog
         output_file, _ = QFileDialog.getSaveFileName(
-            self, "Export Data Path",
+            self, "Backup Data",
             os.path.expanduser("~/Desktop/JK_Backup.jkbackup"),
             "JK Backup Files (*.jkbackup)"
         )

@@ -533,7 +533,7 @@ class SecurityUI(QWidget):
             ]),
             ("Settings", [
                 ("Calendar",            ["tab.calendar"],       ["calendar.edit"]),
-                ("Export Data",         [],                     ["data.export"]),
+                ("Backup Data",         [],                     ["data.export"]),
                 ("Import Data",         [],                     ["data.import"]),
                 ("Admin / Users",       [],                     ["settings.manage_users", "settings.manage_roles",
                                                                  "settings.company_config",

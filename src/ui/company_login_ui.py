@@ -640,7 +640,7 @@ class CompanyLoginUI(QWidget):
             return
         
         output_file, _ = QFileDialog.getSaveFileName(
-            self, "Export Data Path",
+            self, "Backup Data",
             os.path.expanduser("~/Desktop/JK_Backup.jkbackup"),
             "JK Backup Files (*.jkbackup)"
         )
