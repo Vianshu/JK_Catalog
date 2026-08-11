@@ -307,6 +307,30 @@ def import_data_path(backup_file, target_data_path, progress_cb=None):
                                 pass  # Paths on different drives
                     conn.commit()
                     logger.info("Updated company folder paths in restored Security DB")
+
+                # Deduplicate: if multiple companies share the same folder_path,
+                # keep only the one with the lowest id and delete the rest.
+                # This happens when the user pre-created a company before importing.
+                cursor.execute("""
+                    SELECT folder_path, MIN(id) AS keep_id
+                    FROM companies
+                    WHERE folder_path IS NOT NULL AND folder_path != ''
+                    GROUP BY folder_path
+                    HAVING COUNT(*) > 1
+                """)
+                dupes = cursor.fetchall()
+                for folder_path_val, keep_id in dupes:
+                    cursor.execute(
+                        "DELETE FROM companies WHERE folder_path = ? AND id != ?",
+                        (folder_path_val, keep_id)
+                    )
+                    logger.info(
+                        f"[Import] Removed duplicate company entry for: {folder_path_val}"
+                    )
+                if dupes:
+                    conn.commit()
+                    logger.info(f"[Import] Deduplication removed {len(dupes)} duplicate company entries.")
+
             except Exception as e:
                 logger.warning(f"Could not update folder paths: {e}")
         
