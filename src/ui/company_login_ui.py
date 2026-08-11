@@ -530,7 +530,6 @@ class CompanyLoginUI(QWidget):
         # User Requested Layout: Create and Path as Items
         self.add_item("➕ Create New Company", align_right=True, role="create")
         self.add_item("📂 Change Data Path", align_right=True, role="set_path")
-        self.add_item("📥 Import Backup Data", align_right=True, role="import")
         
         line = QListWidgetItem()
         line.setFlags(Qt.ItemFlag.NoItemFlags)
@@ -599,8 +598,6 @@ class CompanyLoginUI(QWidget):
             self.create_new_company()
         elif role == "set_path":
             self.change_path()
-        elif role == "import":
-            self.import_data()
         elif role == "login": 
             path = item.data(Qt.ItemDataRole.UserRole + 1)
             self.handle_login(path)
