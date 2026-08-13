@@ -1753,23 +1753,26 @@ class MainWindow(QWidget):
     def _check_startup_backup(self, company_path: str):
         """Run a backup immediately on login if the last backup is >24 hours old.
 
-        Reads the per-company last-backup timestamp from QSettings and triggers
+        Reads the per-data-path last-backup timestamp from QSettings and triggers
         _run_auto_backup if needed.  Uses a short QTimer.singleShot delay so the
         main window has fully painted before the (potentially slow) backup starts.
+        All companies sharing the same data path share one backup cycle per 24h.
         """
         from datetime import datetime, timezone
         _24H = 24 * 60 * 60  # seconds
 
-        # Key is based on the company folder name so each company is tracked independently
-        company_key = os.path.basename(os.path.normpath(company_path))
-        ts_key = f"last_backup/{company_key}"
-        last_ts = self._backup_settings.value(ts_key, 0, type=float)
-        now_ts  = datetime.now(timezone.utc).timestamp()
+        # Key is based on the DATA PATH folder (parent of company), not the company.
+        # This ensures all companies in the same data path share one backup per 24h.
+        data_path = os.path.dirname(os.path.normpath(company_path))
+        data_key  = os.path.basename(data_path) if os.path.basename(data_path) else "DataRoot"
+        ts_key    = f"last_backup/{data_key}"
+        last_ts   = self._backup_settings.value(ts_key, 0, type=float)
+        now_ts    = datetime.now(timezone.utc).timestamp()
 
         elapsed = now_ts - last_ts
         if elapsed >= _24H:
             logger.info(
-                f"[AutoBackup] Last backup for '{company_key}' was "
+                f"[AutoBackup] Last backup for data path '{data_key}' was "
                 f"{elapsed/3600:.1f}h ago — running startup backup."
             )
             # Delay 3 s so the UI is fully ready before the backup thread blocks disk I/O
@@ -1777,7 +1780,7 @@ class MainWindow(QWidget):
             _QT.singleShot(3_000, self._run_auto_backup)
         else:
             logger.info(
-                f"[AutoBackup] '{company_key}' backed up "
+                f"[AutoBackup] Data path '{data_key}' backed up "
                 f"{elapsed/3600:.1f}h ago — no startup backup needed."
             )
 
@@ -1835,16 +1838,17 @@ class MainWindow(QWidget):
     def _on_backup_done(self, success: bool, msg: str):
         """Slot called when the background backup thread finishes."""
         from datetime import datetime, timezone
-        company_key = getattr(self, '_pending_backup_key', '')
+        # _pending_backup_key is the data path key set by _run_auto_backup
+        data_key = getattr(self, '_pending_backup_key', '')
 
         if msg == "skipped:locked":
             logger.info(f"[AutoBackup] Skipped — another user is already backing up.")
             self._show_backup_toast("⏭ Auto-backup skipped (another user is running it)", running=False)
         elif success:
-            logger.info(f"[AutoBackup] Backup complete for '{company_key}'.")
+            logger.info(f"[AutoBackup] Backup complete for data path '{data_key}'.")
             self._show_backup_toast("✅  Auto-backup complete", running=False)
-            # Record timestamp so next login can check elapsed time
-            ts_key = f"last_backup/{company_key}"
+            # Record timestamp so next login (any company in this data path) sees it as done
+            ts_key = f"last_backup/{data_key}"
             self._backup_settings.setValue(ts_key, datetime.now(timezone.utc).timestamp())
             # Audit log
             if self._security_mgr and self.user_session:
@@ -1852,10 +1856,10 @@ class MainWindow(QWidget):
                     self.user_session, "auto_backup", module="system",
                     detail=f"Auto-backup: {getattr(self, '_pending_backup_file', '')}"
                 )
-            # Prune: keep only the 7 most recent backups for this company
+            # Prune: keep only the 7 most recent backups for this data path
             try:
                 folder = getattr(self, '_pending_backup_dir', '')
-                prefix = f"JK_AutoBackup_{company_key}_"
+                prefix = f"JK_AutoBackup_{data_key}_"
                 backups = sorted(
                     f for f in os.listdir(folder)
                     if f.startswith(prefix) and f.endswith(".jkbackup")
@@ -1914,40 +1918,42 @@ class MainWindow(QWidget):
             return
 
         from datetime import datetime
-        company_key = os.path.basename(os.path.normpath(company_path))
-        data_path   = os.path.dirname(company_path)
-        today_str   = datetime.now().strftime("%Y-%m-%d")
-        company_backup_dir = os.path.join(backup_folder, company_key)
+        # Derive keys from the DATA PATH (parent of company), not the company itself.
+        # This ensures all companies in the same data path share one backup per 24h.
+        data_path        = os.path.dirname(os.path.normpath(company_path))
+        data_key         = os.path.basename(data_path) if os.path.basename(data_path) else "DataRoot"
+        today_str        = datetime.now().strftime("%Y-%m-%d")
+        data_backup_dir  = os.path.join(backup_folder, data_key)
 
         try:
-            os.makedirs(company_backup_dir, exist_ok=True)
+            os.makedirs(data_backup_dir, exist_ok=True)
         except OSError as e:
             logger.error(f"[AutoBackup] Could not create backup folder: {e}")
             return
 
-        # Guard 1: same-day file check (cross-user)
-        prefix = f"JK_AutoBackup_{company_key}_{today_str}"
-        existing = [f for f in os.listdir(company_backup_dir)
+        # Guard 1: same-day file check (cross-user, cross-company)
+        prefix = f"JK_AutoBackup_{data_key}_{today_str}"
+        existing = [f for f in os.listdir(data_backup_dir)
                     if f.startswith(prefix) and f.endswith(".jkbackup")]
         if existing:
-            logger.info(f"[AutoBackup] Today's backup already exists: {existing[0]} — skipping.")
+            logger.info(f"[AutoBackup] Today's backup already exists for '{data_key}': {existing[0]} — skipping.")
             return
 
         timestamp   = datetime.now().strftime("%Y-%m-%d_%H-%M")
-        output_file = os.path.join(company_backup_dir,
-                                   f"JK_AutoBackup_{company_key}_{timestamp}.jkbackup")
-        lock_name   = f"JK_AutoBackup_{company_key}"
+        output_file = os.path.join(data_backup_dir,
+                                   f"JK_AutoBackup_{data_key}_{timestamp}.jkbackup")
+        lock_name   = f"JK_AutoBackup_{data_key}"
 
         # Stash for use in the done-callback
-        self._pending_backup_key  = company_key
+        self._pending_backup_key  = data_key
         self._pending_backup_file = os.path.basename(output_file)
-        self._pending_backup_dir  = company_backup_dir
+        self._pending_backup_dir  = data_backup_dir
 
         logger.info(f"[AutoBackup] Launching background backup: {output_file}")
-        self._show_backup_toast(f"🔄  Auto-backup running for {company_key}…")
+        self._show_backup_toast(f"🔄  Auto-backup running for {data_key}…")
 
         self._backup_worker = self._BackupWorker(
-            data_path, output_file, company_key, lock_name, parent=self
+            data_path, output_file, data_key, lock_name, parent=self
         )
         self._backup_worker.finished.connect(self._on_backup_done)
         self._backup_worker.start()
