@@ -171,6 +171,20 @@ def save_report_json(data, company_path=""):
         return
     cursor = conn.cursor()
     try:
+        # ── Cross-machine lock ──────────────────────────────────────────
+        # Serializes the read-modify-write cycle so two concurrent builds
+        # on different machines don't overwrite each other's CRM changes.
+        try:
+            cursor.execute("""
+                EXEC sp_getapplock
+                    @Resource    = 'JKCatalog_ReportData',
+                    @LockMode    = 'Exclusive',
+                    @LockOwner   = 'Transaction',
+                    @LockTimeout = 10000
+            """)
+        except Exception:
+            pass  # proceed without lock if unavailable
+
         # Crash-safe replacement: INSERT new rows first, THEN delete old ones.
         # If we crash after insert but before delete, we get duplicates (harmless,
         # cleaned up on next save) rather than total data loss.

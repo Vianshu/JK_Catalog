@@ -507,7 +507,18 @@ class FinalDataUI(ExcelTableMixin, QWidget):
                 self.table.blockSignals(False)
             return
         
-        new_val = item.text().strip()
+        # ── Display-label guard ──────────────────────────────────────────
+        # The Image_Path column shows visual labels ("✅ FOUND", "❌ NOT FOUND",
+        # "NO NEED", "⚠️ DUPLICATE") instead of the real file path.  These are
+        # set during refresh_table and must NEVER be persisted to the DB.
+        # If Qt fires itemChanged for one of these labels (e.g. user clicks,
+        # drags, or pastes over the cell), silently discard the event.
+        DISPLAY_ONLY_LABELS = {"✅ FOUND", "❌ NOT FOUND", "NO NEED", "⚠️ DUPLICATE"}
+        raw_text = item.text().strip()
+        if raw_text in DISPLAY_ONLY_LABELS:
+            return
+
+        new_val = raw_text
         old_val = item.data(Qt.ItemDataRole.UserRole)
         row, col = item.row(), item.column()
         col_name = self.headers[col]

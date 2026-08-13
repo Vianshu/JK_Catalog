@@ -1869,7 +1869,7 @@ class CatalogLogic:
                 f"_compute_page_hash: product lookup empty for serial {serial_no} "
                 f"({len(product_names)} products expected) — returning fetch_error sentinel"
             )
-            return f"fetch_error_{serial_no}"
+            return "fetch_error_empty_catalog"
 
         # Build content signature — ORDER MATTERS (no sorting)
         def _norm_num(v):
@@ -1940,6 +1940,12 @@ class CatalogLogic:
         changed = set()
         try:
             cursor = conn.cursor()
+            # Guard: if catalog table is empty (Tally sync race), skip detection
+            # to prevent sentinel hash from flooding all pages to CRM.
+            cursor.execute("SELECT COUNT(*) FROM catalog")
+            if cursor.fetchone()[0] == 0:
+                logger.warning("detect_changed_pages: catalog table is empty — skipping (Tally sync race?)")
+                return set()
             cursor.execute("SELECT serial_no FROM catalog_pages WHERE serial_no IS NOT NULL ORDER BY serial_no")
             all_serials = [str(row[0]) for row in cursor.fetchall()]
             cursor.execute("SELECT serial_no, content_hash FROM page_snapshots")
@@ -2034,6 +2040,23 @@ class CatalogLogic:
         if not self.catalog_db_path or not self.final_db_path:
             return {"dirty_count": 0, "dirty_serials": [], "pages_created": 0}
 
+        # ── Cross-machine build lock ─────────────────────────────────────
+        # Prevents two users from sorting the same pages simultaneously.
+        # The second user's build waits (up to 30s) for the first to finish.
+        # Lock is released automatically when the connection commits/rollbacks.
+        _engine_lock_conn = self._get_catalog_conn()
+        if _engine_lock_conn:
+            try:
+                _engine_lock_conn.cursor().execute("""
+                    EXEC sp_getapplock
+                        @Resource    = 'JKCatalog_EngineBuild',
+                        @LockMode    = 'Exclusive',
+                        @LockOwner   = 'Transaction',
+                        @LockTimeout = 30000
+                """)
+            except Exception as lock_err:
+                logger.warning(f"engine_run: sp_getapplock unavailable ({lock_err}) — proceeding without lock")
+
         # Step 1: Sync + rebuild serials
         old_serial_map = self._get_serial_map()
         self.sync_pages_with_content()
@@ -2049,6 +2072,12 @@ class CatalogLogic:
         if self._post_sync_detected:
             logger.info("Engine: post-sync build — skipping sort/page-creation to preserve synced layout")
             self._post_sync_detected = False
+            # Release cross-machine build lock before early return
+            if _engine_lock_conn:
+                try:
+                    _engine_lock_conn.commit()
+                except Exception:
+                    pass
             return {"dirty_count": 0, "dirty_serials": [], "pages_created": 0}
 
         # Step 3: Read least-pending CRM for sort scope
@@ -2068,6 +2097,12 @@ class CatalogLogic:
 
         if not sort_serials:
             logger.info("Engine: no dirty pages detected — nothing to do")
+            # Release cross-machine build lock before early return
+            if _engine_lock_conn:
+                try:
+                    _engine_lock_conn.commit()
+                except Exception:
+                    pass
             return {"dirty_count": 0, "dirty_serials": [], "pages_created": 0}
 
         logger.info(
