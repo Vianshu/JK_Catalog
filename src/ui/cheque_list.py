@@ -1,4 +1,5 @@
 import os
+import uuid as _uuid_mod
 from src.ui.table_nav_mixin import ExcelTableMixin
 import pandas as pd
 from PyQt6.QtWidgets import (
@@ -9,14 +10,18 @@ from PyQt6.QtWidgets import (
     QRadioButton, QButtonGroup, QAbstractItemView, QStyledItemDelegate, QSplitter, QDialog
 )
 
-from PyQt6.QtGui import QTextDocument, QPageSize, QPageLayout, QFont, QPainter, QPen, QColor, QFontMetrics
-from PyQt6.QtCore import Qt, QEvent, QSettings, QSizeF, QMarginsF, QRect
+from PyQt6.QtGui import QTextDocument, QPageSize, QPageLayout, QFont, QPainter, QPen, QColor, QFontMetrics, QBrush
+from PyQt6.QtCore import Qt, QEvent, QSettings, QSizeF, QMarginsF, QRect, QTimer
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 from difflib import SequenceMatcher
 from src.logic.db_manager import get_db_manager, build_logical_name
 from PyQt6.QtCore import QSortFilterProxyModel
 from PyQt6.QtGui import QStandardItemModel, QStandardItem
 from src.ui.ui_helpers import pick_export_folder
+
+# Custom data roles for GUID/bank-ref storage (invisible to user, stored behind display text)
+_GUID_ROLE = Qt.ItemDataRole.UserRole        # stores ledger GUID in party cells
+_BREF_ROLE = Qt.ItemDataRole.UserRole + 1   # stores bank_ref UUID in bank cells
 
 
 class NumericTableWidgetItem(QTableWidgetItem):
@@ -101,9 +106,60 @@ def _enforce_match(editor: QLineEdit, text: str, data_list: list):
         completer._on_text_edited(text[:-1])
 
 class AutocompleteDelegate(QStyledItemDelegate):
+    """Smart delegate for columns 2 (Party/GUID) and 3 (Bank/bank_ref) and 5 (CRM).
+    
+    For col 2: stores Tally ledger GUID in _GUID_ROLE; displays live name.
+    For col 3: stores bank_ref UUID in _BREF_ROLE; displays live bank name.
+    For col 5: stores CRM text normally.
+    """
     def __init__(self, parent=None):
         super().__init__(parent)
         self.main_ui = parent
+
+    # ---- painting: show live name (resolved from GUID/bank_ref) ----
+    def paint(self, painter, option, index):
+        col = index.column()
+        if col == 2:
+            guid = index.data(_GUID_ROLE)
+            if guid:
+                name = self.main_ui.guid_to_name.get(guid, "")
+                if not name:
+                    # GUID present but not found in current ledger data
+                    option2 = option.__class__(option)
+                    painter.save()
+                    painter.fillRect(option.rect, QColor("#fff7ed"))
+                    painter.setPen(QColor("#dc2626"))
+                    painter.drawText(option.rect.adjusted(4, 0, -4, 0),
+                                     Qt.AlignmentFlag.AlignVCenter,
+                                     f"[Not found: {guid[:8]}…]")
+                    painter.restore()
+                    return
+                # Temporarily override display for painting
+                from PyQt6.QtWidgets import QStyleOptionViewItem
+                opt = QStyleOptionViewItem(option)
+                opt.text = name
+                super().paint(painter, opt, index)
+                return
+        elif col == 3:
+            bref = index.data(_BREF_ROLE)
+            if bref:
+                name = self.main_ui.bref_to_name.get(bref, "")
+                if not name:
+                    option2 = option.__class__(option)
+                    painter.save()
+                    painter.fillRect(option.rect, QColor("#fff7ed"))
+                    painter.setPen(QColor("#dc2626"))
+                    painter.drawText(option.rect.adjusted(4, 0, -4, 0),
+                                     Qt.AlignmentFlag.AlignVCenter,
+                                     f"[Unknown Bank]")
+                    painter.restore()
+                    return
+                from PyQt6.QtWidgets import QStyleOptionViewItem
+                opt = QStyleOptionViewItem(option)
+                opt.text = name
+                super().paint(painter, opt, index)
+                return
+        super().paint(painter, option, index)
 
     def createEditor(self, parent, option, index):
         col = index.column()
@@ -138,6 +194,33 @@ class AutocompleteDelegate(QStyledItemDelegate):
             return editor
         return super().createEditor(parent, option, index)
 
+    def setEditorData(self, editor, index):
+        """Pre-fill editor with the currently displayed name (resolved from GUID/bref)."""
+        col = index.column()
+        if col == 2:
+            guid = index.data(_GUID_ROLE)
+            if guid:
+                name = self.main_ui.guid_to_name.get(guid, "")
+                editor.setText(name)
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(0, editor.deselect)
+                QTimer.singleShot(0, lambda: editor.end(False))
+                return
+        elif col == 3:
+            bref = index.data(_BREF_ROLE)
+            if bref:
+                name = self.main_ui.bref_to_name.get(bref, "")
+                editor.setText(name)
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(0, editor.deselect)
+                QTimer.singleShot(0, lambda: editor.end(False))
+                return
+        super().setEditorData(editor, index)
+        if isinstance(editor, QLineEdit):
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, editor.deselect)
+            QTimer.singleShot(0, lambda: editor.end(False))
+
     def eventFilter(self, editor, event):
         if event.type() == QEvent.Type.KeyPress and isinstance(editor, QLineEdit):
             key = event.key()
@@ -161,11 +244,6 @@ class AutocompleteDelegate(QStyledItemDelegate):
                     self.main_ui._nav_set_current(r + 1, c)
                 return True
                 
-            # Left/Right: per spec, in Edit mode the cursor moves within text.
-            # The delegate eventFilter only fires when a QLineEdit editor IS active,
-            # which IS Edit mode — so Left/Right ALWAYS moves cursor, never navigates.
-            # (Previously gated by _is_double_click which was unreliable due to
-            # _reset_edit_mode firing from currentCellChanged during double-click.)
             elif key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
                 return False  # QLineEdit handles cursor movement natively
                 
@@ -193,6 +271,10 @@ class AutocompleteDelegate(QStyledItemDelegate):
             val = editor.text().strip()
             if not val:
                 model.setData(index, "", Qt.ItemDataRole.EditRole)
+                if col == 2:
+                    model.setData(index, None, _GUID_ROLE)
+                elif col == 3:
+                    model.setData(index, None, _BREF_ROLE)
                 return
 
             data_list = []
@@ -211,7 +293,6 @@ class AutocompleteDelegate(QStyledItemDelegate):
                         val = item
                         exact_match = True
                         break
-
                 if not exact_match:
                     contains_match = False
                     for item in sorted(str(x) for x in data_list):
@@ -220,30 +301,30 @@ class AutocompleteDelegate(QStyledItemDelegate):
                             contains_match = True
                             break
                     if not contains_match:
-                        # Reject the edit — value not in the allowed list
-                        return
+                        return  # Reject — not in allowed list
 
             if col == 2:
+                # Resolve to canonical name first
                 val_lower = val.lower()
                 for alias, name in self.main_ui.party_mapping.items():
                     if alias.lower() == val_lower:
                         val = name
                         break
+                # Store the GUID in UserRole
+                guid = self.main_ui.name_to_guid.get(val, "") or self.main_ui.name_to_guid.get(val_lower, "")
+                model.setData(index, val, Qt.ItemDataRole.DisplayRole)  # visible name (fallback display)
+                model.setData(index, guid, _GUID_ROLE)
 
-            model.setData(index, val, Qt.ItemDataRole.EditRole)
+            elif col == 3:
+                # Store the bank_ref UUID in _BREF_ROLE
+                bref = self.main_ui.bank_name_to_ref.get(val, "") or self.main_ui.bank_name_to_ref.get(val.lower(), "")
+                model.setData(index, val, Qt.ItemDataRole.DisplayRole)  # visible (fallback)
+                model.setData(index, bref, _BREF_ROLE)
+
+            else:
+                model.setData(index, val, Qt.ItemDataRole.EditRole)
         else:
             super().setModelData(editor, model, index)
-
-    def setEditorData(self, editor, index):
-        """Prevent auto-select-all on edit open. Qt calls selectAll() inside
-        the editor's focusInEvent, which fires AFTER setEditorData — so
-        deselect() here is immediately overwritten. Use QTimer.singleShot(0)
-        to defer deselection until after the focusIn event completes."""
-        super().setEditorData(editor, index)
-        if isinstance(editor, QLineEdit):
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(0, editor.deselect)        # Runs after focusInEvent
-            QTimer.singleShot(0, lambda: editor.end(False))  # Cursor at end, no selection
 
     def destroyEditor(self, editor, index):
         self.main_ui._is_edit_mode = False   # Exit Mode 2 when editor closes
@@ -263,7 +344,11 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         self.export_folder = self.settings.value("export_folder", "")
         self.bank_list_data = []
         self.crm_list_data = []
-        self.party_mapping = {}
+        self.party_mapping = {}        # alias/name -> canonical_name
+        self.guid_to_name = {}         # ledger GUID -> canonical display name
+        self.name_to_guid = {}         # canonical_name (lower) -> GUID
+        self.bref_to_name = {}         # bank_ref UUID -> bank display name
+        self.bank_name_to_ref = {}     # bank display name (lower) -> bank_ref UUID
         # _is_edit_mode is initialised by ExcelTableMixin._init_excel_table()
         self.columns = [
             "S.N", "Date", "Party Name", "Bank",
@@ -560,13 +645,21 @@ class ChequeListUI(ExcelTableMixin, QWidget):
                     if w and isinstance(w, QLineEdit): return w.text().strip()
                     it = self.table.item(_r, c)
                     return it.text().strip() if it and it.text().strip() else None
+                def _role(c, role, _r=r):
+                    it = self.table.item(_r, c)
+                    return it.data(role) if it else None
+                party_guid = _role(2, _GUID_ROLE) or ""
+                bank_ref   = _role(3, _BREF_ROLE) or ""
                 rows_to_insert.append((
                     txt(0), txt(1), txt(2), txt(3),
-                    txt(4), txt(5), txt(6), txt(7), txt(8), txt(9)
+                    txt(4), txt(5), txt(6), txt(7), txt(8), txt(9),
+                    party_guid, bank_ref
                 ))
             cur.execute("DELETE FROM cheques")
             if rows_to_insert:
-                cur.executemany("INSERT INTO cheques VALUES (?,?,?,?,?,?,?,?,?,?)", rows_to_insert)
+                cur.executemany(
+                    "INSERT INTO cheques VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    rows_to_insert)
             conn.commit()
         except Exception as e:
             conn.rollback()
@@ -607,7 +700,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
                 )
                 return
 
-        # DB Update Logic (Export explicit list items to bank_list)
+        # DB Update Logic — preserve bank_ref UUIDs through renames via UserRole
         conn = self.db.get_connection(self.cheque_db_name)
         if not conn: return
         cur = conn.cursor()
@@ -615,21 +708,75 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             rows_to_insert = []
             save_idx = 1
             self.bank_list_data = []
+            self.bref_to_name = {}
+            self.bank_name_to_ref = {}
+
             for r in range(total_row_idx):
                 it = self.bank_table.item(r, 1)
                 if it and it.text().strip():
-                    rows_to_insert.append((str(save_idx), it.text().strip()))
-                    self.bank_list_data.append(it.text().strip())
+                    bname = it.text().strip()
+                    # Read UUID stored in UserRole (set at load time; survives renames)
+                    bref = (it.data(Qt.ItemDataRole.UserRole) or "").strip()
+                    if not bref:
+                        # New bank row that was never loaded from DB — generate a fresh UUID
+                        bref = str(_uuid_mod.uuid4())
+                    rows_to_insert.append((str(save_idx), bname, bref))
+                    self.bank_list_data.append(bname)
+                    self.bref_to_name[bref] = bname
+                    self.bank_name_to_ref[bname.lower()] = bref
+                    self.bank_name_to_ref[bname] = bref
                     save_idx += 1
+
             cur.execute("DELETE FROM bank_list")
             if rows_to_insert:
-                cur.executemany("INSERT INTO bank_list VALUES (?, ?)", rows_to_insert)
+                cur.executemany("INSERT INTO bank_list (sn, bank_name, bank_ref) VALUES (?,?,?)",
+                                rows_to_insert)
             conn.commit()
+
+            # Write the (possibly new) bref back into UserRole so next save still finds it
+            self.bank_table.blockSignals(True)
+            save_r = 0
+            for r in range(total_row_idx):
+                it = self.bank_table.item(r, 1)
+                if it and it.text().strip() and save_r < len(rows_to_insert):
+                    it.setData(Qt.ItemDataRole.UserRole, rows_to_insert[save_r][2])  # bref
+                    save_r += 1
+                elif it:
+                    it.setData(Qt.ItemDataRole.UserRole, "")  # clear stale ref on blank rows
+            self.bank_table.blockSignals(False)
+
         except Exception as e:
             conn.rollback()
             print(f"[ERROR] Failed to save bank_list: {e}")
 
         self.ensure_bank_row_capacity()
+
+        # --- Live cheque table update ---
+        # Identify the UUID of the bank row that was just renamed, using UserRole on the
+        # bank_table item (which was updated in the write-back loop above).
+        changed_bref = (item.data(Qt.ItemDataRole.UserRole) or "").strip()
+        old_name_str  = (self._pre_bank_name or "").strip()
+        new_name_str  = self.bref_to_name.get(changed_bref, "")
+
+        self.table.blockSignals(True)
+        for r in range(self.table.rowCount()):
+            bank_cell = self.table.item(r, 3)
+            if not bank_cell:
+                continue
+            bref_on_cell = (bank_cell.data(_BREF_ROLE) or "").strip()
+            if bref_on_cell and bref_on_cell in self.bref_to_name:
+                # Delegate-driven row: keep DisplayRole in sync (paint() uses bref_to_name,
+                # but having DisplayRole match avoids stale tooltip/search text)
+                bank_cell.setText(self.bref_to_name[bref_on_cell])
+            elif bank_cell.text().strip() == old_name_str and old_name_str and new_name_str:
+                # Legacy row (no _BREF_ROLE stored): update display text directly
+                bank_cell.setText(new_name_str)
+        self.table.blockSignals(False)
+
+        # Force repaint on next event loop tick so the cheque table shows new bank name
+        QTimer.singleShot(0, self.table.viewport().repaint)
+        self.update_bank_counts()
+
 
     # ================= SUMMARY =================
     def update_summary(self):
@@ -668,25 +815,90 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         return f"{row_index + 1:04d}"
 
     def sort_table_safe(self, col_idx):
-        # सिग्नल्स रोकें ताकि डेटाबेस बार-बार सेव न हो
-        self.table.blockSignals(True)
-        
-        header = self.table.horizontalHeader()
-        current_col = header.sortIndicatorSection()
-        current_order = header.sortIndicatorOrder()
+        """Sort the cheque table by col_idx, toggling Asc/Desc on repeated clicks.
+        Blank rows (no party) stay pinned to the bottom. Numeric columns sort numerically.
 
-        # अगर उसी कॉलम पर दोबारा क्लिक किया है, तो आर्डर बदलें
-        if current_col == col_idx:
-            new_order = (Qt.SortOrder.DescendingOrder 
-                         if current_order == Qt.SortOrder.AscendingOrder 
-                         else Qt.SortOrder.AscendingOrder)
+        NOTE: We track state in self._sort_col / self._sort_asc rather than reading
+        header.sortIndicatorSection/Order because Qt auto-updates the header indicator
+        BEFORE sectionClicked fires, so the header values are already wrong by the time
+        our handler runs.
+        """
+        header = self.table.horizontalHeader()
+
+        # --- Our own state (reliable toggle) ---
+        prev_col = getattr(self, '_sort_col', -1)
+        prev_asc = getattr(self, '_sort_asc', True)
+
+        if prev_col == col_idx:
+            asc = not prev_asc          # same column → flip
         else:
-            new_order = Qt.SortOrder.AscendingOrder
-            
-        self.table.sortItems(col_idx, new_order)
+            asc = True                  # new column → start Ascending
+
+        self._sort_col = col_idx
+        self._sort_asc = asc
+
+        new_order = Qt.SortOrder.AscendingOrder if asc else Qt.SortOrder.DescendingOrder
+
+        # Numeric columns: S.N (0), Amount (6)
+        NUMERIC_COLS = {0, 6}
+
+        def cell_key(row):
+            """Return (is_blank, sort_value) so blank rows always sink to bottom."""
+            party = self.table.item(row, 2)
+            is_blank = not (party and party.text().strip())
+            it = self.table.item(row, col_idx)
+            raw = it.text().strip() if it else ""
+            if col_idx in NUMERIC_COLS:
+                try:
+                    val = float(raw.replace(",", ""))
+                except ValueError:
+                    val = float("-inf") if asc else float("inf")
+            else:
+                val = raw.lower()
+            return (is_blank, val)
+
+        n = self.table.rowCount()
+        rows = list(range(n))
+        rows.sort(key=cell_key, reverse=not asc)
+
+        # Snapshot all row data (items + roles) before reordering
+        def snapshot_row(r):
+            snap = []
+            for c in range(self.table.columnCount()):
+                it = self.table.item(r, c)
+                if it:
+                    snap.append({
+                        "text":  it.text(),
+                        "guid":  it.data(_GUID_ROLE),
+                        "bref":  it.data(_BREF_ROLE),
+                        "align": it.textAlignment(),
+                        "hidden": self.table.isRowHidden(r),
+                    })
+                else:
+                    snap.append(None)
+            return snap
+
+        snapshots = [snapshot_row(r) for r in rows]
+
+        self.table.blockSignals(True)
+        for dest, snap in enumerate(snapshots):
+            for c, cell in enumerate(snap):
+                if cell is None:
+                    self.table.setItem(dest, c, QTableWidgetItem(""))
+                else:
+                    new_it = QTableWidgetItem(cell["text"])
+                    if cell["align"]:
+                        new_it.setTextAlignment(cell["align"])
+                    if cell["guid"] is not None:
+                        new_it.setData(_GUID_ROLE, cell["guid"])
+                    if cell["bref"] is not None:
+                        new_it.setData(_BREF_ROLE, cell["bref"])
+                    self.table.setItem(dest, c, new_it)
+            self.table.setRowHidden(dest, snap[0]["hidden"] if snap[0] else False)
+        self.table.blockSignals(False)
+
         header.setSortIndicator(col_idx, new_order)
 
-        self.table.blockSignals(False)
 
     def ensure_cheque_schema(self):
         cols = self.db.get_table_columns(self.cheque_db_name, "cheques")
@@ -694,6 +906,34 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             self.db.add_column(self.cheque_db_name, "cheques", "clear_date", "NVARCHAR(MAX)")
         if "narration" not in cols:
             self.db.add_column(self.cheque_db_name, "cheques", "narration", "NVARCHAR(MAX)")
+
+    def _ensure_linked_schema(self):
+        """Add party_guid and bank_ref columns to cheques and bank_ref to bank_list (one-time migration)."""
+        # cheques.party_guid — stores Tally GUID for party
+        cols_chq = self.db.get_table_columns(self.cheque_db_name, "cheques")
+        if "party_guid" not in cols_chq:
+            self.db.add_column(self.cheque_db_name, "cheques", "party_guid", "NVARCHAR(200)")
+        # cheques.bank_ref — stores stable UUID for bank
+        if "bank_ref" not in cols_chq:
+            self.db.add_column(self.cheque_db_name, "cheques", "bank_ref", "NVARCHAR(100)")
+        # bank_list.bank_ref — stable UUID per bank row
+        cols_bl = self.db.get_table_columns(self.cheque_db_name, "bank_list")
+        if "bank_ref" not in cols_bl:
+            self.db.add_column(self.cheque_db_name, "bank_list", "bank_ref", "NVARCHAR(100)")
+            # Generate UUIDs for all existing bank rows
+            conn = self.db.get_connection(self.cheque_db_name)
+            if conn:
+                cur = conn.cursor()
+                try:
+                    cur.execute("SELECT sn, bank_name FROM bank_list")
+                    rows = cur.fetchall()
+                    for sn, bname in rows:
+                        new_ref = str(_uuid_mod.uuid4())
+                        cur.execute("UPDATE bank_list SET bank_ref=? WHERE sn=?", (new_ref, sn))
+                    conn.commit()
+                except Exception as e:
+                    conn.rollback()
+                    print("[CHEQUE] _ensure_linked_schema bank_ref error:", e)
 
     def sync_cheque_rows(self):
         """Compact the cheque table: remove blank rows, preserve order and SNs.
@@ -788,20 +1028,22 @@ class ChequeListUI(ExcelTableMixin, QWidget):
 
             
     def update_bank_counts(self):
-        counts = {}
+        # Count by bank_ref UUID so renames don't break counts
+        counts_by_ref  = {}   # bank_ref  -> count
+        counts_by_name = {}   # bank_name -> count (fallback for unlinked rows)
         for r in range(self.table.rowCount()):
             if self.table.isRowHidden(r):
                 continue
-            
-            def val(c):
-                w = self.table.cellWidget(r, c)
-                if w and isinstance(w, QLineEdit): return w.text().strip()
-                it = self.table.item(r, c)
-                return it.text().strip() if it else ""
-
-            name = val(3) # Bank Column
-            if name:
-                counts[name] = counts.get(name, 0) + 1
+            it = self.table.item(r, 3)  # Bank column
+            if it:
+                bref = it.data(_BREF_ROLE)
+                if bref:
+                    counts_by_ref[bref] = counts_by_ref.get(bref, 0) + 1
+                else:
+                    # Legacy row without bank_ref — fall back to name matching
+                    name = it.text().strip()
+                    if name:
+                        counts_by_name[name] = counts_by_name.get(name, 0) + 1
         
         self.bank_table.blockSignals(True)
         try:
@@ -813,7 +1055,12 @@ class ChequeListUI(ExcelTableMixin, QWidget):
                 if bank_name_item:
                     bn = bank_name_item.text().strip()
                     if bn:
-                        count_val = counts.get(bn, 0)
+                        # Look up by bank_ref first, fall back to name
+                        bref = self.bank_name_to_ref.get(bn.lower(), "")
+                        if bref and bref in counts_by_ref:
+                            count_val = counts_by_ref[bref]
+                        else:
+                            count_val = counts_by_name.get(bn, 0)
                         total_count += count_val
                         display_val = str(count_val) if count_val > 0 else ""
                         
@@ -866,6 +1113,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             )
         """)
         self.ensure_cheque_schema()
+        self._ensure_linked_schema()   # adds party_guid, bank_ref columns
         self.load_all_data()
 
     def load_all_data(self):
@@ -874,24 +1122,37 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         if not conn: return
         cursor = conn.cursor()
         
-        # Bank list loading logic
-        cursor.execute("SELECT * FROM bank_list")
-        bnks = cursor.fetchall()
+        # ── Bank list: build bref_to_name & bank_name_to_ref maps ──
+        try:
+            cursor.execute("SELECT sn, bank_name, bank_ref FROM bank_list")
+            bnks = cursor.fetchall()
+        except Exception:
+            cursor.execute("SELECT sn, bank_name FROM bank_list")
+            bnks = [(r[0], r[1], "") for r in cursor.fetchall()]
+
+        self.bref_to_name = {}
+        self.bank_name_to_ref = {}
+        for sn, bname, bref in bnks:
+            bname = (bname or "").strip()
+            bref  = (bref  or "").strip()
+            if bname:
+                self.bref_to_name[bref] = bname
+                self.bank_name_to_ref[bname.lower()] = bref
+                self.bank_name_to_ref[bname] = bref
+
         self.bank_table.blockSignals(True)
         try:
             total_required_rows = max(30, len(bnks)+10)
             self.bank_table.setRowCount(total_required_rows)
-            
             total_idx = total_required_rows - 1
-            
-            for i in range(total_idx): 
+            for i in range(total_idx):
                 self.bank_table.setItem(i, 0, QTableWidgetItem(str(i+1)))
                 self.bank_table.setItem(i, 1, QTableWidgetItem(""))
                 self.bank_table.setItem(i, 2, QTableWidgetItem(""))
-                
-            for r, b in enumerate(bnks): 
-                self.bank_table.setItem(r, 1, QTableWidgetItem(b[1]))
-                
+            for r, (sn, bname, bref) in enumerate(bnks):
+                name_item = QTableWidgetItem(bname or "")
+                name_item.setData(Qt.ItemDataRole.UserRole, bref or "")  # preserve UUID through renames
+                self.bank_table.setItem(r, 1, name_item)
             self.bank_table.setItem(total_idx, 0, QTableWidgetItem(""))
             total_lbl = QTableWidgetItem("Total")
             total_lbl.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -899,26 +1160,49 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             self.bank_table.setItem(total_idx, 2, QTableWidgetItem(""))
         finally:
             self.bank_table.blockSignals(False)
-        self.bank_list_data = [b[1] for b in bnks]
-        
-        # Cheque list loading logic
-        cursor.execute("SELECT * FROM cheques")
-        chqs = cursor.fetchall()
-        
+        self.bank_list_data = [b[1] for b in bnks if b[1]]
+
+        # ── Cheque list: resolve party_guid and bank_ref to display names ──
+        try:
+            cursor.execute("SELECT sn,date,party,bank,chq_no,crm,amount,status,clear_date,narration,party_guid,bank_ref FROM cheques")
+            chqs = cursor.fetchall()
+            has_linked_cols = True
+        except Exception:
+            cursor.execute("SELECT * FROM cheques")
+            chqs = cursor.fetchall()
+            has_linked_cols = False
+
         self.table.blockSignals(True)
         try:
             self.table.setRowCount(len(chqs))
             for r, row in enumerate(chqs):
-                for c, v in enumerate(row):
-                    if c >= 10: break
+                # First 10 cols are the core fields
+                party_guid = row[10] if has_linked_cols and len(row) > 10 else ""
+                bank_ref   = row[11] if has_linked_cols and len(row) > 11 else ""
+                party_guid = (party_guid or "").strip()
+                bank_ref   = (bank_ref   or "").strip()
+
+                # Migration: if no GUID stored yet but party text matches a ledger name, resolve it
+                if not party_guid:
+                    raw_party = (row[2] or "").strip()
+                    if raw_party:
+                        party_guid = self.name_to_guid.get(raw_party.lower(), "")
+
+                # Migration: if no bank_ref stored yet but bank text matches a bank_name, resolve it
+                if not bank_ref:
+                    raw_bank = (row[3] or "").strip()
+                    if raw_bank:
+                        bank_ref = self.bank_name_to_ref.get(raw_bank.lower(), "")
+
+                for c, v in enumerate(row[:10]):
                     val = "" if v in (None, "None") else str(v)
-                    
+
                     if c == 0:
                         try:
                             val = f"{int(val):04d}"
                         except Exception:
                             val = f"{r + 1:04d}"
-                    
+
                     item = QTableWidgetItem(val)
                     if c == 0:
                         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -927,6 +1211,13 @@ class ChequeListUI(ExcelTableMixin, QWidget):
                         item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                     elif c == 7:
                         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+                    # Attach hidden ID roles for party and bank
+                    if c == 2 and party_guid:
+                        item.setData(_GUID_ROLE, party_guid)
+                    elif c == 3 and bank_ref:
+                        item.setData(_BREF_ROLE, bank_ref)
+
                     self.table.setItem(r, c, item)
         finally:
             self.table.blockSignals(False)
@@ -944,33 +1235,83 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         self._reload_dropdown_data()
         self.update_summary()
     
+    def refresh_ledger_maps(self):
+        """Re-load guid_to_name / name_to_guid from row_ledger_data after a Tally ledger sync.
+        Repaints the party column so all cells show updated names immediately.
+        Safe to call from any thread via QTimer.singleShot(0, ...).
+        """
+        if not self.ledger_db_name:
+            return
+        try:
+            l_conn = self.db.get_connection(self.ledger_db_name)
+            if not l_conn:
+                return
+            l_cursor = l_conn.cursor()
+            l_cursor.execute(
+                "SELECT GUID, Alias, Name FROM row_ledger_data "
+                "WHERE [Group] LIKE '%Sundry Debtors%'"
+            )
+            new_guid_to_name = {}
+            new_name_to_guid = {}
+            new_party_mapping = {}
+            for guid, alias, name in l_cursor.fetchall():
+                name_str  = str(name).strip()  if name  and str(name).strip().lower()  != "none" else ""
+                alias_str = str(alias).strip() if alias and str(alias).strip().lower() != "none" else ""
+                guid_str  = str(guid).strip()  if guid  and str(guid).strip().lower()  != "none" else ""
+                if alias_str:
+                    new_party_mapping[alias_str] = name_str
+                if name_str:
+                    new_party_mapping[name_str] = name_str
+                if guid_str and name_str:
+                    new_guid_to_name[guid_str] = name_str
+                    new_name_to_guid[name_str.lower()] = guid_str
+                    if alias_str:
+                        new_name_to_guid[alias_str.lower()] = guid_str
+            # Atomic swap so delegate always sees a consistent map
+            self.guid_to_name  = new_guid_to_name
+            self.name_to_guid  = new_name_to_guid
+            self.party_mapping = new_party_mapping
+            # Repaint party column so new names appear without a full reload
+            self.table.viewport().update()
+            print(f"[CHEQUE] Ledger maps refreshed: {len(new_guid_to_name)} entries")
+        except Exception as e:
+            print("[CHEQUE] refresh_ledger_maps error:", e)
+
     def _reload_dropdown_data(self):
         """Refresh party names, CRM, and bank list from SQL Server.
         Called every time the tab becomes visible."""
         if not self.ledger_db_name:
             return
-        
+
         # 1. CRM Data
         from src.ui.settings import load_crm_list
         self.crm_list_data = load_crm_list(self.company_path)
-        
-        # 2. Party Mapping (Sundry Debtors: Alias + Name searchable)
+
+        # 2. Party Mapping (Sundry Debtors: Alias + Name searchable) + GUID maps
         self.party_mapping = {}
+        self.guid_to_name = {}
+        self.name_to_guid = {}
         try:
             l_conn = self.db.get_connection(self.ledger_db_name)
             if l_conn:
                 l_cursor = l_conn.cursor()
-                l_cursor.execute("SELECT Alias, Name FROM row_ledger_data WHERE [Group] LIKE '%Sundry Debtors%'")
-                for alias, name in l_cursor.fetchall():
-                    name_str = str(name).strip() if name and str(name).strip().lower() != "none" else ""
+                l_cursor.execute("SELECT GUID, Alias, Name FROM row_ledger_data WHERE [Group] LIKE '%Sundry Debtors%'")
+                for guid, alias, name in l_cursor.fetchall():
+                    name_str  = str(name).strip()  if name  and str(name).strip().lower()  != "none" else ""
                     alias_str = str(alias).strip() if alias and str(alias).strip().lower() != "none" else ""
+                    guid_str  = str(guid).strip()  if guid  and str(guid).strip().lower()  != "none" else ""
                     if alias_str:
                         self.party_mapping[alias_str] = name_str
                     if name_str:
                         self.party_mapping[name_str] = name_str
+                    if guid_str and name_str:
+                        self.guid_to_name[guid_str] = name_str
+                        self.name_to_guid[name_str.lower()] = guid_str
+                        if alias_str:
+                            self.name_to_guid[alias_str.lower()] = guid_str
         except Exception as e:
             print("[CHEQUE] Error loading ledger:", e)
-        
+
         # 3. Bank list refresh
         try:
             conn = self.db.get_connection(self.cheque_db_name)

@@ -13,3 +13,6 @@
 If the user types the following exact phrases, execute the corresponding workflow without requiring further confirmation:
 - **"check 1"**: Immediately run `git commit` (with a small, amateur two-word message), then trigger the PyInstaller one-dir build, and finally compile the Inno Setup (`.iss`) script.
 - **"check 2"**: Perform a deep, thorough bug-check of the codebase as if you are a senior architect with 50 years of experience.
+
+# Theme Rules
+1. **Green Theme for Payment Sheets**: Maintain a consistent green theme for the application. Specifically, in supp_payment.py, primary buttons and the bottom tab navigation should use green colors (e.g. #059669 and #047857) instead of blue.

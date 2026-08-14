@@ -715,9 +715,6 @@ class MainWindow(QWidget):
     def _on_ledger_sync_done(self, row_count, error):
         """Handle ledger sync completion (standalone, runs on main thread)."""
         if hasattr(self, '_ledger_progress') and self._ledger_progress:
-            # IMPORTANT: disconnect canceled BEFORE close(). An indeterminate
-            # QProgressDialog (max=0) emits canceled() when close() is called,
-            # which would fire the cancel lambda on an already-finished service.
             try:
                 self._ledger_progress.canceled.disconnect()
             except (TypeError, RuntimeError):
@@ -731,9 +728,19 @@ class MainWindow(QWidget):
                 self, "Sync Complete",
                 f"Ledger data synced successfully!\nLoaded {row_count} ledger entries."
             )
+            # Refresh cheque list party names live (no restart needed)
+            self._refresh_cheque_ledger_maps()
         else:
             msg = error if error else "No ledger data received from Tally."
             QMessageBox.warning(self, "Sync Issue", msg)
+
+    def _refresh_cheque_ledger_maps(self):
+        """Tell the Cheque List to re-read guid_to_name from the freshly-synced ledger DB."""
+        if hasattr(self, 'cheque_list_page') and hasattr(self.cheque_list_page, 'refresh_ledger_maps'):
+            try:
+                self.cheque_list_page.refresh_ledger_maps()
+            except Exception as e:
+                logger.warning(f"[_refresh_cheque_ledger_maps] {e}")
 
     def on_main_stack_change(self, idx):
         """Handle main tab changes -> Auto-build Catalog only on relevant tabs."""
