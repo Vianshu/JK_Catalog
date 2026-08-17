@@ -66,10 +66,14 @@ class ChequeListUI(ExcelTableMixin, QWidget):
                 return item
         return None
 
-    def _party_set_model_cb(self, model, index, val):
+    def _party_set_model_cb(self, val, index):
+        model = index.model()
         if not val:
+            self.table.blockSignals(True)
             model.setData(index, "", Qt.ItemDataRole.EditRole)
             model.setData(index, None, _GUID_ROLE)
+            self.table.blockSignals(False)
+            self.save_cheques_to_db()
             return
             
         data_list = list(self.party_mapping.keys())
@@ -85,13 +89,22 @@ class ChequeListUI(ExcelTableMixin, QWidget):
                 break
         
         guid = self.name_to_guid.get(matched, "") or self.name_to_guid.get(val_lower, "")
+        # Block signals so save fires once with both values already set
+        self.table.blockSignals(True)
         model.setData(index, matched, Qt.ItemDataRole.DisplayRole)
         model.setData(index, guid, _GUID_ROLE)
+        self.table.blockSignals(False)
+        self.table.viewport().update()   # repaint so initStyleOption picks up the new name
+        self.save_cheques_to_db()
 
-    def _bank_set_model_cb(self, model, index, val):
+    def _bank_set_model_cb(self, val, index):
+        model = index.model()
         if not val:
+            self.table.blockSignals(True)
             model.setData(index, "", Qt.ItemDataRole.EditRole)
             model.setData(index, None, _BREF_ROLE)
+            self.table.blockSignals(False)
+            self.save_cheques_to_db()
             return
             
         matched = self._match_autocomplete_val(val, self.bank_list_data)
@@ -99,10 +112,15 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             return # reject
             
         bref = self.bank_name_to_ref.get(matched, "") or self.bank_name_to_ref.get(matched.lower(), "")
+        # Block signals so save fires once with both values already set
+        self.table.blockSignals(True)
         model.setData(index, matched, Qt.ItemDataRole.DisplayRole)
         model.setData(index, bref, _BREF_ROLE)
+        self.table.blockSignals(False)
+        self.save_cheques_to_db()
 
-    def _crm_set_model_cb(self, model, index, val):
+    def _crm_set_model_cb(self, val, index):
+        model = index.model()
         if not val:
             model.setData(index, "", Qt.ItemDataRole.EditRole)
             return
@@ -752,7 +770,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         """
         self.table.blockSignals(True)
         try:
-            data = []  # [(existing_sn_int | None, row_values_list)]
+            data = []  # [(existing_sn_int | None, row_values_list, party_guid, bank_ref)]
 
             # 1. Collect data rows with their existing SN values
             for r in range(self.table.rowCount()):
@@ -768,10 +786,15 @@ class ChequeListUI(ExcelTableMixin, QWidget):
                         existing_sn = int(row[0])
                     except (ValueError, TypeError):
                         existing_sn = None
-                    data.append((existing_sn, row))
+                    # Snapshot custom roles so they survive the setRowCount(0) wipe
+                    p_it = self.table.item(r, 2)
+                    b_it = self.table.item(r, 3)
+                    party_guid = p_it.data(_GUID_ROLE) if p_it else None
+                    bank_ref   = b_it.data(_BREF_ROLE) if b_it else None
+                    data.append((existing_sn, row, party_guid, bank_ref))
 
             # Track SN integers already claimed by data rows so buffer rows skip them
-            used_sns = {sn for sn, _ in data if sn is not None}
+            used_sns = {sn for sn, _, _, _ in data if sn is not None}
             _next_ctr = [1]  # mutable counter for closure
 
             def _next_free():
@@ -784,7 +807,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
 
             # 2. Re-insert data rows, keeping original SNs where present
             self.table.setRowCount(0)
-            for existing_sn, row_data in data:
+            for existing_sn, row_data, party_guid, bank_ref in data:
                 idx = self.table.rowCount()
                 self.table.insertRow(idx)
                 for c, v in enumerate(row_data):
@@ -804,6 +827,11 @@ class ChequeListUI(ExcelTableMixin, QWidget):
                         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                     else:
                         item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                    # Restore custom roles (critical: _party_display_cb needs _GUID_ROLE)
+                    if c == 2 and party_guid:
+                        item.setData(_GUID_ROLE, party_guid)
+                    elif c == 3 and bank_ref:
+                        item.setData(_BREF_ROLE, bank_ref)
                     self.table.setItem(idx, c, item)
 
             # 3. Add empty buffer rows with new sequential SNs (start from 1, skip used)
@@ -830,7 +858,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         finally:
             self.table.blockSignals(False)
 
-            
+
     def update_bank_counts(self):
         # Count by bank_ref UUID so renames don't break counts
         counts_by_ref  = {}   # bank_ref  -> count

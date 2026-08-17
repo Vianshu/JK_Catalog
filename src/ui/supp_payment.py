@@ -169,21 +169,27 @@ class _DbTable(QTableWidget):
         QTimer.singleShot(300, self._do_save)
 
     def _do_save(self):
-        """Save table contents using execute_query with fetch=False for writes."""
+        """Save table contents using a single atomic transaction to prevent data loss."""
         if not self._db_name:
             return
+        conn = self._db.get_connection(self._db_name)
+        if not conn:
+            return
+        cur = conn.cursor()
         try:
-            self._db.execute_query(self._db_name,
-                f"DELETE FROM {self._table_name}", fetch=False)
+            cur.execute(f"DELETE FROM {self._table_name}")
             for r in range(self.rowCount()):
                 for c in range(self.columnCount()):
                     it = self.item(r, c)
                     if it and it.text():
-                        self._db.execute_query(self._db_name,
+                        cur.execute(
                             f"INSERT INTO {self._table_name} (row_idx, col_idx, cell_text)"
                             f" VALUES (?,?,?)",
-                            (r, c, it.text()), fetch=False)
+                            (r, c, it.text())
+                        )
+            conn.commit()
         except Exception as e:
+            conn.rollback()
             print(f"[_DbTable] _do_save error ({self._table_name}):", e)
 
     # keep save_to_db as alias for external callers
@@ -941,54 +947,72 @@ class TodayPaymentTab(QWidget):
         else:
             self._rebuild_multi_grid()
 
+    def _display_party_cb(self, index):
+        """Translate GUIDs back to Hindi names for display."""
+        val = index.data(Qt.ItemDataRole.DisplayRole)
+        val_str = str(val or "")
+        if val_str in self._guid_to_name:
+            return self._guid_to_name[val_str]
+        # Fallback to raw string (legacy)
+        if "-" in val_str and len(val_str) > 10:  # Looks like a GUID
+            print(f"[DEBUG] _display_party_cb failed to find GUID '{val_str}'. Keys available: {len(self._guid_to_name)}")
+        return val
+
+    def _set_party_cb(self, text, index):
+        """Lookup alias or name and store GUID in the model."""
+        txt_lower = text.strip().lower()
+        guid = self._alias_to_guid.get(txt_lower) or self._name_to_guid.get(txt_lower)
+        # We must use Qt.ItemDataRole.EditRole to actually store it in the underlying cell text
+        if guid:
+            index.model().setData(index, guid, Qt.ItemDataRole.EditRole)
+        else:
+            index.model().setData(index, text, Qt.ItemDataRole.EditRole)
+
     def _build_core_section_specs(self):
         """Build column specs for the Payments core section."""
         date_delegate = UniversalCellDelegate(self, cell_type="date")
         party_delegate = UniversalCellDelegate(self, cell_type="autocomplete", autocomplete_items=lambda: self._party_list)
+        party_delegate._display_cb = self._display_party_cb
+        party_delegate._set_model_cb = self._set_party_cb
 
         specs = {
             "Payments": [
                 ("S.N",        40,  None),
-                ("Date",      110,  date_delegate),
                 ("Party Name",200,  party_delegate),
-                ("Bank",      130,  None),
-                ("Cheque No", 110,  None),
-                ("Amount",    110,  None),
-                ("Narration", 180,  None),
+                ("Date",      110,  date_delegate),
+                ("To",      130,  None),
+                ("From", 110,  None),
+                ("Payment",    110,  None),
             ],
             "Demand Loans (DL)": [
                 ("S.N",        40,  None),
                 ("Party Name", 200, None),
-                ("Limit",      110, None),
-                ("Outstanding",110, None),
+                ("Amount",      110, None),
                 ("Expiry Date",110, date_delegate),
-                ("Remarks",    200, None),
+                ("Day's left",    200, None),
+                ("Gap",    50, None),
+                ("Notes",    50, None),
             ],
             "Purchase (Today)": [
                 ("S.N",        40,  None),
-                ("Supplier",  200,  None),
-                ("Item",      160,  None),
-                ("Qty",        80,  None),
-                ("Rate",       90,  None),
-                ("Amount",    110,  None),
+                ("Party Name",200,  party_delegate),
                 ("Date",      110,  date_delegate),
+                ("To",      130,  None),
+                ("From", 110,  None),
+                ("Payment",    110,  None),
             ],
             "Account Table": [
-                ("S.N",        40,  None),
                 ("Account",   200,  None),
-                ("Debit",     110,  None),
-                ("Credit",    110,  None),
-                ("Balance",   120,  None),
-                ("Remarks",   180,  None),
+                ("Remain Cash",     110,  None),
+                ("Bank Cash",   180,  None),
             ],
             "Purchase (Upcoming)": [
                 ("S.N",        40,  None),
-                ("Supplier",  200,  None),
-                ("Item",      160,  None),
-                ("Qty",        80,  None),
-                ("Rate",       90,  None),
-                ("Amount",    110,  None),
-                ("Expected Date", 120, date_delegate),
+                ("Party Name",200,  party_delegate),
+                ("Date",      110,  date_delegate),
+                ("To",      130,  None),
+                ("From", 110,  None),
+                ("Payment",    110,  None),
             ],
             "Limits & LC": [
                 ("Type",   260,  None),
@@ -1007,7 +1031,11 @@ class TodayPaymentTab(QWidget):
         self._rebuild_section_views()
 
     def _reload_party_list(self):
-        """Load Sundry Debtors list for the Payments party autocomplete."""
+        """Load Sundry Debtors list and mapping dicts for the Payments party autocomplete."""
+        self._guid_to_name = {}
+        self._name_to_guid = {}
+        self._alias_to_guid = {}
+        self._party_list = []
         try:
             # Try to find the ledger DB (same pattern as cheque_list.py)
             import re
@@ -1024,21 +1052,47 @@ class TodayPaymentTab(QWidget):
                     continue
                 try:
                     cur = conn.cursor()
-                    cur.execute("SELECT Alias, Name FROM row_ledger_data WHERE [Group] LIKE '%Sundry Debtors%'")
-                    mapping = {}
-                    for alias, name in cur.fetchall():
+                    cur.execute("SELECT GUID, Alias, Name FROM row_ledger_data WHERE [Group] LIKE '%Sundry Debtors%'")
+                    for guid, alias, name in cur.fetchall():
+                        guid_str = str(guid).strip() if guid else ""
+                        if not guid_str: continue
+                        
                         alias_str = str(alias).strip() if alias and str(alias).strip().lower() != "none" else ""
                         name_str  = str(name).strip()  if name  and str(name).strip().lower()  != "none" else ""
-                        if alias_str:
-                            mapping[alias_str] = name_str
+                        
                         if name_str:
-                            mapping[name_str] = name_str
-                    self._party_list = list(mapping.keys())
+                            self._guid_to_name[guid_str] = name_str
+                            self._name_to_guid[name_str.lower()] = guid_str
+                        
+                        if alias_str:
+                            self._alias_to_guid[alias_str.lower()] = guid_str
+                            
+                    # Autocomplete list shows names and aliases
+                    keys = set(self._guid_to_name.values()) | set(self._alias_to_guid.keys())
+                    self._party_list = sorted(list(keys))
                     break
-                except Exception:
+                except Exception as ex:
                     pass
         except Exception as e:
             print("[TodayPayment] Could not load party list:", e)
+
+    def refresh_ledger_maps(self):
+        """Re-load party maps from DB after a Tally sync, then repaint all party columns.
+        Safe to call at any time — triggers no DB writes.
+        """
+        try:
+            self._reload_party_list()
+            # Repaint the party column in every section card so updated names appear immediately
+            for card in self._section_cards.values():
+                try:
+                    tbl = card.table
+                    tbl.viewport().update()
+                except Exception:
+                    pass
+            entry_count = len(self._guid_to_name)
+            print(f"[TodayPayment] Ledger maps refreshed: {entry_count} entries")
+        except Exception as e:
+            print(f"[TodayPayment] refresh_ledger_maps error: {e}")
 
     def _ensure_tables(self):
         for tname, ddl in [
@@ -1141,6 +1195,7 @@ class TodayPaymentTab(QWidget):
             card._today_tab_ref = self   # direct reference, avoids broken parent-walk
             card.set_edit_mode(self._can_edit)
             self._section_cards[sid] = card
+            self._migrate_party_names_to_guid(card)
 
             # Sidebar entry
             item = QListWidgetItem(f"  {name}")
@@ -1156,6 +1211,32 @@ class TodayPaymentTab(QWidget):
         # Select first in sidebar (must come AFTER grid is built to avoid gap bug)
         if self._sidebar_list.count() > 0:
             self._sidebar_list.setCurrentRow(0)
+
+    def _migrate_party_names_to_guid(self, card):
+        """Converts raw name strings in Party Name columns to GUIDs and resaves."""
+        if not card._fixed_cols or not card._col_specs:
+            return
+        
+        needs_save = False
+        card.table.blockSignals(True)
+        for c, spec in enumerate(card._col_specs):
+            # Check if this column uses the party delegate
+            if len(spec) > 2 and isinstance(spec[2], UniversalCellDelegate) and spec[2]._cell_type == "autocomplete":
+                # Assuming this is the party autocomplete since it's the only one we define
+                for r in range(card.table.rowCount()):
+                    it = card.table.item(r, c)
+                    if it and it.text():
+                        txt = it.text().strip()
+                        # If it's not a known GUID, it must be legacy text
+                        if txt not in self._guid_to_name:
+                            txt_lower = txt.lower()
+                            guid = self._name_to_guid.get(txt_lower) or self._alias_to_guid.get(txt_lower)
+                            if guid:
+                                it.setText(guid)
+                                needs_save = True
+        card.table.blockSignals(False)
+        if needs_save:
+            card._save_data()
 
     def _on_sidebar_select(self, row):
         """Show the selected card in single-table view. No-op in multi view."""
@@ -2973,6 +3054,14 @@ class SuppPaymentUI(QWidget):
             w = self.tabs.widget(i)
             if hasattr(w, 'set_company_path'):
                 w.set_company_path(path)
+
+    def refresh_ledger_maps(self):
+        """Propagate ledger refresh down to TodayPaymentTab after a Tally sync."""
+        if hasattr(self, '_today_payment_tab'):
+            try:
+                self._today_payment_tab.refresh_ledger_maps()
+            except Exception as e:
+                print(f"[SuppPaymentUI] refresh_ledger_maps error: {e}")
 
     def add_new_sheet(self):
         if not self._can_edit:

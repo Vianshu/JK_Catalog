@@ -72,18 +72,17 @@ class UniversalCellDelegate(QStyledItemDelegate):
         self._display_cb = display_cb
         self._set_model_cb = set_model_cb
 
-    def paint(self, painter, option, index):
-        """Delegate paint. The editor is opaque-white so it covers old text;
-        no special editing-state detection is needed here."""
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
         display_cb = index.data(DISPLAY_CALLBACK_ROLE) or self._display_cb
         if callable(display_cb):
             display_text = display_cb(index)
             if display_text is not None:
-                opt = QStyleOptionViewItem(option)
-                self.initStyleOption(opt, index)
-                opt.text = str(display_text)
-                super().paint(painter, opt, index)
-                return
+                option.text = str(display_text)
+
+    def paint(self, painter, option, index):
+        """Delegate paint. The editor is opaque-white so it covers old text;
+        no special editing-state detection is needed here."""
         super().paint(painter, option, index)
 
     def createEditor(self, parent, option, index):
@@ -129,7 +128,6 @@ class UniversalCellDelegate(QStyledItemDelegate):
                     editor.textEdited.connect(
                         lambda text, e=editor, dl=data_list: _enforce_match(e, text, dl)
                     )
-                editor.installEventFilter(self)
         return editor
 
     def updateEditorGeometry(self, editor, option, index):
@@ -144,7 +142,7 @@ class UniversalCellDelegate(QStyledItemDelegate):
         super().updateEditorGeometry(editor, option, index)
 
     def setEditorData(self, editor, index):
-        cell_type = index.data(CELL_TYPE_ROLE)
+        cell_type = index.data(CELL_TYPE_ROLE) or self._cell_type
         
         if cell_type == "date" and isinstance(editor, QLineEdit):
             # Pre-fill with whatever text is currently stored in the cell
@@ -155,8 +153,7 @@ class UniversalCellDelegate(QStyledItemDelegate):
         elif cell_type == "autocomplete":
             display_cb = index.data(DISPLAY_CALLBACK_ROLE) or self._display_cb
             if callable(display_cb):
-                val = index.data(Qt.ItemDataRole.DisplayRole)
-                display_text = display_cb(val)
+                display_text = display_cb(index)
                 if display_text is not None:
                     editor.setText(str(display_text))
                     return
@@ -164,7 +161,7 @@ class UniversalCellDelegate(QStyledItemDelegate):
         super().setEditorData(editor, index)
 
     def setModelData(self, editor, model, index):
-        cell_type = index.data(CELL_TYPE_ROLE)
+        cell_type = index.data(CELL_TYPE_ROLE) or self._cell_type
         
         if cell_type == "date" and isinstance(editor, QLineEdit):
             import re as _re
@@ -188,28 +185,6 @@ class UniversalCellDelegate(QStyledItemDelegate):
         
         super().setModelData(editor, model, index)
 
-    def eventFilter(self, editor, event):
-        if event.type() == QEvent.Type.KeyPress:
-            key = event.key()
-            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
-                t = self._owner._excel_table if hasattr(self._owner, '_excel_table') else None
-                if t:
-                    row = t.currentRow()
-                    if key == Qt.Key.Key_Up and row > 0:
-                        t.setCurrentCell(row - 1, t.currentColumn())
-                    elif key == Qt.Key.Key_Down and row < t.rowCount() - 1:
-                        t.setCurrentCell(row + 1, t.currentColumn())
-                return True
-            elif key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
-                t = self._owner._excel_table if hasattr(self._owner, '_excel_table') else None
-                if t:
-                    col = t.currentColumn()
-                    if key == Qt.Key.Key_Left and col > 0:
-                        t.setCurrentCell(t.currentRow(), col - 1)
-                    elif key == Qt.Key.Key_Right and col < t.columnCount() - 1:
-                        t.setCurrentCell(t.currentRow(), col + 1)
-                return True
-        return super().eventFilter(editor, event)
 
     def destroyEditor(self, editor, index):
         if self._owner and hasattr(self._owner, '_is_edit_mode'):

@@ -110,6 +110,9 @@ class ReportsUI(QWidget):
         title = QLabel("📈 CRM Performance Reports")
         title.setObjectName("SectionTitle")
         
+        self.lbl_last_sync = QLabel("Last Sync: N/A")
+        self.lbl_last_sync.setStyleSheet("color: #64748b; font-weight: bold; font-size: 11pt; margin-left: 20px;")
+        
         self.lbl_refresh = QLabel("\u23f3 Refreshing Catalog... Please Wait")
         self.lbl_refresh.setObjectName("RefreshLabel")
         self.lbl_refresh.hide()
@@ -134,6 +137,7 @@ class ReportsUI(QWidget):
         button_box.addWidget(self.btn_download)
         
         header_layout.addWidget(title)
+        header_layout.addWidget(self.lbl_last_sync)
         header_layout.addWidget(self.lbl_refresh)
         header_layout.addStretch()
         header_layout.addLayout(button_box)
@@ -455,6 +459,14 @@ class ReportsUI(QWidget):
         self.refresh_report_data()
 
     def refresh_report_data(self):
+        # Mirror the exact last sync time from the Final Data tab
+        try:
+            main_win = self.window()
+            if hasattr(main_win, 'final_data_page'):
+                self.lbl_last_sync.setText(main_win.final_data_page.sync_lbl.text())
+        except Exception as e:
+            logger.warning(f"Failed to sync label from final_data_page: {e}")
+
         if not self.current_company_path:
             self.table.setRowCount(0)
             return

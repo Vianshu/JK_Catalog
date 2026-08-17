@@ -301,8 +301,10 @@ class GodownListUI(ExcelTableMixin, QWidget):
         # Col 0 (Alias) uses a QLineEdit overlay (setCellWidget), not the delegate.
         self._init_excel_table(self.table)
         
-        # Use _GodownDelegate for the Alias column (col 0) — Tab commits like Enter
-        self.table.setItemDelegateForColumn(0, _GodownDelegate(self, self.table, cell_type="autocomplete", autocomplete_items=lambda: getattr(self, "final_data", [])))
+        # Use _GodownDelegate for all columns so Tab acts like Enter everywhere in this table
+        self.table.setItemDelegate(_GodownDelegate(self))
+        # Specific override for Alias column (col 0) for autocomplete
+        self.table.setItemDelegateForColumn(0, _GodownDelegate(self, cell_type="autocomplete", autocomplete_items=lambda: getattr(self, "final_data", [])))
         
         # Inline stylesheet overrides global QSS cascade for font (Devanagari support)
         from src.ui.table_nav_mixin import UNIVERSAL_TABLE_STYLE

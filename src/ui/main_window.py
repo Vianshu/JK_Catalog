@@ -735,12 +735,17 @@ class MainWindow(QWidget):
             QMessageBox.warning(self, "Sync Issue", msg)
 
     def _refresh_cheque_ledger_maps(self):
-        """Tell the Cheque List to re-read guid_to_name from the freshly-synced ledger DB."""
+        """Tell the Cheque List and Today Payment to re-read guid_to_name from the freshly-synced ledger DB."""
         if hasattr(self, 'cheque_list_page') and hasattr(self.cheque_list_page, 'refresh_ledger_maps'):
             try:
                 self.cheque_list_page.refresh_ledger_maps()
             except Exception as e:
-                logger.warning(f"[_refresh_cheque_ledger_maps] {e}")
+                logger.warning(f"[_refresh_cheque_ledger_maps] cheque: {e}")
+        if hasattr(self, 'supp_payment_page') and hasattr(self.supp_payment_page, 'refresh_ledger_maps'):
+            try:
+                self.supp_payment_page.refresh_ledger_maps()
+            except Exception as e:
+                logger.warning(f"[_refresh_cheque_ledger_maps] today_payment: {e}")
 
     def on_main_stack_change(self, idx):
         """Handle main tab changes -> Auto-build Catalog only on relevant tabs."""
@@ -855,7 +860,8 @@ class MainWindow(QWidget):
         self.main_stack.addWidget(self.godown_page)        # 10
         
         self.main_stack.addWidget(SalesChatUI())           # 11
-        self.main_stack.addWidget(SuppPaymentUI())         # 12
+        self.supp_payment_page = SuppPaymentUI()
+        self.main_stack.addWidget(self.supp_payment_page)  # 12
         self.main_stack.addWidget(BalanceUI())             # 13
         self.main_stack.addWidget(StockUI())               # 14
         self.cheque_list_page = ChequeListUI()
