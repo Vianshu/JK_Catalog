@@ -5,7 +5,7 @@ from PyQt6.QtCore import *
 from PyQt6.QtGui import *
 from PyQt6.QtPrintSupport import QPrintPreviewDialog, QPrinter
 from src.logic.db_manager import get_db_manager, build_logical_name
-from src.ui.table_nav_mixin import ExcelTableMixin
+from src.ui.table_nav_mixin import ExcelTableMixin, UniversalCellDelegate
 from src.ui.ui_helpers import pick_export_folder
 
 # ── Part No Override Mapping ──────────────────────────────────────────────────
@@ -106,6 +106,36 @@ def _godown_enforce_match(editor, text: str, data_list: list, proxy, completer):
     reverted = text[:-1].lower()
     proxy.set_prefix(reverted)
     completer.complete()
+
+
+class _GodownDelegate(UniversalCellDelegate):
+    """UniversalCellDelegate subclass for the Godown List.
+    Tab key commits the current value and moves down — identical to Enter.
+    Applies ONLY to this table; all other tables retain default Tab behaviour.
+    """
+    def eventFilter(self, editor, event):
+        from PyQt6.QtCore import QEvent, Qt
+        if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Tab:
+            from PyQt6.QtGui import QKeyEvent
+            # Convert Tab → Return and let Qt's built-in delegate mechanism
+            # handle commitData / closeEditor atomically. This avoids the
+            # "does not belong to this view" error that occurs when we emit
+            # those signals ourselves on an editor that may already be closing.
+            ret_event = QKeyEvent(
+                QEvent.Type.KeyPress,
+                Qt.Key.Key_Return,
+                Qt.KeyboardModifier.NoModifier,
+            )
+            super().eventFilter(editor, ret_event)   # commits via Qt internals
+            # Schedule downward navigation (editor is closed by now)
+            t = getattr(self._owner, '_excel_table', None)
+            if t:
+                row = t.currentRow()
+                if row < t.rowCount() - 1:
+                    from PyQt6.QtCore import QTimer
+                    QTimer.singleShot(0, lambda r=row: t.setCurrentCell(r + 1, t.currentColumn()))
+            return True   # consume the Tab — don't let Qt move right
+        return super().eventFilter(editor, event)
 
 
 class GodownListUI(ExcelTableMixin, QWidget):
@@ -267,18 +297,22 @@ class GodownListUI(ExcelTableMixin, QWidget):
         self.table.setColumnWidth(6, 80)
         
         # Table navigation (Mode 1 / Mode 2) — ExcelTableMixin
-        # _NavResetDelegate (from mixin) resets _is_edit_mode on editor close.
+        # UniversalCellDelegate (from mixin) resets _is_edit_mode on editor close.
         # Col 0 (Alias) uses a QLineEdit overlay (setCellWidget), not the delegate.
         self._init_excel_table(self.table)
         
-        # Inline stylesheet overrides global QSS cascade for font and padding
-        self.table.setStyleSheet(
-            "QTableWidget, QLineEdit { font-family: 'Noto Sans Devanagari'; font-size: 14pt; }"
-            "QTableWidget::item { padding: 0px; margin: 0px; }"
-            "QHeaderView::section { font-family: 'Noto Sans Devanagari'; font-weight: bold; font-size: 14pt; }"
-        )
+        # Use _GodownDelegate for the Alias column (col 0) — Tab commits like Enter
+        self.table.setItemDelegateForColumn(0, _GodownDelegate(self, self.table, cell_type="autocomplete", autocomplete_items=lambda: getattr(self, "final_data", [])))
+        
+        # Inline stylesheet overrides global QSS cascade for font (Devanagari support)
+        from src.ui.table_nav_mixin import UNIVERSAL_TABLE_STYLE
+        self.table.setStyleSheet(UNIVERSAL_TABLE_STYLE + """
+            QTableWidget, QLineEdit { font-family: 'Noto Sans Devanagari'; font-size: 14pt; }
+            QHeaderView::section { font-family: 'Noto Sans Devanagari'; font-weight: bold; font-size: 14pt; }
+        """)
         
         self.table.itemChanged.connect(self.handle_item_changed)
+        self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         # Track the CN value before each edit so the swap in handle_item_changed
         # has the real old value (item already holds the new value by the time
         # itemChanged fires).
@@ -327,41 +361,6 @@ class GodownListUI(ExcelTableMixin, QWidget):
         """Commit the col-0 overlay editor (if open) before moving away."""
         self._cleanup_active_editor()
 
-    def _excel_on_double_click(self, row, col):
-        """Col 0: open autocomplete overlay. Col > 0: mixin default (track + cursor)."""
-        if not getattr(self, '_can_edit', True):
-            return  # Display-only mode: block overlay editor
-        if col == 0:
-            self.start_Alias_search(row, col)
-            return
-        if col == 6:
-            # Capture pre-edit CN so the swap in handle_item_changed is correct
-            item = self.table.item(row, 6)
-            self._pre_cn = item.text().strip() if item else ""
-        super()._excel_on_double_click(row, col)
-
-    def _excel_on_printable_key(self, row, col, text):
-        """Col 0: open overlay + type. Col 1: numeric only. Col 3: digits/+/- only. Others: mixin default."""
-        if not getattr(self, '_can_edit', True):
-            return True  # Display-only mode: swallow key, block overlay
-        if col == 0:
-            self.start_Alias_search(row, col)
-            editor = self._active_editor[1] if self._active_editor else None
-            if editor:
-                editor.clear()
-                editor.setText(text)
-            return True
-        if col == 6:
-            # Capture pre-edit CN before super() clears/replaces the cell value
-            item = self.table.item(row, 6)
-            self._pre_cn = item.text().strip() if item else ""
-        if col == 1 and text not in "0123456789.,-":
-            return True   # block non-numeric for प्रति कार्टुन
-        if col == 3 and text not in "0123456789+-":
-            return True   # block anything that isn't a digit, + or - for जम्मा कार्टुन
-        return super()._excel_on_printable_key(row, col, text)
-
-    # kept for backward-compat with any stale signal connections
     def _on_cell_changed(self, cur_row=None, cur_col=None, prev_row=None, prev_col=None):
         pass
 
@@ -392,188 +391,78 @@ class GodownListUI(ExcelTableMixin, QWidget):
             
         return item
     
-    def start_Alias_search(self, row, col):
-        if col != 0: return
-
-        # Clean up any previous editor
-        self._cleanup_active_editor()
-
-        current = self.table.item(row, col)
-        # Item 8: capture pre-edit text so we can restore it if user clears the field
-        self._pre_edit_text = current.text() if current else ""
-        text = self._pre_edit_text
-        editor = QLineEdit(text)
-        editor.setFont(QFont("Noto Sans Devanagari", 14))
-        if self.final_data:
-            # Build source model from the alias/item-name list
-            src_model = QStringListModel(self.final_data)
-
-            # Proxy: starts-with matches at the top, contains matches below
-            proxy = _GodownSortProxyModel()
-            proxy.setSourceModel(src_model)
-            proxy.setSortRole(Qt.ItemDataRole.DisplayRole)
-            proxy.setDynamicSortFilter(True)
-
-            local_completer = QCompleter(proxy, editor)
-            local_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-            local_completer.setFilterMode(Qt.MatchFlag.MatchContains)
-            local_completer.setMaxVisibleItems(12)
-            local_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-            editor.setCompleter(local_completer)
-
-            # Keep proxy sorted whenever the user types
-            editor.textEdited.connect(lambda t: proxy.set_prefix(t.strip()))
-            # No typing guard — user can type anything (autocomplete gives suggestions only)
-            local_completer.activated.connect(lambda val: self._commit_alias_search(row, editor))
-
-        self.table.setCellWidget(row, col, editor)
-        # Use QTimer so deselect/cursor-end runs AFTER focusInEvent fires
-        # (focusInEvent calls selectAll which overwrites any deselect done here)
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(0, editor.deselect)
-        QTimer.singleShot(0, lambda: editor.end(False))
-        editor.setFocus()
-
-        # Track this editor
-        self._active_editor = (row, editor)
-
-        editor.returnPressed.connect(lambda: self._commit_alias_search(row, editor))
-        
-    def _commit_alias_search(self, row, editor):
-        if not editor or not editor.parent():
-            return  # Already committed
-
-        Alias = editor.text().strip()
-        self.table.removeCellWidget(row, 0)
-
-        # Empty input — user wants to clear the row completely
-        if not Alias:
-            self.table.blockSignals(True)
-            # Clear name and columns 1-5 only; CN stays as-is
-            self.table.setItem(row, 0, self.create_table_item(""))
-            for c in range(1, 6):
-                self.set_item_locked(row, c, "", should_lock=False)
-            self.table.blockSignals(False)
-
-            self.save_data_to_db()
-            return
-
-        # Exact match first
-        data = self._alias_lookup.get(Alias.lower())
-
-        # Contains match fallback — use pre-sorted keys (sorted once at load, not every call)
-        if not data and self._alias_lookup:
-            alias_lower = Alias.lower()
-            for key in getattr(self, '_sorted_alias_keys', sorted(self._alias_lookup.keys())):
-                if alias_lower in key:
-                    data = self._alias_lookup[key]
-                    break
-
-        if data:
-            item_name = data["Item_Name"]
-            # 1. Set Item Name (from Name column, not Alias)
-            self.table.setItem(row, 0, self.create_table_item(item_name))
-
-            # 2. Unit - auto-fill and lock (item is in the master list)
-            self.table.setItem(row, 2, self.create_table_item(
-                data.get("Unit", ""), Qt.AlignmentFlag.AlignCenter, True))
-
-            # 3. Part No - auto-fill, apply override, and lock (item is in the master list)
-            p_no = str(data.get("Part_No", ""))
-            if p_no.lower() == "none":
-                p_no = ""
-            # Item 13: override Part No for mapped products
-            p_no = _apply_part_no_override(item_name, p_no)
-            self.table.setItem(row, 5, self.create_table_item(
-                p_no, Qt.AlignmentFlag.AlignCenter, True))
-
-            # 4. Set remaining columns as editable (if empty)
-            if not self.table.item(row, 1):
-                self.set_item_locked(row, 1, "", should_lock=False)
-            if not self.table.item(row, 3):
-                self.set_item_locked(row, 3, "", should_lock=False)
-            if not self.table.item(row, 4):
-                self.set_item_locked(row, 4, "", should_lock=False)
-            if not self.table.item(row, 6):
-                self.set_item_locked(row, 6, "", should_lock=False)
-
-            # 5. If Part No is excluded, handle CN removal (with dialog for named rows)
-            cn_was_freed = False
-            if _is_cn_excluded(p_no):
-                existing_cn_item = self.table.item(row, 6)
-                existing_cn = existing_cn_item.text().strip() if existing_cn_item else ""
-                if existing_cn:
-                    pre_name = getattr(self, '_pre_edit_text', '').strip()
-                    if pre_name:
-                        # Case 2: Row previously had a name — ask user
-                        reply = QMessageBox.question(
-                            self, 'Remove CN?',
-                            f"This product does not need a CN.\nRemove CN {existing_cn} and swap it?",
-                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                            QMessageBox.StandardButton.Yes
-                        )
-                        if reply == QMessageBox.StandardButton.No:
-                            # User cancelled — revert the row back to the original product
-                            self.table.removeCellWidget(row, 0)
-                            self.table.setItem(row, 0, self.create_table_item(pre_name))
-                            self._nav_set_current(row, 0)
-                            return
-                        # Yes — blank the CN and swap it to next available empty row
-                        self.table.blockSignals(True)
-                        self.set_item_locked(row, 6, "", should_lock=False)
-                        self.table.blockSignals(False)
-                        cn_was_freed = True
-                    else:
-                        # Case 1: Row was empty before — blank silently
-                        self.table.blockSignals(True)
-                        self.set_item_locked(row, 6, "", should_lock=False)
-                        self.table.blockSignals(False)
-                        cn_was_freed = True
-
-            # 6. Move cursor to quantity col (col 1) and open editor
-            self._nav_set_current(row, 1)
-            self.table.setFocus()
-            self._is_edit_mode = True
-            self.table.editItem(self.table.item(row, 1))
-
-            # Only recycle if a CN was actually freed (JALI case).
-            # Normal product commits (empty row → named row) keep the row's
-            # existing CN — no gap-filling so manual CN jumps stay as gaps until Sort.
-            if cn_was_freed:
-                self._reassign_empty_cns()
-
-            self.save_data_to_db()
-            return
-
-        # No match in lookup — allow the typed text and let user fill Unit/Part No manually
-        self.table.setItem(row, 0, self.create_table_item(Alias))
-        # Ensure Unit and Part No are editable for manual entry
-        unit_val = self.table.item(row, 2).text() if self.table.item(row, 2) else ""
-        pno_val  = self.table.item(row, 5).text() if self.table.item(row, 5) else ""
-        self.set_item_locked(row, 2, unit_val, should_lock=False)
-        self.set_item_locked(row, 5, pno_val,  should_lock=False)
-        # Ensure col 1 item exists before opening editor (fresh row may have None)
-        if not self.table.item(row, 1):
-            self.set_item_locked(row, 1, "", should_lock=False)
-        self._nav_set_current(row, 1)
-        self.table.setFocus()
-        self._is_edit_mode = True
-        self.table.editItem(self.table.item(row, 1))
-        self.save_data_to_db()
-    
     def ensure_minimum_rows(self, min_rows=200):
         """Ensure at least min_rows rows exist in the table"""
         current_rows = self.table.rowCount()
         if current_rows < min_rows:
             self.table.setRowCount(min_rows)
             
+    def _on_cell_double_clicked(self, row, col):
+        if col == 6:
+            item = self.table.item(row, 6)
+            self._pre_cn = item.text().strip() if item else ""
+            
     def handle_item_changed(self, item):
         row = item.row()
         col = item.column()
         text = item.text().strip()
 
+        if col == 0 and not text:
+            self.table.blockSignals(True)
+            for c in range(1, 6):
+                self.set_item_locked(row, c, "", should_lock=False)
+            self.table.blockSignals(False)
+            self.save_data_to_db()
+            return
+            
         self.table.blockSignals(True)
         try:
+            # Column 0 (Alias) - apply lookup logic
+            if col == 0 and text:
+                data = self._alias_lookup.get(text.lower())
+                if not data and self._alias_lookup:
+                    for key in getattr(self, '_sorted_alias_keys', sorted(self._alias_lookup.keys())):
+                        if text.lower() in key:
+                            data = self._alias_lookup[key]
+                            break
+                if data:
+                    item_name = data["Item_Name"]
+                    item.setText(item_name)
+                    self.table.setItem(row, 2, self.create_table_item(data.get("Unit", ""), Qt.AlignmentFlag.AlignCenter, True))
+                    p_no = str(data.get("Part_No", ""))
+                    if p_no.lower() == "none": p_no = ""
+                    p_no = _apply_part_no_override(item_name, p_no)
+                    self.table.setItem(row, 5, self.create_table_item(p_no, Qt.AlignmentFlag.AlignCenter, True))
+                    
+                    if not self.table.item(row, 1): self.set_item_locked(row, 1, "", should_lock=False)
+                    if not self.table.item(row, 3): self.set_item_locked(row, 3, "", should_lock=False)
+                    if not self.table.item(row, 4): self.set_item_locked(row, 4, "", should_lock=False)
+                    if not self.table.item(row, 6): self.set_item_locked(row, 6, "", should_lock=False)
+                    
+                    cn_was_freed = False
+                    if _is_cn_excluded(p_no):
+                        existing_cn_item = self.table.item(row, 6)
+                        if existing_cn_item and existing_cn_item.text().strip():
+                            self.set_item_locked(row, 6, "", should_lock=False)
+                            cn_was_freed = True
+                            
+                    self._nav_set_current(row, 1)
+                    from PyQt6.QtCore import QTimer
+                    QTimer.singleShot(0, lambda r=row: self.table.editItem(self.table.item(r, 1)) if self.table.item(r, 1) else None)
+                    if cn_was_freed: self._reassign_empty_cns()
+                    self.save_data_to_db()
+                    return
+                else:
+                    unit_val = self.table.item(row, 2).text() if self.table.item(row, 2) else ""
+                    pno_val  = self.table.item(row, 5).text() if self.table.item(row, 5) else ""
+                    self.set_item_locked(row, 2, unit_val, should_lock=False)
+                    self.set_item_locked(row, 5, pno_val,  should_lock=False)
+                    if not self.table.item(row, 1): self.set_item_locked(row, 1, "", should_lock=False)
+                    self._nav_set_current(row, 1)
+                    from PyQt6.QtCore import QTimer
+                    QTimer.singleShot(0, lambda r=row: self.table.editItem(self.table.item(r, 1)) if self.table.item(r, 1) else None)
+                    self.save_data_to_db()
+
             # Column 1 (प्रति कार्टुन) - Right align + numeric validation
             if col == 1:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)

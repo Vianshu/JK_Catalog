@@ -19,6 +19,12 @@ from PyQt6.QtCore import QSortFilterProxyModel
 from PyQt6.QtGui import QStandardItemModel, QStandardItem
 from src.ui.ui_helpers import pick_export_folder
 
+from src.ui.table_nav_mixin import (
+    ExcelTableMixin, UniversalCellDelegate, 
+    CELL_TYPE_ROLE, AUTOCOMPLETE_ITEMS_ROLE, 
+    DISPLAY_CALLBACK_ROLE, SET_MODEL_DATA_CALLBACK_ROLE
+)
+
 # Custom data roles for GUID/bank-ref storage (invisible to user, stored behind display text)
 _GUID_ROLE = Qt.ItemDataRole.UserRole        # stores ledger GUID in party cells
 _BREF_ROLE = Qt.ItemDataRole.UserRole + 1   # stores bank_ref UUID in bank cells
@@ -31,306 +37,79 @@ class NumericTableWidgetItem(QTableWidgetItem):
         except Exception as e:
             return super().__lt__(other)
 
-
-# ── Tally-like completer: starts-with entries sorted to top ──────────────────
-class _TallySortProxyModel(QSortFilterProxyModel):
-    """Keeps starts-with matches at the top; contains matches below."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._prefix = ""
-
-    def set_prefix(self, prefix: str):
-        self._prefix = prefix.lower()
-
-    def lessThan(self, left, right):
-        lv = left.data(Qt.ItemDataRole.DisplayRole) or ""
-        rv = right.data(Qt.ItemDataRole.DisplayRole) or ""
-        p = self._prefix
-        l_starts = lv.lower().startswith(p)
-        r_starts = rv.lower().startswith(p)
-        if l_starts != r_starts:
-            return l_starts  # starts-with items sort lower (come first)
-        return lv.lower() < rv.lower()
-
-
-class _TallyCompleter(QCompleter):
-    """QCompleter that shows starts-with matches first, then contains."""
-    def __init__(self, data_list, parent=None):
-        self._data_list = [str(x) for x in data_list]
-        # Build a standard model so we can re-sort on each keystroke
-        self._src_model = QStandardItemModel()
-        for item in self._data_list:
-            self._src_model.appendRow(QStandardItem(item))
-
-        self._proxy = _TallySortProxyModel()
-        self._proxy.setSourceModel(self._src_model)
-        self._proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self._proxy.setFilterKeyColumn(0)
-
-        super().__init__(self._proxy, parent)
-        self.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        self.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-
-        if parent:
-            parent.textEdited.connect(self._on_text_edited)
-
-    def _on_text_edited(self, text: str):
-        p = text.lower()
-        self._proxy.set_prefix(p)
-        # Show starts-with + contains
-        self._proxy.setFilterFixedString(text)
-        self._proxy.sort(0, Qt.SortOrder.AscendingOrder)
-        self.complete()
-
-
-def _enforce_match(editor: QLineEdit, text: str, data_list: list):
-    """Reject the last typed character if the current text has no match at all.
-    Mimics Tally behaviour: typing stops when nothing matches."""
-    if not text:
-        return
-    tl = text.lower()
-    for item in data_list:
-        if tl in str(item).lower():   # contains check
-            return                     # at least one match — allow
-    # No match at all: strip the last character
-    editor.blockSignals(True)
-    editor.setText(text[:-1])
-    editor.blockSignals(False)
-    # Re-open the popup for the restored text.
-    # We call _on_text_edited (not bare complete()) so the proxy filter
-    # is updated to text[:-1] first — otherwise the popup would show empty
-    # results (still filtered to the rejected text) and Qt's popup event
-    # filter would intercept subsequent keypresses, bypassing this guard.
-    completer = editor.completer()
-    if completer and hasattr(completer, '_on_text_edited'):
-        completer._on_text_edited(text[:-1])
-
-class AutocompleteDelegate(QStyledItemDelegate):
-    """Smart delegate for columns 2 (Party/GUID) and 3 (Bank/bank_ref) and 5 (CRM).
-    
-    For col 2: stores Tally ledger GUID in _GUID_ROLE; displays live name.
-    For col 3: stores bank_ref UUID in _BREF_ROLE; displays live bank name.
-    For col 5: stores CRM text normally.
-    """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.main_ui = parent
-
-    # ---- painting: show live name (resolved from GUID/bank_ref) ----
-    def paint(self, painter, option, index):
-        col = index.column()
-        if col == 2:
-            guid = index.data(_GUID_ROLE)
-            if guid:
-                name = self.main_ui.guid_to_name.get(guid, "")
-                if not name:
-                    # GUID present but not found in current ledger data
-                    option2 = option.__class__(option)
-                    painter.save()
-                    painter.fillRect(option.rect, QColor("#fff7ed"))
-                    painter.setPen(QColor("#dc2626"))
-                    painter.drawText(option.rect.adjusted(4, 0, -4, 0),
-                                     Qt.AlignmentFlag.AlignVCenter,
-                                     f"[Not found: {guid[:8]}…]")
-                    painter.restore()
-                    return
-                # Temporarily override display for painting
-                from PyQt6.QtWidgets import QStyleOptionViewItem
-                opt = QStyleOptionViewItem(option)
-                opt.text = name
-                super().paint(painter, opt, index)
-                return
-        elif col == 3:
-            bref = index.data(_BREF_ROLE)
-            if bref:
-                name = self.main_ui.bref_to_name.get(bref, "")
-                if not name:
-                    option2 = option.__class__(option)
-                    painter.save()
-                    painter.fillRect(option.rect, QColor("#fff7ed"))
-                    painter.setPen(QColor("#dc2626"))
-                    painter.drawText(option.rect.adjusted(4, 0, -4, 0),
-                                     Qt.AlignmentFlag.AlignVCenter,
-                                     f"[Unknown Bank]")
-                    painter.restore()
-                    return
-                from PyQt6.QtWidgets import QStyleOptionViewItem
-                opt = QStyleOptionViewItem(option)
-                opt.text = name
-                super().paint(painter, opt, index)
-                return
-        super().paint(painter, option, index)
-
-    def createEditor(self, parent, option, index):
-        col = index.column()
-        if col == 0:  # S.N — never editable
-            return None
-        if col in (2, 3, 5):
-            editor = QLineEdit(parent)
-            editor.setFrame(False)
-
-            data_list = []
-            if col == 2:
-                data_list = list(self.main_ui.party_mapping.keys())
-            elif col == 3:
-                data_list = self.main_ui.bank_list_data
-            elif col == 5:
-                data_list = self.main_ui.crm_list_data
-
-            if data_list:
-                # ── Tally-like completer: starts-with entries appear first ──
-                completer = _TallyCompleter(data_list, editor)
-                completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-                completer.setMaxVisibleItems(12)
-                editor.setCompleter(completer)
-                completer.popup().setMinimumWidth(350)
-
-                # ── Tally-like typing guard: reject chars that have no match ──
-                editor.textEdited.connect(
-                    lambda text, e=editor, dl=data_list: _enforce_match(e, text, dl)
-                )
-
-            editor.installEventFilter(self)
-            return editor
-        return super().createEditor(parent, option, index)
-
-    def setEditorData(self, editor, index):
-        """Pre-fill editor with the currently displayed name (resolved from GUID/bref)."""
-        col = index.column()
-        if col == 2:
-            guid = index.data(_GUID_ROLE)
-            if guid:
-                name = self.main_ui.guid_to_name.get(guid, "")
-                editor.setText(name)
-                from PyQt6.QtCore import QTimer
-                QTimer.singleShot(0, editor.deselect)
-                QTimer.singleShot(0, lambda: editor.end(False))
-                return
-        elif col == 3:
-            bref = index.data(_BREF_ROLE)
-            if bref:
-                name = self.main_ui.bref_to_name.get(bref, "")
-                editor.setText(name)
-                from PyQt6.QtCore import QTimer
-                QTimer.singleShot(0, editor.deselect)
-                QTimer.singleShot(0, lambda: editor.end(False))
-                return
-        super().setEditorData(editor, index)
-        if isinstance(editor, QLineEdit):
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(0, editor.deselect)
-            QTimer.singleShot(0, lambda: editor.end(False))
-
-    def eventFilter(self, editor, event):
-        if event.type() == QEvent.Type.KeyPress and isinstance(editor, QLineEdit):
-            key = event.key()
-            
-            # Smart Excel Option A: Up/Down moves to next cell, UNLESS dropdown is visible
-            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
-                completer = getattr(editor, 'completer', lambda: None)()
-                if completer and completer.popup() and completer.popup().isVisible():
-                    return False # Let the dropdown handle the arrow key
-                
-                # Dropdown is hidden: Commit and move like Excel
-                self.commitData.emit(editor)
-                self.closeEditor.emit(editor, QStyledItemDelegate.EndEditHint.NoHint)
-                
-                table = self.main_ui.table
-                r = table.currentRow()
-                c = table.currentColumn()
-                if key == Qt.Key.Key_Up and r > 0:
-                    self.main_ui._nav_set_current(r - 1, c)
-                elif key == Qt.Key.Key_Down and r < table.rowCount() - 1:
-                    self.main_ui._nav_set_current(r + 1, c)
-                return True
-                
-            elif key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
-                return False  # QLineEdit handles cursor movement natively
-                
-            # Excel: Enter commits and moves down
-            elif key in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
-                completer = getattr(editor, 'completer', lambda: None)()
-                if completer and completer.popup() and completer.popup().isVisible():
-                    return False # Let completer handle selection
-                    
-                self.commitData.emit(editor)
-                self.closeEditor.emit(editor, QStyledItemDelegate.EndEditHint.NoHint)
-                
-                table = self.main_ui.table
-                r = table.currentRow()
-                c = table.currentColumn()
-                if r < table.rowCount() - 1:
-                    self.main_ui._nav_set_current(r + 1, c)
-                return True
-                
-        return super().eventFilter(editor, event)
-
-    def setModelData(self, editor, model, index):
-        col = index.column()
-        if col in (2, 3, 5):
-            val = editor.text().strip()
-            if not val:
-                model.setData(index, "", Qt.ItemDataRole.EditRole)
-                if col == 2:
-                    model.setData(index, None, _GUID_ROLE)
-                elif col == 3:
-                    model.setData(index, None, _BREF_ROLE)
-                return
-
-            data_list = []
-            if col == 2:
-                data_list = list(self.main_ui.party_mapping.keys())
-            elif col == 3:
-                data_list = self.main_ui.bank_list_data
-            elif col == 5:
-                data_list = self.main_ui.crm_list_data
-
-            if data_list:
-                val_lower = val.lower()
-                exact_match = False
-                for item in data_list:
-                    if val_lower == str(item).lower():
-                        val = item
-                        exact_match = True
-                        break
-                if not exact_match:
-                    contains_match = False
-                    for item in sorted(str(x) for x in data_list):
-                        if val_lower in item.lower():
-                            val = item
-                            contains_match = True
-                            break
-                    if not contains_match:
-                        return  # Reject — not in allowed list
-
-            if col == 2:
-                # Resolve to canonical name first
-                val_lower = val.lower()
-                for alias, name in self.main_ui.party_mapping.items():
-                    if alias.lower() == val_lower:
-                        val = name
-                        break
-                # Store the GUID in UserRole
-                guid = self.main_ui.name_to_guid.get(val, "") or self.main_ui.name_to_guid.get(val_lower, "")
-                model.setData(index, val, Qt.ItemDataRole.DisplayRole)  # visible name (fallback display)
-                model.setData(index, guid, _GUID_ROLE)
-
-            elif col == 3:
-                # Store the bank_ref UUID in _BREF_ROLE
-                bref = self.main_ui.bank_name_to_ref.get(val, "") or self.main_ui.bank_name_to_ref.get(val.lower(), "")
-                model.setData(index, val, Qt.ItemDataRole.DisplayRole)  # visible (fallback)
-                model.setData(index, bref, _BREF_ROLE)
-
-            else:
-                model.setData(index, val, Qt.ItemDataRole.EditRole)
-        else:
-            super().setModelData(editor, model, index)
-
-    def destroyEditor(self, editor, index):
-        self.main_ui._is_edit_mode = False   # Exit Mode 2 when editor closes
-        super().destroyEditor(editor, index)
-
 class ChequeListUI(ExcelTableMixin, QWidget):
+    def _party_display_cb(self, index):
+        guid = index.data(_GUID_ROLE)
+        if guid:
+            name = self.guid_to_name.get(guid, "")
+            if not name:
+                return f"[Not found: {guid[:8]}…]"
+            return name
+        return index.data(Qt.ItemDataRole.DisplayRole)
+
+    def _bank_display_cb(self, index):
+        bref = index.data(_BREF_ROLE)
+        if bref:
+            name = self.bref_to_name.get(bref, "")
+            if not name:
+                return "[Unknown Bank]"
+            return name
+        return index.data(Qt.ItemDataRole.DisplayRole)
+        
+    def _match_autocomplete_val(self, val, data_list):
+        val_lower = val.lower()
+        for item in data_list:
+            if val_lower == str(item).lower():
+                return item
+        for item in sorted(str(x) for x in data_list):
+            if val_lower in item.lower():
+                return item
+        return None
+
+    def _party_set_model_cb(self, model, index, val):
+        if not val:
+            model.setData(index, "", Qt.ItemDataRole.EditRole)
+            model.setData(index, None, _GUID_ROLE)
+            return
+            
+        data_list = list(self.party_mapping.keys())
+        matched = self._match_autocomplete_val(val, data_list)
+        if not matched:
+            return # reject
+            
+        # Resolve to canonical name first
+        val_lower = matched.lower()
+        for alias, name in self.party_mapping.items():
+            if alias.lower() == val_lower:
+                matched = name
+                break
+        
+        guid = self.name_to_guid.get(matched, "") or self.name_to_guid.get(val_lower, "")
+        model.setData(index, matched, Qt.ItemDataRole.DisplayRole)
+        model.setData(index, guid, _GUID_ROLE)
+
+    def _bank_set_model_cb(self, model, index, val):
+        if not val:
+            model.setData(index, "", Qt.ItemDataRole.EditRole)
+            model.setData(index, None, _BREF_ROLE)
+            return
+            
+        matched = self._match_autocomplete_val(val, self.bank_list_data)
+        if not matched:
+            return # reject
+            
+        bref = self.bank_name_to_ref.get(matched, "") or self.bank_name_to_ref.get(matched.lower(), "")
+        model.setData(index, matched, Qt.ItemDataRole.DisplayRole)
+        model.setData(index, bref, _BREF_ROLE)
+
+    def _crm_set_model_cb(self, model, index, val):
+        if not val:
+            model.setData(index, "", Qt.ItemDataRole.EditRole)
+            return
+        matched = self._match_autocomplete_val(val, self.crm_list_data)
+        if matched:
+            model.setData(index, matched, Qt.ItemDataRole.EditRole)
+
     def __init__(self, company_path=None):
         super().__init__()
         
@@ -439,12 +218,13 @@ class ChequeListUI(ExcelTableMixin, QWidget):
 
         # Header settings — balanced column widths
         # S.N, Date, Party Name, Bank, Chq No., CRM, Amount, Cash/Bank, Clear Date, Narration
-        _col_widths = [45, 95, 210, 140, 85, 110, 90, 75, 95, 160]
         header = self.table.horizontalHeader()
         header.setMinimumSectionSize(40)
-        for i, w in enumerate(_col_widths):
-            header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
-            self.table.setColumnWidth(i, w)
+        # S.N stays fixed; data columns auto-size to content; Narration fills remainder
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(0, 45)
+        for i in range(1, 9):
+            header.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(9, QHeaderView.ResizeMode.Stretch)  # Narration fills remaining space
 
         self.table.horizontalHeader().sectionClicked.connect(self.sort_table_safe)
@@ -460,19 +240,43 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         self.splitter.addWidget(table_container)
 
         # Table navigation (Mode 1 / Mode 2) — ExcelTableMixin
-        # _init_excel_table sets: DoubleClicked trigger, SingleSelection, blue
-        # selection style, _NavResetDelegate, installEventFilter, cellDoubleClicked.
-        # We then override the delegate with AutocompleteDelegate for autocomplete cols.
+        # _init_excel_table sets UniversalCellDelegate as default
         self._init_excel_table(self.table)
-        self.table.setItemDelegate(AutocompleteDelegate(self))
+        
+        # Apply specific delegates for Date and Autocomplete columns
+        self.table.setItemDelegateForColumn(1, UniversalCellDelegate(self, cell_type="date"))
+        self.table.setItemDelegateForColumn(8, UniversalCellDelegate(self, cell_type="date"))
+        
+        party_del = UniversalCellDelegate(
+            self, cell_type="autocomplete",
+            autocomplete_items=lambda: list(self.party_mapping.keys()),
+            display_cb=self._party_display_cb,
+            set_model_cb=self._party_set_model_cb
+        )
+        self.table.setItemDelegateForColumn(2, party_del)
+        
+        bank_del = UniversalCellDelegate(
+            self, cell_type="autocomplete",
+            autocomplete_items=lambda: self.bank_list_data,
+            display_cb=self._bank_display_cb,
+            set_model_cb=self._bank_set_model_cb
+        )
+        self.table.setItemDelegateForColumn(3, bank_del)
+        
+        crm_del = UniversalCellDelegate(
+            self, cell_type="autocomplete",
+            autocomplete_items=lambda: self.crm_list_data,
+            set_model_cb=self._crm_set_model_cb
+        )
+        self.table.setItemDelegateForColumn(5, crm_del)
         # _init_excel_table already connected cellDoubleClicked — no duplicate needed.
 
-        # Inline stylesheet overrides global QSS cascade for font and padding
-        self.table.setStyleSheet(
-            "QTableWidget { font-family: 'Noto Sans Devanagari'; font-size: 14pt; }"
-            "QTableWidget::item { padding: 0px; margin: 0px; }"
-            "QHeaderView::section { font-weight: normal; }"
-        )
+        # Inline stylesheet overrides global QSS cascade for font (Devanagari support)
+        from src.ui.table_nav_mixin import UNIVERSAL_TABLE_STYLE
+        self.table.setStyleSheet(UNIVERSAL_TABLE_STYLE + """
+            QTableWidget { font-family: 'Noto Sans Devanagari'; font-size: 14pt; }
+            QHeaderView::section { font-weight: normal; }
+        """)
 
         # ================= RIGHT (BANK LIST) =================
         self.right_container = QWidget()
@@ -1227,6 +1031,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         self.apply_initial_hide()    # पहले डेटा छुपाएं (App Start Hide)
         self.update_summary()        # फिर समरी कैलकुलेट करें (ताकि छुपा हुआ डेटा न गिना जाए)
         self.update_bank_counts()    # बैंक काउंट अपडेट करें
+        self.table.resizeColumnsToContents()
         
         # Column widths already set in setup_ui via balanced _col_widths
     
@@ -1643,19 +1448,6 @@ class ChequeListUI(ExcelTableMixin, QWidget):
 
     # ── ExcelTableMixin overrides ────────────────────────────────────────────
 
-    def _excel_on_double_click(self, row, col):
-        """Col 0 (S.N.) is never editable — skip it; delegate to mixin for all other cols."""
-        if col == 0:
-            return
-        super()._excel_on_double_click(row, col)
-
-    def _excel_on_printable_key(self, row, col, text):
-        """Col 0 (S.N.) is never editable — skip it; delegate to mixin for all other cols."""
-        if col == 0:
-            return False
-        return super()._excel_on_printable_key(row, col, text)
-
-    # kept for backward-compat with any stale signal connections
     def _reset_edit_mode(self, cr=None, cc=None, pr=None, pc=None):
         pass
     def _on_selection_changed(self):

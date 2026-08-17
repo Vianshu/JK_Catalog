@@ -1,17 +1,19 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTabWidget, QPushButton, QInputDialog, QMenu, QMessageBox, QTableWidget
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTabWidget, QPushButton, QInputDialog, QMenu, QMessageBox, QTableWidget, QStyledItemDelegate, QLineEdit
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
+
+from src.ui.table_nav_mixin import UniversalCellDelegate, UNIVERSAL_TABLE_STYLE
+from PyQt6.QtWidgets import QAbstractItemView
 class ExcelSheetBase(QTableWidget):
     def __init__(self, color):
         super().__init__(100, 52) # 52 Columns (AZ तक)
         self.setObjectName("ExcelSheetTable") # QSS: #ExcelSheetTable
-        self.setFont(QFont("Arial", 10))
-        
-        # यहाँ इनलाइन स्टाइल को रहने दिया है क्योंकि यह 'color' वेरिएबल पर निर्भर है
-        # header_style = f"QHeaderView::section {{ background-color: {color}; color: white; font-weight: bold; height: 30px; border: 1px solid #dee2e6; }}"
-        # self.horizontalHeader().setStyleSheet(header_style) # Moved to QSS
+        self.setStyleSheet(UNIVERSAL_TABLE_STYLE)
+        self.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.AnyKeyPressed)
         self.setHorizontalHeaderLabels([self.get_column_name(i) for i in range(52)])
+        # Apply opaque-editor delegate to prevent ghost-text during cell editing
+        self.setItemDelegate(UniversalCellDelegate(self))
 
     def get_column_name(self, n):
         res = ""

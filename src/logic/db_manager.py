@@ -817,15 +817,15 @@ class DBManager:
             return False
         try:
             cursor = conn.cursor()
-            # Check if table exists in dbo schema specifically
-            cursor.execute("""
-                SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES 
-                WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = ?
-            """, table_name)
-            if cursor.fetchone()[0] == 0:
-                cursor.execute(create_sql)
-                conn.commit()
-                logger.info(f"Created table '{table_name}' in '{logical_name}'")
+            # Use native SQL Server IF NOT EXISTS to avoid race conditions (fixes 42S01)
+            safe_sql = f"""
+            IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[{table_name}]') AND type in (N'U'))
+            BEGIN
+                {create_sql}
+            END
+            """
+            cursor.execute(safe_sql)
+            conn.commit()
             return True
         except pyodbc.Error as e:
             logger.error(f"ensure_table failed for '{table_name}' in '{logical_name}': {e}")

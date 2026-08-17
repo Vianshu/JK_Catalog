@@ -8,18 +8,21 @@ from PyQt6.QtWidgets import (
     QMenu, QMessageBox, QHeaderView, QAbstractItemView,
     QLabel, QScrollArea, QFrame, QSizePolicy, QLineEdit,
     QListWidget, QListWidgetItem, QStackedWidget, QSplitter,
-    QFormLayout, QCompleter, QStyledItemDelegate, QDateEdit,
-    QApplication, QToolButton,
+    QFormLayout, QApplication, QAbstractScrollArea,
 )
 from PyQt6.QtCore import (
-    Qt, QTimer, QDate, QEvent, QSortFilterProxyModel, QMimeData,
-    QSize,
+    Qt, QTimer, QDate, QEvent, QMimeData,
 )
 from PyQt6.QtGui import (
-    QFont, QColor, QBrush, QPixmap, QPainter, QStandardItemModel,
-    QStandardItem, QKeySequence, QShortcut, QCursor,
+    QFont, QColor, QBrush, QPixmap, QPainter, QKeySequence, QShortcut, QCursor, QImage,
 )
 from src.logic.db_manager import get_db_manager, build_logical_name
+from src.ui.table_nav_mixin import (
+    UniversalCellDelegate, 
+    CELL_TYPE_ROLE, 
+    AUTOCOMPLETE_ITEMS_ROLE,
+    UNIVERSAL_TABLE_STYLE
+)
 
 # ---------------------------------------------------------------------------
 # Shared font helpers
@@ -35,21 +38,7 @@ def _norm_font(size=10):
 # ---------------------------------------------------------------------------
 # Common stylesheet constants
 # ---------------------------------------------------------------------------
-_TABLE_STYLE = """
-QTableWidget {
-    gridline-color: #e2e8f0;
-    background: #ffffff;
-    alternate-background-color: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 6px;
-    font-family: 'Segoe UI';
-    font-size: 10pt;
-}
-QTableWidget::item { padding: 4px 8px; }
-QTableWidget::item:selected {
-    background-color: #dbeafe;
-    color: #1e40af;
-}
+_TABLE_STYLE = UNIVERSAL_TABLE_STYLE + """
 QHeaderView::section:horizontal {
     background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #1e3a5f,stop:1 #162d4a);
     color: #ffffff;
@@ -93,137 +82,39 @@ QPushButton {
 QPushButton:hover { background: #dc2626; }
 """
 
-# ===========================================================================
-# Tally-like completer  (borrowed from cheque_list.py — exact same logic)
-# ===========================================================================
-class _TallySortProxyModel(QSortFilterProxyModel):
-    """Keeps starts-with matches at the top; contains matches below."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._prefix = ""
+_MENU_STYLE = """
+    QMenu {
+        background: #ffffff; color: #1e293b;
+        border: 1px solid #e2e8f0; border-radius: 6px;
+        padding: 4px 0;
+    }
+    QMenu::item { padding: 7px 20px; font-size: 10pt; }
+    QMenu::item:selected { background: #f1f5f9; color: #1e293b; }
+    QMenu::item:disabled { color: #94a3b8; }
+    QMenu::separator { height: 1px; background: #e2e8f0; margin: 3px 8px; }
+"""
 
-    def set_prefix(self, prefix: str):
-        self._prefix = prefix.lower()
-
-    def lessThan(self, left, right):
-        lv = left.data(Qt.ItemDataRole.DisplayRole) or ""
-        rv = right.data(Qt.ItemDataRole.DisplayRole) or ""
-        p = self._prefix
-        l_starts = lv.lower().startswith(p)
-        r_starts = rv.lower().startswith(p)
-        if l_starts != r_starts:
-            return l_starts
-        return lv.lower() < rv.lower()
-
-
-class _TallyCompleter(QCompleter):
-    """QCompleter that shows starts-with matches first, then contains."""
-    def __init__(self, data_list, parent=None):
-        self._data_list = [str(x) for x in data_list]
-        self._src_model = QStandardItemModel()
-        for item in self._data_list:
-            self._src_model.appendRow(QStandardItem(item))
-        self._proxy = _TallySortProxyModel()
-        self._proxy.setSourceModel(self._src_model)
-        self._proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self._proxy.setFilterKeyColumn(0)
-        super().__init__(self._proxy, parent)
-        self.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        self.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        if parent:
-            parent.textEdited.connect(self._on_text_edited)
-
-    def _on_text_edited(self, text: str):
-        p = text.lower()
-        self._proxy.set_prefix(p)
-        self._proxy.setFilterFixedString(text)
-        self._proxy.sort(0, Qt.SortOrder.AscendingOrder)
-        self.complete()
-
-    def update_data(self, data_list):
-        self._data_list = [str(x) for x in data_list]
-        self._src_model.clear()
-        for item in self._data_list:
-            self._src_model.appendRow(QStandardItem(item))
-
-
-def _enforce_match(editor: QLineEdit, text: str, data_list: list):
-    """Reject last typed char if current text has no match at all."""
-    if not text:
-        return
-    tl = text.lower()
-    for item in data_list:
-        if tl in str(item).lower():
-            return
-    editor.blockSignals(True)
-    editor.setText(text[:-1])
-    editor.blockSignals(False)
-    completer = editor.completer()
-    if completer and hasattr(completer, '_on_text_edited'):
-        completer._on_text_edited(text[:-1])
-
-
-# ===========================================================================
-# Delegate: Date-Only column
-# ===========================================================================
-class _DateDelegate(QStyledItemDelegate):
-    def createEditor(self, parent, option, index):
-        ed = QDateEdit(parent)
-        ed.setDisplayFormat("dd/MM/yyyy")
-        ed.setCalendarPopup(True)
-        ed.setDate(QDate.currentDate())
-        ed.setFrame(False)
-        return ed
-
-    def setEditorData(self, editor, index):
-        val = index.data(Qt.ItemDataRole.DisplayRole) or ""
-        d = QDate.fromString(val, "dd/MM/yyyy")
-        if d.isValid():
-            editor.setDate(d)
-
-    def setModelData(self, editor, model, index):
-        model.setData(index, editor.date().toString("dd/MM/yyyy"), Qt.ItemDataRole.EditRole)
-
-
-# ===========================================================================
-# Delegate: Autocomplete column (Sundry Debtors)
-# ===========================================================================
-class _AutocompleteDelegate(QStyledItemDelegate):
-    def __init__(self, data_getter, parent=None):
-        """data_getter: callable that returns the current list of strings."""
-        super().__init__(parent)
-        self._data_getter = data_getter
-
-    def createEditor(self, parent, option, index):
-        editor = QLineEdit(parent)
-        editor.setFrame(False)
-        data_list = self._data_getter()
-        if data_list:
-            completer = _TallyCompleter(data_list, editor)
-            completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-            completer.setMaxVisibleItems(12)
-            editor.setCompleter(completer)
-            completer.popup().setMinimumWidth(300)
-            editor.textEdited.connect(
-                lambda text, e=editor, dl=data_list: _enforce_match(e, text, dl)
-            )
-        return editor
-
-    def setModelData(self, editor, model, index):
-        val = editor.text().strip()
-        model.setData(index, val, Qt.ItemDataRole.EditRole)
-
+_POPUP_STYLE = """
+    QMessageBox { background: #ffffff; color: #0f172a; }
+    QMessageBox QLabel { color: #0f172a; font-size: 10pt; }
+    QPushButton {
+        background: #f1f5f9; color: #374151; border: 1px solid #cbd5e1;
+        border-radius: 4px; padding: 5px 15px; font-weight: bold;
+    }
+    QPushButton:hover { background: #e2e8f0; }
+"""
 
 # ===========================================================================
 # Simple DB-backed QTableWidget
 # ===========================================================================
+
 class _DbTable(QTableWidget):
     """A clean QTableWidget backed by a single SQL table.
     Schema: (row_idx INT, col_idx INT, cell_text NVARCHAR(MAX), PRIMARY KEY (row_idx, col_idx))
     """
     def __init__(self, table_name: str, headers: list, widths: list,
-                 parent=None, row_count=40):
-        super().__init__(row_count, len(headers), parent)
+                 parent=None, row_count=0):
+        super().__init__(0, len(headers), parent)
         self._table_name = table_name
         self._db = get_db_manager()
         self._db_name = ""
@@ -231,20 +122,24 @@ class _DbTable(QTableWidget):
         self._widths = widths
         self._loading = False
         self._can_edit = True
+        self._min_rows = max(0, row_count)  # Bug 1b: minimum visible rows after load
 
         self.setFont(_norm_font())
         self.setAlternatingRowColors(True)
         self.setStyleSheet(_TABLE_STYLE)
         self.setHorizontalHeaderLabels(headers)
         self.horizontalHeader().setHighlightSections(False)
-        self.horizontalHeader().setStretchLastSection(True)
+        self.horizontalHeader().setStretchLastSection(False)
+        self.horizontalHeader().setMinimumSectionSize(60)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.verticalHeader().setDefaultSectionSize(26)
         self.verticalHeader().setVisible(False)
-        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
 
         for i, w in enumerate(widths):
             self.setColumnWidth(i, w)
 
+        self.setItemDelegate(UniversalCellDelegate(self))
         self.itemChanged.connect(self._on_change)
 
     def set_db_name(self, db_name: str):
@@ -270,28 +165,30 @@ class _DbTable(QTableWidget):
     def _on_change(self, _):
         if self._loading:
             return
-        QTimer.singleShot(400, self.save_to_db)
+        # Debounced 300ms save — consistent with _SectionCard strategy
+        QTimer.singleShot(300, self._do_save)
 
-    def save_to_db(self):
+    def _do_save(self):
+        """Save table contents using execute_query with fetch=False for writes."""
         if not self._db_name:
             return
-        conn = self._db.get_connection(self._db_name)
-        if not conn:
-            return
-        cur = conn.cursor()
         try:
-            cur.execute(f"DELETE FROM {self._table_name}")
+            self._db.execute_query(self._db_name,
+                f"DELETE FROM {self._table_name}", fetch=False)
             for r in range(self.rowCount()):
                 for c in range(self.columnCount()):
                     it = self.item(r, c)
                     if it and it.text():
-                        cur.execute(
-                            f"INSERT INTO {self._table_name} (row_idx, col_idx, cell_text) VALUES (?,?,?)",
-                            (r, c, it.text()))
-            conn.commit()
+                        self._db.execute_query(self._db_name,
+                            f"INSERT INTO {self._table_name} (row_idx, col_idx, cell_text)"
+                            f" VALUES (?,?,?)",
+                            (r, c, it.text()), fetch=False)
         except Exception as e:
-            conn.rollback()
-            print(f"[ERROR] _DbTable.save_to_db({self._table_name}):", e)
+            print(f"[_DbTable] _do_save error ({self._table_name}):", e)
+
+    # keep save_to_db as alias for external callers
+    def save_to_db(self):
+        self._do_save()
 
     def load_from_db(self):
         if not self._db_name:
@@ -303,22 +200,35 @@ class _DbTable(QTableWidget):
         ) or []
         self.blockSignals(True)
         self.clearContents()
+        self.setRowCount(0)
         for r, c, txt in rows:
             while self.rowCount() <= int(r):
                 self.insertRow(self.rowCount())
+                for ci in range(self.columnCount()):
+                    self.setItem(self.rowCount() - 1, ci, QTableWidgetItem(""))
             it = QTableWidgetItem(txt or "")
             self.setItem(int(r), int(c), it)
+        # Bug 1b: Pad up to the minimum row count so the table is never visually empty
+        while self.rowCount() < self._min_rows:
+            r = self.rowCount()
+            self.insertRow(r)
+            for c in range(self.columnCount()):
+                self.setItem(r, c, QTableWidgetItem(""))
         self.blockSignals(False)
         self._loading = False
 
     def add_row(self):
         if not self._can_edit:
             return
+        self.blockSignals(True)
         r = self.rowCount()
         self.insertRow(r)
         for c in range(self.columnCount()):
             self.setItem(r, c, QTableWidgetItem(""))
+        self.blockSignals(False)
         self.scrollToBottom()
+        # Save the new empty row directly (no timer, no thread)
+        self._do_save()
 
     def keyPressEvent(self, event):
         if self._can_edit and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
@@ -327,71 +237,111 @@ class _DbTable(QTableWidget):
         else:
             super().keyPressEvent(event)
 
+    # ── Right-click context menu with Delete Row ──────────────────────────
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        menu.setStyleSheet(_MENU_STYLE)
+
+        sel_rows = sorted({i.row() for i in self.selectedItems()})
+        lbl = f"🗑  Delete {len(sel_rows)} Row(s)" if sel_rows else "🗑  Delete Row"
+        act_del = menu.addAction(lbl)
+        act_del.setEnabled(bool(sel_rows) and self._can_edit)
+
+        menu.addSeparator()
+        act_add = menu.addAction("➕  Add Row")
+        act_add.setEnabled(self._can_edit)
+
+        chosen = menu.exec(event.globalPos())
+
+        if chosen == act_del and sel_rows:
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Delete Rows")
+            msg.setText(f"Delete {len(sel_rows)} row(s)? This cannot be undone.")
+            msg.setIcon(QMessageBox.Icon.Question)
+            msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            msg.setStyleSheet(_POPUP_STYLE)
+            if msg.exec() == QMessageBox.StandardButton.Yes:
+                self.blockSignals(True)
+                for r in reversed(sel_rows):
+                    self.removeRow(r)
+                # Pad back to minimum rows if needed
+                while self.rowCount() < self._min_rows:
+                    r = self.rowCount()
+                    self.insertRow(r)
+                    for c in range(self.columnCount()):
+                        self.setItem(r, c, QTableWidgetItem(""))
+                self.blockSignals(False)
+                self._do_save()
+
+        elif chosen == act_add:
+            self.add_row()
+
 
 # ===========================================================================
-# Section card widget  used in Today Payment
+# Section card widget used in Today Payment
 # ===========================================================================
-class _SectionCard(QWidget):
-    """Header bar + QTableWidget for one section in the Today Payment tab."""
-
-    def __init__(self, section_id, name, color, db_manager, db_name,
-                 col_specs=None, parent=None):
-        """
-        col_specs: list of (header_name, width, delegate_or_None)
-        If None, the table loads columns dynamically from DB.
-        """
+class _SectionCard(QFrame):
+    """A single card containing a title and a dynamically-sized table."""
+    def __init__(self, section_id, name, color,
+                 db, db_name,
+                 col_specs=None,
+                 parent=None, card_width=450):
         super().__init__(parent)
         self.section_id = section_id
-        self._db = db_manager
+        self._db = db
         self._db_name = db_name
-        self._can_edit = True
-        self._saving = False
-        self._fixed_cols = col_specs is not None
+        self._fixed_cols = (col_specs is not None)
         self._col_specs = col_specs or []
-        self._today_tab_ref = None   # set by TodayPaymentTab after construction
-
-        outer = QVBoxLayout(self)
+        self._can_edit = False
+        self._today_tab_ref = None
+        self._saving = False
+        
+        # Resizing state
+        self._resizing = False
+        self._resize_start_x = 0
+        self._resize_start_width = 0
+        self.setMouseTracking(True)        # Wrap outer layout in a QWidget
+        content_widget = QWidget()
+        outer = QVBoxLayout(content_widget)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
         # ---- Header bar ----
         self._hdr = QWidget()
         self._hdr.setMinimumHeight(36)
-        self._hdr.setStyleSheet(f"background:{color}; border-radius:6px 6px 0 0;")
+        self._hdr.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._hdr.setStyleSheet(f"""
+            QWidget {{ background: #0f172a; border-left: 4px solid {color}; border-top-left-radius: 4px; border-top-right-radius: 4px; }}
+            QLabel {{ color: white; font-weight: 600; font-size: 13px; }}
+            QPushButton {{
+                background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 4px; padding: 2px 10px; font-size: 9pt; font-weight: 500;
+            }}
+            QPushButton:hover {{ background: #334155; border-color: #475569; }}
+        """)
         hlay = QHBoxLayout(self._hdr)
         hlay.setContentsMargins(12, 4, 8, 4)
         hlay.setSpacing(6)
 
         self.title_lbl = QLabel(name)
         self.title_lbl.setFont(_bold_font(11))
-        self.title_lbl.setStyleSheet("color:white; border:none; background:transparent;")
         hlay.addWidget(self.title_lbl)
         hlay.addStretch()
-
-        _bs = (
-            "QPushButton{background:rgba(255,255,255,.20);color:white;"
-            "border:1px solid rgba(255,255,255,.35);border-radius:4px;"
-            "padding:2px 10px;font-size:10pt;}"
-            "QPushButton:hover{background:rgba(255,255,255,.35);}"
-        )
 
         if not self._fixed_cols:
             self._btn_col = QPushButton("+ Col")
             self._btn_col.setFixedHeight(24)
-            self._btn_col.setStyleSheet(_bs)
             self._btn_col.clicked.connect(self._add_column)
             hlay.addWidget(self._btn_col)
 
         self._btn_row = QPushButton("+ Row")
         self._btn_row.setFixedHeight(24)
-        self._btn_row.setStyleSheet(_bs)
         self._btn_row.clicked.connect(self._add_row)
         hlay.addWidget(self._btn_row)
 
         if not self._fixed_cols:
             self._btn_gear = QPushButton("⚙")
             self._btn_gear.setFixedSize(28, 24)
-            self._btn_gear.setStyleSheet(_bs)
             self._btn_gear.clicked.connect(self._show_gear)
             hlay.addWidget(self._btn_gear)
 
@@ -406,19 +356,28 @@ class _SectionCard(QWidget):
         # Install event filter on hdr to catch mouse events
         self._hdr.installEventFilter(self)
 
-        # ---- Table ----
-        n_cols = len(self._col_specs) if self._fixed_cols else 0
-        self.table = QTableWidget(0, max(n_cols, 1))
+        # ---- Table — visually unified with all other tables in the app ----
+        # NOTE: _TABLE_STYLE is intentionally NOT applied here because its
+        # item padding (4px 8px) creates a visible inset-box inside every cell
+        # in the Today Payment cards. Alternating rows, font, and row height
+        # are applied to match other tabs without the padding artifact.
+        self.table = QTableWidget()
+        self.table.setFrameShape(QFrame.Shape.NoFrame)
         self.table.setFont(_norm_font())
         self.table.setAlternatingRowColors(True)
-        self.table.setStyleSheet(_TABLE_STYLE)
-        self.table.verticalHeader().setDefaultSectionSize(26)
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(26)
         self.table.horizontalHeader().setHighlightSections(False)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.horizontalHeader().setStretchLastSection(False)
+        self.table.horizontalHeader().setMinimumSectionSize(60)
+        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
-        self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-        self.table.setMinimumHeight(50)
+        self.table.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustToContents)
+        self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
+        self.table.setMinimumHeight(60)
+
+        # Apply cell delegate for seamless editing
+        self.table.setItemDelegate(UniversalCellDelegate(self.table))
 
         if self._fixed_cols and self._col_specs:
             headers = [s[0] for s in self._col_specs]
@@ -436,12 +395,59 @@ class _SectionCard(QWidget):
         self.table.customContextMenuRequested.connect(self._row_ctx)
         self.table.itemChanged.connect(self._on_change)
         outer.addWidget(self.table)
+        
+        # Main layout for card + grip
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # Grip handle
+        self.grip = QFrame()
+        self.grip.setFixedWidth(8)
+        self.grip.setCursor(Qt.CursorShape.SplitHCursor)
+        self.grip.setStyleSheet("""
+            QFrame { background-color: transparent; border-left: 1px dashed #cbd5e1; border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
+            QFrame:hover { background-color: #f1f5f9; border-left: 2px solid #94a3b8; }
+        """)
+        self.grip.installEventFilter(self)
+        
+        main_layout.addWidget(content_widget)
+        main_layout.addWidget(self.grip)
 
+        # Allow card to naturally shrink/grow unless setFixedWidth is called.
+        self.setMinimumWidth(300)
+        
+        # Ignore 450 (the old DB default) to allow natural sizing.
+        if card_width is not None and card_width >= 300 and card_width != 450:
+            self.setFixedWidth(card_width)
+            
         self._load()
-
-    # ---- drag-and-drop header: initiates position swap in multi view ----
+        
     def eventFilter(self, source, event):
-        if source is self._hdr:
+        if source == self.grip:
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                self._resizing = True
+                self._resize_start_x = event.globalPosition().x()
+                self._resize_start_width = self.width()
+                return True
+            elif event.type() == QEvent.Type.MouseMove and self._resizing:
+                diff = event.globalPosition().x() - self._resize_start_x
+                new_w = max(300, int(self._resize_start_width + diff))
+                self.setFixedWidth(new_w)
+                return True
+            elif event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+                if self._resizing:
+                    self._resizing = False
+                    try:
+                        conn = self._db.get_connection(self._db_name)
+                        if conn:
+                            cur = conn.cursor()
+                            cur.execute("UPDATE tp_sections SET card_width=? WHERE id=?", (self.width(), self.section_id))
+                            conn.commit()
+                    except Exception as e:
+                        print(f"Error saving card width: {e}")
+                return True
+        elif source is self._hdr:
             t = event.type()
             if t == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
                 # Only start drag if the click wasn't on a button child
@@ -519,12 +525,46 @@ class _SectionCard(QWidget):
             self._db_name,
             "SELECT row_idx, col_idx, cell_text FROM tp_section_data "
             "WHERE section_id=? ORDER BY row_idx, col_idx", (self.section_id,)) or []
-        if data:
-            max_r = max(r[0] for r in data)
-            self.table.setRowCount(max_r + 1)
-            for ri, ci, txt in data:
+            
+        # Reconstruct rows in memory first to filter out ghost rows (e.g. only S.N populated)
+        row_map = {}
+        for ri, ci, txt in data:
+            if not txt or not str(txt).strip(): continue
+            if ri not in row_map: row_map[ri] = {}
+            row_map[ri][ci] = str(txt).strip()
+            
+        # Determine if col 0 is an S.N column
+        is_sn_col = False
+        if self.table.columnCount() > 0:
+            h = self.table.horizontalHeaderItem(0)
+            if h and h.text().replace(".", "").strip().upper() in ("SN", "SNO"):
+                is_sn_col = True
+
+        # Filter rows: A row is considered "valid" if it has data in any real column
+        valid_rows = []
+        for ri in sorted(row_map.keys()):
+            # If col 0 is S.N, we check if any col > 0 has data.
+            # If col 0 is NOT S.N, we check if ANY col >= 0 has data.
+            has_real_data = any((ci > 0 if is_sn_col else True) and val for ci, val in row_map[ri].items())
+            
+            if has_real_data or (is_sn_col and 0 in row_map[ri] and len(row_map[ri]) == 1):
+                # We'll keep it for now, but trailing S.N.-only rows will be trimmed below
+                valid_rows.append(row_map[ri])
+                
+        # Trim trailing rows that only have col 0 populated (if it's an S.N column) or are completely empty
+        while valid_rows:
+            last_row = valid_rows[-1]
+            if not any((ci > 0 if is_sn_col else True) and val for ci, val in last_row.items()):
+                valid_rows.pop()
+            else:
+                break
+                
+        self.table.setRowCount(len(valid_rows) + 1) # +1 for a clean empty row at the bottom
+        for new_ri, r_data in enumerate(valid_rows):
+            for ci, txt in r_data.items():
                 if ci < self.table.columnCount():
-                    self.table.setItem(int(ri), int(ci), QTableWidgetItem(txt or ""))
+                    self.table.setItem(new_ri, int(ci), QTableWidgetItem(txt))
+                    
         self.table.blockSignals(False)
         self._recalc()
 
@@ -538,14 +578,33 @@ class _SectionCard(QWidget):
         cur = conn.cursor()
         try:
             cur.execute("DELETE FROM tp_section_data WHERE section_id=?", (self.section_id,))
+            
+            # Find last content row to avoid saving trailing empty rows
+            last_content = -1
+            is_sn_col = False
+            if self.table.columnCount() > 0:
+                h = self.table.horizontalHeaderItem(0)
+                if h and h.text().replace(".", "").strip().upper() in ("SN", "SNO"):
+                    is_sn_col = True
+                    
             for r in range(self.table.rowCount()):
                 for c in range(self.table.columnCount()):
+                    if is_sn_col and c == 0:
+                        continue # Skip col 0 (S.N) when checking for emptiness
                     it = self.table.item(r, c)
-                    if it and it.text():
+                    if it and str(it.text()).strip():
+                        last_content = r
+                        break
+
+            for r in range(last_content + 1):
+                for c in range(self.table.columnCount()):
+                    it = self.table.item(r, c)
+                    val = str(it.text()).strip() if it else ""
+                    if val:
                         cur.execute(
                             "INSERT INTO tp_section_data(section_id,row_idx,col_idx,cell_text)"
                             " VALUES(?,?,?,?)",
-                            (self.section_id, r, c, it.text()))
+                            (self.section_id, r, c, val))
             conn.commit()
         except Exception as e:
             conn.rollback()
@@ -648,6 +707,7 @@ class _SectionCard(QWidget):
         item = self.table.itemAt(pos)
         r = item.row() if item else self.table.currentRow()
         menu = QMenu(self)
+        menu.setStyleSheet(_MENU_STYLE)
         a_del = menu.addAction("🗑 Delete Row")
         act = menu.exec(self.table.viewport().mapToGlobal(pos))
         if act == a_del and r >= 0:
@@ -659,6 +719,7 @@ class _SectionCard(QWidget):
         if self._fixed_cols:
             return
         menu = QMenu(self)
+        menu.setStyleSheet(_MENU_STYLE)
         a_ren = menu.addAction("✏ Rename Table")
         a_col = menu.addAction("🎨 Change Header Color")
         menu.addSeparator()
@@ -671,11 +732,13 @@ class _SectionCard(QWidget):
                 self.title_lbl.setText(new.strip())
                 self._update_db("name", new.strip())
         elif act == a_del:
-            if QMessageBox.question(
-                    self, "Delete Table",
-                    f"Delete '{self.title_lbl.text()}'?\nAll data will be lost.",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            ) == QMessageBox.StandardButton.Yes:
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Delete Table")
+            msg.setText(f"Delete '{self.title_lbl.text()}'?\nAll data will be lost.")
+            msg.setIcon(QMessageBox.Icon.Question)
+            msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            msg.setStyleSheet(_POPUP_STYLE)
+            if msg.exec() == QMessageBox.StandardButton.Yes:
                 self._delete_from_db()
                 tp = self._today_tab_ref
                 if tp:
@@ -706,7 +769,7 @@ class _SectionCard(QWidget):
         delegate = self.table.itemDelegateForColumn(col_idx)
         if hasattr(delegate, '_data_getter'):
             pass  # data_getter is a lambda; just reassign delegate
-        new_delegate = _AutocompleteDelegate(lambda dl=data_list: dl, self.table)
+        new_delegate = UniversalCellDelegate(self.table, cell_type="autocomplete", autocomplete_items=lambda dl=data_list: dl)
         self.table.setItemDelegateForColumn(col_idx, new_delegate)
 
 
@@ -714,16 +777,6 @@ class _SectionCard(QWidget):
 # TODAY PAYMENT TAB
 # ===========================================================================
 class TodayPaymentTab(QWidget):
-    # Fixed core section definitions: (name, color, col_specs or None)
-    # col_specs = list of (header, width, delegate_instance_or_None)
-    _CORE_SECTIONS = [
-        ("Payments",            "#1565C0", None),  # col_specs set after completer is built
-        ("Demand Loans (DL)",   "#2E7D32", None),
-        ("Purchase (Today)",    "#00695C", None),
-        ("Account Table",       "#E65100", None),
-        ("Purchase (Upcoming)", "#4527A0", None),
-        ("Limits & LC",         "#B71C1C", None),
-    ]
 
     def __init__(self):
         super().__init__()
@@ -766,9 +819,10 @@ class TodayPaymentTab(QWidget):
         tgl.setContentsMargins(3, 3, 3, 3)
         tgl.setSpacing(2)
 
-        _ts = ("QPushButton{border-radius:4px;padding:3px 14px;font-size:10pt;border:none;}"
-               "QPushButton:checked{background:#1d4ed8;color:white;font-weight:bold;}"
-               "QPushButton:!checked{background:transparent;color:#64748b;}")
+        _ts = ("QPushButton{border-radius:4px;padding:4px 16px;font-size:10pt;border:none;font-weight:500;}"
+               "QPushButton:checked{background:#ffffff;color:#0f172a;border:1px solid #cbd5e1;}"
+               "QPushButton:!checked{background:transparent;color:#64748b;}"
+               "QPushButton:!checked:hover{color:#334155;}")
         self._btn_single = QPushButton("Single Table")
         self._btn_single.setCheckable(True)
         self._btn_stack  = QPushButton("Multi View")
@@ -861,12 +915,14 @@ class TodayPaymentTab(QWidget):
 
         self._multi_container = QWidget()
         self._multi_container.setStyleSheet("background:transparent;")
-        self._multi_grid = QGridLayout(self._multi_container)
-        self._multi_grid.setContentsMargins(12, 12, 12, 12)
-        self._multi_grid.setSpacing(12)
-        # Stretch both columns equally
-        self._multi_grid.setColumnStretch(0, 1)
-        self._multi_grid.setColumnStretch(1, 1)
+        # Use a VBox of HBox rows so each row is only as wide as its cards
+        self._multi_layout = QVBoxLayout(self._multi_container)
+        self._multi_layout.setContentsMargins(6, 6, 6, 6)
+        self._multi_layout.setSpacing(8)
+        self._multi_layout.addStretch(1)  # bottom stretch placeholder
+        # Keep _multi_grid as None so any stale references error loudly
+        self._multi_grid = None
+        self._multi_row_layouts = []  # track child QHBoxLayouts for cleanup
 
         multi_scroll.setWidget(self._multi_container)
         self._body_stack.addWidget(multi_scroll)
@@ -887,8 +943,8 @@ class TodayPaymentTab(QWidget):
 
     def _build_core_section_specs(self):
         """Build column specs for the Payments core section."""
-        date_delegate = _DateDelegate()
-        party_delegate = _AutocompleteDelegate(lambda: self._party_list)
+        date_delegate = UniversalCellDelegate(self, cell_type="date")
+        party_delegate = UniversalCellDelegate(self, cell_type="autocomplete", autocomplete_items=lambda: self._party_list)
 
         specs = {
             "Payments": [
@@ -935,13 +991,8 @@ class TodayPaymentTab(QWidget):
                 ("Expected Date", 120, date_delegate),
             ],
             "Limits & LC": [
-                ("S.N",        40,  None),
-                ("Party",     200,  None),
-                ("Limit",     110,  None),
-                ("Used",      110,  None),
-                ("Available", 110,  None),
-                ("Expiry",    110,  date_delegate),
-                ("Remarks",   180,  None),
+                ("Type",   260,  None),
+                ("Value",  180,  None),
             ],
         }
         return specs
@@ -1004,7 +1055,7 @@ class TodayPaymentTab(QWidget):
         ]:
             self._db.ensure_table(self._db_name, tname, ddl)
 
-        # Add is_core column if it doesn't exist (migration)
+        # Add is_core and card_width columns if they don't exist (migration)
         try:
             conn = self._db.get_connection(self._db_name)
             if conn:
@@ -1012,8 +1063,11 @@ class TodayPaymentTab(QWidget):
                 try:
                     cur.execute("ALTER TABLE tp_sections ADD is_core BIT DEFAULT 0")
                     conn.commit()
-                except Exception:
-                    pass  # Column already exists
+                except Exception: pass
+                try:
+                    cur.execute("ALTER TABLE tp_sections ADD card_width INT NULL")
+                    conn.commit()
+                except Exception: pass
         except Exception:
             pass
 
@@ -1070,18 +1124,19 @@ class TodayPaymentTab(QWidget):
 
         rows = self._db.execute_query(
             self._db_name,
-            "SELECT id, name, header_color, is_core FROM tp_sections ORDER BY sort_order, id"
+            "SELECT id, name, header_color, is_core, card_width FROM tp_sections ORDER BY sort_order, id"
         ) or []
 
         core_specs = self._build_core_section_specs()
 
-        for sid, name, color, is_core in rows:
+        for sid, name, color, is_core, c_width in rows:
             col_specs = core_specs.get(name) if is_core else None
             card = _SectionCard(
                 sid, name or "Table", color or "#1565C0",
                 self._db, self._db_name,
                 col_specs=col_specs,
-                parent=self._multi_container
+                parent=self._multi_container,
+                card_width=c_width or 450
             )
             card._today_tab_ref = self   # direct reference, avoids broken parent-walk
             card.set_edit_mode(self._can_edit)
@@ -1199,33 +1254,65 @@ class TodayPaymentTab(QWidget):
         self._rebuild_section_views()
 
     def _clear_multi_grid(self):
-        """Remove all widgets AND row stretches from the multi grid layout."""
-        while self._multi_grid.count() > 0:
-            item = self._multi_grid.takeAt(0)
-            if item.widget():
-                item.widget().setParent(None)
-        # Clear all row stretches accumulated from previous builds
-        for r in range(self._multi_grid.rowCount() + 1):
-            self._multi_grid.setRowStretch(r, 0)
+        """Remove all card widgets from the multi view layout."""
+        # Remove every row HBoxLayout and its cards
+        for row_hbox in self._multi_row_layouts:
+            while row_hbox.count() > 0:
+                item = row_hbox.takeAt(0)
+                w = item.widget()
+                if w:
+                    w.setParent(None)
+        self._multi_row_layouts.clear()
+
+        # Strip all items from the VBox except re-add the bottom stretch at the end
+        while self._multi_layout.count() > 0:
+            item = self._multi_layout.takeAt(0)
+            if item.layout():
+                # delete lingering child layouts
+                pass  # already cleared above
 
     def _rebuild_multi_grid(self):
-        """Lay cards out in a 2-column grid inside the multi view."""
+        """Lay cards out in compact 2-column rows: T1 T2 / T3 T4 / …
+        Each row is a QHBoxLayout so T2 sits immediately after T1 with a small gap,
+        rather than being pushed to the midpoint of the viewport."""
         self._clear_multi_grid()
-        # Get cards in their current sort order (from sidebar, which reflects DB order)
+
+        # Collect cards in sidebar order
         ordered_sids = []
         for i in range(self._sidebar_list.count()):
             sid = self._sidebar_list.item(i).data(Qt.ItemDataRole.UserRole)
             ordered_sids.append(sid)
 
-        for i, sid in enumerate(ordered_sids):
-            card = self._section_cards.get(sid)
-            if card:
-                row, col = divmod(i, 2)
-                card.setParent(self._multi_container)
-                self._multi_grid.addWidget(card, row, col)
-        # Stretch the empty row at the bottom so cards don't balloon vertically
-        n = len(ordered_sids)
-        self._multi_grid.setRowStretch((n + 1) // 2, 1)
+        # Build one QHBoxLayout per pair
+        for i in range(0, max(len(ordered_sids), 1), 2):
+            row_widget = QWidget()
+            row_widget.setStyleSheet("background: transparent;")
+            hbox = QHBoxLayout(row_widget)
+            hbox.setContentsMargins(0, 0, 0, 0)
+            hbox.setSpacing(8)   # ← gap between the two columns
+
+            # Left card
+            if i < len(ordered_sids):
+                left_card = self._section_cards.get(ordered_sids[i])
+                if left_card:
+                    left_card.setParent(row_widget)
+                    hbox.addWidget(left_card, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+
+            # Right card (may not exist for the last odd row)
+            if i + 1 < len(ordered_sids):
+                right_card = self._section_cards.get(ordered_sids[i + 1])
+                if right_card:
+                    right_card.setParent(row_widget)
+                    hbox.addWidget(right_card, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+
+            # Push both cards to the left — no artificial column stretching
+            hbox.addStretch(1)
+
+            self._multi_row_layouts.append(hbox)
+            self._multi_layout.addWidget(row_widget, 0, Qt.AlignmentFlag.AlignTop)
+
+        # Bottom stretch so rows don't balloon to fill the scroll area
+        self._multi_layout.addStretch(1)
 
     def _swap_table_positions(self, sid_a: int, sid_b: int):
         """Swap two tables' positions in the sidebar order, persist, and redraw grid."""
@@ -1325,7 +1412,7 @@ def _field_ss(accent_color="#1a4a8a", is_amount=False):
     return f"""
         QLineEdit {{
             background:#ffffff; border:1px solid #d1d5db;
-            border-radius:2px; padding:2px 6px;
+            border-radius:0px; padding:1px 4px; margin:0px;
             color:#111827; font-size:9pt;
             {'font-weight:bold;' if is_amount else ''}
         }}
@@ -1375,9 +1462,9 @@ class _AccCard(QFrame):
         self.customContextMenuRequested.connect(self._show_context_menu)
 
         lay = QFormLayout(self)
-        lay.setContentsMargins(10, 6, 10, 8)
-        lay.setHorizontalSpacing(8)
-        lay.setVerticalSpacing(3)
+        lay.setContentsMargins(0, 0, 0, 0)  # Zero whitespace like a tight table
+        lay.setHorizontalSpacing(0)
+        lay.setVerticalSpacing(0)
         lay.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         for fkey, flabel_np, flabel_en in _REC_FIELDS:
@@ -1385,19 +1472,20 @@ class _AccCard(QFrame):
             is_amount = fkey == "rakam"
 
             lbl = QLabel(f"{flabel_np}:")
-            lbl.setFont(_norm_font(7))
+            lbl.setFont(_norm_font(9))  # Increased from 7pt
+            lbl.setFixedWidth(75)       # Fixed width acts like an Excel column
             lbl.setStyleSheet(
                 f"color:{'#065f3a' if is_amount and is_company else accent if is_amount else '#6b7280'};"
                 f"font-weight:{'600' if is_amount else '400'};"
-                f"background:transparent;"
+                f"background:transparent; padding-right:4px;"
             )
 
             edit = QLineEdit(val)
-            edit.setFont(_norm_font(8) if not is_amount else _bold_font(9))
+            edit.setFont(_norm_font(10) if not is_amount else _bold_font(11)) # Increased
             edit.setStyleSheet(_field_ss(accent, is_amount))
             edit.setReadOnly(not can_edit)
-            edit.setFixedHeight(20)
-            edit.setMinimumWidth(100)
+            edit.setFixedHeight(26)  # Taller row height to fit bigger font
+            edit.setMinimumWidth(120)
             edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             if is_amount:
                 edit.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -1569,8 +1657,8 @@ class _SupplierSection(QFrame):
         body = QWidget()
         body.setStyleSheet("background:transparent;")
         body_lay = QHBoxLayout(body)
-        body_lay.setContentsMargins(10, 10, 10, 10)
-        body_lay.setSpacing(12)
+        body_lay.setContentsMargins(0, 0, 0, 0)
+        body_lay.setSpacing(0)
 
         # Split accounts into company vs personal
         co_accs = [(a.get("acc_idx", i), a) for i, a in enumerate(accounts)
@@ -1579,8 +1667,8 @@ class _SupplierSection(QFrame):
                    if "company" not in a.get("type", "").lower()]
 
         for is_co, accs_for_col, head_txt, head_bg, head_accent in [
-            (True,  co_accs, "??  COMPANY ACCOUNTS",  _C_CO_HEAD, _C_CO_ACCENT),
-            (False, pe_accs, "??  PERSONAL ACCOUNTS", _C_PE_HEAD, _C_PE_ACCENT),
+            (True,  co_accs, "COMPANY ACCOUNTS",  _C_CO_HEAD, _C_CO_ACCENT),
+            (False, pe_accs, "PERSONAL ACCOUNTS", _C_PE_HEAD, _C_PE_ACCENT),
         ]:
             col = QWidget()
             col.setStyleSheet("background:transparent;")
@@ -1588,7 +1676,7 @@ class _SupplierSection(QFrame):
             col.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
             col_lay = QVBoxLayout(col)
             col_lay.setContentsMargins(0, 0, 0, 0)
-            col_lay.setSpacing(4)
+            col_lay.setSpacing(0)
 
             if accs_for_col:
                 # -- cards in a fixed-size container so header can match its width --
@@ -1597,14 +1685,16 @@ class _SupplierSection(QFrame):
                 cards_widget.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
                 cards_row_lay = QHBoxLayout(cards_widget)
                 cards_row_lay.setContentsMargins(0, 0, 0, 0)
-                cards_row_lay.setSpacing(6)
+                cards_row_lay.setSpacing(0)
                 for acc_idx, acc_data in accs_for_col:
                     card = _AccCard(
                         supplier_id, acc_idx, acc_data,
                         db, db_name, is_co, can_edit, refresh_fn=self._refresh_fn, parent=body)
-                    card.setMinimumWidth(190)
-                    card.setMaximumWidth(280)
-                    card.mousePressEvent = lambda e, c=card: self._acc_click(e, c)
+                    card.setMinimumWidth(240)
+                    card.setMaximumWidth(350)
+                    # Use installEventFilter instead of monkey-patching mousePressEvent
+                    # so child QLineEdit widgets keep native click-to-position-cursor behavior
+                    card.installEventFilter(self)
                     cards_row_lay.addWidget(card)
                     self._acc_cards.append(card)
 
@@ -1655,6 +1745,24 @@ class _SupplierSection(QFrame):
         root.addWidget(body)
 
     # ------------------------------------------------------------------
+    def eventFilter(self, source, event):
+        """Handle mouse clicks on _AccCard frames for selection.
+        Only intercept direct clicks on the card frame itself — clicks on
+        child widgets (e.g. QLineEdit) pass through to preserve native behavior.
+        """
+        if (
+            isinstance(source, _AccCard)
+            and event.type() == QEvent.Type.MouseButtonPress
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            # Only handle the click if it landed directly on the frame background,
+            # not on a child widget (QLineEdit, QLabel, etc.)
+            child = source.childAt(event.pos())
+            if child is None or isinstance(child, _AccCard):
+                self._acc_click(event, source)
+                return True   # consumed — don't propagate to frame's own handler
+        return super().eventFilter(source, event)
+
     def _acc_click(self, event, card: _AccCard):
         mods = event.modifiers()
         if mods & Qt.KeyboardModifier.ControlModifier:
@@ -1671,11 +1779,9 @@ class _SupplierSection(QFrame):
                 pass
 
     def set_selected(self, sel: bool):
-        """Select/deselect the entire supplier section."""
+        """Select/deselect the supplier section frame only — not the account cards."""
         self._selected = sel
         self.setStyleSheet(self._sel_ss if sel else self._norm_ss)
-        for c in self._acc_cards:
-            c.set_selected(sel)
 
     def is_selected(self) -> bool:
         return self._selected
@@ -1787,6 +1893,22 @@ class RecordTab(QWidget):
             "border-radius:2px;border:1px solid #2d3f50;"
             "background:#1c2b3a;")
         hlay.addWidget(self._sel_status)
+
+        # Search bar
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("🔍  Search supplier...")
+        self._search.setFixedHeight(26)
+        self._search.setFixedWidth(200)
+        self._search.setStyleSheet("""
+            QLineEdit{
+                background:#263545;color:#e2e8f0;
+                border:1px solid #334155;border-radius:3px;
+                padding:0 8px;font-size:9pt;
+            }
+            QLineEdit:focus{border-color:#7dd3fc;}
+        """)
+        self._search.textChanged.connect(self._filter_sections)
+        hlay.addWidget(self._search)
         hlay.addStretch()
 
         # Hint
@@ -1847,8 +1969,8 @@ class RecordTab(QWidget):
         self._container = QWidget()
         self._container.setStyleSheet(f"background:{_C_PAGE_BG};")
         self._c_lay = QVBoxLayout(self._container)
-        self._c_lay.setContentsMargins(16, 14, 16, 14)
-        self._c_lay.setSpacing(10)
+        self._c_lay.setContentsMargins(8, 8, 8, 8)
+        self._c_lay.setSpacing(0)  # No gap between supplier cards
         self._scroll.setWidget(self._container)
         main_layout.addWidget(self._scroll)
 
@@ -1937,6 +2059,11 @@ class RecordTab(QWidget):
             row_wrap.addStretch()
             self._c_lay.addLayout(row_wrap)
             self._sections.append(section)
+            # Sync width to actual content after layout has been calculated
+            def _sync_width(sec=section):
+                body_w = sec.sizeHint().width()
+                sec.setFixedWidth(body_w)
+            QTimer.singleShot(0, _sync_width)
 
         self._c_lay.addStretch()
         self._update_status()
@@ -1959,7 +2086,12 @@ class RecordTab(QWidget):
             else:
                 self._select_only(section, curr_idx)
         else:
-            self._select_only(section, curr_idx)
+            if section.is_selected():
+                # Click on already-selected card → deselect it
+                section.set_selected(False)
+                self._last_clicked_idx = -1
+            else:
+                self._select_only(section, curr_idx)
 
         self._update_status()
         # Also let the edit widget receive focus naturally
@@ -1975,6 +2107,13 @@ class RecordTab(QWidget):
             s.set_selected(False)
         self._last_clicked_idx = -1
         self._update_status()
+
+    def _filter_sections(self, text: str):
+        """Show/hide supplier cards whose name matches the search query."""
+        q = text.strip().lower()
+        for s in self._sections:
+            name = s._name_edit.text().lower()
+            s.setVisible(not q or q in name)
 
     def _update_status(self):
         n_sup = sum(1 for s in self._sections if s.is_selected())
@@ -2003,33 +2142,46 @@ class RecordTab(QWidget):
                                     "Ctrl+Click = multi · Shift+Click = range.")
             return
 
+        # High-DPI Off-screen Rendering (3x Scale)
+        scale = 3
         margin = 8
+        scaled_margin = margin * scale
         bg = QColor(_C_PAGE_BG)
-        pixmaps = []
+        images = []
         for sec in selected:
-            hint = sec.sizeHint()
             ow, oh = sec.width(), sec.height()
-            sec.setFixedSize(max(hint.width(), 640), hint.height())
-            sec.adjustSize()
-            px = sec.grab()
-            sec.setMinimumSize(0, 0)
-            sec.setMaximumSize(16777215, 16777215)
-            sec.resize(ow, oh)
-            pixmaps.append(px)
 
-        max_w = max(p.width() for p in pixmaps)
-        total_h = margin + sum(p.height() + margin for p in pixmaps)
-        result = QPixmap(max_w + margin * 2, total_h)
+            # Render at 3x without touching the live widget at all
+            img = QImage(ow * scale, oh * scale, QImage.Format.Format_ARGB32_Premultiplied)
+            img.fill(bg)
+
+            painter = QPainter(img)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            painter.scale(scale, scale)
+            sec.render(painter)
+            painter.end()
+            images.append(img)
+
+        max_w = max(img.width() for img in images)
+        total_h = scaled_margin + sum(img.height() + scaled_margin for img in images)
+        
+        # Stitch all scaled sections onto a final massive canvas
+        result = QImage(max_w + scaled_margin * 2, total_h, QImage.Format.Format_ARGB32_Premultiplied)
         result.fill(bg)
         painter = QPainter(result)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        y = margin
-        for px in pixmaps:
-            painter.drawPixmap(margin, y, px)
-            y += px.height() + margin
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        
+        y = scaled_margin
+        for img in images:
+            painter.drawImage(scaled_margin, y, img)
+            y += img.height() + scaled_margin
         painter.end()
 
-        QApplication.clipboard().setPixmap(result)
+        # Place the pristine high-resolution image directly on the clipboard
+        QApplication.clipboard().setImage(result)
         self._btn_image.setText("✓ Copied")
         QTimer.singleShot(2000, lambda: self._btn_image.setText("⎙ Copy"))
 
@@ -2125,7 +2277,7 @@ class InsuranceTab(QWidget):
         super().__init__()
         self._can_edit = True
         self._tables = []
-        self._date_delegate = _DateDelegate()
+        self._date_delegate = UniversalCellDelegate(self, cell_type="date")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2157,8 +2309,7 @@ class InsuranceTab(QWidget):
             # Section header
             hdr = QLabel(title)
             hdr.setFont(_bold_font(11))
-            hdr.setStyleSheet(
-                f"background:{color}; color:white; padding:8px 14px; border-radius:6px 6px 0 0;")
+            hdr.setStyleSheet(_SECTION_HEADER_STYLE.format(color=color))
             c_lay.addWidget(hdr)
 
             headers = [c[0] for c in cols]
@@ -2166,8 +2317,8 @@ class InsuranceTab(QWidget):
             tbl = _DbTable(tname, headers, widths)
 
             # Apply date delegates to start/end date columns (indices 4 and 5)
-            tbl.setItemDelegateForColumn(4, _DateDelegate())
-            tbl.setItemDelegateForColumn(5, _DateDelegate())
+            tbl.setItemDelegateForColumn(4, UniversalCellDelegate(tbl, cell_type="date"))
+            tbl.setItemDelegateForColumn(5, UniversalCellDelegate(tbl, cell_type="date"))
 
             # Add row button
             add_btn = QPushButton("+ Add Row")
@@ -2376,7 +2527,7 @@ class AnilHisabTab(QWidget):
     def __init__(self):
         super().__init__()
         self._can_edit = True
-        self._blocking = False
+
         self._db_name  = ""
         self._db       = get_db_manager()
 
@@ -2412,14 +2563,19 @@ class AnilHisabTab(QWidget):
         for i, (_, w) in enumerate(_ANIL_COLS):
             self.table.setColumnWidth(i, w)
         self.table.horizontalHeader().setHighlightSections(False)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.horizontalHeader().setStretchLastSection(False)
+        self.table.horizontalHeader().setMinimumSectionSize(60)
+        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.table.verticalHeader().setDefaultSectionSize(26)
         self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
 
+        # Apply UniversalCellDelegate globally for seamless text editing
+        self.table.setItemDelegate(UniversalCellDelegate(self.table))
+        
         # Date delegates on Start Date (0) and End Date (1)
-        self.table.setItemDelegateForColumn(0, _DateDelegate())
-        self.table.setItemDelegateForColumn(1, _DateDelegate())
+        self.table.setItemDelegateForColumn(0, UniversalCellDelegate(self.table, cell_type="date"))
+        self.table.setItemDelegateForColumn(1, UniversalCellDelegate(self.table, cell_type="date"))
 
         self.table.cellChanged.connect(self._on_cell_changed)
         layout.addWidget(self.table)
@@ -2449,7 +2605,6 @@ class AnilHisabTab(QWidget):
             "SELECT start_date, end_date, days, particular, dr, cr, remarks "
             "FROM anil_ledger ORDER BY sort_order, id"
         ) or []
-        self._blocking = True
         self.table.blockSignals(True)
         self.table.setRowCount(0)
         for row_data in rows:
@@ -2464,66 +2619,27 @@ class AnilHisabTab(QWidget):
             self.table.setItem(r, 5, self._a_item(_fmt(cr)  if cr  else "", _R))
             self.table.setItem(r, 7, self._a_item(remarks or "", _L))
         self.table.blockSignals(False)
-        self._blocking = False
-        self._recalc_from(0)
+        # Recalc balances silently after load
+        self._recalc_all()
 
-    def _save_to_db(self):
-        if not self._db_name:
-            return
-        conn = self._db.get_connection(self._db_name)
-        if not conn:
-            return
-        cur = conn.cursor()
-        try:
-            cur.execute("DELETE FROM anil_ledger")
-            for r in range(self.table.rowCount()):
-                def _t(c):
-                    it = self.table.item(r, c)
-                    return it.text().strip() if it else ""
-                cur.execute(
-                    "INSERT INTO anil_ledger"
-                    "(sort_order,start_date,end_date,days,particular,dr,cr,remarks)"
-                    " VALUES(?,?,?,?,?,?,?,?)",
-                    (r, _t(0), _t(1), _t(2), _t(3), _t(4), _t(5), _t(7)))
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
-            print("[AnilHisab] _save_to_db error:", e)
-
-    def _add_row(self):
-        if not self._can_edit:
-            return
-        r = self.table.rowCount()
-        self.table.insertRow(r)
-        for c in range(self.table.columnCount()):
-            self.table.setItem(r, c, self._a_item(""))
-        self.table.scrollToBottom()
-        self._recalc_from(r)
-
-    def _recalc_from(self, start_row: int):
-        self._blocking = True
-        for r in range(start_row, self.table.rowCount()):
-            prev_bal = 0.0
-            if r > 0:
-                prev_item = self.table.item(r - 1, _ANIL_BAL)
-                try:
-                    prev_bal = float(prev_item.text().replace(",", "")) if prev_item and prev_item.text() else 0.0
-                except ValueError:
-                    prev_bal = 0.0
-
-            def _num(col):
-                it = self.table.item(r, col)
+    def _recalc_all(self):
+        """Recalculate all Balance cells with signals fully blocked."""
+        self.table.blockSignals(True)
+        prev_bal = 0.0
+        for r in range(self.table.rowCount()):
+            def _n(col, row=r):
+                it = self.table.item(row, col)
                 try:
                     return float(it.text().replace(",", "")) if it and it.text() else 0.0
                 except ValueError:
                     return 0.0
-
-            dr = _num(_ANIL_DR)
-            cr = _num(_ANIL_CR)
+            dr = _n(_ANIL_DR)
+            cr = _n(_ANIL_CR)
             new_bal = (dr - cr) if r == 0 else (prev_bal + dr - cr)
-            dr_txt = self.table.item(r, _ANIL_DR)
-            cr_txt = self.table.item(r, _ANIL_CR)
-            has_val = (dr_txt and dr_txt.text()) or (cr_txt and cr_txt.text())
+            prev_bal = new_bal
+            dr_it = self.table.item(r, _ANIL_DR)
+            cr_it = self.table.item(r, _ANIL_CR)
+            has_val = (dr_it and dr_it.text()) or (cr_it and cr_it.text())
             bal_str = _fmt(new_bal) if has_val else ""
             bal_it = self._a_item(bal_str, _R)
             if new_bal < 0:
@@ -2531,17 +2647,49 @@ class AnilHisabTab(QWidget):
             elif new_bal > 0:
                 bal_it.setForeground(QBrush(QColor("#16a34a")))
             self.table.setItem(r, _ANIL_BAL, bal_it)
+        self.table.blockSignals(False)
 
-        self._blocking = False
-        QTimer.singleShot(500, self._save_to_db)
+    def _save_all(self):
+        """Save all rows using execute_query with fetch=False for writes."""
+        if not self._db_name:
+            return
+        try:
+            self._db.execute_query(self._db_name,
+                "DELETE FROM anil_ledger", fetch=False)
+            for r in range(self.table.rowCount()):
+                self._db.execute_query(
+                    self._db_name,
+                    "INSERT INTO anil_ledger"
+                    "(sort_order,start_date,end_date,days,particular,dr,cr,remarks)"
+                    " VALUES(?,?,?,?,?,?,?,?)",
+                    (r, self._cell(r,0), self._cell(r,1), self._cell(r,2),
+                        self._cell(r,3), self._cell(r,4), self._cell(r,5),
+                        self._cell(r,7)),
+                    fetch=False)
+        except Exception as e:
+            print("[AnilHisab] _save_all error:", e)
+
+    def _cell(self, r, c):
+        it = self.table.item(r, c)
+        return it.text().strip() if it else ""
+
+    def _add_row(self):
+        if not self._can_edit:
+            return
+        self.table.blockSignals(True)
+        r = self.table.rowCount()
+        self.table.insertRow(r)
+        for c in range(self.table.columnCount()):
+            self.table.setItem(r, c, self._a_item(""))
+        self.table.blockSignals(False)
+        self.table.scrollToBottom()
+        self._save_all()
 
     def _on_cell_changed(self, row, col):
-        if self._blocking:
-            return
+        """Save on any column edit; also recalc running balance when DR/CR changes."""
         if col in (_ANIL_DR, _ANIL_CR):
-            self._recalc_from(row)
-        else:
-            QTimer.singleShot(500, self._save_to_db)
+            self._recalc_all()
+        self._save_all()  # Bug 1a: persist dates, particular, remarks, etc.
 
     def apply_edit_mode(self, can_edit: bool):
         self._can_edit = can_edit
@@ -2564,9 +2712,7 @@ class _StyledTable(QWidget):
 
         hdr = QLabel(title)
         hdr.setFont(_bold_font(11))
-        hdr.setStyleSheet(
-            f"background:{header_color}; color:white; padding:8px 14px; "
-            f"border-radius:6px 6px 0 0;")
+        hdr.setStyleSheet(_SECTION_HEADER_STYLE.format(color=header_color))
         lay.addWidget(hdr)
 
         self.table = QTableWidget(0, len(headers))
@@ -2577,7 +2723,9 @@ class _StyledTable(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(26)
         self.table.horizontalHeader().setHighlightSections(False)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.horizontalHeader().setStretchLastSection(False)
+        self.table.horizontalHeader().setMinimumSectionSize(60)
+        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         self.table.setMinimumHeight(60)
         for i, w in enumerate(widths):
@@ -2607,11 +2755,17 @@ class _StyledTable(QWidget):
 
 
 class PaymentSheet(QWidget):
+    """A user-created sheet containing one or more _StyledTable sub-tables.
+    Data persists via a dedicated `payment_sheet_data` DB table.
+    """
+
     def __init__(self, cfg: dict):
         super().__init__()
-        self._tables = []
+        self._cfg = cfg
+        self._tables: list[_StyledTable] = []
         self._db_name = ""
         self._db = get_db_manager()
+        self._sheet_key = cfg.get("tab", "Sheet")  # used as DB identity key
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2621,10 +2775,10 @@ class PaymentSheet(QWidget):
         top_bar.setFixedHeight(42)
         tlay = QHBoxLayout(top_bar)
         tlay.setContentsMargins(16, 6, 16, 6)
-        title_lbl = QLabel(cfg.get("tab", "Sheet"))
-        title_lbl.setFont(_bold_font(12))
-        title_lbl.setStyleSheet("color:#1e293b;")
-        tlay.addWidget(title_lbl)
+        self._title_lbl = QLabel(cfg.get("tab", "Sheet"))
+        self._title_lbl.setFont(_bold_font(12))
+        self._title_lbl.setStyleSheet("color:#1e293b;")
+        tlay.addWidget(self._title_lbl)
         layout.addWidget(top_bar)
 
         scroll = QScrollArea()
@@ -2641,29 +2795,112 @@ class PaymentSheet(QWidget):
         widths  = [c[1] for c in cols]
         sections = cfg.get("sections", {0: ("Data", "#1976D2")})
 
-        for row, (label, bg) in sections.items():
+        for row_key, (label, bg) in sections.items():
             t = _StyledTable(label, headers, widths, header_color=bg)
+            t._section_key = str(row_key)  # DB identity within this sheet
             t.btn_add.clicked.connect(lambda _, tbl=t: self._add_row(tbl))
             self._tables.append(t)
             c_lay.addWidget(t)
+            # Wire persistence
+            t.table.itemChanged.connect(lambda _, tbl=t: QTimer.singleShot(300, lambda tbl=tbl: self._save_table(tbl)))
 
         c_lay.addStretch()
         scroll.setWidget(container)
         layout.addWidget(scroll)
 
-    def _add_row(self, tbl):
+    # ---------------------------------------------------------------- DB --
+    def _ensure_db_table(self):
+        """Create the payment_sheet_data table if it doesn't exist."""
+        if not self._db_name:
+            return
+        ddl = (
+            "CREATE TABLE payment_sheet_data "
+            "(sheet_key NVARCHAR(200), section_key NVARCHAR(100), "
+            " row_idx INT, col_idx INT, cell_text NVARCHAR(MAX), "
+            " PRIMARY KEY (sheet_key, section_key, row_idx, col_idx))"
+        )
+        self._db.ensure_table(self._db_name, "payment_sheet_data", ddl)
+
+    def _load_table(self, tbl: "_StyledTable"):
+        if not self._db_name:
+            return
+        rows = self._db.execute_query(
+            self._db_name,
+            "SELECT row_idx, col_idx, cell_text FROM payment_sheet_data "
+            "WHERE sheet_key=? AND section_key=? ORDER BY row_idx, col_idx",
+            (self._sheet_key, tbl._section_key)
+        ) or []
+        tbl.table.blockSignals(True)
+        tbl.table.setRowCount(0)
+        for r, c, txt in rows:
+            while tbl.table.rowCount() <= int(r):
+                tbl.table.insertRow(tbl.table.rowCount())
+                for ci in range(tbl.table.columnCount()):
+                    tbl.table.setItem(tbl.table.rowCount() - 1, ci, QTableWidgetItem(""))
+            tbl.table.setItem(int(r), int(c), QTableWidgetItem(txt or ""))
+        tbl.table.blockSignals(False)
+        tbl.recalculate_height()
+
+    def _save_table(self, tbl: "_StyledTable"):
+        if not self._db_name:
+            return
+        try:
+            self._db.execute_query(
+                self._db_name,
+                "DELETE FROM payment_sheet_data WHERE sheet_key=? AND section_key=?",
+                (self._sheet_key, tbl._section_key), fetch=False)
+            for r in range(tbl.table.rowCount()):
+                for c in range(tbl.table.columnCount()):
+                    it = tbl.table.item(r, c)
+                    val = it.text().strip() if it else ""
+                    if val:
+                        self._db.execute_query(
+                            self._db_name,
+                            "INSERT INTO payment_sheet_data"
+                            "(sheet_key, section_key, row_idx, col_idx, cell_text)"
+                            " VALUES(?,?,?,?,?)",
+                            (self._sheet_key, tbl._section_key, r, c, val), fetch=False)
+        except Exception as e:
+            print(f"[PaymentSheet] _save_table error: {e}")
+
+    def _add_row(self, tbl: "_StyledTable"):
         r = tbl.table.rowCount()
         tbl.table.insertRow(r)
         for c in range(tbl.table.columnCount()):
             tbl.table.setItem(r, c, QTableWidgetItem(""))
         tbl.recalculate_height()
+        # Empty row is not saved until the user types in it (debounced on itemChanged)
 
     def set_company_path(self, path: str):
-        pass  # Generic sheets don't persist to DB
+        """Bug 1c: Wire DB so all table data persists across restarts."""
+        company_name = os.path.basename(os.path.normpath(path))
+        self._db_name = build_logical_name(company_name, company_path=path)
+        self._ensure_db_table()
+        for tbl in self._tables:
+            self._load_table(tbl)
 
     def setEditTriggers(self, trigs):
         for t in self._tables:
             t.table.setEditTriggers(trigs)
+
+    def apply_edit_mode(self, can_edit: bool):
+        trigs = (
+            QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.AnyKeyPressed
+            if can_edit else QTableWidget.EditTrigger.NoEditTriggers
+        )
+        self.setEditTriggers(trigs)
+
+    def delete_from_db(self):
+        """Remove all saved data for this sheet from the database."""
+        if not self._db_name:
+            return
+        try:
+            self._db.execute_query(
+                self._db_name,
+                "DELETE FROM payment_sheet_data WHERE sheet_key=?",
+                (self._sheet_key,), fetch=False)
+        except Exception as e:
+            print(f"[PaymentSheet] delete_from_db error: {e}")
 
 
 # ===========================================================================
@@ -2756,38 +2993,43 @@ class SuppPaymentUI(QWidget):
         if ok and new.strip():
             self.tabs.setTabText(index, new.strip())
 
+    # Number of fixed core tabs that must never be deleted
+    _CORE_TAB_COUNT = 6  # Today Payment, Record, Anil Dai Hisab, Team-List, Bonus, Insurance
+
     def show_tab_menu(self, point):
         idx = self.tabs.tabBar().tabAt(point)
         if idx == -1:
             return
         menu = QMenu(self)
         ra = menu.addAction("✏ Rename Sheet")
+        # Only non-core (user-added) tabs can be deleted
+        is_core = idx < self._CORE_TAB_COUNT
         da = menu.addAction("🗑 Delete Sheet")
+        da.setEnabled(not is_core)
         act = menu.exec(self.tabs.tabBar().mapToGlobal(point))
         if act == ra:
             self.rename_tab(idx)
-        elif act == da:
-            if self.tabs.count() > 1:
+        elif act == da and not is_core:
+            if self.tabs.count() > self._CORE_TAB_COUNT:
+                tab_name = self.tabs.tabText(idx)
                 if (QMessageBox.question(
                         self, "Delete",
-                        f"Delete '{self.tabs.tabText(idx)}'?",
+                        f"Delete '{tab_name}'? All data in this sheet will be lost.",
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
                         == QMessageBox.StandardButton.Yes):
+                    # Clean up DB data before removing the widget
+                    w = self.tabs.widget(idx)
+                    if isinstance(w, PaymentSheet):
+                        w.delete_from_db()
                     self.tabs.removeTab(idx)
             else:
-                QMessageBox.warning(self, "Warning", "At least one sheet must remain!")
+                QMessageBox.information(self, "Info", "No user-created sheets to delete.")
 
     def apply_edit_mode(self, can_edit: bool):
         self._can_edit = can_edit
-        triggers = (
-            QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.AnyKeyPressed
-            if can_edit else QTableWidget.EditTrigger.NoEditTriggers
-        )
         for i in range(self.tabs.count()):
             w = self.tabs.widget(i)
-            if isinstance(w, PaymentSheet):
-                w.setEditTriggers(triggers)
-            elif hasattr(w, "apply_edit_mode"):
+            if hasattr(w, "apply_edit_mode"):
                 w.apply_edit_mode(can_edit)
         self.add_button.setEnabled(can_edit)
         self.tabs.setMovable(can_edit)

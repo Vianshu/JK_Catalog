@@ -1,11 +1,13 @@
 import os
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-    QPushButton, QTableWidget, QHeaderView
+    QPushButton, QTableWidget, QHeaderView,
+    QStyledItemDelegate, QLineEdit
 )
 from PyQt6.QtCore import Qt
 
-class IntCostSheetUI(QDialog):
+from src.ui.table_nav_mixin import UniversalCellDelegate, ExcelTableMixin
+class IntCostSheetUI(ExcelTableMixin, QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("CostSheetDialog") # QSS: #CostSheetDialog
@@ -34,6 +36,7 @@ class IntCostSheetUI(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
+        self._init_excel_table(self.table)
         
         layout.addWidget(self.table)
 
