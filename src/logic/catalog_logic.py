@@ -1890,30 +1890,26 @@ class CatalogLogic:
             except (ValueError, TypeError):
                 return s
 
-        def _norm_str(v):
-            """Remove invisible trailing/multiple spaces that cause false positives."""
-            return " ".join(str(v).strip().lower().split()) if v else ""
-
         parts = []
         for name in product_names:
             p = product_lookup.get(name)
             if p:
                 parts.append({
-                    "name": _norm_str(name),
-                    "length": _norm_str(p.get("length", "1|0")),
-                    "sizes": [_norm_str(v) for v in p.get("sizes", [])],
+                    "name": name.strip().lower(),
+                    "length": str(p.get("length", "1|0")).strip().lower(),
+                    "sizes": [str(v).strip().lower() for v in p.get("sizes", [])],
                     "mrps": [_norm_num(v) for v in p.get("mrps", [])],
-                    "moqs": [_norm_str(v) for v in p.get("moqs", [])],
+                    "moqs": [str(v).strip().lower() for v in p.get("moqs", [])],
                     # sort_price omitted — redundant with mrps, was causing false-positive
                     # hash changes when variant ordering shifted due to MRP updates.
-                    "img": _norm_str(p.get("image_path", "")),
-                    "img_date": _norm_str(p.get("img_date", "")),  # MAX across all variants
-                    "category": _norm_str(p.get("category", "")),
-                    "base_units": _norm_str(p.get("base_units", "")),
-                    "master_packing": _norm_str(p.get("master_packing", "")),
+                    "img": str(p.get("image_path", "")).strip().lower(),
+                    "img_date": str(p.get("img_date", "")).strip().lower(),  # MAX across all variants
+                    "category": str(p.get("category", "")).strip().lower(),
+                    "base_units": str(p.get("base_units", "")).strip().lower(),
+                    "master_packing": str(p.get("master_packing", "")).strip().lower(),
                 })
             else:
-                parts.append({"name": _norm_str(name), "_missing": True})
+                parts.append({"name": name.strip().lower(), "_missing": True})
                 
         json_dump = json.dumps(parts, indent=2, sort_keys=True)
         md5_hash = hashlib.md5(json.dumps(parts, sort_keys=True).encode()).hexdigest()
@@ -1958,7 +1954,7 @@ class CatalogLogic:
         # We bump CURRENT_HASH_VERSION whenever the algorithm changes and
         # auto-regenerate all snapshots silently on first run, returning 0
         # changes so the CRM is not polluted.
-        CURRENT_HASH_VERSION = 3  # v2: ORDER BY MRP,GUID  v3: img_date=MAX, sort_price removed
+        CURRENT_HASH_VERSION = 5  # v5: Reverted aggressive string stripping to capture single character formatting changes
         try:
             cursor = conn.cursor()
             cursor.execute("SELECT [value] FROM build_config WHERE [key]='hash_version'")
