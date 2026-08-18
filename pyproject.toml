@@ -1,0 +1,28 @@
+[tool.ruff]
+extend-exclude = ["dist", "build", "scratch", "ignore", "backup code", ".venv", "venv"]
+
+[tool.mypy]
+exclude = "(^dist/|^build/|^scratch/|^ignore/|^backup code/|^\\.venv/|^venv/)"
+
+# pyodbc/nepali_datetime/fitz have no official type stubs - suppress the "missing stubs" noise
+[[tool.mypy.overrides]]
+module = ["pyodbc", "nepali_datetime", "fitz"]
+ignore_missing_imports = true
+
+# pandas DOES have official stubs - install them instead of ignoring:
+#   pip install pandas-stubs
+
+# PyQt6's bundled .pyi stub hit a syntax error under your mypy/Python version and
+# was blocking the whole run ("Found 15 errors ... errors prevented further checking").
+# This tells mypy not to fail on errors inside PyQt6's own stub files specifically -
+# it does NOT disable checking of your code that uses PyQt6.
+[[tool.mypy.overrides]]
+module = ["PyQt6.*"]
+ignore_errors = true
+
+[tool.bandit]
+exclude_dirs = ["dist", "build", "scratch", "ignore", "backup code", ".venv", "venv"]
+
+[tool.vulture]
+exclude = ["dist/", "build/", "scratch/", "ignore/", "backup code/", ".venv/", "venv/"]
+min_confidence = 70

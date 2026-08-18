@@ -129,7 +129,7 @@ class _DbTable(QTableWidget):
         self.setStyleSheet(_TABLE_STYLE)
         self.setHorizontalHeaderLabels(headers)
         self.horizontalHeader().setHighlightSections(False)
-        self.horizontalHeader().setStretchLastSection(False)
+        self.horizontalHeader().setStretchLastSection(True)
         self.horizontalHeader().setMinimumSectionSize(60)
         self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.verticalHeader().setDefaultSectionSize(26)
@@ -374,12 +374,12 @@ class _SectionCard(QFrame):
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(26)
         self.table.horizontalHeader().setHighlightSections(False)
-        self.table.horizontalHeader().setStretchLastSection(False)
+        self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setMinimumSectionSize(60)
         self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.table.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustToContents)
-        self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
+        self.table.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.MinimumExpanding)
         self.table.setMinimumHeight(60)
 
         # Apply cell delegate for seamless editing
@@ -923,7 +923,7 @@ class TodayPaymentTab(QWidget):
         self._multi_container.setStyleSheet("background:transparent;")
         # Use a VBox of HBox rows so each row is only as wide as its cards
         self._multi_layout = QVBoxLayout(self._multi_container)
-        self._multi_layout.setContentsMargins(6, 6, 6, 6)
+        self._multi_layout.setContentsMargins(6, 6, 400, 6)
         self._multi_layout.setSpacing(8)
         self._multi_layout.addStretch(1)  # bottom stretch placeholder
         # Keep _multi_grid as None so any stale references error loudly
@@ -977,9 +977,8 @@ class TodayPaymentTab(QWidget):
 
         specs = {
             "Payments": [
-                ("S.N",        40,  None),
-                ("Party Name",200,  party_delegate),
                 ("Date",      110,  date_delegate),
+                ("Party Name",200,  party_delegate),
                 ("To",      130,  None),
                 ("From", 110,  None),
                 ("Payment",    110,  None),
@@ -994,9 +993,8 @@ class TodayPaymentTab(QWidget):
                 ("Notes",    50, None),
             ],
             "Purchase (Today)": [
-                ("S.N",        40,  None),
-                ("Party Name",200,  party_delegate),
                 ("Date",      110,  date_delegate),
+                ("Party Name",200,  party_delegate),
                 ("To",      130,  None),
                 ("From", 110,  None),
                 ("Payment",    110,  None),
@@ -1007,9 +1005,8 @@ class TodayPaymentTab(QWidget):
                 ("Bank Cash",   180,  None),
             ],
             "Purchase (Upcoming)": [
-                ("S.N",        40,  None),
-                ("Party Name",200,  party_delegate),
                 ("Date",      110,  date_delegate),
+                ("Party Name",200,  party_delegate),
                 ("To",      130,  None),
                 ("From", 110,  None),
                 ("Payment",    110,  None),
@@ -2644,7 +2641,7 @@ class AnilHisabTab(QWidget):
         for i, (_, w) in enumerate(_ANIL_COLS):
             self.table.setColumnWidth(i, w)
         self.table.horizontalHeader().setHighlightSections(False)
-        self.table.horizontalHeader().setStretchLastSection(False)
+        self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setMinimumSectionSize(60)
         self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.table.verticalHeader().setDefaultSectionSize(26)
@@ -2804,10 +2801,10 @@ class _StyledTable(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(26)
         self.table.horizontalHeader().setHighlightSections(False)
-        self.table.horizontalHeader().setStretchLastSection(False)
+        self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setMinimumSectionSize(60)
         self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self.table.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
         self.table.setMinimumHeight(60)
         for i, w in enumerate(widths):
             self.table.setColumnWidth(i, w)

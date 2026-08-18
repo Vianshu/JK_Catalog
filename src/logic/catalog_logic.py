@@ -1029,7 +1029,8 @@ class CatalogLogic:
                       CAST(REPLACE(ISNULL([Stock], '0'), ',', '') AS FLOAT) > 0
                       OR LOWER(TRIM(CAST([True/False] AS NVARCHAR(MAX)))) IN ('1', 'true', 'yes')
                   )
-                ORDER BY [ID] COLLATE Latin1_General_CI_AI ASC
+                ORDER BY TRY_CAST(REPLACE(ISNULL([MRP], '0'), ',', '') AS FLOAT) ASC,
+                         [GUID] ASC
             """, (group_name.strip(), sg_sn))
             rows = cursor.fetchall()
         except Exception as e:
@@ -1932,7 +1933,40 @@ class CatalogLogic:
                 return set()
         except Exception:
             pass  # build_config may not exist yet (first run)
-        
+
+        # ── Hash-version guard ────────────────────────────────────────────
+        # When the hash algorithm changes (ORDER BY, fields included, etc.),
+        # stored snapshots computed with the old algorithm would cause every
+        # page to appear "changed" on the first build — flooding the CRM.
+        # We bump CURRENT_HASH_VERSION whenever the algorithm changes and
+        # auto-regenerate all snapshots silently on first run, returning 0
+        # changes so the CRM is not polluted.
+        CURRENT_HASH_VERSION = 2  # bump this whenever hash algorithm changes
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT [value] FROM build_config WHERE [key]='hash_version'")
+            ver_row = cursor.fetchone()
+            stored_ver = int(ver_row[0]) if (ver_row and ver_row[0] and str(ver_row[0]).strip().isdigit()) else 0
+            if stored_ver < CURRENT_HASH_VERSION:
+                logger.info(
+                    f"Hash algorithm updated (v{stored_ver}\u2192v{CURRENT_HASH_VERSION}) "
+                    f"\u2014 regenerating all snapshots silently (no CRM flood)."
+                )
+                cursor.execute("""
+                    MERGE build_config AS t
+                    USING (SELECT 'hash_version' AS [key], ? AS [value]) AS s
+                    ON t.[key] = s.[key]
+                    WHEN MATCHED THEN UPDATE SET [value] = s.[value]
+                    WHEN NOT MATCHED THEN INSERT ([key],[value]) VALUES (s.[key],s.[value]);
+                """, (str(CURRENT_HASH_VERSION),))
+                conn.commit()
+                self._post_sync_detected = True
+                self.invalidate_cache()
+                self.save_all_page_snapshots()
+                return set()
+        except Exception as ver_err:
+            logger.warning(f"detect_changed_pages: hash_version check failed ({ver_err}) — proceeding normally")
+
         # FAST PATH removed: SQL Server string comparison of DD-MM-YYYY dates
         # causes alphabetical sort bugs, leading to falsely skipping dirty pages.
         # Fall back to 100% accurate snapshot hashing.

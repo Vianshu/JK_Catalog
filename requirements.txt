@@ -4,3 +4,5 @@ pyodbc
 openpyxl
 bcrypt
 nepali_datetime
+PyMuPDF
+sqlalchemy

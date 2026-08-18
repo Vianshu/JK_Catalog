@@ -1,0 +1,4693 @@
+﻿F401 [*] `logging` imported but unused
+ --> main.py:4:8
+  |
+2 | import os
+3 | import traceback
+4 | import logging
+  |        ^^^^^^^
+5 | from datetime import datetime
+6 | from PyQt6.QtWidgets import QApplication
+  |
+help: Remove unused import: `logging`
+
+F401 [*] `datetime.datetime` imported but unused
+ --> main.py:5:22
+  |
+3 | import traceback
+4 | import logging
+5 | from datetime import datetime
+  |                      ^^^^^^^^
+6 | from PyQt6.QtWidgets import QApplication
+7 | from src.utils.path_utils import get_asset_path, get_app_dir
+  |
+help: Remove unused import: `datetime.datetime`
+
+F401 [*] `PyQt6.QtGui.QPainter` imported but unused
+   --> main.py:213:46
+    |
+212 |     # --- Animated Splash Screen ---
+213 |     from PyQt6.QtGui import QPixmap, QColor, QPainter, QFont
+    |                                              ^^^^^^^^
+214 |     from PyQt6.QtWidgets import QSplashScreen
+215 |     from PyQt6.QtCore import Qt
+    |
+help: Remove unused import: `PyQt6.QtGui.QPainter`
+
+F811 [*] Redefinition of unused `QFont` from line 213
+   --> main.py:230:29
+    |
+228 |     # --- Loading strip widgets (image is 140x182; loading area starts at y=146) ---
+229 |     from PyQt6.QtWidgets import QProgressBar, QLabel
+230 |     from PyQt6.QtGui import QFont, QColor
+    |                             ^^^^^ `QFont` redefined here
+231 |
+232 |     # Status text ΓÇö centred, 8px below logo
+    |
+   ::: main.py:213:56
+    |
+212 |     # --- Animated Splash Screen ---
+213 |     from PyQt6.QtGui import QPixmap, QColor, QPainter, QFont
+    |                                                        ----- previous definition of `QFont` here
+214 |     from PyQt6.QtWidgets import QSplashScreen
+215 |     from PyQt6.QtCore import Qt
+    |
+help: Remove definition: `QFont`
+
+F401 [*] `PyQt6.QtGui.QFont` imported but unused
+   --> main.py:230:29
+    |
+228 |     # --- Loading strip widgets (image is 140x182; loading area starts at y=146) ---
+229 |     from PyQt6.QtWidgets import QProgressBar, QLabel
+230 |     from PyQt6.QtGui import QFont, QColor
+    |                             ^^^^^
+231 |
+232 |     # Status text ΓÇö centred, 8px below logo
+    |
+help: Remove unused import: `PyQt6.QtGui.QFont`
+
+E402 Module level import not at top of file
+   --> main.py:349:1
+    |
+348 | # Suppress Font Warnings
+349 | from PyQt6.QtCore import qInstallMessageHandler
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+350 | def qt_message_handler(mode, context, message):
+351 |     if "OpenType support missing" in message or "Point size <= 0" in message:
+    |
+
+F401 [*] `pyodbc` imported but unused
+  --> src\logic\catalog_logic.py:14:8
+   |
+12 | import json
+13 | import hashlib
+14 | import pyodbc
+   |        ^^^^^^
+15 | from datetime import datetime
+   |
+help: Remove unused import: `pyodbc`
+
+F401 [*] `src.logic.text_utils.cluster_products` imported but unused
+  --> src\logic\catalog_logic.py:18:34
+   |
+17 | from src.logic.db_manager import get_db_manager, build_logical_name, DB_SUPER, DB_CALENDAR, build_shared_db_name
+18 | from src.logic.text_utils import cluster_products, cluster_and_sort, clean_cat_name, is_similar
+   |                                  ^^^^^^^^^^^^^^^^
+19 | from src.utils.app_logger import get_logger
+   |
+help: Remove unused import
+
+F401 [*] `src.logic.text_utils.clean_cat_name` imported but unused
+  --> src\logic\catalog_logic.py:18:70
+   |
+17 | from src.logic.db_manager import get_db_manager, build_logical_name, DB_SUPER, DB_CALENDAR, build_shared_db_name
+18 | from src.logic.text_utils import cluster_products, cluster_and_sort, clean_cat_name, is_similar
+   |                                                                      ^^^^^^^^^^^^^^
+19 | from src.utils.app_logger import get_logger
+   |
+help: Remove unused import
+
+F401 [*] `src.logic.text_utils.is_similar` imported but unused
+  --> src\logic\catalog_logic.py:18:86
+   |
+17 | from src.logic.db_manager import get_db_manager, build_logical_name, DB_SUPER, DB_CALENDAR, build_shared_db_name
+18 | from src.logic.text_utils import cluster_products, cluster_and_sort, clean_cat_name, is_similar
+   |                                                                                      ^^^^^^^^^^
+19 | from src.utils.app_logger import get_logger
+   |
+help: Remove unused import
+
+F401 [*] `pyodbc` imported but unused
+ --> src\logic\data_processor.py:1:8
+  |
+1 | import pyodbc
+  |        ^^^^^^
+2 | import re
+3 | import pandas as pd # Pandas ka use comparison ke liye
+  |
+help: Remove unused import: `pyodbc`
+
+F401 [*] `pandas` imported but unused
+ --> src\logic\data_processor.py:3:18
+  |
+1 | import pyodbc
+2 | import re
+3 | import pandas as pd # Pandas ka use comparison ke liye
+  |                  ^^
+4 | import datetime
+5 | from collections import Counter
+  |
+help: Remove unused import: `pandas`
+
+E701 Multiple statements on one line (colon)
+  --> src\logic\data_processor.py:21:20
+   |
+19 | # ============================================================================
+20 |     def clean_for_img(self, text):
+21 |         if not text: return ""
+   |                    ^
+22 |         
+23 |         # 1. αñ¼αÑìαñ░αÑêαñòαÑçαñƒ αñòαÑç αñàαñéαñªαñ░ αñòαñ╛ αñ╣αñ┐αñ╕αÑìαñ╕αñ╛ αñ╣αñƒαñ╛αñ¿αñ╛ (αñ£αÑêαñ╕αÑç (1/50))
+   |
+
+E701 Multiple statements on one line (colon)
+   --> src\logic\data_processor.py:146:25
+    |
+145 |     def extract_product_details(self, full_name):
+146 |         if not full_name: return "", ""
+    |                         ^
+147 |         
+148 |         # αñôαñ░αñ┐αñ£αñ┐αñ¿αñ▓ αñ¿αñ╛αñ«
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\logic\data_processor.py:217:43
+    |
+216 | ΓÇª     # mm αñòαÑç αñ▓αñ┐αñÅ αñ¿αñ┐αñ»αñ«
+217 | ΓÇª     if i > 0 and t.lower() == "mm": continue
+    |                                     ^
+218 | ΓÇª     
+219 | ΓÇª     # αñ¼αñ╛αñòαÑÇ αñ»αÑéαñ¿αñ┐αñƒαÑìαñ╕ (αñ«αÑÇ., kg αñåαñªαñ┐) αñòαÑç αñ▓αñ┐αñÅ αñ¬αÑüαñ░αñ╛αñ¿αñ╛ αñ╕αÑìαñ¬αÑçαñ╕ αñ╡αñ╛αñ▓αñ╛ αñ▓αÑëαñ£αñ┐αñò αñ£αñ╛αñ░αÑÇ αñ░αñ╣αÑçαñùαñ╛
+    |
+
+F841 Local variable `now_time` is assigned to but never used
+   --> src\logic\data_processor.py:259:13
+    |
+257 |     def process_and_save_final_data(self, auto_commit=True, cancel_check=None):
+258 |         try:
+259 |             now_time = datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')
+    |             ^^^^^^^^
+260 |             conn = self.db.get_connection(self.db_name)
+261 |             if not conn:
+    |
+help: Remove assignment to unused variable `now_time`
+
+F541 [*] f-string without any placeholders
+    --> src\logic\db_manager.py:1149:26
+     |
+1148 |         if not move_clauses:
+1149 |             logger.error(f"Could not build MOVE clauses for restore")
+     |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1150 |             return False
+     |
+help: Remove extraneous `f` prefix
+
+E702 Multiple statements on one line (semicolon)
+   --> src\logic\security_manager.py:689:47
+    |
+687 |             updates, params = [], []
+688 |             if username is not None:
+689 |                 updates.append("username = ?"); params.append(username)
+    |                                               ^
+690 |             if password is not None:
+691 |                 updates.append("password_hash = ?"); params.append(self._hash_password(password))
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src\logic\security_manager.py:691:52
+    |
+689 |                 updates.append("username = ?"); params.append(username)
+690 |             if password is not None:
+691 |                 updates.append("password_hash = ?"); params.append(self._hash_password(password))
+    |                                                    ^
+692 |             if role_id is not None:
+693 |                 updates.append("role_id = ?"); params.append(role_id)
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src\logic\security_manager.py:693:46
+    |
+691 |                 updates.append("password_hash = ?"); params.append(self._hash_password(password))
+692 |             if role_id is not None:
+693 |                 updates.append("role_id = ?"); params.append(role_id)
+    |                                              ^
+694 |             if is_active is not None:
+695 |                 updates.append("is_active = ?"); params.append(1 if is_active else 0)
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src\logic\security_manager.py:695:48
+    |
+693 |                 updates.append("role_id = ?"); params.append(role_id)
+694 |             if is_active is not None:
+695 |                 updates.append("is_active = ?"); params.append(1 if is_active else 0)
+    |                                                ^
+696 |             if not updates:
+697 |                 return True
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src\logic\security_manager.py:790:52
+    |
+788 |                 updates, params = [], []
+789 |                 if role_name:
+790 |                     updates.append("role_name = ?"); params.append(role_name)
+    |                                                    ^
+791 |                 if description is not None:
+792 |                     updates.append("description = ?"); params.append(description)
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src\logic\security_manager.py:792:54
+    |
+790 |                     updates.append("role_name = ?"); params.append(role_name)
+791 |                 if description is not None:
+792 |                     updates.append("description = ?"); params.append(description)
+    |                                                      ^
+793 |                 params.append(role_id)
+794 |                 cursor.execute(f"UPDATE roles SET {', '.join(updates)} WHERE id = ?", params)
+    |
+
+F541 [*] f-string without any placeholders
+   --> src\logic\security_manager.py:994:26
+    |
+992 |                 logger.info(f"Deleted company folder: {folder_path}")
+993 |             
+994 |             return True, f"Company deleted successfully."
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+995 |         
+996 |         except Exception as e:
+    |
+help: Remove extraneous `f` prefix
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\logic\text_utils.py:140:33
+    |
+138 |             try:
+139 |                 return float(str(x[4]).replace(",", "").strip()) if len(x) > 4 else 0
+140 |             except Exception as e:
+    |                                 ^
+141 |                 return 0
+    |
+help: Remove assignment to unused variable `e`
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\logic\text_utils.py:153:37
+    |
+151 |                 try:
+152 |                     sz = str(x[5]) if len(x) > 5 else ""
+153 |                 except Exception as e: pass
+    |                                     ^
+154 |             import re
+155 |             m = re.search(r'\d+(\.\d+)?', str(sz))
+    |
+help: Remove assignment to unused variable `e`
+
+E701 Multiple statements on one line (colon)
+   --> src\logic\text_utils.py:153:38
+    |
+151 |                 try:
+152 |                     sz = str(x[5]) if len(x) > 5 else ""
+153 |                 except Exception as e: pass
+    |                                      ^
+154 |             import re
+155 |             m = re.search(r'\d+(\.\d+)?', str(sz))
+    |
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\logic\text_utils.py:164:33
+    |
+162 |             try:
+163 |                 return str(x[11]) if len(x) > 11 and x[11] else "ZZZZZZ"
+164 |             except Exception as e:
+    |                                 ^
+165 |                 return "ZZZZZZ"
+    |
+help: Remove assignment to unused variable `e`
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\logic\text_utils.py:236:33
+    |
+234 |             try:
+235 |                 return float(str(x[4]).replace(",", "").strip()) if len(x) > 4 else 0
+236 |             except Exception as e:
+    |                                 ^
+237 |                 return 0
+    |
+help: Remove assignment to unused variable `e`
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\logic\text_utils.py:249:37
+    |
+247 |                 try:
+248 |                     sz = str(x[5]) if len(x) > 5 else ""
+249 |                 except Exception as e: pass
+    |                                     ^
+250 |             import re
+251 |             m = re.search(r'\d+(\.\d+)?', str(sz))
+    |
+help: Remove assignment to unused variable `e`
+
+E701 Multiple statements on one line (colon)
+   --> src\logic\text_utils.py:249:38
+    |
+247 |                 try:
+248 |                     sz = str(x[5]) if len(x) > 5 else ""
+249 |                 except Exception as e: pass
+    |                                      ^
+250 |             import re
+251 |             m = re.search(r'\d+(\.\d+)?', str(sz))
+    |
+
+E701 Multiple statements on one line (colon)
+  --> src\logic\year_end.py:67:16
+   |
+65 |     def emit(text, n):
+66 |         if progress_cb:
+67 |             try: progress_cb(text, n, TOTAL)
+   |                ^
+68 |             except Exception: pass
+   |
+
+E701 Multiple statements on one line (colon)
+  --> src\logic\year_end.py:68:29
+   |
+66 |         if progress_cb:
+67 |             try: progress_cb(text, n, TOTAL)
+68 |             except Exception: pass
+   |                             ^
+69 |
+70 |     db = get_db_manager()
+   |
+
+E701 Multiple statements on one line (colon)
+   --> src\logic\year_end.py:139:12
+    |
+138 |     finally:
+139 |         try: shutil.rmtree(temp_dir, ignore_errors=True)
+    |            ^
+140 |         except Exception: pass
+141 |         # Bug 5 fix: remove the half-created company folder on failure so the
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\logic\year_end.py:140:25
+    |
+138 |     finally:
+139 |         try: shutil.rmtree(temp_dir, ignore_errors=True)
+140 |         except Exception: pass
+    |                         ^
+141 |         # Bug 5 fix: remove the half-created company folder on failure so the
+142 |         # user doesn't have to manually delete it before retrying.
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\logic\year_end.py:164:20
+    |
+162 |         if os.path.isfile(src):
+163 |             if os.path.splitext(item)[1].lower() not in _DB_EXTENSIONS:
+164 |                 try: shutil.copy2(src, dst)
+    |                    ^
+165 |                 except Exception as e: logger.warning(f"Could not copy {src}: {e}")
+166 |         elif os.path.isdir(src):
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\logic\year_end.py:165:38
+    |
+163 |             if os.path.splitext(item)[1].lower() not in _DB_EXTENSIONS:
+164 |                 try: shutil.copy2(src, dst)
+165 |                 except Exception as e: logger.warning(f"Could not copy {src}: {e}")
+    |                                      ^
+166 |         elif os.path.isdir(src):
+167 |             # Copy directory tree but skip any DB files inside sub-folders
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\logic\year_end.py:184:20
+    |
+182 |         if os.path.isfile(src):
+183 |             if os.path.splitext(item)[1].lower() not in _DB_EXTENSIONS:
+184 |                 try: shutil.copy2(src, dst)
+    |                    ^
+185 |                 except Exception as e: logger.warning(f"Could not copy {src}: {e}")
+186 |         elif os.path.isdir(src):
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\logic\year_end.py:185:38
+    |
+183 |             if os.path.splitext(item)[1].lower() not in _DB_EXTENSIONS:
+184 |                 try: shutil.copy2(src, dst)
+185 |                 except Exception as e: logger.warning(f"Could not copy {src}: {e}")
+    |                                      ^
+186 |         elif os.path.isdir(src):
+187 |             _copy_dir_filtered(src, dst)
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\logic\year_end.py:229:12
+    |
+227 |     except Exception as exc:
+228 |         logger.error(f"[YearEnd] _process_cheque_year_end failed: {exc}", exc_info=True)
+229 |         try: conn.rollback()
+    |            ^
+230 |         except Exception: pass
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\logic\year_end.py:230:25
+    |
+228 |         logger.error(f"[YearEnd] _process_cheque_year_end failed: {exc}", exc_info=True)
+229 |         try: conn.rollback()
+230 |         except Exception: pass
+    |                         ^
+    |
+
+F401 [*] `pathlib.Path` imported but unused
+ --> src\services\tally_sync.py:4:21
+  |
+2 | import os
+3 | import warnings
+4 | from pathlib import Path
+  |                     ^^^^
+5 |
+6 | import pandas as pd
+  |
+help: Remove unused import: `pathlib.Path`
+
+F401 [*] `PyQt6.QtCore.QSettings` imported but unused
+  --> src\services\tally_sync.py:24:30
+   |
+22 | def get_tally_port() -> int:
+23 |     """Return the Tally port for the current OS user (default 9000)."""
+24 |     from PyQt6.QtCore import QSettings, QSettings as _QS
+   |                              ^^^^^^^^^
+25 |     s = _QS("JKCatalog", "TallyPort")
+26 |     return int(s.value("port", 9000))
+   |
+help: Remove unused import: `PyQt6.QtCore.QSettings`
+
+F541 [*] f-string without any placeholders
+   --> src\services\tally_sync.py:440:25
+    |
+438 |             """
+439 |
+440 |             logger.info(f"Fetching stock items from Tally...")
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+441 |             df = pd.read_sql(sql, self.connection)
+    |
+help: Remove extraneous `f` prefix
+
+F401 [*] `PyQt6.QtWidgets.QInputDialog` imported but unused
+  --> src\ui\a4_renderer.py:12:5
+   |
+10 |     QSizePolicy,
+11 |     QMenu,
+12 |     QInputDialog,
+   |     ^^^^^^^^^^^^
+13 |     QDialog,
+14 |     QSpinBox,
+   |
+help: Remove unused import: `PyQt6.QtWidgets.QInputDialog`
+
+F401 [*] `PyQt6.QtGui.QPixmap` imported but unused
+  --> src\ui\a4_renderer.py:19:25
+   |
+17 | )
+18 | from PyQt6.QtCore import Qt, pyqtSignal
+19 | from PyQt6.QtGui import QPixmap, QAction
+   |                         ^^^^^^^
+20 | import os
+21 | import json
+   |
+help: Remove unused import: `PyQt6.QtGui.QPixmap`
+
+F401 [*] `time` imported but unused
+  --> src\ui\a4_renderer.py:22:8
+   |
+20 | import os
+21 | import json
+22 | import time
+   |        ^^^^
+   |
+help: Remove unused import: `time`
+
+E402 Module level import not at top of file
+   --> src\ui\a4_renderer.py:154:1
+    |
+153 | # --- Load catalog rendering config ---
+154 | from src.utils.path_utils import get_base_path
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+155 | _CATALOG_CONFIG_PATH = os.path.join(
+156 |     get_base_path(),
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\a4_renderer.py:212:26
+    |
+210 |         # Calculate Auto Height
+211 |         num_sizes = len(prod_data.get("sizes", []))
+212 |         if num_sizes > 10: self.auto_h = 3
+    |                          ^
+213 |         elif num_sizes > 5: self.auto_h = 2
+214 |         else: self.auto_h = 1
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\a4_renderer.py:213:27
+    |
+211 |         num_sizes = len(prod_data.get("sizes", []))
+212 |         if num_sizes > 10: self.auto_h = 3
+213 |         elif num_sizes > 5: self.auto_h = 2
+    |                           ^
+214 |         else: self.auto_h = 1
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\a4_renderer.py:214:13
+    |
+212 |         if num_sizes > 10: self.auto_h = 3
+213 |         elif num_sizes > 5: self.auto_h = 2
+214 |         else: self.auto_h = 1
+    |             ^
+215 |         
+216 |         product_name = prod_data.get("product_name", "Unknown")
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\a4_renderer.py:401:43
+    |
+399 |                 self.spin_data.setFocus()
+400 |             elif fw == self.spin_data:
+401 |                 if self.spin_h.isEnabled(): self.spin_h.setFocus()
+    |                                           ^
+402 |                 else: self.save()
+403 |             elif fw == self.spin_h:
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\a4_renderer.py:402:21
+    |
+400 |             elif fw == self.spin_data:
+401 |                 if self.spin_h.isEnabled(): self.spin_h.setFocus()
+402 |                 else: self.save()
+    |                     ^
+403 |             elif fw == self.spin_h:
+404 |                 self.save()  # Enter on last field ΓåÆ Apply
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\a4_renderer.py:409:48
+    |
+407 |             else:
+408 |                  from PyQt6.QtWidgets import QPushButton
+409 |                  if isinstance(fw, QPushButton): fw.animateClick()
+    |                                                ^
+410 |                  else: self.save()
+411 |             return
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\a4_renderer.py:410:22
+    |
+408 |                  from PyQt6.QtWidgets import QPushButton
+409 |                  if isinstance(fw, QPushButton): fw.animateClick()
+410 |                  else: self.save()
+    |                      ^
+411 |             return
+412 |         elif event.key() == Qt.Key.Key_Escape:
+    |
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\ui\a4_renderer.py:676:33
+    |
+674 |                 self.grid_layout.removeWidget(s)
+675 |                 s.deleteLater()
+676 |             except Exception as e: pass
+    |                                 ^
+677 |         self._struts = []
+    |
+help: Remove assignment to unused variable `e`
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\a4_renderer.py:676:34
+    |
+674 |                 self.grid_layout.removeWidget(s)
+675 |                 s.deleteLater()
+676 |             except Exception as e: pass
+    |                                  ^
+677 |         self._struts = []
+    |
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\ui\a4_renderer.py:705:33
+    |
+703 |                 self.grid_layout.removeWidget(w)
+704 |                 w.deleteLater()
+705 |             except Exception as e: pass
+    |                                 ^
+706 |         self._widgets = []
+    |
+help: Remove assignment to unused variable `e`
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\a4_renderer.py:705:34
+    |
+703 |                 self.grid_layout.removeWidget(w)
+704 |                 w.deleteLater()
+705 |             except Exception as e: pass
+    |                                  ^
+706 |         self._widgets = []
+    |
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\ui\a4_renderer.py:755:41
+    |
+753 |                             H = total - 1
+754 |                             D = 1 
+755 |                     except Exception as e: pass
+    |                                         ^
+756 |             
+757 |             # Fallback / Safety
+    |
+help: Remove assignment to unused variable `e`
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\a4_renderer.py:755:42
+    |
+753 |                             H = total - 1
+754 |                             D = 1 
+755 |                     except Exception as e: pass
+    |                                          ^
+756 |             
+757 |             # Fallback / Safety
+    |
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\ui\a4_renderer.py:851:29
+    |
+850 |             return f"Image Width: {img_w}\nData Width: {data_w}\nHeight (Rows): {h_part}"
+851 |         except Exception as e:
+    |                             ^
+852 |             return raw_str
+    |
+help: Remove assignment to unused variable `e`
+
+F841 Local variable `product_name` is assigned to but never used
+   --> src\ui\a4_renderer.py:907:9
+    |
+905 |         menu = QMenu(widget)
+906 |         
+907 |         product_name = prod.get("product_name", "Unknown")
+    |         ^^^^^^^^^^^^
+908 |         current_len_str = str(prod.get("length", "")).strip()
+909 |         if not current_len_str: current_len_str = "1|0" 
+    |
+help: Remove assignment to unused variable `product_name`
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\a4_renderer.py:909:31
+    |
+907 |         product_name = prod.get("product_name", "Unknown")
+908 |         current_len_str = str(prod.get("length", "")).strip()
+909 |         if not current_len_str: current_len_str = "1|0" 
+    |                               ^
+910 |         
+911 |         # Set Size action
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\a4_renderer.py:922:27
+    |
+920 |         product_name = prod.get("product_name", "Unknown")
+921 |         current_val = str(prod.get("length", "")).strip()
+922 |         if not current_val: current_val = "1|0"
+    |                           ^
+923 |         
+924 |         dlg = ProductSizeDialog(current_val, prod, None)
+    |
+
+F841 [*] Local variable `e` is assigned to but never used
+    --> src\ui\a4_renderer.py:1101:33
+     |
+1099 |                 clean_m = re.sub(r"[^\d\.]", "", str(m))
+1100 |                 p_val = float(clean_m) if clean_m else 0.0
+1101 |             except Exception as e:
+     |                                 ^
+1102 |                 p_val = 0.0
+     |
+help: Remove assignment to unused variable `e`
+
+F841 [*] Local variable `e` is assigned to but never used
+    --> src\ui\a4_renderer.py:1167:29
+     |
+1165 |                 return str(int(x))
+1166 |             return f"{x:.2f}"
+1167 |         except Exception as e:
+     |                             ^
+1168 |             return str(v)
+     |
+help: Remove assignment to unused variable `e`
+
+F401 [*] `pyodbc` imported but unused
+ --> src\ui\calendar_mapping.py:3:8
+  |
+1 | import os
+2 | import datetime
+3 | import pyodbc
+  |        ^^^^^^
+4 | from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, 
+5 |                              QPushButton, QLabel, QHeaderView, QMessageBox, QHBoxLayout)
+  |
+help: Remove unused import: `pyodbc`
+
+F401 [*] `PyQt6.QtCore.Qt` imported but unused
+ --> src\ui\catalog_price_list.py:5:26
+  |
+3 |     QPushButton, QTableWidget, QHeaderView
+4 | )
+5 | from PyQt6.QtCore import Qt
+  |                          ^^
+6 |
+7 | class CatalogPriceListUI(QDialog):
+  |
+help: Remove unused import: `PyQt6.QtCore.Qt`
+
+F401 [*] `PyQt6.QtWidgets.QCompleter` imported but unused
+  --> src\ui\cheque_list.py:9:18
+   |
+ 7 |     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
+ 8 |     QTableWidgetItem, QLineEdit, QLabel, QHeaderView,
+ 9 |     QPushButton, QCompleter, QMessageBox, QFileDialog,
+   |                  ^^^^^^^^^^
+10 |     QRadioButton, QButtonGroup, QAbstractItemView, QStyledItemDelegate, QSplitter, QDialog
+11 | )
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QFileDialog` imported but unused
+  --> src\ui\cheque_list.py:9:43
+   |
+ 7 |     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
+ 8 |     QTableWidgetItem, QLineEdit, QLabel, QHeaderView,
+ 9 |     QPushButton, QCompleter, QMessageBox, QFileDialog,
+   |                                           ^^^^^^^^^^^
+10 |     QRadioButton, QButtonGroup, QAbstractItemView, QStyledItemDelegate, QSplitter, QDialog
+11 | )
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QRadioButton` imported but unused
+  --> src\ui\cheque_list.py:10:5
+   |
+ 8 |     QTableWidgetItem, QLineEdit, QLabel, QHeaderView,
+ 9 |     QPushButton, QCompleter, QMessageBox, QFileDialog,
+10 |     QRadioButton, QButtonGroup, QAbstractItemView, QStyledItemDelegate, QSplitter, QDialog
+   |     ^^^^^^^^^^^^
+11 | )
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QButtonGroup` imported but unused
+  --> src\ui\cheque_list.py:10:19
+   |
+ 8 |     QTableWidgetItem, QLineEdit, QLabel, QHeaderView,
+ 9 |     QPushButton, QCompleter, QMessageBox, QFileDialog,
+10 |     QRadioButton, QButtonGroup, QAbstractItemView, QStyledItemDelegate, QSplitter, QDialog
+   |                   ^^^^^^^^^^^^
+11 | )
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QAbstractItemView` imported but unused
+  --> src\ui\cheque_list.py:10:33
+   |
+ 8 |     QTableWidgetItem, QLineEdit, QLabel, QHeaderView,
+ 9 |     QPushButton, QCompleter, QMessageBox, QFileDialog,
+10 |     QRadioButton, QButtonGroup, QAbstractItemView, QStyledItemDelegate, QSplitter, QDialog
+   |                                 ^^^^^^^^^^^^^^^^^
+11 | )
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QStyledItemDelegate` imported but unused
+  --> src\ui\cheque_list.py:10:52
+   |
+ 8 |     QTableWidgetItem, QLineEdit, QLabel, QHeaderView,
+ 9 |     QPushButton, QCompleter, QMessageBox, QFileDialog,
+10 |     QRadioButton, QButtonGroup, QAbstractItemView, QStyledItemDelegate, QSplitter, QDialog
+   |                                                    ^^^^^^^^^^^^^^^^^^^
+11 | )
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtGui.QTextDocument` imported but unused
+  --> src\ui\cheque_list.py:13:25
+   |
+11 | )
+12 |
+13 | from PyQt6.QtGui import QTextDocument, QPageSize, QPageLayout, QFont, QPainter, QPen, QColor, QFontMetrics, QBrush
+   |                         ^^^^^^^^^^^^^
+14 | from PyQt6.QtCore import Qt, QEvent, QSettings, QSizeF, QMarginsF, QRect, QTimer
+15 | from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtGui.QFontMetrics` imported but unused
+  --> src\ui\cheque_list.py:13:95
+   |
+11 | )
+12 |
+13 | from PyQt6.QtGui import QTextDocument, QPageSize, QPageLayout, QFont, QPainter, QPen, QColor, QFontMetrics, QBrush
+   |                                                                                               ^^^^^^^^^^^^
+14 | from PyQt6.QtCore import Qt, QEvent, QSettings, QSizeF, QMarginsF, QRect, QTimer
+15 | from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtGui.QBrush` imported but unused
+  --> src\ui\cheque_list.py:13:109
+   |
+11 | )
+12 |
+13 | from PyQt6.QtGui import QTextDocument, QPageSize, QPageLayout, QFont, QPainter, QPen, QColor, QFontMetrics, QBrush
+   |                                                                                                             ^^^^^^
+14 | from PyQt6.QtCore import Qt, QEvent, QSettings, QSizeF, QMarginsF, QRect, QTimer
+15 | from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtCore.QEvent` imported but unused
+  --> src\ui\cheque_list.py:14:30
+   |
+13 | from PyQt6.QtGui import QTextDocument, QPageSize, QPageLayout, QFont, QPainter, QPen, QColor, QFontMetrics, QBrush
+14 | from PyQt6.QtCore import Qt, QEvent, QSettings, QSizeF, QMarginsF, QRect, QTimer
+   |                              ^^^^^^
+15 | from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
+16 | from difflib import SequenceMatcher
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtCore.QSizeF` imported but unused
+  --> src\ui\cheque_list.py:14:49
+   |
+13 | from PyQt6.QtGui import QTextDocument, QPageSize, QPageLayout, QFont, QPainter, QPen, QColor, QFontMetrics, QBrush
+14 | from PyQt6.QtCore import Qt, QEvent, QSettings, QSizeF, QMarginsF, QRect, QTimer
+   |                                                 ^^^^^^
+15 | from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
+16 | from difflib import SequenceMatcher
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtCore.QSortFilterProxyModel` imported but unused
+  --> src\ui\cheque_list.py:18:26
+   |
+16 | from difflib import SequenceMatcher
+17 | from src.logic.db_manager import get_db_manager, build_logical_name
+18 | from PyQt6.QtCore import QSortFilterProxyModel
+   |                          ^^^^^^^^^^^^^^^^^^^^^
+19 | from PyQt6.QtGui import QStandardItemModel, QStandardItem
+20 | from src.ui.ui_helpers import pick_export_folder
+   |
+help: Remove unused import: `PyQt6.QtCore.QSortFilterProxyModel`
+
+F401 [*] `PyQt6.QtGui.QStandardItemModel` imported but unused
+  --> src\ui\cheque_list.py:19:25
+   |
+17 | from src.logic.db_manager import get_db_manager, build_logical_name
+18 | from PyQt6.QtCore import QSortFilterProxyModel
+19 | from PyQt6.QtGui import QStandardItemModel, QStandardItem
+   |                         ^^^^^^^^^^^^^^^^^^
+20 | from src.ui.ui_helpers import pick_export_folder
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtGui.QStandardItem` imported but unused
+  --> src\ui\cheque_list.py:19:45
+   |
+17 | from src.logic.db_manager import get_db_manager, build_logical_name
+18 | from PyQt6.QtCore import QSortFilterProxyModel
+19 | from PyQt6.QtGui import QStandardItemModel, QStandardItem
+   |                                             ^^^^^^^^^^^^^
+20 | from src.ui.ui_helpers import pick_export_folder
+   |
+help: Remove unused import
+
+F811 [*] Redefinition of unused `ExcelTableMixin` from line 3
+  --> src\ui\cheque_list.py:23:5
+   |
+22 | from src.ui.table_nav_mixin import (
+23 |     ExcelTableMixin, UniversalCellDelegate, 
+   |     ^^^^^^^^^^^^^^^ `ExcelTableMixin` redefined here
+24 |     CELL_TYPE_ROLE, AUTOCOMPLETE_ITEMS_ROLE, 
+25 |     DISPLAY_CALLBACK_ROLE, SET_MODEL_DATA_CALLBACK_ROLE
+   |
+  ::: src\ui\cheque_list.py:3:36
+   |
+ 1 | import os
+ 2 | import uuid as _uuid_mod
+ 3 | from src.ui.table_nav_mixin import ExcelTableMixin
+   |                                    --------------- previous definition of `ExcelTableMixin` here
+ 4 | import pandas as pd
+ 5 | from PyQt6.QtWidgets import (
+   |
+help: Remove definition: `ExcelTableMixin`
+
+F401 [*] `src.ui.table_nav_mixin.CELL_TYPE_ROLE` imported but unused
+  --> src\ui\cheque_list.py:24:5
+   |
+22 | from src.ui.table_nav_mixin import (
+23 |     ExcelTableMixin, UniversalCellDelegate, 
+24 |     CELL_TYPE_ROLE, AUTOCOMPLETE_ITEMS_ROLE, 
+   |     ^^^^^^^^^^^^^^
+25 |     DISPLAY_CALLBACK_ROLE, SET_MODEL_DATA_CALLBACK_ROLE
+26 | )
+   |
+help: Remove unused import
+
+F401 [*] `src.ui.table_nav_mixin.AUTOCOMPLETE_ITEMS_ROLE` imported but unused
+  --> src\ui\cheque_list.py:24:21
+   |
+22 | from src.ui.table_nav_mixin import (
+23 |     ExcelTableMixin, UniversalCellDelegate, 
+24 |     CELL_TYPE_ROLE, AUTOCOMPLETE_ITEMS_ROLE, 
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^
+25 |     DISPLAY_CALLBACK_ROLE, SET_MODEL_DATA_CALLBACK_ROLE
+26 | )
+   |
+help: Remove unused import
+
+F401 [*] `src.ui.table_nav_mixin.DISPLAY_CALLBACK_ROLE` imported but unused
+  --> src\ui\cheque_list.py:25:5
+   |
+23 |     ExcelTableMixin, UniversalCellDelegate, 
+24 |     CELL_TYPE_ROLE, AUTOCOMPLETE_ITEMS_ROLE, 
+25 |     DISPLAY_CALLBACK_ROLE, SET_MODEL_DATA_CALLBACK_ROLE
+   |     ^^^^^^^^^^^^^^^^^^^^^
+26 | )
+   |
+help: Remove unused import
+
+F401 [*] `src.ui.table_nav_mixin.SET_MODEL_DATA_CALLBACK_ROLE` imported but unused
+  --> src\ui\cheque_list.py:25:28
+   |
+23 |     ExcelTableMixin, UniversalCellDelegate, 
+24 |     CELL_TYPE_ROLE, AUTOCOMPLETE_ITEMS_ROLE, 
+25 |     DISPLAY_CALLBACK_ROLE, SET_MODEL_DATA_CALLBACK_ROLE
+   |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+26 | )
+   |
+help: Remove unused import
+
+F841 [*] Local variable `e` is assigned to but never used
+  --> src\ui\cheque_list.py:37:29
+   |
+35 |         try:
+36 |             return float(self.text()) < float(other.text())
+37 |         except Exception as e:
+   |                             ^
+38 |             return super().__lt__(other)
+   |
+help: Remove assignment to unused variable `e`
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\cheque_list.py:349:39
+    |
+347 |         return SequenceMatcher(None, a, b).ratio() >= threshold
+348 |     def on_item_changed(self, item):
+349 |         if self.table.signalsBlocked(): return
+    |                                       ^
+350 |         
+351 |         col = item.column()
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\cheque_list.py:457:35
+    |
+455 |     # ================= DB =================
+456 |     def save_cheques_to_db(self):
+457 |         if not self.cheque_db_name: return
+    |                                   ^
+458 |         conn = self.db.get_connection(self.cheque_db_name)
+459 |         if not conn: return
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\cheque_list.py:459:20
+    |
+457 |         if not self.cheque_db_name: return
+458 |         conn = self.db.get_connection(self.cheque_db_name)
+459 |         if not conn: return
+    |                    ^
+460 |         cur = conn.cursor()
+461 |         try:
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\cheque_list.py:467:54
+    |
+465 |                 def txt(c, _r=r):
+466 |                     w = self.table.cellWidget(_r, c)
+467 |                     if w and isinstance(w, QLineEdit): return w.text().strip()
+    |                                                      ^
+468 |                     it = self.table.item(_r, c)
+469 |                     return it.text().strip() if it and it.text().strip() else None
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\cheque_list.py:498:30
+    |
+496 |     # ================= BANK LIST =================
+497 |     def handle_bank_change(self, item):
+498 |         if item.column() != 1: return
+    |                              ^
+499 |
+500 |         total_row_idx = self.bank_table.rowCount() - 1
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\cheque_list.py:501:39
+    |
+500 |         total_row_idx = self.bank_table.rowCount() - 1
+501 |         if item.row() == total_row_idx: return  # Ignore edits on total row
+    |                                       ^
+502 |
+503 |         new_name = item.text().strip()
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\cheque_list.py:527:20
+    |
+525 |         # DB Update Logic ΓÇö preserve bank_ref UUIDs through renames via UserRole
+526 |         conn = self.db.get_connection(self.cheque_db_name)
+527 |         if not conn: return
+    |                    ^
+528 |         cur = conn.cursor()
+529 |         try:
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\cheque_list.py:779:54
+    |
+777 |                 def val(c, _r=r):
+778 |                     w = self.table.cellWidget(_r, c)
+779 |                     if w and isinstance(w, QLineEdit): return w.text().strip()
+    |                                                      ^
+780 |                     it = self.table.item(_r, c)
+781 |                     return it.text().strip() if it and it.text().strip() else ""
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\cheque_list.py:952:35
+    |
+951 |     def load_all_data(self):
+952 |         if not self.cheque_db_name: return
+    |                                   ^
+953 |         conn = self.db.get_connection(self.cheque_db_name)
+954 |         if not conn: return
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\cheque_list.py:954:20
+    |
+952 |         if not self.cheque_db_name: return
+953 |         conn = self.db.get_connection(self.cheque_db_name)
+954 |         if not conn: return
+    |                    ^
+955 |         cursor = conn.cursor()
+    |
+
+E701 Multiple statements on one line (colon)
+    --> src\ui\cheque_list.py:1218:50
+     |
+1216 |             def val(c):
+1217 |                 w = self.table.cellWidget(r, c)
+1218 |                 if w and isinstance(w, QLineEdit): return w.text().strip()
+     |                                                  ^
+1219 |                 it = self.table.item(r, c)
+1220 |                 return it.text().strip() if it and it.text().strip() else ""
+     |
+
+E701 Multiple statements on one line (colon)
+    --> src\ui\cheque_list.py:1222:47
+     |
+1220 |                 return it.text().strip() if it and it.text().strip() else ""
+1221 |             row = [val(c) for c in range(10)]
+1222 |             if any(v.strip() for v in row[1:]): d.append(row)
+     |                                               ^
+1223 |         
+1224 |         try:
+     |
+
+E701 Multiple statements on one line (colon)
+    --> src\ui\cheque_list.py:1343:50
+     |
+1341 |             def val(c, _r=r):
+1342 |                 w = self.table.cellWidget(_r, c)
+1343 |                 if w and isinstance(w, QLineEdit): return w.text().strip()
+     |                                                  ^
+1344 |                 it = self.table.item(_r, c)
+1345 |                 return it.text().strip() if it and it.text().strip() else ""
+     |
+
+E701 Multiple statements on one line (colon)
+  --> src\ui\company_login_ui.py:56:13
+   |
+54 |     def browse_folder(self):
+55 |         p = QFileDialog.getExistingDirectory(self, "Select Folder")
+56 |         if p: self.path_edit.setText(p)
+   |             ^
+57 |     def get_path(self): return self.path_edit.text()
+   |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:154:41
+    |
+152 |     def keyPressEvent(self, event):
+153 |         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+154 |             if self.user_edit.hasFocus(): self.pass_edit.setFocus()
+    |                                         ^
+155 |             else: self.verify_login()
+156 |         elif event.key() == Qt.Key.Key_Escape: self.reject()
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:155:17
+    |
+153 |         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+154 |             if self.user_edit.hasFocus(): self.pass_edit.setFocus()
+155 |             else: self.verify_login()
+    |                 ^
+156 |         elif event.key() == Qt.Key.Key_Escape: self.reject()
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:156:46
+    |
+154 |             if self.user_edit.hasFocus(): self.pass_edit.setFocus()
+155 |             else: self.verify_login()
+156 |         elif event.key() == Qt.Key.Key_Escape: self.reject()
+    |                                              ^
+157 |
+158 | # ================= 3. COMPANY CREATE FORM (DECENTRALIZED LOGIC) =================
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:201:34
+    |
+199 |             edit = QLineEdit()
+200 |             edit.setObjectName("FormInput") 
+201 |             if "Password" in text: edit.setEchoMode(QLineEdit.EchoMode.Password)
+    |                                  ^
+202 |             
+203 |             if "Location" in text and "Image" not in text and "Backup" not in text:
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:241:13
+    |
+239 |     def browse_dir(self, edit_field):
+240 |         p = QFileDialog.getExistingDirectory(self, "Select Folder")
+241 |         if p: edit_field.setText(p)
+    |             ^
+242 |
+243 |     def load_for_setup(self, parent_path):
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:251:40
+    |
+250 |         for f in self.fields: 
+251 |             if isinstance(f, QLineEdit): f.clear()
+    |                                        ^
+252 |             
+253 |         # Show parent path to user
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:263:29
+    |
+261 |                 with open(config_file, 'r', encoding='utf-8') as f:
+262 |                     self.fields[6].setText(json.load(f).get("backup_path", ""))
+263 |             except Exception: pass
+    |                             ^
+264 |         
+265 |     def load_for_alter(self, company_path):
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:304:29
+    |
+302 |                         self.fields[4].setText(self.base_folder_path)
+303 |                         self.fields[5].setText(d.get("image_path", ""))
+304 |             except Exception: pass
+    |                             ^
+305 |             
+306 |         # Load global backup path
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:313:29
+    |
+311 |                 with open(config_file, 'r', encoding='utf-8') as f:
+312 |                     self.fields[6].setText(json.load(f).get("backup_path", ""))
+313 |             except Exception: pass
+    |                             ^
+314 |
+315 |     def back_to_list(self):
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:347:34
+    |
+345 |                 # Create Mode: Create folder inside base_folder_path
+346 |                 clean_name = self.sanitize_filename(display_name)
+347 |                 if not clean_name: clean_name = "Company_Data"
+    |                                  ^
+348 |                 
+349 |                 final_folder_path = os.path.join(self.base_folder_path, clean_name)
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:376:33
+    |
+374 |                     with open(config_file, 'r', encoding='utf-8') as f:
+375 |                         c_data = json.load(f)
+376 |                 except Exception: pass
+    |                                 ^
+377 |             c_data["backup_path"] = backup_path
+378 |             try:
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:381:29
+    |
+379 |                 with open(config_file, 'w', encoding='utf-8') as f:
+380 |                     json.dump(c_data, f, indent=4)
+381 |             except Exception: pass
+    |                             ^
+382 |                 
+383 |             # Initialize empty report data in SQL (ensures table exists)
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src\ui\company_login_ui.py:538:21
+    |
+536 |         line.setSizeHint(QSize(100, 2))
+537 |         self.list.addItem(line)
+538 |         f = QFrame(); f.setFixedHeight(2); f.setObjectName("ListSeparator")
+    |                     ^
+539 |         self.list.setItemWidget(line, f)
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src\ui\company_login_ui.py:538:42
+    |
+536 |         line.setSizeHint(QSize(100, 2))
+537 |         self.list.addItem(line)
+538 |         f = QFrame(); f.setFixedHeight(2); f.setObjectName("ListSeparator")
+    |                                          ^
+539 |         self.list.setItemWidget(line, f)
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:555:29
+    |
+553 |                             found_folders.append(full)
+554 |                             seen_paths.add(full.lower())
+555 |             except Exception: pass
+    |                             ^
+556 |         
+557 |         if not found_folders:
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:578:23
+    |
+576 |     def add_item(self, text, role=None, align_right=False, is_bold=False):
+577 |         item = QListWidgetItem(text)
+578 |         if align_right: item.setTextAlignment(Qt.AlignmentFlag.AlignRight)
+    |                       ^
+579 |         if is_bold: 
+580 |             font = QFont()
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:586:31
+    |
+584 |         if role:
+585 |             item.setData(Qt.ItemDataRole.UserRole, role)
+586 |             if role == "error": item.setForeground(QColor("red"))
+    |                               ^
+587 |             if role == "setup": item.setForeground(QColor("gray"))
+588 |             if role == "create": item.setForeground(QColor("#28a745")); item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:587:31
+    |
+585 |             item.setData(Qt.ItemDataRole.UserRole, role)
+586 |             if role == "error": item.setForeground(QColor("red"))
+587 |             if role == "setup": item.setForeground(QColor("gray"))
+    |                               ^
+588 |             if role == "create": item.setForeground(QColor("#28a745")); item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:588:32
+    |
+586 |             if role == "error": item.setForeground(QColor("red"))
+587 |             if role == "setup": item.setForeground(QColor("gray"))
+588 |             if role == "create": item.setForeground(QColor("#28a745")); item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+    |                                ^
+589 |
+590 |         self.list.addItem(item)
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src\ui\company_login_ui.py:588:71
+    |
+586 |             if role == "error": item.setForeground(QColor("red"))
+587 |             if role == "setup": item.setForeground(QColor("gray"))
+588 |             if role == "create": item.setForeground(QColor("#28a745")); item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+    |                                                                       ^
+589 |
+590 |         self.list.addItem(item)
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:594:20
+    |
+593 |     def on_enter(self, item):
+594 |         if not item: return
+    |                    ^
+595 |         role = item.data(Qt.ItemDataRole.UserRole)
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:809:55
+    |
+807 |         if os.path.exists(self.history_file):
+808 |             try:
+809 |                 with open(self.history_file, 'r') as f: return json.load(f)
+    |                                                       ^
+810 |             except Exception: return []
+811 |         return []
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:810:29
+    |
+808 |             try:
+809 |                 with open(self.history_file, 'r') as f: return json.load(f)
+810 |             except Exception: return []
+    |                             ^
+811 |         return []
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\company_login_ui.py:817:51
+    |
+815 |         if new_path not in hist:
+816 |             hist.append(new_path)
+817 |             with open(self.history_file, 'w') as f: json.dump(hist, f)
+    |                                                   ^
+818 |
+819 |     def show_list(self):
+    |
+
+F401 [*] `PyQt6.QtWidgets.QGroupBox` imported but unused
+ --> src\ui\final_data.py:5:48
+  |
+3 | import datetime
+4 | from PyQt6.QtWidgets import (
+5 |     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QGroupBox, QPushButton,
+  |                                                ^^^^^^^^^
+6 |     QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
+7 |     QProgressDialog, QApplication
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QHeaderView` imported but unused
+ --> src\ui\final_data.py:6:48
+  |
+4 | from PyQt6.QtWidgets import (
+5 |     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QGroupBox, QPushButton,
+6 |     QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
+  |                                                ^^^^^^^^^^^
+7 |     QProgressDialog, QApplication
+8 | )
+  |
+help: Remove unused import
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\final_data.py:497:39
+    |
+496 |     def save_cell_to_db(self, item):
+497 |         if self.table.signalsBlocked(): return
+    |                                       ^
+498 |         
+499 |         # RBAC: Block edits if user lacks permission
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\final_data.py:588:29
+    |
+586 |         try:
+587 |             guid_item = self.table.item(row, 0)
+588 |             if not guid_item: return
+    |                             ^
+589 |             guid = guid_item.text()
+    |
+
+F841 Local variable `base_dir` is assigned to but never used
+   --> src\ui\final_data.py:654:13
+    |
+652 |         try:
+653 |             # 1. Path Setup (fast ΓÇö stays on main thread)
+654 |             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    |             ^^^^^^^^
+655 |             
+656 |             folder_path = company_path
+    |
+help: Remove assignment to unused variable `base_dir`
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\final_data.py:669:49
+    |
+667 |                      with open(info_file, 'r', encoding='utf-8') as f:
+668 |                          info = json.load(f)
+669 |                          if "image_path" in info: self.image_folder = info["image_path"]
+    |                                                 ^
+670 |                  except Exception: pass
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\final_data.py:670:34
+    |
+668 |                          info = json.load(f)
+669 |                          if "image_path" in info: self.image_folder = info["image_path"]
+670 |                  except Exception: pass
+    |                                  ^
+671 |
+672 |             self.db_path = os.path.join(folder_path, "final_data.db")
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\final_data.py:951:24
+    |
+949 |                     old_group = str(old_row_db[8]).lower().strip() if old_row_db[8] else ""
+950 |                     new_group = str(s_data[1]).lower().strip() if s_data[1] else ""
+951 |                     try: old_mg = int(str(old_row_db[7]).strip())
+    |                        ^
+952 |                     except (ValueError, TypeError): old_mg = 0
+953 |                     try: new_mg = int(str(s_data[0]).strip())
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\final_data.py:952:51
+    |
+950 |                     new_group = str(s_data[1]).lower().strip() if s_data[1] else ""
+951 |                     try: old_mg = int(str(old_row_db[7]).strip())
+952 |                     except (ValueError, TypeError): old_mg = 0
+    |                                                   ^
+953 |                     try: new_mg = int(str(s_data[0]).strip())
+954 |                     except (ValueError, TypeError): new_mg = 0
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\final_data.py:953:24
+    |
+951 |                     try: old_mg = int(str(old_row_db[7]).strip())
+952 |                     except (ValueError, TypeError): old_mg = 0
+953 |                     try: new_mg = int(str(s_data[0]).strip())
+    |                        ^
+954 |                     except (ValueError, TypeError): new_mg = 0
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\final_data.py:954:51
+    |
+952 |                     except (ValueError, TypeError): old_mg = 0
+953 |                     try: new_mg = int(str(s_data[0]).strip())
+954 |                     except (ValueError, TypeError): new_mg = 0
+    |                                                   ^
+955 |                     
+956 |                     if (old_group == "price list" or old_mg >= 90) and (new_group != "price list" and new_mg < 90):
+    |
+
+F541 [*] f-string without any placeholders
+    --> src\ui\final_data.py:1006:17
+     |
+1004 |                 placeholders = ','.join(['?'] * len(chunk))
+1005 |                 cur.execute(f"DELETE FROM catalog WHERE GUID IN ({placeholders})", chunk)
+1006 |         elapsed(f"catalog UPSERT/DELETE to SQL Server")
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1007 |
+1008 |         # Processor ΓÇö run WITHOUT auto-commit (shares same connection)
+     |
+help: Remove extraneous `f` prefix
+
+E702 Multiple statements on one line (semicolon)
+    --> src\ui\final_data.py:1347:52
+     |
+1345 |                              # User Requirement: Price List items display "NO NEED" (Green).
+1346 |                              # This is strictly visual. Underlying UserRole keeps original path.
+1347 |                             item.setText("NO NEED"); item.setForeground(QColor("green"))
+     |                                                    ^
+1348 |                         elif is_row_missing:
+1349 |                             item.setText("Γ¥î NOT FOUND"); item.setForeground(QColor("red"))
+     |
+
+E702 Multiple statements on one line (semicolon)
+    --> src\ui\final_data.py:1349:56
+     |
+1347 |                             item.setText("NO NEED"); item.setForeground(QColor("green"))
+1348 |                         elif is_row_missing:
+1349 |                             item.setText("Γ¥î NOT FOUND"); item.setForeground(QColor("red"))
+     |                                                         ^
+1350 |                         elif has_duplicate:
+1351 |                             item.setText("ΓÜá∩╕Å DUPLICATE"); item.setForeground(QColor("#e67e00"))
+     |
+
+E702 Multiple statements on one line (semicolon)
+    --> src\ui\final_data.py:1351:57
+     |
+1349 |                             item.setText("Γ¥î NOT FOUND"); item.setForeground(QColor("red"))
+1350 |                         elif has_duplicate:
+1351 |                             item.setText("ΓÜá∩╕Å DUPLICATE"); item.setForeground(QColor("#e67e00"))
+     |                                                        ^
+1352 |                             item.setBackground(QColor("#fff3cd"))
+1353 |                         else:
+     |
+
+E702 Multiple statements on one line (semicolon)
+    --> src\ui\final_data.py:1354:52
+     |
+1352 |                             item.setBackground(QColor("#fff3cd"))
+1353 |                         else:
+1354 |                             item.setText("Γ£à FOUND"); item.setForeground(QColor("green"))
+     |                                                     ^
+1355 |
+1356 |                     if is_row_missing:
+     |
+
+F541 [*] f-string without any placeholders
+    --> src\ui\final_data.py:1691:56
+     |
+1689 |                     QMessageBox.warning(self, "Error", f"Could not open image: {e}")
+1690 |             else:
+1691 |                  QMessageBox.information(self, "Info", f"No valid image path found.")
+     |                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: Remove extraneous `f` prefix
+
+F401 [*] `PyQt6.QtWidgets.QScrollArea` imported but unused
+  --> src\ui\full_catalog.py:21:49
+   |
+19 |     QWidget, QHBoxLayout, QVBoxLayout, QFrame,
+20 |     QPushButton, QLineEdit, QLabel, QTableWidget,
+21 |     QTableWidgetItem, QHeaderView, QMessageBox, QScrollArea,
+   |                                                 ^^^^^^^^^^^
+22 |     QStyle, QGroupBox, QApplication,
+23 |     QGraphicsView, QGraphicsScene, QGraphicsProxyWidget,
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QApplication` imported but unused
+  --> src\ui\full_catalog.py:22:24
+   |
+20 |     QPushButton, QLineEdit, QLabel, QTableWidget,
+21 |     QTableWidgetItem, QHeaderView, QMessageBox, QScrollArea,
+22 |     QStyle, QGroupBox, QApplication,
+   |                        ^^^^^^^^^^^^
+23 |     QGraphicsView, QGraphicsScene, QGraphicsProxyWidget,
+24 |     QDialog, QDialogButtonBox, QTextEdit, QSplitter
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QGraphicsProxyWidget` imported but unused
+  --> src\ui\full_catalog.py:23:36
+   |
+21 |     QTableWidgetItem, QHeaderView, QMessageBox, QScrollArea,
+22 |     QStyle, QGroupBox, QApplication,
+23 |     QGraphicsView, QGraphicsScene, QGraphicsProxyWidget,
+   |                                    ^^^^^^^^^^^^^^^^^^^^
+24 |     QDialog, QDialogButtonBox, QTextEdit, QSplitter
+25 | )
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QDialogButtonBox` imported but unused
+  --> src\ui\full_catalog.py:24:14
+   |
+22 |     QStyle, QGroupBox, QApplication,
+23 |     QGraphicsView, QGraphicsScene, QGraphicsProxyWidget,
+24 |     QDialog, QDialogButtonBox, QTextEdit, QSplitter
+   |              ^^^^^^^^^^^^^^^^
+25 | )
+26 | from PyQt6.QtCore import Qt, QThread, pyqtSignal
+   |
+help: Remove unused import
+
+F401 [*] `src.ui.settings.add_pages_to_all_crms` imported but unused
+  --> src\ui\full_catalog.py:31:47
+   |
+29 | from src.logic.catalog_logic import CatalogLogic
+30 | from src.ui.a4_renderer import A4PageRenderer
+31 | from src.ui.settings import EmptyPagesDialog, add_pages_to_all_crms
+   |                                               ^^^^^^^^^^^^^^^^^^^^^
+32 | from src.ui.print_export import PrintExportDialog
+33 | from src.utils.path_utils import get_data_file_path
+   |
+help: Remove unused import: `src.ui.settings.add_pages_to_all_crms`
+
+F811 [*] Redefinition of unused `QApplication` from line 22
+   --> src\ui\full_catalog.py:859:54
+    |
+857 |         logger.info(f"Catalog build started: silent={silent}")
+858 |
+859 |         from PyQt6.QtWidgets import QProgressDialog, QApplication
+    |                                                      ^^^^^^^^^^^^ `QApplication` redefined here
+860 |
+861 |         self._build_silent = silent
+    |
+   ::: src\ui\full_catalog.py:22:24
+    |
+ 20 |     QPushButton, QLineEdit, QLabel, QTableWidget,
+ 21 |     QTableWidgetItem, QHeaderView, QMessageBox, QScrollArea,
+ 22 |     QStyle, QGroupBox, QApplication,
+    |                        ------------ previous definition of `QApplication` here
+ 23 |     QGraphicsView, QGraphicsScene, QGraphicsProxyWidget,
+ 24 |     QDialog, QDialogButtonBox, QTextEdit, QSplitter
+    |
+help: Remove definition: `QApplication`
+
+F811 [*] Redefinition of unused `QApplication` from line 22
+   --> src\ui\full_catalog.py:889:37
+    |
+888 |     def _on_build_finished(self, result):
+889 |         from PyQt6.QtWidgets import QApplication
+    |                                     ^^^^^^^^^^^^ `QApplication` redefined here
+890 |
+891 |         if self._build_progress:
+    |
+   ::: src\ui\full_catalog.py:22:24
+    |
+ 20 |     QPushButton, QLineEdit, QLabel, QTableWidget,
+ 21 |     QTableWidgetItem, QHeaderView, QMessageBox, QScrollArea,
+ 22 |     QStyle, QGroupBox, QApplication,
+    |                        ------------ previous definition of `QApplication` here
+ 23 |     QGraphicsView, QGraphicsScene, QGraphicsProxyWidget,
+ 24 |     QDialog, QDialogButtonBox, QTextEdit, QSplitter
+    |
+help: Remove definition: `QApplication`
+
+F541 [*] f-string without any placeholders
+   --> src\ui\full_catalog.py:926:23
+    |
+925 |             if not self._build_silent:
+926 |                 msg = f"Catalog built successfully!\n\n"
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+927 |                 msg += f"ΓÇó Changed Pages: {result['affected_count']}\n"
+928 |                 msg += f"ΓÇó CRMs Updated: {result['crm_updated']}\n"
+    |
+help: Remove extraneous `f` prefix
+
+F811 [*] Redefinition of unused `QApplication` from line 22
+    --> src\ui\full_catalog.py:1077:37
+     |
+1075 |             return
+1076 |
+1077 |         from PyQt6.QtWidgets import QApplication
+     |                                     ^^^^^^^^^^^^ `QApplication` redefined here
+1078 |         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+1079 |         QApplication.processEvents()
+     |
+    ::: src\ui\full_catalog.py:22:24
+     |
+  20 |     QPushButton, QLineEdit, QLabel, QTableWidget,
+  21 |     QTableWidgetItem, QHeaderView, QMessageBox, QScrollArea,
+  22 |     QStyle, QGroupBox, QApplication,
+     |                        ------------ previous definition of `QApplication` here
+  23 |     QGraphicsView, QGraphicsScene, QGraphicsProxyWidget,
+  24 |     QDialog, QDialogButtonBox, QTextEdit, QSplitter
+     |
+help: Remove definition: `QApplication`
+
+F403 `from PyQt6.QtWidgets import *` used; unable to detect undefined names
+ --> src\ui\godown_list.py:3:1
+  |
+1 | import os
+2 | from datetime import date as _date
+3 | from PyQt6.QtWidgets import *
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4 | from PyQt6.QtCore import *
+5 | from PyQt6.QtGui import *
+  |
+
+F403 `from PyQt6.QtCore import *` used; unable to detect undefined names
+ --> src\ui\godown_list.py:4:1
+  |
+2 | from datetime import date as _date
+3 | from PyQt6.QtWidgets import *
+4 | from PyQt6.QtCore import *
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+5 | from PyQt6.QtGui import *
+6 | from PyQt6.QtPrintSupport import QPrintPreviewDialog, QPrinter
+  |
+
+F403 `from PyQt6.QtGui import *` used; unable to detect undefined names
+ --> src\ui\godown_list.py:5:1
+  |
+3 | from PyQt6.QtWidgets import *
+4 | from PyQt6.QtCore import *
+5 | from PyQt6.QtGui import *
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^
+6 | from PyQt6.QtPrintSupport import QPrintPreviewDialog, QPrinter
+7 | from src.logic.db_manager import get_db_manager, build_logical_name
+  |
+
+F405 `QSortFilterProxyModel` may be undefined, or defined from star imports
+  --> src\ui\godown_list.py:54:29
+   |
+54 | class _GodownSortProxyModel(QSortFilterProxyModel):
+   |                             ^^^^^^^^^^^^^^^^^^^^^
+55 |     """Proxy model for the Godown col-0 completer.
+   |
+
+F405 `Qt` may be undefined, or defined from star imports
+  --> src\ui\godown_list.py:68:39
+   |
+66 |         super().__init__(parent)
+67 |         self._prefix = ""
+68 |         self.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+   |                                       ^^
+69 |
+70 |     def set_prefix(self, text: str):
+   |
+
+F405 `Qt` may be undefined, or defined from star imports
+  --> src\ui\godown_list.py:77:45
+   |
+75 |         """Accept rows that contain the current prefix (case-insensitive)."""
+76 |         idx = self.sourceModel().index(source_row, 0, source_parent)
+77 |         text = self.sourceModel().data(idx, Qt.ItemDataRole.DisplayRole) or ""
+   |                                             ^^
+78 |         return self._prefix in text.lower()
+   |
+
+F405 `Qt` may be undefined, or defined from star imports
+  --> src\ui\godown_list.py:82:46
+   |
+80 |     def lessThan(self, left, right):
+81 |         """Starts-with wins; within each tier sort alphabetically."""
+82 |         lv = (self.sourceModel().data(left,  Qt.ItemDataRole.DisplayRole) or "").lower()
+   |                                              ^^
+83 |         rv = (self.sourceModel().data(right, Qt.ItemDataRole.DisplayRole) or "").lower()
+84 |         p  = self._prefix
+   |
+
+F405 `Qt` may be undefined, or defined from star imports
+  --> src\ui\godown_list.py:83:46
+   |
+81 |         """Starts-with wins; within each tier sort alphabetically."""
+82 |         lv = (self.sourceModel().data(left,  Qt.ItemDataRole.DisplayRole) or "").lower()
+83 |         rv = (self.sourceModel().data(right, Qt.ItemDataRole.DisplayRole) or "").lower()
+   |                                              ^^
+84 |         p  = self._prefix
+85 |         l_starts = lv.startswith(p)
+   |
+
+F405 `QWidget` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:141:37
+    |
+141 | class GodownListUI(ExcelTableMixin, QWidget):
+    |                                     ^^^^^^^
+142 |     def __init__(self, data_folder_path, final_data_df=None):
+143 |         super().__init__()
+    |
+
+F405 `QSettings` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:144:25
+    |
+142 |     def __init__(self, data_folder_path, final_data_df=None):
+143 |         super().__init__()
+144 |         self.settings = QSettings("TallySync", "GodownList")
+    |                         ^^^^^^^^^
+145 |         self.export_folder = self.settings.value("export_folder", "")
+146 |         self.final_data = None  # Will be loaded from final_data DB
+    |
+
+F405 `QTimer` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:157:28
+    |
+156 |         # Debounced save timer ΓÇö saves 1 second after last edit instead of on every keystroke
+157 |         self._save_timer = QTimer(self)
+    |                            ^^^^^^
+158 |         self._save_timer.setSingleShot(True)
+159 |         self._save_timer.setInterval(1000)
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\godown_list.py:166:28
+    |
+165 |     def change_data_folder(self, company_path, final_data_df=None):
+166 |         if not company_path: return
+    |                            ^
+167 |         self.company_path = company_path
+168 |         company_name = os.path.basename(company_path)
+    |
+
+F405 `QCompleter` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:257:30
+    |
+255 |         self.completer = None
+256 |         if self.final_data:
+257 |             self.completer = QCompleter(self.final_data)  # final_data is now a list of alias strings
+    |                              ^^^^^^^^^^
+258 |             self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+259 |             self.completer.setFilterMode(Qt.MatchFlag.MatchContains)
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:258:47
+    |
+256 |         if self.final_data:
+257 |             self.completer = QCompleter(self.final_data)  # final_data is now a list of alias strings
+258 |             self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+    |                                               ^^
+259 |             self.completer.setFilterMode(Qt.MatchFlag.MatchContains)
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:259:42
+    |
+257 |             self.completer = QCompleter(self.final_data)  # final_data is now a list of alias strings
+258 |             self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+259 |             self.completer.setFilterMode(Qt.MatchFlag.MatchContains)
+    |                                          ^^
+260 |
+261 |     # ---------------- UI ----------------
+    |
+
+F405 `QVBoxLayout` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:263:18
+    |
+261 |     # ---------------- UI ----------------
+262 |     def init_ui(self):
+263 |         layout = QVBoxLayout(self)
+    |                  ^^^^^^^^^^^
+264 |         top = QHBoxLayout()
+    |
+
+F405 `QHBoxLayout` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:264:15
+    |
+262 |     def init_ui(self):
+263 |         layout = QVBoxLayout(self)
+264 |         top = QHBoxLayout()
+    |               ^^^^^^^^^^^
+265 |
+266 |         btn_set_location = QPushButton("≡ƒôé Set Location")
+    |
+
+F405 `QPushButton` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:266:28
+    |
+264 |         top = QHBoxLayout()
+265 |
+266 |         btn_set_location = QPushButton("≡ƒôé Set Location")
+    |                            ^^^^^^^^^^^
+267 |         self.btn_excel = QPushButton("≡ƒôÑ Excel αñíαñ╛αñëαñ¿αñ▓αÑïαñí")
+268 |         btn_print = QPushButton("≡ƒû¿∩╕Å αñ¬αÑìαñ░αñ┐αñéαñƒ αñ¬αÑìαñ░αñ┐αñ╡αÑìαñ»αÑé")
+    |
+
+F405 `QPushButton` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:267:26
+    |
+266 |         btn_set_location = QPushButton("≡ƒôé Set Location")
+267 |         self.btn_excel = QPushButton("≡ƒôÑ Excel αñíαñ╛αñëαñ¿αñ▓αÑïαñí")
+    |                          ^^^^^^^^^^^
+268 |         btn_print = QPushButton("≡ƒû¿∩╕Å αñ¬αÑìαñ░αñ┐αñéαñƒ αñ¬αÑìαñ░αñ┐αñ╡αÑìαñ»αÑé")
+269 |         self.btn_save = QPushButton("≡ƒÆ╛ Save & Sort")
+    |
+
+F405 `QPushButton` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:268:21
+    |
+266 |         btn_set_location = QPushButton("≡ƒôé Set Location")
+267 |         self.btn_excel = QPushButton("≡ƒôÑ Excel αñíαñ╛αñëαñ¿αñ▓αÑïαñí")
+268 |         btn_print = QPushButton("≡ƒû¿∩╕Å αñ¬αÑìαñ░αñ┐αñéαñƒ αñ¬αÑìαñ░αñ┐αñ╡αÑìαñ»αÑé")
+    |                     ^^^^^^^^^^^
+269 |         self.btn_save = QPushButton("≡ƒÆ╛ Save & Sort")
+    |
+
+F405 `QPushButton` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:269:25
+    |
+267 |         self.btn_excel = QPushButton("≡ƒôÑ Excel αñíαñ╛αñëαñ¿αñ▓αÑïαñí")
+268 |         btn_print = QPushButton("≡ƒû¿∩╕Å αñ¬αÑìαñ░αñ┐αñéαñƒ αñ¬αÑìαñ░αñ┐αñ╡αÑìαñ»αÑé")
+269 |         self.btn_save = QPushButton("≡ƒÆ╛ Save & Sort")
+    |                         ^^^^^^^^^^^
+270 |
+271 |         btn_set_location.clicked.connect(self.set_export_location)
+    |
+
+F405 `QTableWidget` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:283:22
+    |
+281 |         layout.addLayout(top)
+282 |
+283 |         self.table = QTableWidget(200, 7)
+    |                      ^^^^^^^^^^^^
+284 |         self.table.setHorizontalHeaderLabels([
+285 |             "αñ╕αñ╛αñ«αñ╛αñ¿αñòαÑï αñ¿αñ╛αñ«", "αñ¬αÑìαñ░αññαñ┐ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿", "UNIT",
+    |
+
+F405 `QAbstractItemView` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:337:17
+    |
+335 |         if can_edit:
+336 |             self.table.setEditTriggers(
+337 |                 QAbstractItemView.EditTrigger.DoubleClicked |
+    |                 ^^^^^^^^^^^^^^^^^
+338 |                 QAbstractItemView.EditTrigger.AnyKeyPressed |
+339 |                 QAbstractItemView.EditTrigger.EditKeyPressed
+    |
+
+F405 `QAbstractItemView` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:338:17
+    |
+336 |             self.table.setEditTriggers(
+337 |                 QAbstractItemView.EditTrigger.DoubleClicked |
+338 |                 QAbstractItemView.EditTrigger.AnyKeyPressed |
+    |                 ^^^^^^^^^^^^^^^^^
+339 |                 QAbstractItemView.EditTrigger.EditKeyPressed
+340 |             )
+    |
+
+F405 `QAbstractItemView` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:339:17
+    |
+337 |                 QAbstractItemView.EditTrigger.DoubleClicked |
+338 |                 QAbstractItemView.EditTrigger.AnyKeyPressed |
+339 |                 QAbstractItemView.EditTrigger.EditKeyPressed
+    |                 ^^^^^^^^^^^^^^^^^
+340 |             )
+341 |         else:
+    |
+
+F405 `QAbstractItemView` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:342:40
+    |
+340 |             )
+341 |         else:
+342 |             self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+    |                                        ^^^^^^^^^^^^^^^^^
+343 |
+344 |         # Action buttons
+    |
+
+F405 `QLineEdit` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:376:32
+    |
+374 |         self._active_editor = None
+375 |         w = self.table.cellWidget(old_row, 0)
+376 |         if w and isinstance(w, QLineEdit):
+    |                                ^^^^^^^^^
+377 |             val = w.text().strip()
+378 |             self.table.removeCellWidget(old_row, 0)
+    |
+
+F405 `QTableWidgetItem` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:379:20
+    |
+377 |             val = w.text().strip()
+378 |             self.table.removeCellWidget(old_row, 0)
+379 |             item = QTableWidgetItem(val)
+    |                    ^^^^^^^^^^^^^^^^
+380 |             self.table.blockSignals(True)
+381 |             self.table.setItem(old_row, 0, item)
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:384:49
+    |
+382 |             self.table.blockSignals(False)
+383 |
+384 |     def create_table_item(self, text, alignment=Qt.AlignmentFlag.AlignLeft, locked=False):
+    |                                                 ^^
+385 |         """Create a new table item with alignment and lock properties"""
+386 |         item = QTableWidgetItem(str(text))
+    |
+
+F405 `QTableWidgetItem` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:386:16
+    |
+384 |     def create_table_item(self, text, alignment=Qt.AlignmentFlag.AlignLeft, locked=False):
+385 |         """Create a new table item with alignment and lock properties"""
+386 |         item = QTableWidgetItem(str(text))
+    |                ^^^^^^^^^^^^^^^^
+387 |         item.setTextAlignment(alignment | Qt.AlignmentFlag.AlignVCenter)
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:387:43
+    |
+385 |         """Create a new table item with alignment and lock properties"""
+386 |         item = QTableWidgetItem(str(text))
+387 |         item.setTextAlignment(alignment | Qt.AlignmentFlag.AlignVCenter)
+    |                                           ^^
+388 |         
+389 |         if locked:
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:390:43
+    |
+389 |         if locked:
+390 |             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+    |                                           ^^
+391 |         else:
+392 |             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:392:42
+    |
+390 |             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+391 |         else:
+392 |             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+    |                                          ^^
+393 |             
+394 |         return item
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:433:93
+    |
+431 |                     item_name = data["Item_Name"]
+432 |                     item.setText(item_name)
+433 |                     self.table.setItem(row, 2, self.create_table_item(data.get("Unit", ""), Qt.AlignmentFlag.AlignCenter, True))
+    |                                                                                             ^^
+434 |                     p_no = str(data.get("Part_No", ""))
+435 |                     if p_no.lower() == "none": p_no = ""
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\godown_list.py:435:46
+    |
+433 |                     self.table.setItem(row, 2, self.create_table_item(data.get("Unit", ""), Qt.AlignmentFlag.AlignCenter, True))
+434 |                     p_no = str(data.get("Part_No", ""))
+435 |                     if p_no.lower() == "none": p_no = ""
+    |                                              ^
+436 |                     p_no = _apply_part_no_override(item_name, p_no)
+437 |                     self.table.setItem(row, 5, self.create_table_item(p_no, Qt.AlignmentFlag.AlignCenter, True))
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:437:77
+    |
+435 |                     if p_no.lower() == "none": p_no = ""
+436 |                     p_no = _apply_part_no_override(item_name, p_no)
+437 |                     self.table.setItem(row, 5, self.create_table_item(p_no, Qt.AlignmentFlag.AlignCenter, True))
+    |                                                                             ^^
+438 |                     
+439 |                     if not self.table.item(row, 1): self.set_item_locked(row, 1, "", should_lock=False)
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\godown_list.py:439:51
+    |
+437 |                     self.table.setItem(row, 5, self.create_table_item(p_no, Qt.AlignmentFlag.AlignCenter, True))
+438 |                     
+439 |                     if not self.table.item(row, 1): self.set_item_locked(row, 1, "", should_lock=False)
+    |                                                   ^
+440 |                     if not self.table.item(row, 3): self.set_item_locked(row, 3, "", should_lock=False)
+441 |                     if not self.table.item(row, 4): self.set_item_locked(row, 4, "", should_lock=False)
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\godown_list.py:440:51
+    |
+439 |                     if not self.table.item(row, 1): self.set_item_locked(row, 1, "", should_lock=False)
+440 |                     if not self.table.item(row, 3): self.set_item_locked(row, 3, "", should_lock=False)
+    |                                                   ^
+441 |                     if not self.table.item(row, 4): self.set_item_locked(row, 4, "", should_lock=False)
+442 |                     if not self.table.item(row, 6): self.set_item_locked(row, 6, "", should_lock=False)
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\godown_list.py:441:51
+    |
+439 |                     if not self.table.item(row, 1): self.set_item_locked(row, 1, "", should_lock=False)
+440 |                     if not self.table.item(row, 3): self.set_item_locked(row, 3, "", should_lock=False)
+441 |                     if not self.table.item(row, 4): self.set_item_locked(row, 4, "", should_lock=False)
+    |                                                   ^
+442 |                     if not self.table.item(row, 6): self.set_item_locked(row, 6, "", should_lock=False)
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\godown_list.py:442:51
+    |
+440 |                     if not self.table.item(row, 3): self.set_item_locked(row, 3, "", should_lock=False)
+441 |                     if not self.table.item(row, 4): self.set_item_locked(row, 4, "", should_lock=False)
+442 |                     if not self.table.item(row, 6): self.set_item_locked(row, 6, "", should_lock=False)
+    |                                                   ^
+443 |                     
+444 |                     cn_was_freed = False
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\godown_list.py:454:36
+    |
+452 |                     from PyQt6.QtCore import QTimer
+453 |                     QTimer.singleShot(0, lambda r=row: self.table.editItem(self.table.item(r, 1)) if self.table.item(r, 1) else None)
+454 |                     if cn_was_freed: self._reassign_empty_cns()
+    |                                    ^
+455 |                     self.save_data_to_db()
+456 |                     return
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\godown_list.py:462:51
+    |
+460 |                     self.set_item_locked(row, 2, unit_val, should_lock=False)
+461 |                     self.set_item_locked(row, 5, pno_val,  should_lock=False)
+462 |                     if not self.table.item(row, 1): self.set_item_locked(row, 1, "", should_lock=False)
+    |                                                   ^
+463 |                     self._nav_set_current(row, 1)
+464 |                     from PyQt6.QtCore import QTimer
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:470:39
+    |
+468 |             # Column 1 (αñ¬αÑìαñ░αññαñ┐ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿) - Right align + numeric validation
+469 |             if col == 1:
+470 |                 item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    |                                       ^^
+471 |                 if text:
+472 |                     val = text.replace(",", "").replace(".", "").replace("-", "")
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:470:69
+    |
+468 |             # Column 1 (αñ¬αÑìαñ░αññαñ┐ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿) - Right align + numeric validation
+469 |             if col == 1:
+470 |                 item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    |                                                                     ^^
+471 |                 if text:
+472 |                     val = text.replace(",", "").replace(".", "").replace("-", "")
+    |
+
+F405 `QMessageBox` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:474:25
+    |
+472 | ΓÇª     val = text.replace(",", "").replace(".", "").replace("-", "")
+473 | ΓÇª     if val and not val.isdigit():
+474 | ΓÇª         QMessageBox.warning(self, "Invalid Input", "αñòαÑâαñ¬αñ»αñ╛ αñòαÑçαñ╡αñ▓ αñ╕αñéαñûαÑìαñ»αñ╛ (numbers) αñ▓αñ┐αñûαÑçαñéαÑñ")
+    |           ^^^^^^^^^^^
+475 | ΓÇª         item.setText("")
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:479:39
+    |
+477 |             # Column 3 (αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿) ΓÇö left-align + arithmetic expression evaluator (+ and - only)
+478 |             if col == 3:
+479 |                 item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    |                                       ^^
+480 |                 if text and any(op in text for op in '+-'):
+481 |                     import re as _re
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:479:68
+    |
+477 |             # Column 3 (αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿) ΓÇö left-align + arithmetic expression evaluator (+ and - only)
+478 |             if col == 3:
+479 |                 item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    |                                                                    ^^
+480 |                 if text and any(op in text for op in '+-'):
+481 |                     import re as _re
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:492:39
+    |
+490 |             # Column 4 (Godown) ΓÇö auto-uppercase and center-align
+491 |             if col == 4 and text:
+492 |                 item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+    |                                       ^^
+493 |                 item.setText(text.upper())
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:492:71
+    |
+490 |             # Column 4 (Godown) ΓÇö auto-uppercase and center-align
+491 |             if col == 4 and text:
+492 |                 item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+    |                                                                       ^^
+493 |                 item.setText(text.upper())
+    |
+
+F405 `QMessageBox` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:519:29
+    |
+517 |                         if int(text) in _EXCLUDED_CNS:
+518 |                             item.setText(self._pre_cn)
+519 |                             QMessageBox.warning(
+    |                             ^^^^^^^^^^^
+520 |                                 self, "Invalid CN",
+521 |                                 f"CN {text} is reserved and cannot be assigned."
+    |
+
+F405 `QMessageBox` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:538:37
+    |
+536 | ΓÇª                     # Target CN belongs to a named row ΓÇö reject, revert to old CN
+537 | ΓÇª                     item.setText(self._pre_cn)
+538 | ΓÇª                     QMessageBox.warning(
+    |                       ^^^^^^^^^^^
+539 | ΓÇª                         self, "Cannot Swap",
+540 | ΓÇª                         f"CN {text} is assigned to a product.\nYou can only swap with an empty row."
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:581:29
+    |
+579 |                 item_in_list = bool(row_item_lower) and row_item_lower in known_names
+580 |                 for c, val in enumerate(data):
+581 |                     align = Qt.AlignmentFlag.AlignLeft
+    |                             ^^
+582 |                     is_locked = False
+583 |                     if c == 1: align = Qt.AlignmentFlag.AlignRight # αñ¬αÑìαñ░αññαñ┐ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\godown_list.py:583:30
+    |
+581 |                     align = Qt.AlignmentFlag.AlignLeft
+582 |                     is_locked = False
+583 |                     if c == 1: align = Qt.AlignmentFlag.AlignRight # αñ¬αÑìαñ░αññαñ┐ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿
+    |                              ^
+584 |                     if c == 3: align = Qt.AlignmentFlag.AlignLeft  # αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿ ΓÇö left-aligned
+585 |                     if c in (2, 4, 5, 6): align = Qt.AlignmentFlag.AlignCenter # Unit, Godown, PartNo, CN
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:583:40
+    |
+581 |                     align = Qt.AlignmentFlag.AlignLeft
+582 |                     is_locked = False
+583 |                     if c == 1: align = Qt.AlignmentFlag.AlignRight # αñ¬αÑìαñ░αññαñ┐ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿
+    |                                        ^^
+584 |                     if c == 3: align = Qt.AlignmentFlag.AlignLeft  # αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿ ΓÇö left-aligned
+585 |                     if c in (2, 4, 5, 6): align = Qt.AlignmentFlag.AlignCenter # Unit, Godown, PartNo, CN
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\godown_list.py:584:30
+    |
+582 |                     is_locked = False
+583 |                     if c == 1: align = Qt.AlignmentFlag.AlignRight # αñ¬αÑìαñ░αññαñ┐ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿
+584 |                     if c == 3: align = Qt.AlignmentFlag.AlignLeft  # αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿ ΓÇö left-aligned
+    |                              ^
+585 |                     if c in (2, 4, 5, 6): align = Qt.AlignmentFlag.AlignCenter # Unit, Godown, PartNo, CN
+586 |                     # Lock Unit/Part No only for items in the master list
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:584:40
+    |
+582 |                     is_locked = False
+583 |                     if c == 1: align = Qt.AlignmentFlag.AlignRight # αñ¬αÑìαñ░αññαñ┐ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿
+584 |                     if c == 3: align = Qt.AlignmentFlag.AlignLeft  # αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿ ΓÇö left-aligned
+    |                                        ^^
+585 |                     if c in (2, 4, 5, 6): align = Qt.AlignmentFlag.AlignCenter # Unit, Godown, PartNo, CN
+586 |                     # Lock Unit/Part No only for items in the master list
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\godown_list.py:585:41
+    |
+583 |                     if c == 1: align = Qt.AlignmentFlag.AlignRight # αñ¬αÑìαñ░αññαñ┐ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿
+584 |                     if c == 3: align = Qt.AlignmentFlag.AlignLeft  # αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿ ΓÇö left-aligned
+585 |                     if c in (2, 4, 5, 6): align = Qt.AlignmentFlag.AlignCenter # Unit, Godown, PartNo, CN
+    |                                         ^
+586 |                     # Lock Unit/Part No only for items in the master list
+587 |                     if c in (2, 5): is_locked = item_in_list
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:585:51
+    |
+583 |                     if c == 1: align = Qt.AlignmentFlag.AlignRight # αñ¬αÑìαñ░αññαñ┐ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿
+584 |                     if c == 3: align = Qt.AlignmentFlag.AlignLeft  # αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿ ΓÇö left-aligned
+585 |                     if c in (2, 4, 5, 6): align = Qt.AlignmentFlag.AlignCenter # Unit, Godown, PartNo, CN
+    |                                                   ^^
+586 |                     # Lock Unit/Part No only for items in the master list
+587 |                     if c in (2, 5): is_locked = item_in_list
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\godown_list.py:587:35
+    |
+585 |                     if c in (2, 4, 5, 6): align = Qt.AlignmentFlag.AlignCenter # Unit, Godown, PartNo, CN
+586 |                     # Lock Unit/Part No only for items in the master list
+587 |                     if c in (2, 5): is_locked = item_in_list
+    |                                   ^
+588 |                     self.table.setItem(r, c, self.create_table_item(val, align | Qt.AlignmentFlag.AlignVCenter, is_locked))
+589 |         finally:
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:588:82
+    |
+586 |                     # Lock Unit/Part No only for items in the master list
+587 |                     if c in (2, 5): is_locked = item_in_list
+588 |                     self.table.setItem(r, c, self.create_table_item(val, align | Qt.AlignmentFlag.AlignVCenter, is_locked))
+    |                                                                                  ^^
+589 |         finally:
+590 |             self.table.blockSignals(False)
+    |
+
+E401 [*] Multiple imports on one line
+   --> src\ui\godown_list.py:616:13
+    |
+615 |             # Skip the DB round-trip entirely if nothing has changed since last save.
+616 |             import hashlib, json as _json
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+617 |             current_hash = hashlib.md5(
+618 |                 _json.dumps(rows_to_insert, ensure_ascii=False).encode()
+    |
+help: Split imports
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:790:29
+    |
+788 |                 item_in_list = bool(row_item_lower) and row_item_lower in known_names
+789 |                 for c, val in enumerate(row_data):
+790 |                     align = Qt.AlignmentFlag.AlignLeft
+    |                             ^^
+791 |                     is_locked = False
+792 |                     if c == 1: align = Qt.AlignmentFlag.AlignRight
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\godown_list.py:792:30
+    |
+790 |                     align = Qt.AlignmentFlag.AlignLeft
+791 |                     is_locked = False
+792 |                     if c == 1: align = Qt.AlignmentFlag.AlignRight
+    |                              ^
+793 |                     if c == 3: align = Qt.AlignmentFlag.AlignLeft   # αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿ ΓÇö left-aligned
+794 |                     if c in (2, 4, 5, 6): align = Qt.AlignmentFlag.AlignCenter
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:792:40
+    |
+790 |                     align = Qt.AlignmentFlag.AlignLeft
+791 |                     is_locked = False
+792 |                     if c == 1: align = Qt.AlignmentFlag.AlignRight
+    |                                        ^^
+793 |                     if c == 3: align = Qt.AlignmentFlag.AlignLeft   # αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿ ΓÇö left-aligned
+794 |                     if c in (2, 4, 5, 6): align = Qt.AlignmentFlag.AlignCenter
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\godown_list.py:793:30
+    |
+791 |                     is_locked = False
+792 |                     if c == 1: align = Qt.AlignmentFlag.AlignRight
+793 |                     if c == 3: align = Qt.AlignmentFlag.AlignLeft   # αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿ ΓÇö left-aligned
+    |                              ^
+794 |                     if c in (2, 4, 5, 6): align = Qt.AlignmentFlag.AlignCenter
+795 |                     # Lock Unit/Part No only for items in the master list
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:793:40
+    |
+791 |                     is_locked = False
+792 |                     if c == 1: align = Qt.AlignmentFlag.AlignRight
+793 |                     if c == 3: align = Qt.AlignmentFlag.AlignLeft   # αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿ ΓÇö left-aligned
+    |                                        ^^
+794 |                     if c in (2, 4, 5, 6): align = Qt.AlignmentFlag.AlignCenter
+795 |                     # Lock Unit/Part No only for items in the master list
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\godown_list.py:794:41
+    |
+792 |                     if c == 1: align = Qt.AlignmentFlag.AlignRight
+793 |                     if c == 3: align = Qt.AlignmentFlag.AlignLeft   # αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿ ΓÇö left-aligned
+794 |                     if c in (2, 4, 5, 6): align = Qt.AlignmentFlag.AlignCenter
+    |                                         ^
+795 |                     # Lock Unit/Part No only for items in the master list
+796 |                     if c in (2, 5): is_locked = item_in_list
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:794:51
+    |
+792 |                     if c == 1: align = Qt.AlignmentFlag.AlignRight
+793 |                     if c == 3: align = Qt.AlignmentFlag.AlignLeft   # αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿ ΓÇö left-aligned
+794 |                     if c in (2, 4, 5, 6): align = Qt.AlignmentFlag.AlignCenter
+    |                                                   ^^
+795 |                     # Lock Unit/Part No only for items in the master list
+796 |                     if c in (2, 5): is_locked = item_in_list
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\godown_list.py:796:35
+    |
+794 |                     if c in (2, 4, 5, 6): align = Qt.AlignmentFlag.AlignCenter
+795 |                     # Lock Unit/Part No only for items in the master list
+796 |                     if c in (2, 5): is_locked = item_in_list
+    |                                   ^
+797 |                     self.table.setItem(r, c, self.create_table_item(val, align | Qt.AlignmentFlag.AlignVCenter, is_locked))
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:797:82
+    |
+795 |                     # Lock Unit/Part No only for items in the master list
+796 |                     if c in (2, 5): is_locked = item_in_list
+797 |                     self.table.setItem(r, c, self.create_table_item(val, align | Qt.AlignmentFlag.AlignVCenter, is_locked))
+    |                                                                                  ^^
+798 |
+799 |             # Recycle freed CNs into visible empty buffer rows.
+    |
+
+F405 `QMessageBox` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:814:13
+    |
+812 |         self.save_data_to_db()
+813 |         if not silent:
+814 |             QMessageBox.information(self, "Saved", "Data Saved & Sorted Successfully")
+    |             ^^^^^^^^^^^
+    |
+
+F405 `QTableWidgetItem` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:820:16
+    |
+818 |     def set_item_locked(self, row, col, value, should_lock=True):
+819 |         """Set a cell value with proper alignment and lock state"""
+820 |         item = QTableWidgetItem(str(value))
+    |                ^^^^^^^^^^^^^^^^
+821 |         
+822 |         if col == 1:
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:823:35
+    |
+822 |         if col == 1:
+823 |             item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    |                                   ^^
+824 |         elif col in (2, 4, 5, 6):
+825 |             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:823:65
+    |
+822 |         if col == 1:
+823 |             item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    |                                                                 ^^
+824 |         elif col in (2, 4, 5, 6):
+825 |             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:825:35
+    |
+823 |             item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+824 |         elif col in (2, 4, 5, 6):
+825 |             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+    |                                   ^^
+826 |         else:
+827 |             # cols 0, 3 ΓÇö left-aligned, vertically centred
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:825:66
+    |
+823 |             item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+824 |         elif col in (2, 4, 5, 6):
+825 |             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+    |                                                                  ^^
+826 |         else:
+827 |             # cols 0, 3 ΓÇö left-aligned, vertically centred
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:828:35
+    |
+826 |         else:
+827 |             # cols 0, 3 ΓÇö left-aligned, vertically centred
+828 |             item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    |                                   ^^
+829 |
+830 |         if should_lock:
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:828:64
+    |
+826 |         else:
+827 |             # cols 0, 3 ΓÇö left-aligned, vertically centred
+828 |             item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    |                                                                ^^
+829 |
+830 |         if should_lock:
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:831:43
+    |
+830 |         if should_lock:
+831 |             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+    |                                           ^^
+832 |         else:
+833 |             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+    |
+
+F405 `Qt` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:833:42
+    |
+831 |             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+832 |         else:
+833 |             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+    |                                          ^^
+834 |             
+835 |         self.table.setItem(row, col, item)
+    |
+
+F405 `QMessageBox` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:892:13
+    |
+890 |     def export_to_excel(self):
+891 |         if not hasattr(self, 'export_folder') or not self.export_folder:
+892 |             QMessageBox.warning(self, "Set Location", "Please set an export location first using 'Set Location' button.")
+    |             ^^^^^^^^^^^
+893 |             return
+    |
+
+F405 `QMessageBox` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:940:13
+    |
+938 |                 os.startfile(path)
+939 |         except Exception as e:
+940 |             QMessageBox.critical(self, "Export Error", f"Failed to export Excel:\n{str(e)}")
+    |             ^^^^^^^^^^^
+941 |
+942 |     def handle_print_preview(self):
+    |
+
+F405 `QPageSize` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:944:29
+    |
+942 |     def handle_print_preview(self):
+943 |         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+944 |         printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+    |                             ^^^^^^^^^
+945 |         printer.setPageOrientation(QPageLayout.Orientation.Portrait)
+946 |         printer.setPageMargins(QMarginsF(12, 12, 12, 12), QPageLayout.Unit.Millimeter)
+    |
+
+F405 `QPageSize` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:944:39
+    |
+942 |     def handle_print_preview(self):
+943 |         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+944 |         printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+    |                                       ^^^^^^^^^
+945 |         printer.setPageOrientation(QPageLayout.Orientation.Portrait)
+946 |         printer.setPageMargins(QMarginsF(12, 12, 12, 12), QPageLayout.Unit.Millimeter)
+    |
+
+F405 `QPageLayout` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:945:36
+    |
+943 |         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+944 |         printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+945 |         printer.setPageOrientation(QPageLayout.Orientation.Portrait)
+    |                                    ^^^^^^^^^^^
+946 |         printer.setPageMargins(QMarginsF(12, 12, 12, 12), QPageLayout.Unit.Millimeter)
+    |
+
+F405 `QMarginsF` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:946:32
+    |
+944 |         printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+945 |         printer.setPageOrientation(QPageLayout.Orientation.Portrait)
+946 |         printer.setPageMargins(QMarginsF(12, 12, 12, 12), QPageLayout.Unit.Millimeter)
+    |                                ^^^^^^^^^
+947 |
+948 |         self._godown_print_pages = []
+    |
+
+F405 `QPageLayout` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:946:59
+    |
+944 |         printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+945 |         printer.setPageOrientation(QPageLayout.Orientation.Portrait)
+946 |         printer.setPageMargins(QMarginsF(12, 12, 12, 12), QPageLayout.Unit.Millimeter)
+    |                                                           ^^^^^^^^^^^
+947 |
+948 |         self._godown_print_pages = []
+    |
+
+F405 `QToolBar` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:958:45
+    |
+956 |         # re-call paintRequested with fromPage/toPage, so we intercept the action here.
+957 |         self._godown_preview_ref = preview
+958 |         for toolbar in preview.findChildren(QToolBar):
+    |                                             ^^^^^^^^
+959 |             for action in toolbar.actions():
+960 |                 tip = (action.toolTip() or "").lower()
+    |
+
+F405 `QDialog` may be undefined, or defined from star imports
+   --> src\ui\godown_list.py:981:26
+    |
+979 |         dlg.setMinMax(1, total)
+980 |
+981 |         if dlg.exec() != QDialog.DialogCode.Accepted:
+    |                          ^^^^^^^
+982 |             return
+    |
+
+F405 `QPainter` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1003:19
+     |
+1001 |         page_range: (start, end) 0-indexed inclusive. None = all pages (preview mode).
+1002 |         """
+1003 |         painter = QPainter()
+     |                   ^^^^^^^^
+1004 |         if not painter.begin(printer):
+1005 |             return
+     |
+
+F405 `QFont` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1013:23
+     |
+1012 |         # --- Fonts ---
+1013 |         header_font = QFont("Noto Sans Devanagari", 13, QFont.Weight.Normal)
+     |                       ^^^^^
+1014 |         cell_font   = QFont("Noto Sans Devanagari", 11)
+1015 |         footer_font = QFont("Noto Sans Devanagari", 9)
+     |
+
+F405 `QFont` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1013:57
+     |
+1012 |         # --- Fonts ---
+1013 |         header_font = QFont("Noto Sans Devanagari", 13, QFont.Weight.Normal)
+     |                                                         ^^^^^
+1014 |         cell_font   = QFont("Noto Sans Devanagari", 11)
+1015 |         footer_font = QFont("Noto Sans Devanagari", 9)
+     |
+
+F405 `QFont` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1014:23
+     |
+1012 |         # --- Fonts ---
+1013 |         header_font = QFont("Noto Sans Devanagari", 13, QFont.Weight.Normal)
+1014 |         cell_font   = QFont("Noto Sans Devanagari", 11)
+     |                       ^^^^^
+1015 |         footer_font = QFont("Noto Sans Devanagari", 9)
+     |
+
+F405 `QFont` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1015:23
+     |
+1013 |         header_font = QFont("Noto Sans Devanagari", 13, QFont.Weight.Normal)
+1014 |         cell_font   = QFont("Noto Sans Devanagari", 11)
+1015 |         footer_font = QFont("Noto Sans Devanagari", 9)
+     |                       ^^^^^
+1016 |
+1017 |         painter.setFont(header_font)
+     |
+
+F405 `Qt` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1059:13
+     |
+1057 |         # --- Alignment per column (αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿ col 3 is left-aligned to match screen) ---
+1058 |         alignments = [
+1059 |             Qt.AlignmentFlag.AlignLeft,      # Item Name
+     |             ^^
+1060 |             Qt.AlignmentFlag.AlignRight,     # Qty/Ctn
+1061 |             Qt.AlignmentFlag.AlignHCenter,   # Unit
+     |
+
+F405 `Qt` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1060:13
+     |
+1058 |         alignments = [
+1059 |             Qt.AlignmentFlag.AlignLeft,      # Item Name
+1060 |             Qt.AlignmentFlag.AlignRight,     # Qty/Ctn
+     |             ^^
+1061 |             Qt.AlignmentFlag.AlignHCenter,   # Unit
+1062 |             Qt.AlignmentFlag.AlignLeft,      # Total Ctn (αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿) ΓÇö left-aligned
+     |
+
+F405 `Qt` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1061:13
+     |
+1059 |             Qt.AlignmentFlag.AlignLeft,      # Item Name
+1060 |             Qt.AlignmentFlag.AlignRight,     # Qty/Ctn
+1061 |             Qt.AlignmentFlag.AlignHCenter,   # Unit
+     |             ^^
+1062 |             Qt.AlignmentFlag.AlignLeft,      # Total Ctn (αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿) ΓÇö left-aligned
+1063 |             Qt.AlignmentFlag.AlignHCenter,   # Godown
+     |
+
+F405 `Qt` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1062:13
+     |
+1060 |             Qt.AlignmentFlag.AlignRight,     # Qty/Ctn
+1061 |             Qt.AlignmentFlag.AlignHCenter,   # Unit
+1062 |             Qt.AlignmentFlag.AlignLeft,      # Total Ctn (αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿) ΓÇö left-aligned
+     |             ^^
+1063 |             Qt.AlignmentFlag.AlignHCenter,   # Godown
+1064 |             Qt.AlignmentFlag.AlignHCenter,   # Part No
+     |
+
+F405 `Qt` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1063:13
+     |
+1061 |             Qt.AlignmentFlag.AlignHCenter,   # Unit
+1062 |             Qt.AlignmentFlag.AlignLeft,      # Total Ctn (αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿) ΓÇö left-aligned
+1063 |             Qt.AlignmentFlag.AlignHCenter,   # Godown
+     |             ^^
+1064 |             Qt.AlignmentFlag.AlignHCenter,   # Part No
+1065 |             Qt.AlignmentFlag.AlignHCenter,   # CN
+     |
+
+F405 `Qt` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1064:13
+     |
+1062 |             Qt.AlignmentFlag.AlignLeft,      # Total Ctn (αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿) ΓÇö left-aligned
+1063 |             Qt.AlignmentFlag.AlignHCenter,   # Godown
+1064 |             Qt.AlignmentFlag.AlignHCenter,   # Part No
+     |             ^^
+1065 |             Qt.AlignmentFlag.AlignHCenter,   # CN
+1066 |         ]
+     |
+
+F405 `Qt` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1065:13
+     |
+1063 |             Qt.AlignmentFlag.AlignHCenter,   # Godown
+1064 |             Qt.AlignmentFlag.AlignHCenter,   # Part No
+1065 |             Qt.AlignmentFlag.AlignHCenter,   # CN
+     |             ^^
+1066 |         ]
+     |
+
+F405 `QPen` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1068:15
+     |
+1066 |         ]
+1067 |
+1068 |         pen = QPen(QColor(0, 0, 0), 2)
+     |               ^^^^
+1069 |         today_str = _date.today().strftime("%Y-%m-%d")
+     |
+
+F405 `QColor` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1068:20
+     |
+1066 |         ]
+1067 |
+1068 |         pen = QPen(QColor(0, 0, 0), 2)
+     |                    ^^^^^^
+1069 |         today_str = _date.today().strftime("%Y-%m-%d")
+     |
+
+F405 `QRect` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1076:24
+     |
+1074 |             x = 0
+1075 |             for c, hdr in enumerate(headers):
+1076 |                 rect = QRect(x, y, col_widths[c], header_height)
+     |                        ^^^^^
+1077 |                 painter.fillRect(rect, QColor(220, 220, 220))
+1078 |                 painter.drawRect(rect)
+     |
+
+F405 `QColor` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1077:40
+     |
+1075 |             for c, hdr in enumerate(headers):
+1076 |                 rect = QRect(x, y, col_widths[c], header_height)
+1077 |                 painter.fillRect(rect, QColor(220, 220, 220))
+     |                                        ^^^^^^
+1078 |                 painter.drawRect(rect)
+1079 |                 text_rect = QRect(x + h_pad, y, col_widths[c] - 2 * h_pad, header_height)
+     |
+
+F405 `QRect` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1079:29
+     |
+1077 |                 painter.fillRect(rect, QColor(220, 220, 220))
+1078 |                 painter.drawRect(rect)
+1079 |                 text_rect = QRect(x + h_pad, y, col_widths[c] - 2 * h_pad, header_height)
+     |                             ^^^^^
+1080 |                 painter.drawText(text_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, hdr)
+1081 |                 x += col_widths[c]
+     |
+
+F405 `Qt` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1080:45
+     |
+1078 |                 painter.drawRect(rect)
+1079 |                 text_rect = QRect(x + h_pad, y, col_widths[c] - 2 * h_pad, header_height)
+1080 |                 painter.drawText(text_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, hdr)
+     |                                             ^^
+1081 |                 x += col_widths[c]
+1082 |             return y + header_height
+     |
+
+F405 `Qt` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1080:77
+     |
+1078 |                 painter.drawRect(rect)
+1079 |                 text_rect = QRect(x + h_pad, y, col_widths[c] - 2 * h_pad, header_height)
+1080 |                 painter.drawText(text_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, hdr)
+     |                                                                             ^^
+1081 |                 x += col_widths[c]
+1082 |             return y + header_height
+     |
+
+F405 `QRect` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1089:24
+     |
+1087 |             x = 0
+1088 |             for c, text in enumerate(row_data):
+1089 |                 rect = QRect(x, y, col_widths[c], row_height)
+     |                        ^^^^^
+1090 |                 painter.drawRect(rect)
+1091 |                 text_rect = QRect(x + h_pad, y, col_widths[c] - 2 * h_pad, row_height)
+     |
+
+F405 `QRect` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1091:29
+     |
+1089 |                 rect = QRect(x, y, col_widths[c], row_height)
+1090 |                 painter.drawRect(rect)
+1091 |                 text_rect = QRect(x + h_pad, y, col_widths[c] - 2 * h_pad, row_height)
+     |                             ^^^^^
+1092 |                 align = alignments[c] | Qt.AlignmentFlag.AlignVCenter
+1093 |                 painter.drawText(text_rect, align, text)
+     |
+
+F405 `Qt` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1092:41
+     |
+1090 |                 painter.drawRect(rect)
+1091 |                 text_rect = QRect(x + h_pad, y, col_widths[c] - 2 * h_pad, row_height)
+1092 |                 align = alignments[c] | Qt.AlignmentFlag.AlignVCenter
+     |                                         ^^
+1093 |                 painter.drawText(text_rect, align, text)
+1094 |                 x += col_widths[c]
+     |
+
+F405 `QPen` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1100:28
+     |
+1098 |             """Item 10: footer with page number and print date on every page."""
+1099 |             painter.setFont(footer_font)
+1100 |             painter.setPen(QPen(QColor(100, 100, 100), 1))
+     |                            ^^^^
+1101 |             footer_y = page_h - footer_height
+1102 |             # Left: print date
+     |
+
+F405 `QColor` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1100:33
+     |
+1098 |             """Item 10: footer with page number and print date on every page."""
+1099 |             painter.setFont(footer_font)
+1100 |             painter.setPen(QPen(QColor(100, 100, 100), 1))
+     |                                 ^^^^^^
+1101 |             footer_y = page_h - footer_height
+1102 |             # Left: print date
+     |
+
+F405 `QRect` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1104:17
+     |
+1102 |             # Left: print date
+1103 |             painter.drawText(
+1104 |                 QRect(0, footer_y, page_w // 2, footer_height),
+     |                 ^^^^^
+1105 |                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+1106 |                 f"Printed: {today_str}"
+     |
+
+F405 `Qt` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1105:17
+     |
+1103 |             painter.drawText(
+1104 |                 QRect(0, footer_y, page_w // 2, footer_height),
+1105 |                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+     |                 ^^
+1106 |                 f"Printed: {today_str}"
+1107 |             )
+     |
+
+F405 `Qt` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1105:46
+     |
+1103 |             painter.drawText(
+1104 |                 QRect(0, footer_y, page_w // 2, footer_height),
+1105 |                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+     |                                              ^^
+1106 |                 f"Printed: {today_str}"
+1107 |             )
+     |
+
+F405 `QRect` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1110:17
+     |
+1108 |             # Right: page number
+1109 |             painter.drawText(
+1110 |                 QRect(page_w // 2, footer_y, page_w // 2, footer_height),
+     |                 ^^^^^
+1111 |                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+1112 |                 f"Page {page_num}"
+     |
+
+F405 `Qt` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1111:17
+     |
+1109 |             painter.drawText(
+1110 |                 QRect(page_w // 2, footer_y, page_w // 2, footer_height),
+1111 |                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+     |                 ^^
+1112 |                 f"Page {page_num}"
+1113 |             )
+     |
+
+F405 `Qt` may be undefined, or defined from star imports
+    --> src\ui\godown_list.py:1111:47
+     |
+1109 |             painter.drawText(
+1110 |                 QRect(page_w // 2, footer_y, page_w // 2, footer_height),
+1111 |                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+     |                                               ^^
+1112 |                 f"Page {page_num}"
+1113 |             )
+     |
+
+F401 [*] `PyQt6.QtWidgets.QCheckBox` imported but unused
+ --> src\ui\group_test_tab.py:3:26
+  |
+1 | from PyQt6.QtWidgets import (
+2 |     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
+3 |     QScrollArea, QFrame, QCheckBox, QComboBox, QMessageBox,
+  |                          ^^^^^^^^^
+4 |     QProgressBar, QApplication, QLineEdit
+5 | )
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QComboBox` imported but unused
+ --> src\ui\group_test_tab.py:3:37
+  |
+1 | from PyQt6.QtWidgets import (
+2 |     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
+3 |     QScrollArea, QFrame, QCheckBox, QComboBox, QMessageBox,
+  |                                     ^^^^^^^^^
+4 |     QProgressBar, QApplication, QLineEdit
+5 | )
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QApplication` imported but unused
+ --> src\ui\group_test_tab.py:4:19
+  |
+2 |     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
+3 |     QScrollArea, QFrame, QCheckBox, QComboBox, QMessageBox,
+4 |     QProgressBar, QApplication, QLineEdit
+  |                   ^^^^^^^^^^^^
+5 | )
+6 | from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QThread
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtCore.QTimer` imported but unused
+ --> src\ui\group_test_tab.py:6:42
+  |
+4 |     QProgressBar, QApplication, QLineEdit
+5 | )
+6 | from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QThread
+  |                                          ^^^^^^
+7 | from PyQt6.QtGui import QPixmap, QFont, QColor
+8 | import os
+  |
+help: Remove unused import: `PyQt6.QtCore.QTimer`
+
+F401 [*] `PyQt6.QtGui.QColor` imported but unused
+ --> src\ui\group_test_tab.py:7:41
+  |
+5 | )
+6 | from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QThread
+7 | from PyQt6.QtGui import QPixmap, QFont, QColor
+  |                                         ^^^^^^
+8 | import os
+9 | from src.logic.db_manager import get_db_manager, build_logical_name
+  |
+help: Remove unused import: `PyQt6.QtGui.QColor`
+
+F401 [*] `src.logic.text_utils.clean_cat_name` imported but unused
+  --> src\ui\group_test_tab.py:10:34
+   |
+ 8 | import os
+ 9 | from src.logic.db_manager import get_db_manager, build_logical_name
+10 | from src.logic.text_utils import clean_cat_name, is_similar, cluster_products
+   |                                  ^^^^^^^^^^^^^^
+   |
+help: Remove unused import
+
+F401 [*] `src.logic.text_utils.is_similar` imported but unused
+  --> src\ui\group_test_tab.py:10:50
+   |
+ 8 | import os
+ 9 | from src.logic.db_manager import get_db_manager, build_logical_name
+10 | from src.logic.text_utils import clean_cat_name, is_similar, cluster_products
+   |                                                  ^^^^^^^^^^
+   |
+help: Remove unused import
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\group_test_tab.py:263:31
+    |
+262 |             for c_idx, cluster in enumerate(clusters):
+263 |                 if not cluster: continue
+    |                               ^
+264 |                 
+265 |                 # Visual Separator
+    |
+
+F401 [*] `os` imported but unused
+ --> src\ui\int_cost_sheet.py:1:8
+  |
+1 | import os
+  |        ^^
+2 | from PyQt6.QtWidgets import (
+3 |     QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
+  |
+help: Remove unused import: `os`
+
+F401 [*] `PyQt6.QtWidgets.QStyledItemDelegate` imported but unused
+ --> src\ui\int_cost_sheet.py:5:5
+  |
+3 |     QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
+4 |     QPushButton, QTableWidget, QHeaderView,
+5 |     QStyledItemDelegate, QLineEdit
+  |     ^^^^^^^^^^^^^^^^^^^
+6 | )
+7 | from PyQt6.QtCore import Qt
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QLineEdit` imported but unused
+ --> src\ui\int_cost_sheet.py:5:26
+  |
+3 |     QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
+4 |     QPushButton, QTableWidget, QHeaderView,
+5 |     QStyledItemDelegate, QLineEdit
+  |                          ^^^^^^^^^
+6 | )
+7 | from PyQt6.QtCore import Qt
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtCore.Qt` imported but unused
+ --> src\ui\int_cost_sheet.py:7:26
+  |
+5 |     QStyledItemDelegate, QLineEdit
+6 | )
+7 | from PyQt6.QtCore import Qt
+  |                          ^^
+8 |
+9 | from src.ui.table_nav_mixin import UniversalCellDelegate, ExcelTableMixin
+  |
+help: Remove unused import: `PyQt6.QtCore.Qt`
+
+F401 [*] `src.ui.table_nav_mixin.UniversalCellDelegate` imported but unused
+  --> src\ui\int_cost_sheet.py:9:36
+   |
+ 7 | from PyQt6.QtCore import Qt
+ 8 |
+ 9 | from src.ui.table_nav_mixin import UniversalCellDelegate, ExcelTableMixin
+   |                                    ^^^^^^^^^^^^^^^^^^^^^
+10 | class IntCostSheetUI(ExcelTableMixin, QDialog):
+11 |     def __init__(self, parent=None):
+   |
+help: Remove unused import: `src.ui.table_nav_mixin.UniversalCellDelegate`
+
+F401 [*] `json` imported but unused
+ --> src\ui\main_window.py:1:8
+  |
+1 | import json
+  |        ^^^^
+2 | import os
+3 | import sys
+  |
+help: Remove unused import: `json`
+
+F401 [*] `sys` imported but unused
+ --> src\ui\main_window.py:3:8
+  |
+1 | import json
+2 | import os
+3 | import sys
+  |        ^^^
+4 | from PyQt6.QtWidgets import (
+5 |     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, 
+  |
+help: Remove unused import: `sys`
+
+F401 [*] `pandas` imported but unused
+  --> src\ui\main_window.py:10:18
+   |
+ 8 | from PyQt6.QtCore import Qt, QTimer, QSettings, QThread, pyqtSignal, QObject, QEvent
+ 9 | from PyQt6.QtGui import QShortcut, QKeySequence, QIcon
+10 | import pandas as pd
+   |                  ^^
+11 | import re
+12 | from src.logic.session_manager import SessionManager
+   |
+help: Remove unused import: `pandas`
+
+E402 Module level import not at top of file
+  --> src\ui\main_window.py:39:1
+   |
+37 |   # Settings & Services
+38 |   # Settings & Services
+39 | / from src.ui.settings import (
+40 | |     CRMDialog, UserManagerDialog, SecurityUI,
+41 | |     AuditLogDialog, ChangePasswordDialog,
+42 | |     load_crm_list, save_crm_to_json, update_crm_in_json
+43 | | )
+   | |_^
+44 |   from src.services.tally_sync import fetch_tally_data, fetch_tally_ledger_data, TallyService
+45 |   from PyQt6.QtCore import QThread, pyqtSignal
+   |
+
+E402 Module level import not at top of file
+  --> src\ui\main_window.py:44:1
+   |
+42 |     load_crm_list, save_crm_to_json, update_crm_in_json
+43 | )
+44 | from src.services.tally_sync import fetch_tally_data, fetch_tally_ledger_data, TallyService
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+45 | from PyQt6.QtCore import QThread, pyqtSignal
+   |
+
+E402 Module level import not at top of file
+  --> src\ui\main_window.py:45:1
+   |
+43 | )
+44 | from src.services.tally_sync import fetch_tally_data, fetch_tally_ledger_data, TallyService
+45 | from PyQt6.QtCore import QThread, pyqtSignal
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+46 |
+47 | class _LedgerWorker(QThread):
+   |
+
+F811 [*] Redefinition of unused `QThread` from line 8
+  --> src\ui\main_window.py:45:26
+   |
+43 | )
+44 | from src.services.tally_sync import fetch_tally_data, fetch_tally_ledger_data, TallyService
+45 | from PyQt6.QtCore import QThread, pyqtSignal
+   |                          ^^^^^^^ `QThread` redefined here
+46 |
+47 | class _LedgerWorker(QThread):
+   |
+  ::: src\ui\main_window.py:8:49
+   |
+ 6 |     QFrame, QStackedWidget, QMenu, QMessageBox, QProgressDialog, QApplication
+ 7 | )
+ 8 | from PyQt6.QtCore import Qt, QTimer, QSettings, QThread, pyqtSignal, QObject, QEvent
+   |                                                 ------- previous definition of `QThread` here
+ 9 | from PyQt6.QtGui import QShortcut, QKeySequence, QIcon
+10 | import pandas as pd
+   |
+help: Remove definition: `QThread`
+
+F811 [*] Redefinition of unused `pyqtSignal` from line 8
+  --> src\ui\main_window.py:45:35
+   |
+43 | )
+44 | from src.services.tally_sync import fetch_tally_data, fetch_tally_ledger_data, TallyService
+45 | from PyQt6.QtCore import QThread, pyqtSignal
+   |                                   ^^^^^^^^^^ `pyqtSignal` redefined here
+46 |
+47 | class _LedgerWorker(QThread):
+   |
+  ::: src\ui\main_window.py:8:58
+   |
+ 6 |     QFrame, QStackedWidget, QMenu, QMessageBox, QProgressDialog, QApplication
+ 7 | )
+ 8 | from PyQt6.QtCore import Qt, QTimer, QSettings, QThread, pyqtSignal, QObject, QEvent
+   |                                                          ---------- previous definition of `pyqtSignal` here
+ 9 | from PyQt6.QtGui import QShortcut, QKeySequence, QIcon
+10 | import pandas as pd
+   |
+help: Remove definition: `pyqtSignal`
+
+F401 [*] `ctypes.wintypes` imported but unused
+   --> src\ui\main_window.py:406:32
+    |
+404 |         try:
+405 |             import ctypes
+406 |             from ctypes import wintypes
+    |                                ^^^^^^^^
+407 |             dwmapi = ctypes.windll.dwmapi
+408 |             hwnd = int(self.winId())
+    |
+help: Remove unused import: `ctypes.wintypes`
+
+E701 Multiple statements on one line (colon)
+    --> src\ui\main_window.py:1000:69
+     |
+ 999 |     def show_full_catalog_page(self):
+1000 |         if not self._check_permission("tab.catalog", "Full Catalog"): return
+     |                                                                     ^
+1001 |         self.main_stack.setCurrentIndex(PageIndex.FULL_CATALOG)
+     |
+
+E701 Multiple statements on one line (colon)
+    --> src\ui\main_window.py:1004:64
+     |
+1003 |     def show_reports_page(self):
+1004 |         if not self._check_permission("tab.reports", "Reports"): return
+     |                                                                ^
+1005 |         self.main_stack.setCurrentIndex(PageIndex.REPORTS)
+     |
+
+E701 Multiple statements on one line (colon)
+    --> src\ui\main_window.py:1470:36
+     |
+1468 |         Pass _chain_ledger=False only if you explicitly want stock-only (internal use).
+1469 |         """
+1470 |         if not self.current_company: return
+     |                                    ^
+1471 |         if not self._check_permission("final_data.sync", "Tally Sync"): return
+     |
+
+E701 Multiple statements on one line (colon)
+    --> src\ui\main_window.py:1471:71
+     |
+1469 |         """
+1470 |         if not self.current_company: return
+1471 |         if not self._check_permission("final_data.sync", "Tally Sync"): return
+     |                                                                       ^
+1472 |
+1473 |         # Prevent concurrent syncs
+     |
+
+F541 [*] f-string without any placeholders
+    --> src\ui\main_window.py:1477:21
+     |
+1475 |             return
+1476 |
+1477 |         logger.info(f"Tally sync started")
+     |                     ^^^^^^^^^^^^^^^^^^^^^
+1478 |
+1479 |         # Reset user-cancel flag so a previous cancel doesn't bleed into this run
+     |
+help: Remove extraneous `f` prefix
+
+E701 Multiple statements on one line (colon)
+    --> src\ui\main_window.py:1691:82
+     |
+1690 |     def handle_catalog_price_list(self):
+1691 |         if not self._check_permission("tab.cat_price_list", "Catalog Price List"): return
+     |                                                                                  ^
+1692 |         dlg = CatalogPriceListUI(self)
+1693 |         can_edit = self.user_session.can("cat_price_list.edit") if self.user_session else True
+     |
+
+E701 Multiple statements on one line (colon)
+    --> src\ui\main_window.py:1698:83
+     |
+1697 |     def handle_int_cost_sheet(self):
+1698 |         if not self._check_permission("tab.int_cost_sheet", "Internal Cost Sheet"): return
+     |                                                                                   ^
+1699 |         dlg = IntCostSheetUI(self)
+1700 |         can_edit = self.user_session.can("int_cost_sheet.edit") if self.user_session else True
+     |
+
+E701 Multiple statements on one line (colon)
+    --> src\ui\main_window.py:1711:75
+     |
+1710 |     def handle_pur_import(self):
+1711 |         if not self._check_permission("tab.pur_import", "Purchase Import"): return
+     |                                                                           ^
+1712 |         dlg = PurImportUI(self)
+1713 |         can_import = self.user_session.can("pur_import.import") if self.user_session else True
+     |
+
+F541 [*] f-string without any placeholders
+    --> src\ui\main_window.py:1858:25
+     |
+1857 |         if msg == "skipped:locked":
+1858 |             logger.info(f"[AutoBackup] Skipped ΓÇö another user is already backing up.")
+     |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1859 |             self._show_backup_toast("ΓÅ¡ Auto-backup skipped (another user is running it)", running=False)
+1860 |         elif success:
+     |
+help: Remove extraneous `f` prefix
+
+F541 [*] f-string without any placeholders
+    --> src\ui\main_window.py:2124:21
+     |
+2122 |                 Year End so the user can immediately open the new company.
+2123 |         """
+2124 |         logger.info(f"User logged out")
+     |                     ^^^^^^^^^^^^^^^^^^
+2125 |         set_company_context("")
+2126 |         self.user_session = None  # Clear session
+     |
+help: Remove extraneous `f` prefix
+
+F401 [*] `sys` imported but unused
+ --> src\ui\price_list.py:1:8
+  |
+1 | import sys
+  |        ^^^
+2 | from PyQt6.QtWidgets import (
+3 |     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
+  |
+help: Remove unused import: `sys`
+
+F401 [*] `PyQt6.QtWidgets.QHBoxLayout` imported but unused
+ --> src\ui\price_list.py:3:27
+  |
+1 | import sys
+2 | from PyQt6.QtWidgets import (
+3 |     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
+  |                           ^^^^^^^^^^^
+4 |     QTableWidgetItem, QPushButton, QTabWidget, QInputDialog, QMenu, QMessageBox, QLabel
+5 | )
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QTableWidgetItem` imported but unused
+ --> src\ui\price_list.py:4:5
+  |
+2 | from PyQt6.QtWidgets import (
+3 |     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
+4 |     QTableWidgetItem, QPushButton, QTabWidget, QInputDialog, QMenu, QMessageBox, QLabel
+  |     ^^^^^^^^^^^^^^^^
+5 | )
+6 | from PyQt6.QtCore import Qt
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QLabel` imported but unused
+ --> src\ui\price_list.py:4:82
+  |
+2 | from PyQt6.QtWidgets import (
+3 |     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
+4 |     QTableWidgetItem, QPushButton, QTabWidget, QInputDialog, QMenu, QMessageBox, QLabel
+  |                                                                                  ^^^^^^
+5 | )
+6 | from PyQt6.QtCore import Qt
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtGui.QFont` imported but unused
+ --> src\ui\price_list.py:7:25
+  |
+5 | )
+6 | from PyQt6.QtCore import Qt
+7 | from PyQt6.QtGui import QFont
+  |                         ^^^^^
+8 |
+9 | class PriceSheet(QTableWidget):
+  |
+help: Remove unused import: `PyQt6.QtGui.QFont`
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\price_list.py:110:23
+    |
+108 |             return
+109 |         index = self.tabs.tabBar().tabAt(point)
+110 |         if index == -1: return
+    |                       ^
+111 |
+112 |         menu = QMenu(self)
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\price_list.py:147:23
+    |
+145 |         if not self._can_edit:
+146 |             return
+147 |         if index == -1: return
+    |                       ^
+148 |         old_name = self.tabs.tabText(index)
+149 |         new_name, ok = QInputDialog.getText(self, "Rename", "New Name:", text=old_name)
+    |
+
+F401 [*] `PyQt6.QtWidgets.QScrollArea` imported but unused
+  --> src\ui\print_export.py:9:5
+   |
+ 7 |     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+ 8 |     QSpinBox, QCheckBox, QProgressBar, QFileDialog, QMessageBox,
+ 9 |     QScrollArea, QWidget, QFrame, QComboBox, QGroupBox, QProgressDialog
+   |     ^^^^^^^^^^^
+10 | )
+11 | from PyQt6.QtCore import Qt, QSize, QMarginsF, QSettings, QEvent
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QWidget` imported but unused
+  --> src\ui\print_export.py:9:18
+   |
+ 7 |     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+ 8 |     QSpinBox, QCheckBox, QProgressBar, QFileDialog, QMessageBox,
+ 9 |     QScrollArea, QWidget, QFrame, QComboBox, QGroupBox, QProgressDialog
+   |                  ^^^^^^^
+10 | )
+11 | from PyQt6.QtCore import Qt, QSize, QMarginsF, QSettings, QEvent
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtCore.QSize` imported but unused
+  --> src\ui\print_export.py:11:30
+   |
+ 9 |     QScrollArea, QWidget, QFrame, QComboBox, QGroupBox, QProgressDialog
+10 | )
+11 | from PyQt6.QtCore import Qt, QSize, QMarginsF, QSettings, QEvent
+   |                              ^^^^^
+12 | from PyQt6.QtGui import QPainter, QPageSize, QPageLayout, QImage
+13 | from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
+   |
+help: Remove unused import: `PyQt6.QtCore.QSize`
+
+E401 [*] Multiple imports on one line
+   --> src\ui\print_export.py:487:13
+    |
+485 |         co_path = getattr(self.catalog_ui, 'company_path', "") or getattr(self.catalog_ui, 'current_company_path', "")
+486 |         if co_path:
+487 |             import json, os
+    |             ^^^^^^^^^^^^^^^
+488 |             folder_name = os.path.basename(co_path)
+489 |             prefix = folder_name[:3].upper() if len(folder_name) >= 3 else folder_name.upper()
+    |
+help: Split imports
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\ui\print_export.py:498:37
+    |
+496 |                             name = info_data["display_name"].strip()
+497 |                             prefix = name[:3].upper() if len(name) >= 3 else name.upper()
+498 |                 except Exception as e: pass
+    |                                     ^
+499 |             renderer._company_prefix = prefix
+    |
+help: Remove assignment to unused variable `e`
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\print_export.py:498:38
+    |
+496 |                             name = info_data["display_name"].strip()
+497 |                             prefix = name[:3].upper() if len(name) >= 3 else name.upper()
+498 |                 except Exception as e: pass
+    |                                      ^
+499 |             renderer._company_prefix = prefix
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\print_export.py:665:48
+    |
+663 |             if not ok:
+664 |                 try:
+665 |                     if os.path.exists(temp_pdf): os.remove(temp_pdf)
+    |                                                ^
+666 |                 except Exception as e: pass
+667 |                 self.reject()
+    |
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\ui\print_export.py:666:37
+    |
+664 |                 try:
+665 |                     if os.path.exists(temp_pdf): os.remove(temp_pdf)
+666 |                 except Exception as e: pass
+    |                                     ^
+667 |                 self.reject()
+668 |                 return
+    |
+help: Remove assignment to unused variable `e`
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\print_export.py:666:38
+    |
+664 |                 try:
+665 |                     if os.path.exists(temp_pdf): os.remove(temp_pdf)
+666 |                 except Exception as e: pass
+    |                                      ^
+667 |                 self.reject()
+668 |                 return
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\print_export.py:676:44
+    |
+674 |             # Clean up when closed
+675 |             try:
+676 |                 if os.path.exists(temp_pdf): os.remove(temp_pdf)
+    |                                            ^
+677 |             except Exception as e: pass
+    |
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\ui\print_export.py:677:33
+    |
+675 |             try:
+676 |                 if os.path.exists(temp_pdf): os.remove(temp_pdf)
+677 |             except Exception as e: pass
+    |                                 ^
+678 |             
+679 |             self.accept()
+    |
+help: Remove assignment to unused variable `e`
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\print_export.py:677:34
+    |
+675 |             try:
+676 |                 if os.path.exists(temp_pdf): os.remove(temp_pdf)
+677 |             except Exception as e: pass
+    |                                  ^
+678 |             
+679 |             self.accept()
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\print_export.py:701:39
+    |
+700 |         crm = self.crm_combo.currentText()
+701 |         if crm == "CRM_NAME (Default)": crm = "DefaultCRM"
+    |                                       ^
+702 |         
+703 |         # Determine Company Prefix
+    |
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\ui\print_export.py:732:29
+    |
+730 |             folder = os.path.dirname(file_path)
+731 |             self.settings.setValue("last_export_dir", folder)
+732 |         except Exception as e: pass
+    |                             ^
+733 |         
+734 |         # Ensure .pdf extension
+    |
+help: Remove assignment to unused variable `e`
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\print_export.py:732:30
+    |
+730 |             folder = os.path.dirname(file_path)
+731 |             self.settings.setValue("last_export_dir", folder)
+732 |         except Exception as e: pass
+    |                              ^
+733 |         
+734 |         # Ensure .pdf extension
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\print_export.py:748:49
+    |
+746 |                 # Cancelled
+747 |                 try:
+748 |                     if os.path.exists(file_path): os.remove(file_path)
+    |                                                 ^
+749 |                 except Exception as e: pass
+750 |                 self.reject()
+    |
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\ui\print_export.py:749:37
+    |
+747 |                 try:
+748 |                     if os.path.exists(file_path): os.remove(file_path)
+749 |                 except Exception as e: pass
+    |                                     ^
+750 |                 self.reject()
+751 |                 return
+    |
+help: Remove assignment to unused variable `e`
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\print_export.py:749:38
+    |
+747 |                 try:
+748 |                     if os.path.exists(file_path): os.remove(file_path)
+749 |                 except Exception as e: pass
+    |                                      ^
+750 |                 self.reject()
+751 |                 return
+    |
+
+F401 [*] `PyQt6.QtWidgets.QFrame` imported but unused
+ --> src\ui\pur_import.py:3:58
+  |
+1 | from PyQt6.QtWidgets import (
+2 |     QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
+3 |     QPushButton, QTableWidget, QFileDialog, QHeaderView, QFrame
+  |                                                          ^^^^^^
+4 | )
+5 | from PyQt6.QtCore import Qt
+  |
+help: Remove unused import: `PyQt6.QtWidgets.QFrame`
+
+F401 [*] `PyQt6.QtCore.Qt` imported but unused
+ --> src\ui\pur_import.py:5:26
+  |
+3 |     QPushButton, QTableWidget, QFileDialog, QHeaderView, QFrame
+4 | )
+5 | from PyQt6.QtCore import Qt
+  |                          ^^
+6 |
+7 | class PurImportUI(QDialog):
+  |
+help: Remove unused import: `PyQt6.QtCore.Qt`
+
+F401 [*] `json` imported but unused
+ --> src\ui\reports.py:2:8
+  |
+1 | import os
+2 | import json
+  |        ^^^^
+3 | from PyQt6.QtWidgets import (
+4 |     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
+  |
+help: Remove unused import: `json`
+
+F401 [*] `PyQt6.QtWidgets.QProgressDialog` imported but unused
+ --> src\ui\reports.py:6:64
+  |
+4 |     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
+5 |     QTableWidget, QTableWidgetItem, QHeaderView, QLabel,
+6 |     QDialog, QComboBox, QListWidget, QFileDialog, QMessageBox, QProgressDialog
+  |                                                                ^^^^^^^^^^^^^^^
+7 | )
+8 | from PyQt6.QtCore import Qt, QMarginsF, pyqtSignal
+  |
+help: Remove unused import: `PyQt6.QtWidgets.QProgressDialog`
+
+F401 [*] `PyQt6.QtCore.Qt` imported but unused
+  --> src\ui\reports.py:8:26
+   |
+ 6 |     QDialog, QComboBox, QListWidget, QFileDialog, QMessageBox, QProgressDialog
+ 7 | )
+ 8 | from PyQt6.QtCore import Qt, QMarginsF, pyqtSignal
+   |                          ^^
+ 9 | from PyQt6.QtPrintSupport import QPrintDialog, QPrinter, QPrintPreviewDialog
+10 | from PyQt6.QtGui import QPainter, QPageSize, QPageLayout
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtCore.QMarginsF` imported but unused
+  --> src\ui\reports.py:8:30
+   |
+ 6 |     QDialog, QComboBox, QListWidget, QFileDialog, QMessageBox, QProgressDialog
+ 7 | )
+ 8 | from PyQt6.QtCore import Qt, QMarginsF, pyqtSignal
+   |                              ^^^^^^^^^
+ 9 | from PyQt6.QtPrintSupport import QPrintDialog, QPrinter, QPrintPreviewDialog
+10 | from PyQt6.QtGui import QPainter, QPageSize, QPageLayout
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtPrintSupport.QPrintDialog` imported but unused
+  --> src\ui\reports.py:9:34
+   |
+ 7 | )
+ 8 | from PyQt6.QtCore import Qt, QMarginsF, pyqtSignal
+ 9 | from PyQt6.QtPrintSupport import QPrintDialog, QPrinter, QPrintPreviewDialog
+   |                                  ^^^^^^^^^^^^
+10 | from PyQt6.QtGui import QPainter, QPageSize, QPageLayout
+11 | from src.logic.report_store import load_crm_list, load_report_json, save_report_json
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtPrintSupport.QPrinter` imported but unused
+  --> src\ui\reports.py:9:48
+   |
+ 7 | )
+ 8 | from PyQt6.QtCore import Qt, QMarginsF, pyqtSignal
+ 9 | from PyQt6.QtPrintSupport import QPrintDialog, QPrinter, QPrintPreviewDialog
+   |                                                ^^^^^^^^
+10 | from PyQt6.QtGui import QPainter, QPageSize, QPageLayout
+11 | from src.logic.report_store import load_crm_list, load_report_json, save_report_json
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtPrintSupport.QPrintPreviewDialog` imported but unused
+  --> src\ui\reports.py:9:58
+   |
+ 7 | )
+ 8 | from PyQt6.QtCore import Qt, QMarginsF, pyqtSignal
+ 9 | from PyQt6.QtPrintSupport import QPrintDialog, QPrinter, QPrintPreviewDialog
+   |                                                          ^^^^^^^^^^^^^^^^^^^
+10 | from PyQt6.QtGui import QPainter, QPageSize, QPageLayout
+11 | from src.logic.report_store import load_crm_list, load_report_json, save_report_json
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtGui.QPainter` imported but unused
+  --> src\ui\reports.py:10:25
+   |
+ 8 | from PyQt6.QtCore import Qt, QMarginsF, pyqtSignal
+ 9 | from PyQt6.QtPrintSupport import QPrintDialog, QPrinter, QPrintPreviewDialog
+10 | from PyQt6.QtGui import QPainter, QPageSize, QPageLayout
+   |                         ^^^^^^^^
+11 | from src.logic.report_store import load_crm_list, load_report_json, save_report_json
+12 | from src.logic.catalog_logic import CatalogLogic
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtGui.QPageSize` imported but unused
+  --> src\ui\reports.py:10:35
+   |
+ 8 | from PyQt6.QtCore import Qt, QMarginsF, pyqtSignal
+ 9 | from PyQt6.QtPrintSupport import QPrintDialog, QPrinter, QPrintPreviewDialog
+10 | from PyQt6.QtGui import QPainter, QPageSize, QPageLayout
+   |                                   ^^^^^^^^^
+11 | from src.logic.report_store import load_crm_list, load_report_json, save_report_json
+12 | from src.logic.catalog_logic import CatalogLogic
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtGui.QPageLayout` imported but unused
+  --> src\ui\reports.py:10:46
+   |
+ 8 | from PyQt6.QtCore import Qt, QMarginsF, pyqtSignal
+ 9 | from PyQt6.QtPrintSupport import QPrintDialog, QPrinter, QPrintPreviewDialog
+10 | from PyQt6.QtGui import QPainter, QPageSize, QPageLayout
+   |                                              ^^^^^^^^^^^
+11 | from src.logic.report_store import load_crm_list, load_report_json, save_report_json
+12 | from src.logic.catalog_logic import CatalogLogic
+   |
+help: Remove unused import
+
+F401 [*] `src.ui.a4_renderer.A4PageRenderer` imported but unused
+  --> src\ui\reports.py:13:32
+   |
+11 | from src.logic.report_store import load_crm_list, load_report_json, save_report_json
+12 | from src.logic.catalog_logic import CatalogLogic
+13 | from src.ui.a4_renderer import A4PageRenderer
+   |                                ^^^^^^^^^^^^^^
+14 | from src.ui.print_export import PrintExportDialog # Import the shared dialog
+15 | from src.utils.app_logger import get_logger
+   |
+help: Remove unused import: `src.ui.a4_renderer.A4PageRenderer`
+
+F841 [*] Local variable `e` is assigned to but never used
+  --> src\ui\reports.py:84:33
+   |
+82 |             try:
+83 |                 pending.sort(key=lambda x: int(x) if str(x).isdigit() else float('inf'))
+84 |             except Exception as e:
+   |                                 ^
+85 |                 pending.sort()
+86 |         self.pages_list.addItems(pending)
+   |
+help: Remove assignment to unused variable `e`
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\reports.py:169:41
+    |
+168 |     def ensure_logic_init(self):
+169 |         if not self.current_company_path: return False
+    |                                         ^
+170 |         
+171 |         catalog_db = os.path.join(self.current_company_path, "catalog.db")
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src\ui\reports.py:229:27
+    |
+227 |             page_map = {str(r[0]): (r[1], r[2]) for r in cursor.fetchall()}
+228 |         except Exception as e:
+229 |             import logging; logging.getLogger(__name__).warning(f"_get_pages_missing_images step1: {e}")
+    |                           ^
+230 |             return result
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src\ui\reports.py:257:27
+    |
+255 |                     result[str(serial)] = {"products": products, "guids": guids}
+256 |         except Exception as e:
+257 |             import logging; logging.getLogger(__name__).warning(f"_get_pages_missing_images step2: {e}")
+    |                           ^
+258 |         return result
+    |
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\ui\reports.py:356:29
+    |
+354 |         try:
+355 |             pending_serials = sorted(pending_serials, key=lambda x: int(x) if str(x).isdigit() else float('inf'))
+356 |         except Exception as e:
+    |                             ^
+357 |             pending_serials = sorted(pending_serials)
+    |
+help: Remove assignment to unused variable `e`
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\reports.py:492:20
+    |
+490 |             p_list = data["pending"]
+491 |             if p_list:
+492 |                 try: p_list.sort(key=lambda x: int(x) if str(x).isdigit() else float('inf'))
+    |                    ^
+493 |                 except Exception as e: p_list.sort()
+    |
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\ui\reports.py:493:37
+    |
+491 |             if p_list:
+492 |                 try: p_list.sort(key=lambda x: int(x) if str(x).isdigit() else float('inf'))
+493 |                 except Exception as e: p_list.sort()
+    |                                     ^
+494 |             
+495 |             p_pages = ", ".join(p_list) if p_list else "Completed"
+    |
+help: Remove assignment to unused variable `e`
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\reports.py:493:38
+    |
+491 |             if p_list:
+492 |                 try: p_list.sort(key=lambda x: int(x) if str(x).isdigit() else float('inf'))
+493 |                 except Exception as e: p_list.sort()
+    |                                      ^
+494 |             
+495 |             p_pages = ", ".join(p_list) if p_list else "Completed"
+    |
+
+F401 [*] `json` imported but unused
+ --> src\ui\row_data.py:2:8
+  |
+1 | import os
+2 | import json
+  |        ^^^^
+3 | from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QLabel
+4 | from PyQt6.QtCore import Qt
+  |
+help: Remove unused import: `json`
+
+F401 [*] `sys` imported but unused
+ --> src\ui\sales_chat.py:1:8
+  |
+1 | import sys
+  |        ^^^
+2 | from PyQt6.QtWidgets import (
+3 |     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
+  |
+help: Remove unused import: `sys`
+
+F401 [*] `PyQt6.QtWidgets.QHBoxLayout` imported but unused
+ --> src\ui\sales_chat.py:3:27
+  |
+1 | import sys
+2 | from PyQt6.QtWidgets import (
+3 |     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
+  |                           ^^^^^^^^^^^
+4 |     QTableWidgetItem, QPushButton, QTabWidget, QInputDialog, QMenu, QMessageBox
+5 | )
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QTableWidgetItem` imported but unused
+ --> src\ui\sales_chat.py:4:5
+  |
+2 | from PyQt6.QtWidgets import (
+3 |     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
+4 |     QTableWidgetItem, QPushButton, QTabWidget, QInputDialog, QMenu, QMessageBox
+  |     ^^^^^^^^^^^^^^^^
+5 | )
+6 | from PyQt6.QtCore import Qt
+  |
+help: Remove unused import
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\sales_chat.py:110:23
+    |
+108 |             return
+109 |         index = self.tabs.tabBar().tabAt(point)
+110 |         if index == -1: return
+    |                       ^
+111 |
+112 |         menu = QMenu(self)
+    |
+
+F401 [*] `json` imported but unused
+ --> src\ui\settings.py:1:8
+  |
+1 | import json
+  |        ^^^^
+2 |
+3 | from src.logic.report_store import load_crm_list, save_crm_to_json, update_crm_in_json, load_report_json, save_report_json, add_pages_tΓÇª
+  |
+help: Remove unused import: `json`
+
+F401 [*] `src.logic.report_store.save_crm_to_json` imported but unused
+ --> src\ui\settings.py:3:51
+  |
+1 | import json
+2 |
+3 | from src.logic.report_store import load_crm_list, save_crm_to_json, update_crm_in_json, load_report_json, save_report_json, add_pages_tΓÇª
+  |                                                   ^^^^^^^^^^^^^^^^
+4 | import os
+5 | from PyQt6.QtWidgets import (
+  |
+help: Remove unused import
+
+F401 [*] `src.logic.report_store.update_crm_in_json` imported but unused
+ --> src\ui\settings.py:3:69
+  |
+1 | import json
+2 |
+3 | from src.logic.report_store import load_crm_list, save_crm_to_json, update_crm_in_json, load_report_json, save_report_json, add_pages_tΓÇª
+  |                                                                     ^^^^^^^^^^^^^^^^^^
+4 | import os
+5 | from PyQt6.QtWidgets import (
+  |
+help: Remove unused import
+
+F401 [*] `src.logic.report_store.load_report_json` imported but unused
+ --> src\ui\settings.py:3:89
+  |
+1 | import json
+2 |
+3 | from src.logic.report_store import load_crm_list, save_crm_to_json, update_crm_in_json, load_report_json, save_report_json, add_pages_tΓÇª
+  |                                                                                         ^^^^^^^^^^^^^^^^
+4 | import os
+5 | from PyQt6.QtWidgets import (
+  |
+help: Remove unused import
+
+F401 [*] `src.logic.report_store.save_report_json` imported but unused
+ --> src\ui\settings.py:3:107
+  |
+1 | import json
+2 |
+3 | from src.logic.report_store import load_crm_list, save_crm_to_json, update_crm_in_json, load_report_json, save_report_json, add_pages_tΓÇª
+  |                                                                                                           ^^^^^^^^^^^^^^^^
+4 | import os
+5 | from PyQt6.QtWidgets import (
+  |
+help: Remove unused import
+
+F401 [*] `src.logic.report_store.add_pages_to_all_crms` imported but unused
+ --> src\ui\settings.py:3:125
+  |
+1 | ΓÇª
+2 | ΓÇª
+3 | ΓÇªupdate_crm_in_json, load_report_json, save_report_json, add_pages_to_all_crms
+  |                                                          ^^^^^^^^^^^^^^^^^^^^^
+4 | ΓÇª
+5 | ΓÇª
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QCheckBox` imported but unused
+  --> src\ui\settings.py:8:49
+   |
+ 6 |     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+ 7 |     QPushButton, QComboBox, QTableWidget, QTableWidgetItem, QMessageBox,
+ 8 |     QWidget, QFrame, QInputDialog, QScrollArea, QCheckBox, QGridLayout, QGroupBox
+   |                                                 ^^^^^^^^^
+ 9 | )
+10 | from PyQt6.QtCore import QTimer
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QGroupBox` imported but unused
+  --> src\ui\settings.py:8:73
+   |
+ 6 |     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+ 7 |     QPushButton, QComboBox, QTableWidget, QTableWidgetItem, QMessageBox,
+ 8 |     QWidget, QFrame, QInputDialog, QScrollArea, QCheckBox, QGridLayout, QGroupBox
+   |                                                                         ^^^^^^^^^
+ 9 | )
+10 | from PyQt6.QtCore import QTimer
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtGui.QColor` imported but unused
+  --> src\ui\settings.py:11:25
+   |
+ 9 | )
+10 | from PyQt6.QtCore import QTimer
+11 | from PyQt6.QtGui import QColor
+   |                         ^^^^^^
+12 |
+13 | class EmptyPagesDialog(QDialog):
+   |
+help: Remove unused import: `PyQt6.QtGui.QColor`
+
+E402 Module level import not at top of file
+  --> src\ui\settings.py:54:1
+   |
+52 |         btn_box.addWidget(self.btn_close)
+53 |         layout.addLayout(btn_box)
+54 | from PyQt6.QtCore import Qt
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+55 |
+56 | # --- CRM Dialog ---
+   |
+
+E702 Multiple statements on one line (semicolon)
+   --> src\ui\settings.py:307:69
+    |
+305 |         rid = self.new_role_combo.currentData()
+306 |         if not uname:
+307 |             QMessageBox.warning(self, "Error", "Username required."); return
+    |                                                                     ^
+308 |         if self.security.add_user(self.company_path, uname, pw, rid):
+309 |             self.security.log_action(self._get_session(), "USER_CREATE", "Users", f"Created user '{uname}' with role {rid}")
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> src\ui\settings.py:310:39
+    |
+308 |         if self.security.add_user(self.company_path, uname, pw, rid):
+309 |             self.security.log_action(self._get_session(), "USER_CREATE", "Users", f"Created user '{uname}' with role {rid}")
+310 |             self.new_user_edit.clear(); self.new_pass_edit.clear()
+    |                                       ^
+311 |             self._load_users()
+312 |         else:
+    |
+
+E402 Module level import not at top of file
+   --> src\ui\settings.py:320:1
+    |
+318 | # QComboBox that ignores scroll-wheel events (value only changes on click)
+319 | # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+320 | from PyQt6.QtGui import QWheelEvent
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+321 |
+322 | class NoScrollComboBox(QComboBox):
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\settings.py:940:23
+    |
+938 |     def refresh_data(self):
+939 |         """Called when navigating to this page to refresh context."""
+940 |         if not self.mw: return
+    |                       ^
+941 |         self.company_name = getattr(self.mw, 'current_company', "")
+942 |         self.company_path = getattr(self.mw, 'current_company_path', "")
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\settings.py:990:23
+    |
+988 |         for fac_name, view_keys, edit_keys in self._flat_facilities():
+989 |             sel = self.facility_combos.get(fac_name)
+990 |             if not sel: continue
+    |                       ^
+991 |
+992 |             has_view = any(k in perms for k in view_keys) if view_keys else False
+    |
+
+E701 Multiple statements on one line (colon)
+    --> src\ui\settings.py:1023:25
+     |
+1021 |         for fac_name, view_keys, edit_keys in self._flat_facilities():
+1022 |             combo = self.facility_combos.get(fac_name)
+1023 |             if not combo: continue
+     |                         ^
+1024 |             level = combo.currentData()
+1025 |             if level == "display":
+     |
+
+F541 [*] f-string without any placeholders
+    --> src\ui\settings.py:1265:24
+     |
+1264 |         layout = QVBoxLayout(self)
+1265 |         title = QLabel(f"<h3>≡ƒöæ Change Password</h3>")
+     |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1266 |         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+1267 |         layout.addWidget(title)
+     |
+help: Remove extraneous `f` prefix
+
+F401 [*] `json` imported but unused
+ --> src\ui\super_master.py:2:8
+  |
+1 | import os
+2 | import json
+  |        ^^^^
+3 | import pyodbc
+4 | from PyQt6.QtWidgets import (
+  |
+help: Remove unused import: `json`
+
+F401 [*] `PyQt6.QtWidgets.QMessageBox` imported but unused
+ --> src\ui\super_master.py:6:18
+  |
+4 | from PyQt6.QtWidgets import (
+5 |     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, 
+6 |     QHeaderView, QMessageBox, QLabel, QLineEdit, QFrame
+  |                  ^^^^^^^^^^^
+7 | )
+8 | from PyQt6.QtCore import Qt, QEvent
+  |
+help: Remove unused import: `PyQt6.QtWidgets.QMessageBox`
+
+F401 [*] `PyQt6.QtCore.QEvent` imported but unused
+  --> src\ui\super_master.py:8:30
+   |
+ 6 |     QHeaderView, QMessageBox, QLabel, QLineEdit, QFrame
+ 7 | )
+ 8 | from PyQt6.QtCore import Qt, QEvent
+   |                              ^^^^^^
+ 9 | from src.logic.db_manager import get_db_manager, DB_SUPER, build_logical_name, build_shared_db_name
+10 | from src.utils.app_logger import get_logger
+   |
+help: Remove unused import: `PyQt6.QtCore.QEvent`
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\super_master.py:189:30
+    |
+188 |     def on_item_changed(self, item):
+189 |         if item.column() == 0: return
+    |                              ^
+190 |         row = item.row()
+191 |         col = item.column()
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\super_master.py:210:30
+    |
+208 |             self.save_single_row_to_db(row)
+209 |             self.update_summary()
+210 |         except Exception as e: print(f"Change Error: {e}")
+    |                              ^
+211 |         self.table.setSortingEnabled(True)
+212 |         self.table.blockSignals(False)
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\super_master.py:215:64
+    |
+214 |     def load_super_master_data(self, company_path):
+215 |         if not company_path or not os.path.exists(company_path): return
+    |                                                                ^
+216 |         try:
+217 |             # Resolve data_path (parent of company folder ΓÇö shared across companies)
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\super_master.py:271:35
+    |
+269 |             sub_g = self.table.item(r, 4).text().strip() if self.table.item(r, 4) else ""
+270 |             if gp:
+271 |                 if gp not in stats: stats[gp] = {"sn": mg_sn, "subs": set()}
+    |                                   ^
+272 |                 stats[gp]["subs"].add(sub_g)
+273 |         self.summary_table.setRowCount(0)
+    |
+
+F401 [*] `PyQt6.QtWidgets.QGridLayout` imported but unused
+ --> src\ui\supp_payment.py:6:40
+  |
+4 | import os
+5 | from PyQt6.QtWidgets import (
+6 |     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTableWidget,
+  |                                        ^^^^^^^^^^^
+7 |     QTableWidgetItem, QPushButton, QTabWidget, QInputDialog,
+8 |     QMenu, QMessageBox, QHeaderView, QAbstractItemView,
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QHeaderView` imported but unused
+  --> src\ui\supp_payment.py:8:25
+   |
+ 6 |     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTableWidget,
+ 7 |     QTableWidgetItem, QPushButton, QTabWidget, QInputDialog,
+ 8 |     QMenu, QMessageBox, QHeaderView, QAbstractItemView,
+   |                         ^^^^^^^^^^^
+ 9 |     QLabel, QScrollArea, QFrame, QSizePolicy, QLineEdit,
+10 |     QListWidget, QListWidgetItem, QStackedWidget, QSplitter,
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QSplitter` imported but unused
+  --> src\ui\supp_payment.py:10:51
+   |
+ 8 |     QMenu, QMessageBox, QHeaderView, QAbstractItemView,
+ 9 |     QLabel, QScrollArea, QFrame, QSizePolicy, QLineEdit,
+10 |     QListWidget, QListWidgetItem, QStackedWidget, QSplitter,
+   |                                                   ^^^^^^^^^
+11 |     QFormLayout, QApplication, QAbstractScrollArea,
+12 | )
+   |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtCore.QDate` imported but unused
+  --> src\ui\supp_payment.py:14:17
+   |
+12 | )
+13 | from PyQt6.QtCore import (
+14 |     Qt, QTimer, QDate, QEvent, QMimeData,
+   |                 ^^^^^
+15 | )
+16 | from PyQt6.QtGui import (
+   |
+help: Remove unused import: `PyQt6.QtCore.QDate`
+
+F401 [*] `PyQt6.QtGui.QPixmap` imported but unused
+  --> src\ui\supp_payment.py:17:28
+   |
+15 | )
+16 | from PyQt6.QtGui import (
+17 |     QFont, QColor, QBrush, QPixmap, QPainter, QKeySequence, QShortcut, QCursor, QImage,
+   |                            ^^^^^^^
+18 | )
+19 | from src.logic.db_manager import get_db_manager, build_logical_name
+   |
+help: Remove unused import: `PyQt6.QtGui.QPixmap`
+
+F401 [*] `src.ui.table_nav_mixin.CELL_TYPE_ROLE` imported but unused
+  --> src\ui\supp_payment.py:22:5
+   |
+20 | from src.ui.table_nav_mixin import (
+21 |     UniversalCellDelegate, 
+22 |     CELL_TYPE_ROLE, 
+   |     ^^^^^^^^^^^^^^
+23 |     AUTOCOMPLETE_ITEMS_ROLE,
+24 |     UNIVERSAL_TABLE_STYLE
+   |
+help: Remove unused import
+
+F401 [*] `src.ui.table_nav_mixin.AUTOCOMPLETE_ITEMS_ROLE` imported but unused
+  --> src\ui\supp_payment.py:23:5
+   |
+21 |     UniversalCellDelegate, 
+22 |     CELL_TYPE_ROLE, 
+23 |     AUTOCOMPLETE_ITEMS_ROLE,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+24 |     UNIVERSAL_TABLE_STYLE
+25 | )
+   |
+help: Remove unused import
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\supp_payment.py:538:47
+    |
+536 |         row_map = {}
+537 |         for ri, ci, txt in data:
+538 |             if not txt or not str(txt).strip(): continue
+    |                                               ^
+539 |             if ri not in row_map: row_map[ri] = {}
+540 |             row_map[ri][ci] = str(txt).strip()
+    |
+
+E701 Multiple statements on one line (colon)
+   --> src\ui\supp_payment.py:539:33
+    |
+537 |         for ri, ci, txt in data:
+538 |             if not txt or not str(txt).strip(): continue
+539 |             if ri not in row_map: row_map[ri] = {}
+    |                                 ^
+540 |             row_map[ri][ci] = str(txt).strip()
+    |
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\ui\supp_payment.py:637:29
+    |
+635 |                     (self.section_id, c, h.text() if h else "", self.table.columnWidth(c)))
+636 |             conn.commit()
+637 |         except Exception as e:
+    |                             ^
+638 |             conn.rollback()
+    |
+help: Remove assignment to unused variable `e`
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\ui\supp_payment.py:650:29
+    |
+648 |             cur.execute(f"UPDATE tp_sections SET {field}=? WHERE id=?", (value, self.section_id))
+649 |             conn.commit()
+650 |         except Exception as e:
+    |                             ^
+651 |             conn.rollback()
+    |
+help: Remove assignment to unused variable `e`
+
+F841 [*] Local variable `e` is assigned to but never used
+   --> src\ui\supp_payment.py:665:29
+    |
+663 |             cur.execute("DELETE FROM tp_sections WHERE id=?", (self.section_id,))
+664 |             conn.commit()
+665 |         except Exception as e:
+    |                             ^
+666 |             conn.rollback()
+    |
+help: Remove assignment to unused variable `e`
+
+F841 Local variable `a_col` is assigned to but never used
+   --> src\ui\supp_payment.py:730:9
+    |
+728 |         menu.setStyleSheet(_MENU_STYLE)
+729 |         a_ren = menu.addAction("Γ£Å Rename Table")
+730 |         a_col = menu.addAction("≡ƒÄ¿ Change Header Color")
+    |         ^^^^^
+731 |         menu.addSeparator()
+732 |         a_del = menu.addAction("≡ƒùæ Delete Table")
+    |
+help: Remove assignment to unused variable `a_col`
+
+F401 [*] `re` imported but unused
+    --> src\ui\supp_payment.py:1041:20
+     |
+1039 |         try:
+1040 |             # Try to find the ledger DB (same pattern as cheque_list.py)
+1041 |             import re
+     |                    ^^
+1042 |             # Build ledger db name by finding the company's tally ledger db
+1043 |             from src.logic.db_manager import get_db_manager as _gdm
+     |
+help: Remove unused import: `re`
+
+F841 Local variable `company_name` is assigned to but never used
+    --> src\ui\supp_payment.py:1046:13
+     |
+1044 |             db = _gdm()
+1045 |             # Try to derive ledger db from the company path same way cheque_list does
+1046 |             company_name = os.path.basename(os.path.normpath(self._db_name.split('_')[0] if '_' in self._db_name else self._db_name))
+     |             ^^^^^^^^^^^^
+1047 |             # Search for any db containing row_ledger_data
+1048 |             conns_to_try = [self._db_name]
+     |
+help: Remove assignment to unused variable `company_name`
+
+E701 Multiple statements on one line (colon)
+    --> src\ui\supp_payment.py:1058:40
+     |
+1056 |                     for guid, alias, name in cur.fetchall():
+1057 |                         guid_str = str(guid).strip() if guid else ""
+1058 |                         if not guid_str: continue
+     |                                        ^
+1059 |                         
+1060 |                         alias_str = str(alias).strip() if alias and str(alias).strip().lower() != "none" else ""
+     |
+
+F841 [*] Local variable `ex` is assigned to but never used
+    --> src\ui\supp_payment.py:1074:37
+     |
+1072 |                     self._party_list = sorted(list(keys))
+1073 |                     break
+1074 |                 except Exception as ex:
+     |                                     ^^
+1075 |                     pass
+1076 |         except Exception as e:
+     |
+help: Remove assignment to unused variable `ex`
+
+E701 Multiple statements on one line (colon)
+    --> src\ui\supp_payment.py:1120:33
+     |
+1118 |                     cur.execute("ALTER TABLE tp_sections ADD is_core BIT DEFAULT 0")
+1119 |                     conn.commit()
+1120 |                 except Exception: pass
+     |                                 ^
+1121 |                 try:
+1122 |                     cur.execute("ALTER TABLE tp_sections ADD card_width INT NULL")
+     |
+
+E701 Multiple statements on one line (colon)
+    --> src\ui\supp_payment.py:1124:33
+     |
+1122 |                     cur.execute("ALTER TABLE tp_sections ADD card_width INT NULL")
+1123 |                     conn.commit()
+1124 |                 except Exception: pass
+     |                                 ^
+1125 |         except Exception:
+1126 |             pass
+     |
+
+F841 [*] Local variable `e` is assigned to but never used
+    --> src\ui\supp_payment.py:1285:37
+     |
+1283 |                     cur.execute("UPDATE tp_sections SET name=? WHERE id=?", (new.strip(), sid))
+1284 |                     conn.commit()
+1285 |                 except Exception as e:
+     |                                     ^
+1286 |                     conn.rollback()
+1287 |             card = self._section_cards.get(sid)
+     |
+help: Remove assignment to unused variable `e`
+
+F841 [*] Local variable `e` is assigned to but never used
+    --> src\ui\supp_payment.py:1305:29
+     |
+1303 |                 cur.execute("UPDATE tp_sections SET sort_order=? WHERE id=?", (i, sid))
+1304 |             conn.commit()
+1305 |         except Exception as e:
+     |                             ^
+1306 |             conn.rollback()
+1307 |         # Only refresh the grid layout ΓÇö don't rebuild (that destroys and recreates cards)
+     |
+help: Remove assignment to unused variable `e`
+
+F841 [*] Local variable `e` is assigned to but never used
+    --> src\ui\supp_payment.py:1332:29
+     |
+1330 |                 (max_ord, name.strip(), "#1565C0"))
+1331 |             conn.commit()
+1332 |         except Exception as e:
+     |                             ^
+1333 |             conn.rollback()
+1334 |             return
+     |
+help: Remove assignment to unused variable `e`
+
+F841 [*] Local variable `e` is assigned to but never used
+    --> src\ui\supp_payment.py:1449:33
+     |
+1447 |                     cur.execute("UPDATE tp_sections SET sort_order=? WHERE id=?", (i, sid))
+1448 |                 conn.commit()
+1449 |             except Exception as e:
+     |                                 ^
+1450 |                 conn.rollback()
+     |
+help: Remove assignment to unused variable `e`
+
+F841 Local variable `db` is assigned to but never used
+    --> src\ui\supp_payment.py:2424:9
+     |
+2422 |         company_name = os.path.basename(os.path.normpath(path))
+2423 |         db_name = build_logical_name(company_name, company_path=path)
+2424 |         db = get_db_manager()
+     |         ^^
+2425 |         for tname, tbl in self._tables:
+2426 |             tbl.set_db_name(db_name)
+     |
+help: Remove assignment to unused variable `db`
+
+F841 Local variable `total_cols` is assigned to but never used
+    --> src\ui\supp_payment.py:2529:9
+     |
+2527 |         layout.addWidget(top_bar)
+2528 |
+2529 |         total_cols = 4 + len(self._year_labels) * 3
+     |         ^^^^^^^^^^
+2530 |         headers = ["S.N", "Location", "Post", "Name of Employee"]
+2531 |         for yr in self._year_labels:
+     |
+help: Remove assignment to unused variable `total_cols`
+
+F401 [*] `PyQt6.QtWidgets.QDateEdit` imported but unused
+ --> src\ui\table_nav_mixin.py:5:80
+  |
+3 | """
+4 |
+5 | from PyQt6.QtWidgets import QAbstractItemView, QStyledItemDelegate, QLineEdit, QDateEdit, QStyleOptionViewItem, QCompleter
+  |                                                                                ^^^^^^^^^
+6 | from PyQt6.QtCore import Qt, QEvent, QTimer, QDate
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QStyleOptionViewItem` imported but unused
+ --> src\ui\table_nav_mixin.py:5:91
+  |
+3 | """
+4 |
+5 | from PyQt6.QtWidgets import QAbstractItemView, QStyledItemDelegate, QLineEdit, QDateEdit, QStyleOptionViewItem, QCompleter
+  |                                                                                           ^^^^^^^^^^^^^^^^^^^^
+6 | from PyQt6.QtCore import Qt, QEvent, QTimer, QDate
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtCore.QTimer` imported but unused
+ --> src\ui\table_nav_mixin.py:6:38
+  |
+5 | from PyQt6.QtWidgets import QAbstractItemView, QStyledItemDelegate, QLineEdit, QDateEdit, QStyleOptionViewItem, QCompleter
+6 | from PyQt6.QtCore import Qt, QEvent, QTimer, QDate
+  |                                      ^^^^^^
+7 |
+8 | # Custom roles for the universal delegate
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtCore.QDate` imported but unused
+ --> src\ui\table_nav_mixin.py:6:46
+  |
+5 | from PyQt6.QtWidgets import QAbstractItemView, QStyledItemDelegate, QLineEdit, QDateEdit, QStyleOptionViewItem, QCompleter
+6 | from PyQt6.QtCore import Qt, QEvent, QTimer, QDate
+  |                                              ^^^^^
+7 |
+8 | # Custom roles for the universal delegate
+  |
+help: Remove unused import
+
+F541 [*] f-string without any placeholders
+   --> src\ui\table_nav_mixin.py:173:21
+    |
+171 |                 QMessageBox.warning(
+172 |                     editor.parent(), "αñùαñ▓αññ αñ½αÑëαñ░αÑìαñ«αÑçαñƒ",
+173 |                     f"αñ«αñ┐αññαñ┐ YYYY-MM-DD αñ½αÑëαñ░αÑìαñ«αÑçαñ¿αÑìαñƒ αñ«αñ╛ αñ▓αÑçαñûαÑìαñ¿αÑüαñ╣αÑïαñ╕\nExample: 2082-01-15"
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+174 |                 )
+175 |                 # Keep old value ΓÇö do not write bad format to model
+    |
+help: Remove extraneous `f` prefix
+
+F401 [*] `PyQt6.QtWidgets.QMessageBox` imported but unused
+ --> src\ui\vat_pages.py:1:97
+  |
+1 | from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTabWidget, QPushButton, QInputDialog, QMenu, QMessageBox, QTableWidget, QStyledItemDΓÇª
+  |                                                                                                 ^^^^^^^^^^^
+2 | from PyQt6.QtCore import Qt
+3 | from PyQt6.QtGui import QFont
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QStyledItemDelegate` imported but unused
+ --> src\ui\vat_pages.py:1:124
+  |
+1 | ΓÇªhButton, QInputDialog, QMenu, QMessageBox, QTableWidget, QStyledItemDelegate, QLineEdit
+  |                                                           ^^^^^^^^^^^^^^^^^^^
+2 | ΓÇª
+3 | ΓÇª
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QLineEdit` imported but unused
+ --> src\ui\vat_pages.py:1:145
+  |
+1 | ΓÇªialog, QMenu, QMessageBox, QTableWidget, QStyledItemDelegate, QLineEdit
+  |                                                                ^^^^^^^^^
+2 | ΓÇª
+3 | ΓÇª
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtGui.QFont` imported but unused
+ --> src\ui\vat_pages.py:3:25
+  |
+1 | from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTabWidget, QPushButton, QInputDialog, QMenu, QMessageBox, QTableWidget, QStyledItemDΓÇª
+2 | from PyQt6.QtCore import Qt
+3 | from PyQt6.QtGui import QFont
+  |                         ^^^^^
+  |
+help: Remove unused import: `PyQt6.QtGui.QFont`
+
+E701 Multiple statements on one line (colon)
+  --> src\ui\vat_pages.py:75:23
+   |
+73 |         if not getattr(self, '_can_edit', True):
+74 |             return
+75 |         if index == -1: return
+   |                       ^
+76 |         name, ok = QInputDialog.getText(self, "Rename", "New Name:", text=self.tabs.tabText(index))
+77 |         if ok and name: self.tabs.setTabText(index, name)
+   |
+
+E701 Multiple statements on one line (colon)
+  --> src\ui\vat_pages.py:77:23
+   |
+75 |         if index == -1: return
+76 |         name, ok = QInputDialog.getText(self, "Rename", "New Name:", text=self.tabs.tabText(index))
+77 |         if ok and name: self.tabs.setTabText(index, name)
+   |                       ^
+78 |
+79 |     def show_menu(self, point):
+   |
+
+E701 Multiple statements on one line (colon)
+  --> src\ui\vat_pages.py:83:21
+   |
+81 |             return
+82 |         idx = self.tabs.tabAt(point)
+83 |         if idx == -1: return
+   |                     ^
+84 |         menu = QMenu(self)
+85 |         menu.setObjectName("TabContextMenu")
+   |
+
+F401 [*] `PyQt6.QtWidgets.QHBoxLayout` imported but unused
+ --> src\ui\welcome.py:2:27
+  |
+1 | from PyQt6.QtWidgets import (
+2 |     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QGridLayout
+  |                           ^^^^^^^^^^^
+3 | )
+4 | from PyQt6.QtCore import Qt
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtWidgets.QGridLayout` imported but unused
+ --> src\ui\welcome.py:2:56
+  |
+1 | from PyQt6.QtWidgets import (
+2 |     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QGridLayout
+  |                                                        ^^^^^^^^^^^
+3 | )
+4 | from PyQt6.QtCore import Qt
+  |
+help: Remove unused import
+
+F401 [*] `PyQt6.QtCore.Qt` imported but unused
+ --> src\ui\welcome.py:4:26
+  |
+2 |     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QGridLayout
+3 | )
+4 | from PyQt6.QtCore import Qt
+  |                          ^^
+5 | from PyQt6.QtGui import QFont
+  |
+help: Remove unused import: `PyQt6.QtCore.Qt`
+
+F401 [*] `PyQt6.QtGui.QFont` imported but unused
+ --> src\ui\welcome.py:5:25
+  |
+3 | )
+4 | from PyQt6.QtCore import Qt
+5 | from PyQt6.QtGui import QFont
+  |                         ^^^^^
+  |
+help: Remove unused import: `PyQt6.QtGui.QFont`
+
+Found 420 errors.
+[*] 163 fixable with the `--fix` option (7 hidden fixes can be enabled with the `--unsafe-fixes` option).

@@ -1,0 +1,1485 @@
+Run started:2026-08-18 09:23:58.032493+00:00
+
+Test results:
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: .\main.py:71:12
+70	                        return True
+71	            except Exception:
+72	                pass
+73	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: .\main.py:195:12
+194	                    json.dump(config_data, f, indent=2)
+195	            except Exception:
+196	                pass  # Non-critical — user config is enough
+197	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\build_history.py:84:8
+83	            conn.rollback()
+84	        except Exception:
+85	            pass
+86	        logger.error(f"build_history.save_checkpoint error: {e}", exc_info=True)
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\logic\build_history.py:150:18
+149	            cursor.execute(
+150	                f"DELETE FROM report_data "
+151	                f"WHERE crm_name=? AND serial_no IN ({placeholders}) AND status='pending'",
+152	                [crm_name] + [str(s) for s in serials]
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\build_history.py:181:8
+180	            conn.rollback()
+181	        except Exception:
+182	            pass
+183	        logger.error(f"build_history.restore_checkpoint error: {e}", exc_info=True)
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\logic\catalog_logic.py:258:31
+257	            cursor = conn.cursor()
+258	            cursor.execute(f"""
+259	                SELECT [MG_SN], [Group_Name] FROM {table}
+260	                WHERE [MG_SN] IS NOT NULL
+261	                  AND LTRIM(RTRIM(CAST([MG_SN] AS NVARCHAR(50)))) NOT IN ('', '0', '00')
+262	                  AND CAST([MG_SN] AS INTEGER) < {MAX_MG_SN}
+263	                  AND TRIM(ISNULL([Group_Name], '')) != ''
+264	                GROUP BY [MG_SN], [Group_Name]
+265	                ORDER BY CAST([MG_SN] AS INTEGER)
+266	            """)
+267	            return cursor.fetchall()
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\logic\catalog_logic.py:282:18
+281	            cursor.execute(
+282	                f"SELECT DISTINCT CAST([MG_SN] AS INTEGER) FROM {table} WHERE TRIM([Group_Name])=? COLLATE Latin1_General_CI_AI",
+283	                (group_name.strip(),)
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\logic\catalog_logic.py:288:31
+287	                return []
+288	            cursor.execute(f"""
+289	                SELECT [SG_SN], [Sub_Group] FROM {table}
+290	                WHERE TRIM([Group_Name])=? COLLATE Latin1_General_CI_AI
+291	                  AND [Sub_Group] IS NOT NULL AND [Sub_Group]!=''
+292	                GROUP BY [SG_SN], [Sub_Group]
+293	                ORDER BY CAST([SG_SN] AS INTEGER)
+294	            """, (group_name.strip(),))
+295	            return cursor.fetchall()
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\logic\catalog_logic.py:309:31
+308	            cursor = conn.cursor()
+309	            cursor.execute(f"""
+310	                SELECT [MG_SN], [Group_Name], [SG_SN] FROM {table}
+311	                WHERE [Group_Name] IS NOT NULL AND [SG_SN] IS NOT NULL
+312	                  AND CAST([MG_SN] AS INTEGER) < {MAX_MG_SN}
+313	                GROUP BY [MG_SN], [Group_Name], [SG_SN]
+314	                ORDER BY CAST([MG_SN] AS INTEGER), CAST([SG_SN] AS INTEGER)
+315	            """)
+316	            results = []
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\catalog_logic.py:418:12
+417	                conn.rollback()
+418	            except Exception:
+419	                pass
+420	            logger.error(f"rebuild_serial_numbers error: {e}")
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\catalog_logic.py:647:12
+646	                conn.rollback()
+647	            except Exception:
+648	                pass
+649	            logger.error(f"_add_serials_to_all_crms SQL error: {e}", exc_info=True)
+
+--------------------------------------------------
+>> Issue: [B324:hashlib] Use of weak MD5 hash for security. Consider usedforsecurity=False
+   Severity: High   Confidence: High
+   CWE: CWE-327 (https://cwe.mitre.org/data/definitions/327.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b324_hashlib.html
+   Location: src\logic\catalog_logic.py:1905:15
+1904	                parts.append({"name": name, "_missing": True})
+1905	        return hashlib.md5(json.dumps(parts, sort_keys=True).encode()).hexdigest()
+1906	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\catalog_logic.py:1933:8
+1932	                return set()
+1933	        except Exception:
+1934	            pass  # build_config may not exist yet (first run)
+1935	        
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\catalog_logic.py:2079:16
+2078	                    _engine_lock_conn.commit()
+2079	                except Exception:
+2080	                    pass
+2081	            return {"dirty_count": 0, "dirty_serials": [], "pages_created": 0}
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\catalog_logic.py:2104:16
+2103	                    _engine_lock_conn.commit()
+2104	                except Exception:
+2105	                    pass
+2106	            return {"dirty_count": 0, "dirty_serials": [], "pages_created": 0}
+
+--------------------------------------------------
+>> Issue: [B324:hashlib] Use of weak MD5 hash for security. Consider usedforsecurity=False
+   Severity: High   Confidence: High
+   CWE: CWE-327 (https://cwe.mitre.org/data/definitions/327.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b324_hashlib.html
+   Location: src\logic\db_manager.py:95:20
+94	        norm_path = os.path.normpath(company_path).lower()
+95	        path_hash = hashlib.md5(norm_path.encode()).hexdigest()[:8]
+96	        return f"{base}_{path_hash}"
+
+--------------------------------------------------
+>> Issue: [B324:hashlib] Use of weak MD5 hash for security. Consider usedforsecurity=False
+   Severity: High   Confidence: High
+   CWE: CWE-327 (https://cwe.mitre.org/data/definitions/327.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b324_hashlib.html
+   Location: src\logic\db_manager.py:173:16
+172	    norm_path = os.path.normpath(data_path).lower()
+173	    path_hash = hashlib.md5(norm_path.encode()).hexdigest()[:8]
+174	    return f"{base_name}_{path_hash}"
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\logic\db_manager.py:252:31
+251	            # Create login (if not exists)
+252	            cursor.execute(f"""
+253	                IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = N'{safe_q}')
+254	                    CREATE LOGIN [{safe_b}] FROM WINDOWS;
+255	            """)
+256	            logger.info(f"Ensured SQL Server login for '{win_login}'")
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\db_manager.py:261:12
+260	                cursor.execute(f"ALTER SERVER ROLE dbcreator ADD MEMBER [{safe_b}];")
+261	            except Exception:
+262	                pass  # Non-admin users rely on BUILTIN\Users grants instead
+263	            
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\db_manager.py:270:12
+269	                )
+270	            except Exception:
+271	                pass
+272	                
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\db_manager.py:286:8
+285	                    return data.get("sql_server_name", "")
+286	        except Exception:
+287	            pass
+288	        return ""
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\db_manager.py:363:20
+362	                        conn.close()
+363	                    except Exception:
+364	                        pass
+365	                    thread_cache.pop(logical_name, None)
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\db_manager.py:412:12
+411	                thread_cache[logical_name].close()
+412	            except Exception:
+413	                pass
+414	            del thread_cache[logical_name]
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\db_manager.py:432:12
+431	                conn.close()
+432	            except Exception:
+433	                pass
+434	            with self._lock:
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\db_manager.py:446:16
+445	                    conn.close()
+446	                except Exception:
+447	                    pass
+448	            self._all_connections.clear()
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\db_manager.py:453:8
+452	            self._get_thread_cache().clear()
+453	        except Exception:
+454	            pass
+455	
+
+--------------------------------------------------
+>> Issue: [B404:blacklist] Consider possible security implications associated with the subprocess module.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_imports.html#b404-import-subprocess
+   Location: src\logic\db_manager.py:547:8
+546	        """
+547	        import subprocess
+548	        
+
+--------------------------------------------------
+>> Issue: [B607:start_process_with_partial_path] Starting a process with a partial executable path
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b607_start_process_with_partial_path.html
+   Location: src\logic\db_manager.py:558:12
+557	            # Grant SQL Server service full control with inheritance
+558	            subprocess.run(
+559	                ['icacls', folder_path, '/grant',
+560	                 f'{service_account}:(OI)(CI)F', '/T'],
+561	                capture_output=True, text=True, timeout=15,
+562	                creationflags=subprocess.CREATE_NO_WINDOW
+563	            )
+564	            # CRITICAL: also grant BUILTIN\Users full control with inheritance so that
+
+--------------------------------------------------
+>> Issue: [B603:subprocess_without_shell_equals_true] subprocess call - check for execution of untrusted input.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b603_subprocess_without_shell_equals_true.html
+   Location: src\logic\db_manager.py:558:12
+557	            # Grant SQL Server service full control with inheritance
+558	            subprocess.run(
+559	                ['icacls', folder_path, '/grant',
+560	                 f'{service_account}:(OI)(CI)F', '/T'],
+561	                capture_output=True, text=True, timeout=15,
+562	                creationflags=subprocess.CREATE_NO_WINDOW
+563	            )
+564	            # CRITICAL: also grant BUILTIN\Users full control with inheritance so that
+
+--------------------------------------------------
+>> Issue: [B607:start_process_with_partial_path] Starting a process with a partial executable path
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b607_start_process_with_partial_path.html
+   Location: src\logic\db_manager.py:567:21
+566	            # without needing a second icacls call that requires admin rights.
+567	            result = subprocess.run(
+568	                ['icacls', folder_path, '/grant',
+569	                 'BUILTIN\\Users:(OI)(CI)F', '/T'],
+570	                capture_output=True, text=True, timeout=15,
+571	                creationflags=subprocess.CREATE_NO_WINDOW
+572	            )
+573	            if result.returncode == 0:
+
+--------------------------------------------------
+>> Issue: [B603:subprocess_without_shell_equals_true] subprocess call - check for execution of untrusted input.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b603_subprocess_without_shell_equals_true.html
+   Location: src\logic\db_manager.py:567:21
+566	            # without needing a second icacls call that requires admin rights.
+567	            result = subprocess.run(
+568	                ['icacls', folder_path, '/grant',
+569	                 'BUILTIN\\Users:(OI)(CI)F', '/T'],
+570	                capture_output=True, text=True, timeout=15,
+571	                creationflags=subprocess.CREATE_NO_WINDOW
+572	            )
+573	            if result.returncode == 0:
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\logic\db_manager.py:677:31
+676	            safe_q, safe_b = self._safe_sql_ident(win_login)
+677	            cursor.execute(f"""
+678	                USE [{db_b}];
+679	                IF NOT EXISTS (SELECT * FROM sys.database_principals WHERE name = N'{safe_q}')
+680	                BEGIN
+681	                    CREATE USER [{safe_b}] FOR LOGIN [{safe_b}];
+682	                END
+683	                ALTER ROLE db_owner ADD MEMBER [{safe_b}];
+684	            """)
+685	            logger.info(f"Granted db_owner to '{win_login}' on '{logical_name}'")
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\logic\db_manager.py:692:18
+691	            cursor.execute(
+692	                f"USE [{db_b}]; "
+693	                f"IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = N'BUILTIN\\Users') "
+694	                f"CREATE LOGIN [BUILTIN\\Users] FROM WINDOWS;"
+695	            )
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\logic\db_manager.py:697:18
+696	            cursor.execute(
+697	                f"USE [{db_b}]; "
+698	                "IF NOT EXISTS (SELECT * FROM sys.database_principals WHERE name = N'BuiltinUsers') "
+699	                "BEGIN "
+700	                "CREATE USER [BuiltinUsers] FOR LOGIN [BUILTIN\\Users]; "
+701	                "END; "
+702	                "ALTER ROLE db_owner ADD MEMBER [BuiltinUsers];"
+703	            )
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Low
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\logic\db_manager.py:821:27
+820	            # Use native SQL Server IF NOT EXISTS to avoid race conditions (fixes 42S01)
+821	            safe_sql = f"""
+822	            IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[{table_name}]') AND type in (N'U'))
+823	            BEGIN
+824	                {create_sql}
+825	            END
+826	            """
+827	            cursor.execute(safe_sql)
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\db_manager.py:899:12
+898	                conn.rollback()
+899	            except Exception:
+900	                pass
+901	            return [] if fetch else 0
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\logic\db_manager.py:1012:35
+1011	            try:
+1012	                cursor.execute(f"""
+1013	                    IF EXISTS (SELECT name FROM sys.databases WHERE name = N'{safe_b}')
+1014	                    BEGIN
+1015	                        ALTER DATABASE [{safe_b}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+1016	                        DROP DATABASE [{safe_b}];
+1017	                    END
+1018	                """)
+1019	            except pyodbc.Error:
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\logic\db_manager.py:1022:35
+1021	                # but direct DROP still works
+1022	                cursor.execute(f"""
+1023	                    IF EXISTS (SELECT name FROM sys.databases WHERE name = N'{safe_b}')
+1024	                        DROP DATABASE [{safe_b}];
+1025	                """)
+1026	            logger.info(f"Dropped database '{logical_name}'")
+
+--------------------------------------------------
+>> Issue: [B404:blacklist] Consider possible security implications associated with the subprocess module.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_imports.html#b404-import-subprocess
+   Location: src\logic\db_manager.py:1076:16
+1075	            if os.path.exists(backup_path):
+1076	                import subprocess
+1077	                try:
+
+--------------------------------------------------
+>> Issue: [B607:start_process_with_partial_path] Starting a process with a partial executable path
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b607_start_process_with_partial_path.html
+   Location: src\logic\db_manager.py:1078:20
+1077	                try:
+1078	                    subprocess.run(
+1079	                        ['icacls', backup_path, '/grant',
+1080	                         f'{os.environ.get("USERDOMAIN", "BUILTIN")}\\Users:(R)'],
+1081	                        capture_output=True, timeout=10,
+1082	                        creationflags=subprocess.CREATE_NO_WINDOW
+1083	                    )
+1084	                except Exception:
+
+--------------------------------------------------
+>> Issue: [B603:subprocess_without_shell_equals_true] subprocess call - check for execution of untrusted input.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b603_subprocess_without_shell_equals_true.html
+   Location: src\logic\db_manager.py:1078:20
+1077	                try:
+1078	                    subprocess.run(
+1079	                        ['icacls', backup_path, '/grant',
+1080	                         f'{os.environ.get("USERDOMAIN", "BUILTIN")}\\Users:(R)'],
+1081	                        capture_output=True, timeout=10,
+1082	                        creationflags=subprocess.CREATE_NO_WINDOW
+1083	                    )
+1084	                except Exception:
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\db_manager.py:1084:16
+1083	                    )
+1084	                except Exception:
+1085	                    pass
+1086	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\report_store.py:41:4
+40	                conn.commit()
+41	    except Exception:
+42	        pass
+43	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\report_store.py:185:8
+184	            """)
+185	        except Exception:
+186	            pass  # proceed without lock if unavailable
+187	
+
+--------------------------------------------------
+>> Issue: [B106:hardcoded_password_funcarg] Possible hardcoded password: ''
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b106_hardcoded_password_funcarg.html
+   Location: src\logic\security_manager.py:264:22
+263	                    admin_user="",
+264	                    admin_pass=""
+265	                )
+266	                if cid:
+267	                    registered_count += 1
+268	                    logger.info(f"Auto-registered company from disk: '{display_name}' (id={cid})")
+269	            
+270	            if registered_count > 0:
+271	                logger.info(f"Auto-registered {registered_count} companies from disk")
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\logic\security_manager.py:699:29
+698	            params.append(user_id)
+699	            cursor.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = ?", params)
+700	            conn.commit()
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\logic\security_manager.py:794:33
+793	                params.append(role_id)
+794	                cursor.execute(f"UPDATE roles SET {', '.join(updates)} WHERE id = ?", params)
+795	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\security_manager.py:881:8
+880	            """, (user_id, username, company_id, action, module, detail))
+881	        except Exception:
+882	            pass  # Audit logging must never crash the app
+883	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\security_manager.py:894:8
+893	            conn.commit()
+894	        except Exception:
+895	            pass
+896	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\text_utils.py:153:16
+152	                    sz = str(x[5]) if len(x) > 5 else ""
+153	                except Exception as e: pass
+154	            import re
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\text_utils.py:249:16
+248	                    sz = str(x[5]) if len(x) > 5 else ""
+249	                except Exception as e: pass
+250	            import re
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\year_end.py:47:4
+46	                conn.close()
+47	    except Exception:
+48	        pass
+49	    return None
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\year_end.py:68:12
+67	            try: progress_cb(text, n, TOTAL)
+68	            except Exception: pass
+69	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\year_end.py:140:8
+139	        try: shutil.rmtree(temp_dir, ignore_errors=True)
+140	        except Exception: pass
+141	        # Bug 5 fix: remove the half-created company folder on failure so the
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\year_end.py:147:12
+146	                logger.info(f"[YearEnd] Cleaned up failed company folder: {new_company_path}")
+147	            except Exception:
+148	                pass
+149	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\logic\year_end.py:230:8
+229	        try: conn.rollback()
+230	        except Exception: pass
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\services\tally_sync.py:62:12
+61	                self.connection.close()
+62	            except Exception:
+63	                pass
+64	            self.connection = None
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\services\tally_sync.py:312:12
+311	                conn.commit()
+312	            except Exception:
+313	                pass
+314	
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\services\tally_sync.py:327:29
+326	            # Verify staging has data before merging
+327	            cursor.execute(f"SELECT COUNT(*) FROM dbo.[{staging_table}]")
+328	            staging_count = cursor.fetchone()[0]
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Low
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\services\tally_sync.py:342:28
+341	
+342	            merge_sql = f"""
+343	                MERGE dbo.stock_items AS target
+344	                USING dbo.[{staging_table}] AS source
+345	                ON target.GUID = source.GUID
+346	                WHEN MATCHED THEN
+347	                    UPDATE SET {update_set}
+348	                WHEN NOT MATCHED BY TARGET THEN
+349	                    INSERT ({insert_cols}) VALUES ({source_cols})
+350	                WHEN NOT MATCHED BY SOURCE THEN
+351	                    DELETE;
+352	            """
+353	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\services\tally_sync.py:371:12
+370	                conn.commit()
+371	            except Exception:
+372	                pass
+373	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\services\tally_sync.py:386:12
+385	                    conn.commit()
+386	            except Exception:
+387	                pass
+388	            raise
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\services\tally_sync.py:468:16
+467	                    self.connection.close()
+468	                except Exception:
+469	                    pass
+470	                self.connection = None
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\services\tally_sync.py:626:8
+625	            conn.commit()
+626	        except Exception:
+627	            pass
+628	
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\services\tally_sync.py:641:25
+640	        # Verify staging before swap
+641	        cursor.execute(f"SELECT COUNT(*) FROM dbo.[{staging_table}]")
+642	        if cursor.fetchone()[0] == 0:
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\services\tally_sync.py:677:12
+676	                service.connection.close()
+677	            except Exception:
+678	                pass
+679	            service.connection = None
+
+--------------------------------------------------
+>> Issue: [B324:hashlib] Use of weak MD5 hash for security. Consider usedforsecurity=False
+   Severity: High   Confidence: High
+   CWE: CWE-327 (https://cwe.mitre.org/data/definitions/327.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b324_hashlib.html
+   Location: src\ui\a4_renderer.py:55:20
+54	        # Hash the full source path to avoid filename collisions
+55	        path_hash = hashlib.md5(path.encode('utf-8', errors='replace')).hexdigest()[:12]
+56	        return os.path.join(cls._cache_dir, f"{path_hash}_{w}x{h}.png")
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\a4_renderer.py:127:12
+126	                scaled.save(thumb, "PNG")
+127	            except Exception:
+128	                pass  # Non-critical — next run will re-scale
+129	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\a4_renderer.py:676:12
+675	                s.deleteLater()
+676	            except Exception as e: pass
+677	        self._struts = []
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\a4_renderer.py:705:12
+704	                w.deleteLater()
+705	            except Exception as e: pass
+706	        self._widgets = []
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\a4_renderer.py:755:20
+754	                            D = 1 
+755	                    except Exception as e: pass
+756	            
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\calendar_mapping.py:88:12
+87	                    max_date = dt
+88	            except Exception:
+89	                pass
+90	                
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\cheque_list.py:628:12
+627	                total += float(amt.text().replace(",", "")) if amt and amt.text() else 0
+628	            except Exception:
+629	                pass
+630	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\cheque_list.py:1155:8
+1154	                self.bank_list_data = [r[0] for r in cursor.fetchall() if r[0]]
+1155	        except Exception:
+1156	            pass
+1157	    
+
+--------------------------------------------------
+>> Issue: [B606:start_process_with_no_shell] Starting a process without a shell.
+   Severity: Low   Confidence: Medium
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b606_start_process_with_no_shell.html
+   Location: src\ui\cheque_list.py:1244:16
+1243	            if os.name == 'nt':
+1244	                os.startfile(path)
+1245	                
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\company_login_ui.py:263:12
+262	                    self.fields[6].setText(json.load(f).get("backup_path", ""))
+263	            except Exception: pass
+264	        
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\company_login_ui.py:291:8
+290	                    loaded = True
+291	        except Exception:
+292	            pass
+293	        
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\company_login_ui.py:304:12
+303	                        self.fields[5].setText(d.get("image_path", ""))
+304	            except Exception: pass
+305	            
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\company_login_ui.py:313:12
+312	                    self.fields[6].setText(json.load(f).get("backup_path", ""))
+313	            except Exception: pass
+314	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\company_login_ui.py:376:16
+375	                        c_data = json.load(f)
+376	                except Exception: pass
+377	            c_data["backup_path"] = backup_path
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\company_login_ui.py:381:12
+380	                    json.dump(c_data, f, indent=4)
+381	            except Exception: pass
+382	                
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\company_login_ui.py:475:12
+474	                        return path
+475	            except Exception:
+476	                pass
+477	        
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\company_login_ui.py:492:24
+491	                            logger.info(f"Inherited global data path: '{path}'")
+492	                        except Exception:
+493	                            pass
+494	                        return path
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\company_login_ui.py:495:8
+494	                        return path
+495	        except Exception:
+496	            pass
+497	        
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\company_login_ui.py:555:12
+554	                            seen_paths.add(full.lower())
+555	            except Exception: pass
+556	        
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\company_login_ui.py:732:12
+731	                    json.dump(config_data, f)
+732	            except Exception:
+733	                pass
+734	            self._init_security(target_path)
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\company_login_ui.py:766:16
+765	                        logger.info(f"Global config updated: '{global_config}'")
+766	                except Exception:
+767	                    pass
+768	                
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\final_data.py:67:12
+66	                get_db_manager().close_thread_connections()
+67	            except Exception:
+68	                pass
+69	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\final_data.py:205:12
+204	                get_db_manager().close_thread_connections()
+205	            except Exception:
+206	                pass
+207	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\final_data.py:250:12
+249	                        self.image_folder = info["image_path"]
+250	            except Exception:
+251	                pass
+252	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\final_data.py:480:8
+479	                return datetime.datetime.fromtimestamp(mtime).strftime('%d-%m-%Y %H:%M:%S')
+480	        except Exception:
+481	            pass
+482	        return ""
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\ui\final_data.py:599:30
+598	            if should_update_date:
+599	                cur.execute(f"UPDATE catalog SET [{col_name}]=?, Update_date=? WHERE GUID=?", (new_val, now, guid))
+600	            else:
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\ui\final_data.py:601:30
+600	            else:
+601	                cur.execute(f"UPDATE catalog SET [{col_name}]=? WHERE GUID=?", (new_val, guid))
+602	            
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\final_data.py:670:17
+669	                         if "image_path" in info: self.image_folder = info["image_path"]
+670	                 except Exception: pass
+671	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\final_data.py:818:8
+817	                    conn_check.rollback()
+818	        except Exception:
+819	            pass
+820	        elapsed("DB setup")
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\ui\final_data.py:885:36
+884	        ])
+885	        rows = row_cursor.execute(f"SELECT {select_cols} FROM stock_items").fetchall()
+886	        elapsed(f"stock_items fetch ({len(rows)} rows)")
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Low
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\ui\final_data.py:916:25
+915	        insert_cols = ', '.join([f"[{h}]" for h in self.headers])
+916	        insert_query = f"INSERT INTO catalog ({insert_cols}) VALUES ({insert_placeholders})"
+917	
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\ui\final_data.py:1005:30
+1004	                placeholders = ','.join(['?'] * len(chunk))
+1005	                cur.execute(f"DELETE FROM catalog WHERE GUID IN ({placeholders})", chunk)
+1006	        elapsed(f"catalog UPSERT/DELETE to SQL Server")
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\final_data.py:1255:12
+1254	                        self.sync_lbl.setText(f"Last Sync: {row[0]}")
+1255	            except Exception:
+1256	                pass
+1257	        
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\final_data.py:1269:12
+1268	                        return
+1269	            except Exception:
+1270	                pass  # On error, proceed with full refresh
+1271	        
+
+--------------------------------------------------
+>> Issue: [B606:start_process_with_no_shell] Starting a process without a shell.
+   Severity: Low   Confidence: Medium
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b606_start_process_with_no_shell.html
+   Location: src\ui\final_data.py:1687:20
+1686	                try:
+1687	                    os.startfile(path)
+1688	                except Exception as e:
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\full_catalog.py:208:12
+207	                        prefix = display_name[:3].upper()
+208	            except Exception:
+209	                pass
+210	        return prefix
+
+--------------------------------------------------
+>> Issue: [B324:hashlib] Use of weak MD5 hash for security. Consider usedforsecurity=False
+   Severity: High   Confidence: High
+   CWE: CWE-327 (https://cwe.mitre.org/data/definitions/327.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b324_hashlib.html
+   Location: src\ui\godown_list.py:617:27
+616	            import hashlib, json as _json
+617	            current_hash = hashlib.md5(
+618	                _json.dumps(rows_to_insert, ensure_ascii=False).encode()
+619	            ).hexdigest()
+620	            if current_hash == getattr(self, '_last_saved_hash', None):
+
+--------------------------------------------------
+>> Issue: [B606:start_process_with_no_shell] Starting a process without a shell.
+   Severity: Low   Confidence: Medium
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b606_start_process_with_no_shell.html
+   Location: src\ui\godown_list.py:938:16
+937	            if os.name == 'nt':
+938	                os.startfile(path)
+939	        except Exception as e:
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\main_window.py:185:12
+184	                    self.hotkey_char = char.upper()
+185	            except Exception:
+186	                pass
+187	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\main_window.py:355:8
+354	                self._recalc_sidebar_width()
+355	        except Exception:
+356	            pass  # Non-critical — only affects multi-monitor DPI scenarios
+357	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\main_window.py:420:8
+419	            dwmapi.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(text_color), ctypes.sizeof(text_color))
+420	        except Exception:
+421	            pass  # Silently fail on non-Windows or older Windows versions
+422	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\main_window.py:1926:12
+1925	                    backup_folder = _json.load(f).get("backup_path", "").strip()
+1926	            except Exception:
+1927	                pass
+1928	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\print_export.py:498:16
+497	                            prefix = name[:3].upper() if len(name) >= 3 else name.upper()
+498	                except Exception as e: pass
+499	            renderer._company_prefix = prefix
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\print_export.py:560:8
+559	                        PixmapCache.get(img_path, 200, 200)
+560	        except Exception:
+561	            pass  # Non-critical — images will load on demand anyway
+562	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\print_export.py:666:16
+665	                    if os.path.exists(temp_pdf): os.remove(temp_pdf)
+666	                except Exception as e: pass
+667	                self.reject()
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\print_export.py:677:12
+676	                if os.path.exists(temp_pdf): os.remove(temp_pdf)
+677	            except Exception as e: pass
+678	            
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\print_export.py:732:8
+731	            self.settings.setValue("last_export_dir", folder)
+732	        except Exception as e: pass
+733	        
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\print_export.py:749:16
+748	                    if os.path.exists(file_path): os.remove(file_path)
+749	                except Exception as e: pass
+750	                self.reject()
+
+--------------------------------------------------
+>> Issue: [B606:start_process_with_no_shell] Starting a process without a shell.
+   Severity: Low   Confidence: Medium
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b606_start_process_with_no_shell.html
+   Location: src\ui\print_export.py:768:16
+767	            if reply == QMessageBox.StandardButton.Yes:
+768	                os.startfile(file_path)
+769	            
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\ui\reports.py:223:18
+222	            cursor.execute(
+223	                f"SELECT serial_no, group_name, sg_sn FROM catalog_pages "
+224	                f"WHERE serial_no IN ({placeholders})",
+225	                [str(s) for s in pending_serials]
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\ui\supp_payment.py:180:26
+179	        try:
+180	            cur.execute(f"DELETE FROM {self._table_name}")
+181	            for r in range(self.rowCount()):
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\ui\supp_payment.py:186:30
+185	                        cur.execute(
+186	                            f"INSERT INTO {self._table_name} (row_idx, col_idx, cell_text)"
+187	                            f" VALUES (?,?,?)",
+188	                            (r, c, it.text())
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Low
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\ui\supp_payment.py:205:14
+204	            self._db_name,
+205	            f"SELECT row_idx, col_idx, cell_text FROM {self._table_name} ORDER BY row_idx, col_idx"
+206	        ) or []
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\ui\supp_payment.py:648:26
+647	        try:
+648	            cur.execute(f"UPDATE tp_sections SET {field}=? WHERE id=?", (value, self.section_id))
+649	            conn.commit()
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\supp_payment.py:1074:16
+1073	                    break
+1074	                except Exception as ex:
+1075	                    pass
+1076	        except Exception as e:
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\supp_payment.py:1090:16
+1089	                    tbl.viewport().update()
+1090	                except Exception:
+1091	                    pass
+1092	            entry_count = len(self._guid_to_name)
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\supp_payment.py:1120:16
+1119	                    conn.commit()
+1120	                except Exception: pass
+1121	                try:
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\supp_payment.py:1124:16
+1123	                    conn.commit()
+1124	                except Exception: pass
+1125	        except Exception:
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\supp_payment.py:1125:8
+1124	                except Exception: pass
+1125	        except Exception:
+1126	            pass
+1127	
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: src\ui\supp_payment.py:1645:22
+1644	                cur.execute(
+1645	                    f"UPDATE supplier_accounts SET {fkey}=? "
+1646	                    f"WHERE supplier_id=? AND acc_index=?",
+1647	                    (edit.text().strip(), self.supplier_id, self.acc_idx))
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\ui\supp_payment.py:1859:12
+1858	                self.parent()._update_status()  # type: ignore
+1859	            except Exception:
+1860	                pass
+1861	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\utils\date_utils.py:79:8
+78	                return nepali_date
+79	        except Exception:
+80	            pass
+81	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\utils\date_utils.py:92:4
+91	            return f"{parts[0]}/{parts[1]}"
+92	    except Exception:
+93	        pass
+94	
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: src\utils\path_utils.py:87:8
+86	                        return os.path.join(data_path, filename)
+87	        except Exception:
+88	            pass
+89	
+
+--------------------------------------------------
+
+Code scanned:
+	Total lines of code: 20658
+	Total lines skipped (#nosec): 0
+	Total potential issues skipped due to specifically being disabled (e.g., #nosec BXXX): 0
+
+Run metrics:
+	Total issues (by severity):
+		Undefined: 0
+		Low: 97
+		Medium: 28
+		High: 5
+	Total issues (by confidence):
+		Undefined: 0
+		Low: 4
+		Medium: 29
+		High: 97
+Files skipped (0):

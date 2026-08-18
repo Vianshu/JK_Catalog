@@ -1,0 +1,2 @@
+﻿C:\Users\HP\AppData\Local\Programs\Python\Python313\Lib\site-packages\PyQt6\QtCore.pyi:1342: error: Invalid syntax  [syntax]
+Found 1 error in 1 file (errors prevented further checking)
