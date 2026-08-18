@@ -1947,7 +1947,7 @@ class CatalogLogic:
         # We bump CURRENT_HASH_VERSION whenever the algorithm changes and
         # auto-regenerate all snapshots silently on first run, returning 0
         # changes so the CRM is not polluted.
-        CURRENT_HASH_VERSION = 3  # v2: ORDER BY MRP,GUID  v3: img_date=MAX, sort_price removed
+        CURRENT_HASH_VERSION = 4  # v4: Aggressive string stripping & float comma removal
         try:
             cursor = conn.cursor()
             cursor.execute("SELECT [value] FROM build_config WHERE [key]='hash_version'")
