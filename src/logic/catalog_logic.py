@@ -1832,7 +1832,7 @@ class CatalogLogic:
     # CHANGE DETECTION (Snapshot System)
     # ═══════════════════════════════════════════════════════════════════════════
 
-    def _compute_page_hash(self, serial_no):
+    def _compute_page_hash(self, serial_no, return_json=False):
         """Generate MD5 hash of a page's content for change detection.
 
         Hashes from product_list (assignments) + resolved product data.
@@ -1848,12 +1848,12 @@ class CatalogLogic:
         """
         page_info = self.get_page_info_by_serial(serial_no)
         if not page_info:
-            return ""
+            return ("", "") if return_json else ""
         product_names = self._get_page_product_list(
             page_info["group_name"], page_info["sg_sn"], page_info["page_no"]
         )
         if not product_names:
-            return "empty_page"
+            return ("empty_page", "") if return_json else "empty_page"
 
         # Resolve product data
         cache_key = f"{page_info['group_name']}|{page_info['sg_sn']}"
@@ -1875,41 +1875,52 @@ class CatalogLogic:
                 f"_compute_page_hash: product lookup empty for serial {serial_no} "
                 f"({len(product_names)} products expected) — returning fetch_error sentinel"
             )
-            return "fetch_error_empty_catalog"
+            return ("fetch_error_empty_catalog", "") if return_json else "fetch_error_empty_catalog"
 
         # Build content signature — ORDER MATTERS (no sorting)
         def _norm_num(v):
             """Normalize '23.0' → '23' so mrps hash is insensitive to float formatting."""
             s = str(v).strip()
+            if not s: return ""
             try:
-                f = float(s)
+                f = float(s.replace(",", ""))
                 if f == int(f):
                     return str(int(f))
-                return s
+                return str(f)
             except (ValueError, TypeError):
                 return s
+
+        def _norm_str(v):
+            """Remove invisible trailing/multiple spaces that cause false positives."""
+            return " ".join(str(v).strip().lower().split()) if v else ""
 
         parts = []
         for name in product_names:
             p = product_lookup.get(name)
             if p:
                 parts.append({
-                    "name": name,
-                    "length": p.get("length", "1|0"),
-                    "sizes": p.get("sizes", []),
+                    "name": _norm_str(name),
+                    "length": _norm_str(p.get("length", "1|0")),
+                    "sizes": [_norm_str(v) for v in p.get("sizes", [])],
                     "mrps": [_norm_num(v) for v in p.get("mrps", [])],
-                    "moqs": p.get("moqs", []),
+                    "moqs": [_norm_str(v) for v in p.get("moqs", [])],
                     # sort_price omitted — redundant with mrps, was causing false-positive
                     # hash changes when variant ordering shifted due to MRP updates.
-                    "img": p.get("image_path", ""),
-                    "img_date": p.get("img_date", ""),  # MAX across all variants
-                    "category": p.get("category", ""),
-                    "base_units": p.get("base_units", ""),
-                    "master_packing": p.get("master_packing", ""),
+                    "img": _norm_str(p.get("image_path", "")),
+                    "img_date": _norm_str(p.get("img_date", "")),  # MAX across all variants
+                    "category": _norm_str(p.get("category", "")),
+                    "base_units": _norm_str(p.get("base_units", "")),
+                    "master_packing": _norm_str(p.get("master_packing", "")),
                 })
             else:
-                parts.append({"name": name, "_missing": True})
-        return hashlib.md5(json.dumps(parts, sort_keys=True).encode()).hexdigest()
+                parts.append({"name": _norm_str(name), "_missing": True})
+                
+        json_dump = json.dumps(parts, indent=2, sort_keys=True)
+        md5_hash = hashlib.md5(json.dumps(parts, sort_keys=True).encode()).hexdigest()
+        
+        if return_json:
+            return md5_hash, json_dump
+        return md5_hash
 
     def detect_changed_pages(self):
         """Compare current page content with stored snapshots.
@@ -1947,7 +1958,7 @@ class CatalogLogic:
         # We bump CURRENT_HASH_VERSION whenever the algorithm changes and
         # auto-regenerate all snapshots silently on first run, returning 0
         # changes so the CRM is not polluted.
-        CURRENT_HASH_VERSION = 4  # v4: Aggressive string stripping & float comma removal
+        CURRENT_HASH_VERSION = 3  # v2: ORDER BY MRP,GUID  v3: img_date=MAX, sort_price removed
         try:
             cursor = conn.cursor()
             cursor.execute("SELECT [value] FROM build_config WHERE [key]='hash_version'")
@@ -1988,13 +1999,38 @@ class CatalogLogic:
                 return set()
             cursor.execute("SELECT serial_no FROM catalog_pages WHERE serial_no IS NOT NULL ORDER BY serial_no")
             all_serials = [str(row[0]) for row in cursor.fetchall()]
-            cursor.execute("SELECT serial_no, content_hash FROM page_snapshots")
-            stored_hashes = {str(r[0]): r[1] for r in cursor.fetchall()}
+            
+            # Add json_dump column if it doesn't exist yet (for older DBs)
+            try:
+                cursor.execute("ALTER TABLE page_snapshots ADD json_dump NVARCHAR(MAX)")
+                conn.commit()
+            except Exception:
+                pass
+                
+            cursor.execute("SELECT serial_no, content_hash, json_dump FROM page_snapshots")
+            stored_hashes = {str(r[0]): (r[1], r[2] if len(r) > 2 else "") for r in cursor.fetchall()}
+            
+            import difflib
             for serial_no in all_serials:
-                current_hash = self._compute_page_hash(serial_no)
-                stored_hash = stored_hashes.get(serial_no)
-                if stored_hash is None or stored_hash != current_hash:
+                current_hash, current_json = self._compute_page_hash(serial_no, return_json=True)
+                stored_data = stored_hashes.get(serial_no)
+                
+                if stored_data is None:
                     changed.add(serial_no)
+                    logger.info(f"Page {serial_no} is newly created (no previous snapshot).")
+                elif stored_data[0] != current_hash:
+                    changed.add(serial_no)
+                    old_json = stored_data[1] or ""
+                    
+                    diff = "\n".join(difflib.unified_diff(
+                        old_json.splitlines(),
+                        current_json.splitlines(),
+                        fromfile=f'Page {serial_no} (Before Sync)',
+                        tofile=f'Page {serial_no} (After Sync)',
+                        lineterm=''
+                    ))
+                    logger.info(f"Page {serial_no} Hash Mismatch! Exact Diff:\n{diff}")
+                    
             logger.info(f"Change detection: {len(changed)} changed out of {len(all_serials)} pages")
         except Exception as e:
             logger.error(f"detect_changed_pages error: {e}")
@@ -2008,19 +2044,26 @@ class CatalogLogic:
             return
         try:
             cursor = conn.cursor()
+            # Ensure json_dump column exists before saving
+            try:
+                cursor.execute("ALTER TABLE page_snapshots ADD json_dump NVARCHAR(MAX)")
+                conn.commit()
+            except Exception:
+                pass
+                
             cursor.execute("SELECT serial_no, group_name, sg_sn, page_no FROM catalog_pages WHERE serial_no IS NOT NULL ORDER BY serial_no")
             all_pages = cursor.fetchall()
             for serial_no, group_name, sg_sn, page_no in all_pages:
                 sn = str(serial_no)
-                content_hash = self._compute_page_hash(sn)
+                content_hash, json_dump = self._compute_page_hash(sn, return_json=True)
                 product_names = self._get_page_product_list(group_name, sg_sn, page_no)
                 cursor.execute("""
                     MERGE page_snapshots AS target
-                    USING (SELECT ? AS serial_no, ? AS content_hash, ? AS product_list) AS source
+                    USING (SELECT ? AS serial_no, ? AS content_hash, ? AS product_list, ? AS json_dump) AS source
                     ON target.serial_no = source.serial_no
-                    WHEN MATCHED THEN UPDATE SET content_hash = source.content_hash, product_list = source.product_list
-                    WHEN NOT MATCHED THEN INSERT (serial_no, content_hash, product_list) VALUES (source.serial_no, source.content_hash, source.product_list);
-                """, (sn, content_hash, json.dumps(product_names)))
+                    WHEN MATCHED THEN UPDATE SET content_hash = source.content_hash, product_list = source.product_list, json_dump = source.json_dump
+                    WHEN NOT MATCHED THEN INSERT (serial_no, content_hash, product_list, json_dump) VALUES (source.serial_no, source.content_hash, source.product_list, source.json_dump);
+                """, (sn, content_hash, json.dumps(product_names), json_dump))
             conn.commit()
             logger.info(f"Saved snapshots for {len(all_pages)} pages")
         except Exception as e:
