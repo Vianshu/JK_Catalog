@@ -1066,7 +1066,7 @@ class CatalogLogic:
                     "_mp_list": [], "max_update_date": "",
                     "sort_price": sort_price,
                     "min_id": str(r[11]) if len(r) > 11 and r[11] else "ZZZZZZ",
-                    "img_date": str(r[12]) if len(r) > 12 and r[12] else ""
+                    "img_date": ""  # will be updated to MAX across all variants below
                 }
             g = grouped[norm_key]
             g["sizes"].append(r[5] if r[5] else "")
@@ -1085,6 +1085,11 @@ class CatalogLogic:
                 g["_mp_list"].append(0)
             if not g["image_path"] and r[2]:
                 g["image_path"] = r[2]
+            # img_date: always keep the MAX (most recent) across all variants
+            # so that the hash is insensitive to which variant is "first" in the query.
+            row_img_date = str(r[12]) if len(r) > 12 and r[12] else ""
+            if row_img_date > g["img_date"]:
+                g["img_date"] = row_img_date
 
         final_list = []
         for g in grouped.values():
@@ -1894,9 +1899,10 @@ class CatalogLogic:
                     "sizes": p.get("sizes", []),
                     "mrps": [_norm_num(v) for v in p.get("mrps", [])],
                     "moqs": p.get("moqs", []),
-                    "sort_price": str(p.get("sort_price", "")),
+                    # sort_price omitted — redundant with mrps, was causing false-positive
+                    # hash changes when variant ordering shifted due to MRP updates.
                     "img": p.get("image_path", ""),
-                    "img_date": p.get("img_date", ""),
+                    "img_date": p.get("img_date", ""),  # MAX across all variants
                     "category": p.get("category", ""),
                     "base_units": p.get("base_units", ""),
                     "master_packing": p.get("master_packing", ""),
@@ -1941,7 +1947,7 @@ class CatalogLogic:
         # We bump CURRENT_HASH_VERSION whenever the algorithm changes and
         # auto-regenerate all snapshots silently on first run, returning 0
         # changes so the CRM is not polluted.
-        CURRENT_HASH_VERSION = 2  # bump this whenever hash algorithm changes
+        CURRENT_HASH_VERSION = 3  # v2: ORDER BY MRP,GUID  v3: img_date=MAX, sort_price removed
         try:
             cursor = conn.cursor()
             cursor.execute("SELECT [value] FROM build_config WHERE [key]='hash_version'")
