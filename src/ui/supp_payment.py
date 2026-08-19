@@ -789,7 +789,7 @@ class TodayPaymentTab(QWidget):
         self._can_edit = True
         self._db = get_db_manager()
         self._db_name = ""
-        self._party_list = []         # Sundry Debtors list for Payments col 3
+        self._party_list = []         # Sundry Creditors list for Payments col 3
         self._section_cards = {}      # section_id -> _SectionCard
         self._current_view = 1        # 0=single, 1=multi
 
@@ -1028,7 +1028,7 @@ class TodayPaymentTab(QWidget):
         self._rebuild_section_views()
 
     def _reload_party_list(self):
-        """Load Sundry Debtors list and mapping dicts for the Payments party autocomplete."""
+        """Load Sundry Creditors list and mapping dicts for the Payments party autocomplete."""
         self._guid_to_name = {}
         self._name_to_guid = {}
         self._alias_to_guid = {}
@@ -1049,7 +1049,7 @@ class TodayPaymentTab(QWidget):
                     continue
                 try:
                     cur = conn.cursor()
-                    cur.execute("SELECT GUID, Alias, Name FROM row_ledger_data WHERE [Group] LIKE '%Sundry Debtors%'")
+                    cur.execute("SELECT GUID, Alias, Name FROM row_ledger_data WHERE [Group] LIKE '%Sundry Creditors%'")
                     for guid, alias, name in cur.fetchall():
                         guid_str = str(guid).strip() if guid else ""
                         if not guid_str: continue

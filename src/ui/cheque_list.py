@@ -1082,7 +1082,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             l_cursor = l_conn.cursor()
             l_cursor.execute(
                 "SELECT GUID, Alias, Name FROM row_ledger_data "
-                "WHERE [Group] LIKE '%Sundry Debtors%'"
+                "WHERE [Group] LIKE '%Sundry Creditors%'"
             )
             new_guid_to_name = {}
             new_name_to_guid = {}
@@ -1120,7 +1120,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         from src.ui.settings import load_crm_list
         self.crm_list_data = load_crm_list(self.company_path)
 
-        # 2. Party Mapping (Sundry Debtors: Alias + Name searchable) + GUID maps
+        # 2. Party Mapping (Sundry Creditors: Alias + Name searchable) + GUID maps
         self.party_mapping = {}
         self.guid_to_name = {}
         self.name_to_guid = {}
@@ -1128,7 +1128,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             l_conn = self.db.get_connection(self.ledger_db_name)
             if l_conn:
                 l_cursor = l_conn.cursor()
-                l_cursor.execute("SELECT GUID, Alias, Name FROM row_ledger_data WHERE [Group] LIKE '%Sundry Debtors%'")
+                l_cursor.execute("SELECT GUID, Alias, Name FROM row_ledger_data WHERE [Group] LIKE '%Sundry Creditors%'")
                 for guid, alias, name in l_cursor.fetchall():
                     name_str  = str(name).strip()  if name  and str(name).strip().lower()  != "none" else ""
                     alias_str = str(alias).strip() if alias and str(alias).strip().lower() != "none" else ""
