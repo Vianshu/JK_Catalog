@@ -437,9 +437,12 @@ class GodownListUI(ExcelTableMixin, QWidget):
                             self.set_item_locked(row, 6, "", should_lock=False)
                             cn_was_freed = True
                             
-                    self._nav_set_current(row, 1)
                     from PyQt6.QtCore import QTimer
-                    QTimer.singleShot(0, lambda r=row: self.table.editItem(self.table.item(r, 1)) if self.table.item(r, 1) else None)
+                    def _move_and_edit(r=row):
+                        self._nav_set_current(r, 1)
+                        if self.table.item(r, 1):
+                            self.table.editItem(self.table.item(r, 1))
+                    QTimer.singleShot(0, _move_and_edit)
                     if cn_was_freed: self._reassign_empty_cns()
                     self.save_data_to_db()
                     return
@@ -449,9 +452,12 @@ class GodownListUI(ExcelTableMixin, QWidget):
                     self.set_item_locked(row, 2, unit_val, should_lock=False)
                     self.set_item_locked(row, 5, pno_val,  should_lock=False)
                     if not self.table.item(row, 1): self.set_item_locked(row, 1, "", should_lock=False)
-                    self._nav_set_current(row, 1)
                     from PyQt6.QtCore import QTimer
-                    QTimer.singleShot(0, lambda r=row: self.table.editItem(self.table.item(r, 1)) if self.table.item(r, 1) else None)
+                    def _move_and_edit_else(r=row):
+                        self._nav_set_current(r, 1)
+                        if self.table.item(r, 1):
+                            self.table.editItem(self.table.item(r, 1))
+                    QTimer.singleShot(0, _move_and_edit_else)
                     self.save_data_to_db()
 
             # Column 1 (प्रति कार्टुन) - Right align + numeric validation
