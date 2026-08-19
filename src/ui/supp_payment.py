@@ -2384,11 +2384,32 @@ class InsuranceTab(QWidget):
         c_lay.setSpacing(20)
 
         for title, color, tname, cols in _INS_SECTIONS:
-            # Section header
-            hdr = QLabel(title)
-            hdr.setFont(_bold_font(11))
-            hdr.setStyleSheet(_SECTION_HEADER_STYLE.format(color=color))
-            c_lay.addWidget(hdr)
+            # Section header row: title on the left, Add Row button on the right
+            hdr_row = QWidget()
+            hdr_row.setStyleSheet(_SECTION_HEADER_STYLE.format(color=color))
+            hdr_lay = QHBoxLayout(hdr_row)
+            hdr_lay.setContentsMargins(10, 4, 8, 4)
+            hdr_lay.setSpacing(8)
+
+            hdr_lbl = QLabel(title)
+            hdr_lbl.setFont(_bold_font(11))
+            hdr_lbl.setStyleSheet("color: #ffffff; background: transparent; border: none;")
+            hdr_lay.addWidget(hdr_lbl)
+            hdr_lay.addStretch()
+
+            add_btn = QPushButton("+ Add Row")
+            add_btn.setFixedHeight(24)
+            add_btn.setStyleSheet(
+                "QPushButton { background: rgba(255,255,255,0.22); color: #ffffff; "
+                "border: 1px solid rgba(255,255,255,0.5); border-radius: 4px; "
+                "padding: 0 10px; font-size: 10pt; }"
+                "QPushButton:hover { background: rgba(255,255,255,0.35); }"
+                "QPushButton:pressed { background: rgba(255,255,255,0.15); }"
+            )
+            add_btn.clicked.connect(lambda _, t=tbl: t.add_row())
+            hdr_lay.addWidget(add_btn)
+
+            c_lay.addWidget(hdr_row)
 
             headers = [c[0] for c in cols]
             widths  = [c[1] for c in cols]
@@ -2398,18 +2419,13 @@ class InsuranceTab(QWidget):
             tbl.setItemDelegateForColumn(4, UniversalCellDelegate(tbl, cell_type="date"))
             tbl.setItemDelegateForColumn(5, UniversalCellDelegate(tbl, cell_type="date"))
 
-            # Add row button
-            add_btn = QPushButton("+ Add Row")
-            add_btn.setStyleSheet(_BTN_SECONDARY)
-            add_btn.setFixedHeight(28)
+            # Re-wire button now that tbl exists
+            add_btn.clicked.disconnect()
             add_btn.clicked.connect(lambda _, t=tbl: t.add_row())
-            btn_row = QHBoxLayout()
-            btn_row.addWidget(add_btn)
-            btn_row.addStretch()
 
             c_lay.addWidget(tbl)
-            c_lay.addLayout(btn_row)
             self._tables.append((tname, tbl))
+
 
         c_lay.addStretch()
         scroll.setWidget(container)
