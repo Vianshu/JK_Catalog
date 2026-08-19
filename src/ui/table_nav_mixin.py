@@ -57,7 +57,7 @@ QTableWidget::item:open {
 """
 
 class UniversalCellDelegate(QStyledItemDelegate):
-    def __init__(self, owner=None, parent=None, cell_type=None, autocomplete_items=None, display_cb=None, set_model_cb=None):
+    def __init__(self, owner=None, parent=None, cell_type=None, autocomplete_items=None, display_cb=None, set_model_cb=None, enforce_match=True):
         if parent is None and owner is not None:
             parent = owner
         super().__init__(parent)
@@ -71,6 +71,7 @@ class UniversalCellDelegate(QStyledItemDelegate):
         self._autocomplete_items = autocomplete_items
         self._display_cb = display_cb
         self._set_model_cb = set_model_cb
+        self._enforce_match = enforce_match
 
     def initStyleOption(self, option, index):
         super().initStyleOption(option, index)
@@ -125,9 +126,10 @@ class UniversalCellDelegate(QStyledItemDelegate):
                     completer.setMaxVisibleItems(12)
                     editor.setCompleter(completer)
                     completer.popup().setMinimumWidth(350)
-                    editor.textEdited.connect(
-                        lambda text, e=editor, dl=data_list: _enforce_match(e, text, dl)
-                    )
+                    if self._enforce_match:
+                        editor.textEdited.connect(
+                            lambda text, e=editor, dl=data_list: _enforce_match(e, text, dl)
+                        )
         return editor
 
     def updateEditorGeometry(self, editor, option, index):
@@ -203,7 +205,9 @@ class ExcelTableMixin:
         self._excel_table = table
         self._is_edit_mode = False
 
-        table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.AnyKeyPressed)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | 
+                              QAbstractItemView.EditTrigger.AnyKeyPressed | 
+                              QAbstractItemView.EditTrigger.EditKeyPressed)
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.setStyleSheet(UNIVERSAL_TABLE_STYLE)
         
@@ -214,7 +218,9 @@ class ExcelTableMixin:
         t = self._excel_table
         t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         t.setCurrentCell(row, col)
-        t.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.AnyKeyPressed)
+        t.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | 
+                          QAbstractItemView.EditTrigger.AnyKeyPressed | 
+                          QAbstractItemView.EditTrigger.EditKeyPressed)
 
     def eventFilter(self, source, event):
         t = self._excel_table

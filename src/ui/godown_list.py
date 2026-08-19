@@ -89,23 +89,7 @@ class _GodownSortProxyModel(QSortFilterProxyModel):
         return lv < rv       # alphabetical within same tier
 
 
-def _godown_enforce_match(editor, text: str, data_list: list, proxy, completer):
-    """Reject the last typed character if no entry in data_list contains it.
-    After rejecting, update the proxy and re-open the popup for the reverted text."""
-    if not text:
-        return
-    tl = text.lower()
-    for item in data_list:
-        if tl in str(item).lower():
-            return  # at least one match — allow
-    # No match: strip the last character
-    editor.blockSignals(True)
-    editor.setText(text[:-1])
-    editor.blockSignals(False)
-    # Re-open popup with correct matches for the reverted text
-    reverted = text[:-1].lower()
-    proxy.set_prefix(reverted)
-    completer.complete()
+
 
 
 class _GodownDelegate(UniversalCellDelegate):
@@ -304,7 +288,12 @@ class GodownListUI(ExcelTableMixin, QWidget):
         # Use _GodownDelegate for all columns so Tab acts like Enter everywhere in this table
         self.table.setItemDelegate(_GodownDelegate(self))
         # Specific override for Alias column (col 0) for autocomplete
-        self.table.setItemDelegateForColumn(0, _GodownDelegate(self, cell_type="autocomplete", autocomplete_items=lambda: getattr(self, "final_data", [])))
+        self.table.setItemDelegateForColumn(0, _GodownDelegate(
+            self, 
+            cell_type="autocomplete", 
+            autocomplete_items=lambda: getattr(self, "final_data", []),
+            enforce_match=False
+        ))
         
         # Inline stylesheet overrides global QSS cascade for font (Devanagari support)
         from src.ui.table_nav_mixin import UNIVERSAL_TABLE_STYLE
