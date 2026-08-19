@@ -460,8 +460,15 @@ class GodownListUI(ExcelTableMixin, QWidget):
                 if text:
                     val = text.replace(",", "").replace(".", "").replace("-", "")
                     if val and not val.isdigit():
-                        QMessageBox.warning(self, "Invalid Input", "कृपया केवल संख्या (numbers) लिखें।")
-                        item.setText("")
+                        # Defer the warning + clear to after blockSignals(False) to avoid crash
+                        from PyQt6.QtCore import QTimer
+                        def _warn_and_clear(it=item, tbl=self.table, owner=self):
+                            tbl.blockSignals(True)
+                            it.setText("")
+                            tbl.blockSignals(False)
+                            from PyQt6.QtWidgets import QMessageBox
+                            QMessageBox.warning(owner, "Invalid Input", "कृपया केवल संख्या (numbers) लिखें।")
+                        QTimer.singleShot(0, _warn_and_clear)
 
             # Column 3 (जम्मा कार्टुन) — left-align + arithmetic expression evaluator (+ and - only)
             if col == 3:
