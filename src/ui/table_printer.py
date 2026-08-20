@@ -246,7 +246,7 @@ def _paint_tables(printer, page_range=None):
                 painter.setFont(title_font)
                 painter.setPen(pen)
                 rect = QRect(0, y, page_w, height)
-                painter.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+                painter.drawText(rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, text)
                 y += height
             elif item_type == "header":
                 _, col_texts, col_widths, height = item
@@ -271,10 +271,13 @@ def _paint_tables(printer, page_range=None):
                     painter.drawRect(rect)
                     text_rect = QRect(x + h_pad, y, col_widths[c] - 2 * h_pad, height)
                     
-                    # Try to align numbers to the right
+                    # Try to align numbers to the right (handling commas and negatives)
                     align = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-                    if text and text.replace('.','',1).isdigit():
-                        align = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                    if text:
+                        clean_text = text.replace('.', '', 1).replace(',', '').replace('-', '', 1)
+                        if clean_text.isdigit():
+                            align = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+
                         
                     painter.drawText(text_rect, align, text)
                     x += col_widths[c]

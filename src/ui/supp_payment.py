@@ -812,19 +812,24 @@ class _SectionCard(QFrame):
                 if tp:
                     tp._rebuild_section_views()
 
-    def _recalc(self):
-        """Set table height based on its content so cards don't stretch."""
+    def _recalc(self, single_view=False):
+        """Set table height based on its content so cards don't stretch.
+
+        Args:
+            single_view: True when the card is displayed full-width in single-view
+                         mode (larger cap). False for compact multi-view grid cards.
+        """
         cols = self.table.columnCount()
         hh = self.table.horizontalHeader().sizeHint().height() if cols else 0
         rh = sum(self.table.rowHeight(r) for r in range(self.table.rowCount()))
         h = hh + rh + 6
-        # Allow up to 800px in single-view so large tables aren't prematurely scrolled;
-        # cap at 500px in multi-view (normal card layout)
-        h = min(max(h, 60), 800)
+        # Single-view gets a larger cap (full-width pane, user can scroll the pane).
+        # Multi-view gets a compact cap so cards don't dominate the grid.
+        max_h = 800 if single_view else 500
+        h = min(max(h, 60), max_h)
         self.table.setMinimumHeight(h)
         self.table.setMaximumHeight(h)
-        # Also constrain the card's own height so it never balloons in single-view.
-        # card height = header bar + table + 2px border
+        # Constrain the card's own height to match the table + header bar.
         hdr_h = self._hdr.sizeHint().height() if self._hdr else 36
         card_h = max(hdr_h + h + 2, 80)
         self.setFixedHeight(card_h)
@@ -1343,7 +1348,7 @@ class TodayPaymentTab(QWidget, _PrintExportMixin):
                 w.setMinimumWidth(300)
                 # Undo the fixed height from _recalc() so multi-view can lay it out naturally
                 w.setMaximumHeight(16777215)
-                w._recalc()  # reapply tight height for multi-view
+                w._recalc(single_view=False)  # reapply compact height for multi-view grid
                 if getattr(w, '_card_fixed_width', None):
                     w.setFixedWidth(w._card_fixed_width)
                 else:
@@ -1377,7 +1382,7 @@ class TodayPaymentTab(QWidget, _PrintExportMixin):
         # Ensure height is tight: remove any leftover fixed height from multi-view,
         # then let _recalc() compute the correct compact height.
         card.setMaximumHeight(16777215)
-        card._recalc()
+        card._recalc(single_view=True)  # use larger height cap in full-width single pane
         self._single_card_holder.addWidget(card, 0, Qt.AlignmentFlag.AlignTop)
 
     def _rename_section_from_sidebar(self, item):
@@ -2314,46 +2319,72 @@ class RecordTab(QWidget, _PrintExportMixin):
             s.setVisible(not q or q in name)
 
     def _get_tables_for_export(self):
-        """Builds a temporary QTableWidget from the form data in the sections."""
+        """Builds export tables in the format:
+            Row 0 : Supplier Name  (col 0, spans visually)
+            Row 1 : ""  | Company Account | Personal Account
+            Row 2+: Field:  | value  | value
+            ...
+        """
         tables = []
         for sec in self._sections:
             if sec.isHidden():
                 continue
-            
+
             supplier_name = sec._name_edit.text().strip() or "Unnamed Supplier"
-            
-            # Count valid rows
             cards = [c for c in sec._acc_cards if c.isVisible()]
             if not cards:
                 continue
-                
-            # Create a temporary 2-column form table
-            total_rows = sum(1 + len(_REC_FIELDS) + 1 for _ in cards)
-            tbl = QTableWidget(total_rows, 2)
+
+            # Split into company vs personal pools
+            company_cards  = [c for c in cards if c._is_company]
+            personal_cards = [c for c in cards if not c._is_company]
+            max_pairs = max(len(company_cards), len(personal_cards), 1)
+            n_fields  = len(_REC_FIELDS)
+
+            # Layout: 1 supplier-name row + per-pair (1 type-header + n_fields + 1 spacer)
+            total_rows = 1 + max_pairs * (1 + n_fields + 1)
+
+            # 3 columns:  Field Label  |  Company Value  |  Personal Value
+            tbl = QTableWidget(total_rows, 3)
             tbl.horizontalHeader().setVisible(False)
-            
-            current_row = 0
-            for card in cards:
-                acc_type = "--- COMPANY ACCOUNT ---" if card._is_company else "--- PERSONAL ACCOUNT ---"
-                tbl.setItem(current_row, 0, QTableWidgetItem(acc_type))
-                tbl.setItem(current_row, 1, QTableWidgetItem(""))
-                current_row += 1
-                
-                # Fetch field data
-                for fkey, edit in card._field_edits:
-                    label = next((f[2] for f in _REC_FIELDS if f[0] == fkey), fkey)
-                    tbl.setItem(current_row, 0, QTableWidgetItem(f"{label}:"))
-                    tbl.setItem(current_row, 1, QTableWidgetItem(edit.text().strip()))
-                    current_row += 1
-                
-                # Spacer
-                tbl.setItem(current_row, 0, QTableWidgetItem(""))
-                tbl.setItem(current_row, 1, QTableWidgetItem(""))
-                current_row += 1
-            
+
+            def _set(r, c, text, _t=tbl):
+                _t.setItem(r, c, QTableWidgetItem(str(text) if text else ""))
+
+            # Row 0 — Supplier name
+            _set(0, 0, supplier_name)
+            _set(0, 1, "")
+            _set(0, 2, "")
+
+            row = 1
+            for pair_idx in range(max_pairs):
+                co = company_cards[pair_idx]  if pair_idx < len(company_cards)  else None
+                pe = personal_cards[pair_idx] if pair_idx < len(personal_cards) else None
+
+                # Type-header row
+                _set(row, 0, "")
+                _set(row, 1, "Company Account"  if co else "")
+                _set(row, 2, "Personal Account" if pe else "")
+                row += 1
+
+                # Build field-value dicts
+                co_vals = {fk: ed.text().strip() for fk, ed in co._field_edits} if co else {}
+                pe_vals = {fk: ed.text().strip() for fk, ed in pe._field_edits} if pe else {}
+
+                for fkey, _ftype, flabel in _REC_FIELDS:
+                    _set(row, 0, f"{flabel}:")
+                    _set(row, 1, co_vals.get(fkey, ""))
+                    _set(row, 2, pe_vals.get(fkey, ""))
+                    row += 1
+
+                # Blank spacer row
+                _set(row, 0, ""); _set(row, 1, ""); _set(row, 2, "")
+                row += 1
+
             tables.append({"title": supplier_name.upper(), "table": tbl})
-            
+
         return tables
+
 
     def _update_status(self):
         n_sup = sum(1 for s in self._sections if s.is_selected())
@@ -2586,7 +2617,7 @@ class InsuranceTab(QWidget, _PrintExportMixin):
             add_btn.clicked.connect(lambda _, t=tbl: t.add_row())
 
             c_lay.addWidget(tbl)
-            self._tables.append((tname, tbl))
+            self._tables.append((title, tname, tbl))
 
 
         c_lay.addStretch()
@@ -2595,18 +2626,18 @@ class InsuranceTab(QWidget, _PrintExportMixin):
 
     def _get_tables_for_export(self):
         """Collect all insurance sub-tables for export/print."""
-        return [{"title": tname, "table": tbl} for tname, tbl in self._tables]
+        return [{"title": title, "table": tbl} for title, tname, tbl in self._tables]
 
     def set_company_path(self, path: str):
         company_name = os.path.basename(os.path.normpath(path))
         db_name = build_logical_name(company_name, company_path=path)
         db = get_db_manager()
-        for tname, tbl in self._tables:
+        for title, tname, tbl in self._tables:
             tbl.set_db_name(db_name)
 
     def apply_edit_mode(self, can_edit: bool):
         self._can_edit = can_edit
-        for _, tbl in self._tables:
+        for _, tname, tbl in self._tables:
             tbl.apply_edit_mode(can_edit)
 
 

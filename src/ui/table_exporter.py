@@ -20,6 +20,12 @@ def export_tables_to_excel(export_folder: str, filename: str, tables_data: list,
         sheet = workbook.add_worksheet("Data")
         
         bold_format = workbook.add_format({'bold': True})
+        title_format = workbook.add_format({
+            'bold': True,
+            'align': 'center',
+            'valign': 'vcenter',
+            'font_size': 13,
+        })
         header_format = workbook.add_format({
             'bold': True,
             'bg_color': '#f1f5f9',
@@ -47,7 +53,12 @@ def export_tables_to_excel(export_folder: str, filename: str, tables_data: list,
             start_col = right_col_start if is_right else 0
 
             if title:
-                sheet.write(current_row, start_col, title, bold_format)
+                col_count = table.columnCount()
+                end_col = start_col + max(col_count - 1, 0)
+                if end_col > start_col:
+                    sheet.merge_range(current_row, start_col, current_row, end_col, title, title_format)
+                else:
+                    sheet.write(current_row, start_col, title, title_format)
                 current_row += 1
                 
             # Write Headers (only if visible)
