@@ -625,21 +625,42 @@ class CatalogLogic:
         updated = 0
         try:
             cursor = conn.cursor()
-            for crm_name in crm_list:
-                for serial in pages_to_add:
-                    cursor.execute("""
-                        IF NOT EXISTS (
-                            SELECT 1 FROM report_data
-                            WHERE crm_name=? AND serial_no=? AND status='pending'
-                        )
-                        INSERT INTO report_data (crm_name, serial_no, status)
-                        VALUES (?, ?, 'pending')
-                    """, (crm_name, serial, crm_name, serial))
-                updated += 1
+            # --- Batch approach: 4 queries instead of N_crms × N_serials ---
+            # 1. Stage all (crm_name, serial_no) pairs into a temp table in one round-trip.
+            cursor.execute("""
+                CREATE TABLE #pending_batch (
+                    crm_name  NVARCHAR(255),
+                    serial_no NVARCHAR(100)
+                )
+            """)
+            all_pairs = [
+                (crm_name, serial)
+                for crm_name in crm_list
+                for serial in pages_to_add
+            ]
+            cursor.executemany(
+                "INSERT INTO #pending_batch (crm_name, serial_no) VALUES (?, ?)",
+                all_pairs
+            )
+            # 2. Single idempotent INSERT — only rows not already pending are inserted.
+            cursor.execute("""
+                INSERT INTO report_data (crm_name, serial_no, status)
+                SELECT b.crm_name, b.serial_no, 'pending'
+                FROM #pending_batch b
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM report_data rd
+                    WHERE rd.crm_name  = b.crm_name
+                      AND rd.serial_no = b.serial_no
+                      AND rd.status    = 'pending'
+                )
+            """)
+            # 3. Cleanup temp table.
+            cursor.execute("DROP TABLE #pending_batch")
             conn.commit()
+            updated = len(crm_list)
             logger.info(
                 f"_add_serials_to_all_crms: {len(pages_to_add)} serial(s) → "
-                f"{updated} CRM(s) via SQL INSERT"
+                f"{updated} CRM(s) via batched SQL INSERT"
             )
         except Exception as e:
             try:
@@ -974,6 +995,10 @@ class CatalogLogic:
             if all_names:
                 self._save_display_order(cache_key, all_names)
         except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             logger.error(f"_save_page_assignments error: {e}")
 
     def _ensure_page_exists(self, group_name, sg_sn, page_no):

@@ -563,9 +563,13 @@ class GodownListUI(ExcelTableMixin, QWidget):
         conn = self.db.get_connection(self.godown_db_name)
         if not conn:
             return
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM stock")
-        rows = cursor.fetchall()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM stock")
+            rows = cursor.fetchall()
+        except Exception as e:
+            print(f"[GODOWN] load_data_from_db query failed: {e}")
+            return
 
         self.table.blockSignals(True)
         try:

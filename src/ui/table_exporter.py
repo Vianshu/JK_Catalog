@@ -47,7 +47,7 @@ def export_tables_to_excel(export_folder: str, filename: str, tables_data: list,
             start_col = right_col_start if is_right else 0
 
             if title:
-                sheet.write(current_row, start_col, title.upper(), bold_format)
+                sheet.write(current_row, start_col, title, bold_format)
                 current_row += 1
                 
             # Write Headers (only if visible)

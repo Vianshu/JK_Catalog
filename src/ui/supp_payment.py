@@ -233,15 +233,18 @@ class _DbTable(QTableWidget):
         cur = conn.cursor()
         try:
             cur.execute(f"DELETE FROM {self._table_name}")
-            for r in range(self.rowCount()):
-                for c in range(self.columnCount()):
-                    it = self.item(r, c)
-                    if it and it.text():
-                        cur.execute(
-                            f"INSERT INTO {self._table_name} (row_idx, col_idx, cell_text)"
-                            f" VALUES (?,?,?)",
-                            (r, c, it.text())
-                        )
+            # Collect all non-empty cells first, then send in one batched round-trip.
+            rows_to_insert = [
+                (r, c, self.item(r, c).text())
+                for r in range(self.rowCount())
+                for c in range(self.columnCount())
+                if self.item(r, c) and self.item(r, c).text()
+            ]
+            if rows_to_insert:
+                cur.executemany(
+                    f"INSERT INTO {self._table_name} (row_idx, col_idx, cell_text) VALUES (?,?,?)",
+                    rows_to_insert
+                )
             conn.commit()
         except Exception as e:
             conn.rollback()
@@ -702,10 +705,12 @@ class _SectionCard(QFrame):
             return
         cur = conn.cursor()
         try:
-            cur.execute(f"UPDATE tp_sections SET {field}=? WHERE id=?", (value, self.section_id))
+            # Bracket the identifier to avoid SQL reserved-word conflicts (e.g. 'key', 'name', 'order')
+            cur.execute(f"UPDATE tp_sections SET [{field}]=? WHERE id=?", (value, self.section_id))
             conn.commit()
         except Exception as e:
             conn.rollback()
+            print(f"[ERROR] _update_db('{field}'): {e}")
 
     def _delete_from_db(self):
         if not self._db_name:
@@ -813,9 +818,16 @@ class _SectionCard(QFrame):
         hh = self.table.horizontalHeader().sizeHint().height() if cols else 0
         rh = sum(self.table.rowHeight(r) for r in range(self.table.rowCount()))
         h = hh + rh + 6
-        h = min(max(h, 60), 500)
+        # Allow up to 800px in single-view so large tables aren't prematurely scrolled;
+        # cap at 500px in multi-view (normal card layout)
+        h = min(max(h, 60), 800)
         self.table.setMinimumHeight(h)
         self.table.setMaximumHeight(h)
+        # Also constrain the card's own height so it never balloons in single-view.
+        # card height = header bar + table + 2px border
+        hdr_h = self._hdr.sizeHint().height() if self._hdr else 36
+        card_h = max(hdr_h + h + 2, 80)
+        self.setFixedHeight(card_h)
 
     def set_edit_mode(self, can_edit):
         self._can_edit = can_edit
@@ -887,6 +899,7 @@ class TodayPaymentTab(QWidget, _PrintExportMixin):
                "QPushButton:!checked{background:transparent;color:#64748b;}"
                "QPushButton:!checked:hover{color:#334155;}")
         self._init_print_export(tlay, "Today Payment", supports_print=False, table_getter=self._get_tables_for_export)
+        self._export_two_column = True  # TodayPayment uses 2-column grid layout in Excel
 
         self._btn_single = QPushButton("Single Table")
         
@@ -999,20 +1012,20 @@ class TodayPaymentTab(QWidget, _PrintExportMixin):
 
     def _get_tables_for_export(self):
         """Collect all section card tables for the Excel export (skip fully empty tables)."""
+        from src.ui.table_nav_mixin import get_visual_text
         tables = []
         for sid, card in self._section_cards.items():
             tbl = card.table
             has_data = False
             for r in range(tbl.rowCount()):
                 for c in range(tbl.columnCount()):
-                    it = tbl.item(r, c)
-                    if it and it.text().strip():
+                    if get_visual_text(tbl, r, c).strip():
                         has_data = True
                         break
                 if has_data:
                     break
             if has_data:
-                tables.append({"title": card.title_lbl.text().upper(), "table": tbl})
+                tables.append({"title": card.title_lbl.text(), "table": tbl})
         return tables
 
     def _switch_view(self, idx):
@@ -1328,11 +1341,16 @@ class TodayPaymentTab(QWidget, _PrintExportMixin):
                 w.setFrameShadow(QFrame.Shadow.Raised)
                 w.setLineWidth(1)
                 w.setMinimumWidth(300)
+                # Undo the fixed height from _recalc() so multi-view can lay it out naturally
+                w.setMaximumHeight(16777215)
+                w._recalc()  # reapply tight height for multi-view
                 if getattr(w, '_card_fixed_width', None):
                     w.setFixedWidth(w._card_fixed_width)
                 else:
                     w.setMaximumWidth(16777215)
                 w.setParent(self._multi_container)  # re-park under multi
+                # Do NOT call hide() here — Qt's explicit-hide flag persists through
+                # addWidget() and would cause cards to stay invisible in multi-view.
 
         if row < 0 or row >= self._sidebar_list.count():
             self._single_placeholder.show()
@@ -1356,7 +1374,11 @@ class TodayPaymentTab(QWidget, _PrintExportMixin):
         card.setLineWidth(0)
         card.setMinimumWidth(0)
         card.setMaximumWidth(16777215)  # Qt's QWIDGETSIZE_MAX — removes fixed width
-        self._single_card_holder.addWidget(card)
+        # Ensure height is tight: remove any leftover fixed height from multi-view,
+        # then let _recalc() compute the correct compact height.
+        card.setMaximumHeight(16777215)
+        card._recalc()
+        self._single_card_holder.addWidget(card, 0, Qt.AlignmentFlag.AlignTop)
 
     def _rename_section_from_sidebar(self, item):
         sid = item.data(Qt.ItemDataRole.UserRole)
@@ -1470,6 +1492,7 @@ class TodayPaymentTab(QWidget, _PrintExportMixin):
                 if left_card:
                     left_card.setParent(row_widget)
                     hbox.addWidget(left_card, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+                    left_card.show()  # guard: ensure not left hidden from single-view
 
             # Right card (may not exist for the last odd row)
             if i + 1 < len(ordered_sids):
@@ -1477,6 +1500,7 @@ class TodayPaymentTab(QWidget, _PrintExportMixin):
                 if right_card:
                     right_card.setParent(row_widget)
                     hbox.addWidget(right_card, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+                    right_card.show()  # guard: ensure not left hidden from single-view
 
             # Push both cards to the left — no artificial column stretching
             hbox.addStretch(1)

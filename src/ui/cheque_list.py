@@ -51,9 +51,9 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         bref = index.data(_BREF_ROLE)
         if bref:
             name = self.bref_to_name.get(bref, "")
-            if not name:
-                return "[Unknown Bank]"
-            return name
+            if name:
+                return name
+            # bref exists but not in map (stale ref after bank was deleted) — show raw text
         return index.data(Qt.ItemDataRole.DisplayRole)
         
     def _match_autocomplete_val(self, val, data_list):
