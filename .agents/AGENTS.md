@@ -3,7 +3,7 @@
 1. **JK Multi Only**: All work and development on this codebase should exclusively focus on the "JK Multi" (multi-user) version of the application. Do not modify or focus on the single-user versions.
 2. **PyInstaller Builds**: Always use the **one-dir** (folder) build approach (`COLLECT`) when compiling the executable with PyInstaller. Do not build single-file executables (`--onefile`), as the multi-user structure requires the folder layout for performance and proper data loading. Use `JK_Catalog_Multi.spec` for all builds.
 3. **Inno Setup Builds**: After compiling with PyInstaller, always build the installer using Inno Setup Compiler. Use the `JK_Catalog_Multi_Setup.iss` script.
-4. **No Automated EXE Builds**: DO NOT run PyInstaller or Inno Setup (ISCC) to create an EXE automatically (not even during `check 1`). Only build the EXE when the user explicitly requests it (e.g. "Build the EXE").
+4. **No Automated EXE Builds**: NEVER run PyInstaller or Inno Setup (ISCC) to create an EXE automatically after completing a task. You must wait for the user to explicitly say "check" or "check 1" in their message before starting a build. If they do not explicitly ask for a build or say "check", do not run the build commands.
 5. **No Automated Git Commits**: DO NOT run `git commit` automatically after completing tasks. Only commit when explicitly asked by the user, or when triggered by the `check 1` command.
 
 # Issue Reporting Assumptions

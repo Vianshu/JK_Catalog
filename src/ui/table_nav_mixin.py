@@ -27,6 +27,34 @@ def _enforce_match(editor, text, data_list):
         if not any(text_lower in item.lower() for item in data_list):
             editor.setText(text[:-1])
 
+def get_visual_text(table, r, c):
+    """Get the visual text of a cell, resolving any delegates (e.g. converting GUID to party name)."""
+    w = table.cellWidget(r, c)
+    if w and hasattr(w, "text"):
+        return w.text().strip()
+        
+    it = table.item(r, c)
+    if not it:
+        return ""
+        
+    index = table.model().index(r, c)
+    
+    # Check data role first
+    display_cb = index.data(DISPLAY_CALLBACK_ROLE)
+    if callable(display_cb):
+        res = display_cb(index)
+        if res is not None:
+            return str(res).strip()
+            
+    # Check delegate fallback
+    delegate = table.itemDelegateForColumn(c) or table.itemDelegateForIndex(index) or table.itemDelegate()
+    if delegate and hasattr(delegate, "_display_cb") and callable(delegate._display_cb):
+        res = delegate._display_cb(index)
+        if res is not None:
+            return str(res).strip()
+            
+    return it.text().strip()
+
 # ---------------------------------------------------------------------------
 # Universal Cell Delegate
 # ---------------------------------------------------------------------------

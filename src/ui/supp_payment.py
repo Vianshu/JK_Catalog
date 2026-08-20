@@ -8,15 +8,70 @@ from PyQt6.QtWidgets import (
     QMenu, QMessageBox, QHeaderView, QAbstractItemView,
     QLabel, QScrollArea, QFrame, QSizePolicy, QLineEdit,
     QListWidget, QListWidgetItem, QStackedWidget, QSplitter,
-    QFormLayout, QApplication, QAbstractScrollArea,
+    QFormLayout, QApplication, QAbstractScrollArea, QFileDialog,
 )
 from PyQt6.QtCore import (
-    Qt, QTimer, QDate, QEvent, QMimeData,
+    Qt, QTimer, QDate, QEvent, QMimeData, QSettings,
 )
 from PyQt6.QtGui import (
     QFont, QColor, QBrush, QPixmap, QPainter, QKeySequence, QShortcut, QCursor, QImage,
 )
 from src.logic.db_manager import get_db_manager, build_logical_name
+
+from src.ui.table_exporter import export_tables_to_excel
+from src.ui.table_printer import print_tables_via_preview
+
+class _PrintExportMixin:
+    def _init_print_export(self, layout, title, supports_print=True, table_getter=None):
+        self._export_title = title
+        self._table_getter = table_getter if table_getter else lambda: [{"title": title, "table": self.table}]
+        self._export_two_column = False
+
+        self.btn_export = QPushButton("📊 Excel")
+        self.btn_export.setStyleSheet(_BTN_PRIMARY)
+        self.btn_export.clicked.connect(self._do_export)
+        layout.addWidget(self.btn_export)
+
+        if supports_print:
+            self.btn_print = QPushButton("🖨 Print")
+            self.btn_print.setStyleSheet(_BTN_PRIMARY)
+            self.btn_print.clicked.connect(self._do_print)
+            layout.addWidget(self.btn_print)
+
+    def _do_export(self):
+        tables = self._table_getter()
+        if not tables:
+            QMessageBox.information(self, "Nothing to Export", "No data found to export.")
+            return
+
+        default_name = f"{self._export_title.replace(' ', '_')}.xlsx"
+        # Retrieve last-used directory from QSettings for convenience
+        settings = QSettings("TallySync", "SuppPayment")
+        last_dir = settings.value("export_last_dir", "")
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Excel File",
+            os.path.join(last_dir, default_name) if last_dir else default_name,
+            "Excel Files (*.xlsx)"
+        )
+        if not path:
+            return  # user cancelled
+
+        # Remember directory for next time
+        settings.setValue("export_last_dir", os.path.dirname(path))
+
+        success = export_tables_to_excel(os.path.dirname(path), os.path.basename(path), tables, self, two_column=self._export_two_column)
+        if success:
+            QMessageBox.information(
+                self, "Export Complete",
+                f"File saved to:\n{path}"
+            )
+
+    def _do_print(self):
+        tables = self._table_getter()
+        print_tables_via_preview(tables, self, self._export_title)
+
 from src.ui.table_nav_mixin import (
     UniversalCellDelegate, 
     CELL_TYPE_ROLE, 
@@ -59,10 +114,10 @@ _SECTION_HEADER_STYLE = (
 
 _BTN_PRIMARY = """
 QPushButton {
-    background: #1d4ed8; color: white; border: none;
+    background: #059669; color: white; border: none;
     border-radius: 5px; padding: 5px 14px; font-weight: bold; font-size: 10pt;
 }
-QPushButton:hover { background: #1e40af; }
+QPushButton:hover { background: #047857; }
 QPushButton:disabled { background: #94a3b8; }
 """
 
@@ -422,10 +477,12 @@ class _SectionCard(QFrame):
 
         # Allow card to naturally shrink/grow unless setFixedWidth is called.
         self.setMinimumWidth(300)
-        
+        self._card_fixed_width = None  # Track original fixed width for single/multi toggle
+
         # Ignore 450 (the old DB default) to allow natural sizing.
         if card_width is not None and card_width >= 300 and card_width != 450:
             self.setFixedWidth(card_width)
+            self._card_fixed_width = card_width
             
         self._load()
         
@@ -782,7 +839,7 @@ class _SectionCard(QFrame):
 # ===========================================================================
 # TODAY PAYMENT TAB
 # ===========================================================================
-class TodayPaymentTab(QWidget):
+class TodayPaymentTab(QWidget, _PrintExportMixin):
 
     def __init__(self):
         super().__init__()
@@ -829,7 +886,10 @@ class TodayPaymentTab(QWidget):
                "QPushButton:checked{background:#ffffff;color:#0f172a;border:1px solid #cbd5e1;}"
                "QPushButton:!checked{background:transparent;color:#64748b;}"
                "QPushButton:!checked:hover{color:#334155;}")
+        self._init_print_export(tlay, "Today Payment", supports_print=False, table_getter=self._get_tables_for_export)
+
         self._btn_single = QPushButton("Single Table")
+        
         self._btn_single.setCheckable(True)
         self._btn_stack  = QPushButton("Multi View")
         self._btn_stack.setCheckable(True)
@@ -936,6 +996,24 @@ class TodayPaymentTab(QWidget):
         self._body_stack.setCurrentIndex(1)   # default: multi view
         main_layout.addWidget(self._body_stack)
 
+
+    def _get_tables_for_export(self):
+        """Collect all section card tables for the Excel export (skip fully empty tables)."""
+        tables = []
+        for sid, card in self._section_cards.items():
+            tbl = card.table
+            has_data = False
+            for r in range(tbl.rowCount()):
+                for c in range(tbl.columnCount()):
+                    it = tbl.item(r, c)
+                    if it and it.text().strip():
+                        has_data = True
+                        break
+                if has_data:
+                    break
+            if has_data:
+                tables.append({"title": card.title_lbl.text().upper(), "table": tbl})
+        return tables
 
     def _switch_view(self, idx):
         self._current_view = idx
@@ -1240,11 +1318,21 @@ class TodayPaymentTab(QWidget):
         if self._current_view != 0:
             return  # Only affects single view — prevents grid gap bug
 
-        # Remove any existing card from single pane
+        # Remove any existing card from single pane; restore multi-view sizing
         while self._single_card_holder.count() > 0:
             item = self._single_card_holder.takeAt(0)
-            if item.widget():
-                item.widget().setParent(self._multi_container)  # re-park under multi
+            w = item.widget()
+            if w:
+                # Restore frame shape and original fixed width before re-parking
+                w.setFrameShape(QFrame.Shape.StyledPanel)
+                w.setFrameShadow(QFrame.Shadow.Raised)
+                w.setLineWidth(1)
+                w.setMinimumWidth(300)
+                if getattr(w, '_card_fixed_width', None):
+                    w.setFixedWidth(w._card_fixed_width)
+                else:
+                    w.setMaximumWidth(16777215)
+                w.setParent(self._multi_container)  # re-park under multi
 
         if row < 0 or row >= self._sidebar_list.count():
             self._single_placeholder.show()
@@ -1259,8 +1347,15 @@ class TodayPaymentTab(QWidget):
             return
 
         self._single_placeholder.hide()
-        # Re-parent card to single pane
+        # Re-parent card to single pane and make it fill the full width.
+        # We must clear the fixed width that was set for the multi-view card layout,
+        # and suppress the QFrame's default StyledPanel border which adds visual gaps.
         card.setParent(self._single_pane)
+        card.setFrameShape(QFrame.Shape.NoFrame)
+        card.setFrameShadow(QFrame.Shadow.Plain)
+        card.setLineWidth(0)
+        card.setMinimumWidth(0)
+        card.setMaximumWidth(16777215)  # Qt's QWIDGETSIZE_MAX — removes fixed width
         self._single_card_holder.addWidget(card)
 
     def _rename_section_from_sidebar(self, item):
@@ -1938,7 +2033,7 @@ class _SupplierSection(QFrame):
             self._refresh_fn()
 
 
-class RecordTab(QWidget):
+class RecordTab(QWidget, _PrintExportMixin):
     def __init__(self):
         super().__init__()
         self._can_edit = True
@@ -1988,6 +2083,7 @@ class RecordTab(QWidget):
         self._search.textChanged.connect(self._filter_sections)
         hlay.addWidget(self._search)
         hlay.addStretch()
+        self._init_print_export(hlay, "Supplier Bank Accounts", table_getter=self._get_tables_for_export)
 
         # Hint
         hint = QLabel("Click · Ctrl+Click · Shift+Click")
@@ -2193,6 +2289,48 @@ class RecordTab(QWidget):
             name = s._name_edit.text().lower()
             s.setVisible(not q or q in name)
 
+    def _get_tables_for_export(self):
+        """Builds a temporary QTableWidget from the form data in the sections."""
+        tables = []
+        for sec in self._sections:
+            if sec.isHidden():
+                continue
+            
+            supplier_name = sec._name_edit.text().strip() or "Unnamed Supplier"
+            
+            # Count valid rows
+            cards = [c for c in sec._acc_cards if c.isVisible()]
+            if not cards:
+                continue
+                
+            # Create a temporary 2-column form table
+            total_rows = sum(1 + len(_REC_FIELDS) + 1 for _ in cards)
+            tbl = QTableWidget(total_rows, 2)
+            tbl.horizontalHeader().setVisible(False)
+            
+            current_row = 0
+            for card in cards:
+                acc_type = "--- COMPANY ACCOUNT ---" if card._is_company else "--- PERSONAL ACCOUNT ---"
+                tbl.setItem(current_row, 0, QTableWidgetItem(acc_type))
+                tbl.setItem(current_row, 1, QTableWidgetItem(""))
+                current_row += 1
+                
+                # Fetch field data
+                for fkey, edit in card._field_edits:
+                    label = next((f[2] for f in _REC_FIELDS if f[0] == fkey), fkey)
+                    tbl.setItem(current_row, 0, QTableWidgetItem(f"{label}:"))
+                    tbl.setItem(current_row, 1, QTableWidgetItem(edit.text().strip()))
+                    current_row += 1
+                
+                # Spacer
+                tbl.setItem(current_row, 0, QTableWidgetItem(""))
+                tbl.setItem(current_row, 1, QTableWidgetItem(""))
+                current_row += 1
+            
+            tables.append({"title": supplier_name.upper(), "table": tbl})
+            
+        return tables
+
     def _update_status(self):
         n_sup = sum(1 for s in self._sections if s.is_selected())
         n_acc = sum(len(s.selected_cards()) for s in self._sections)
@@ -2338,10 +2476,10 @@ class RecordTab(QWidget):
 # INSURANCE TAB
 # ===========================================================================
 _INS_SECTIONS = [
-    ("Human Insurance Details",   "#1A3A5C", "ins_human",
+    ("Human Insurance",   "#1A3A5C", "ins_human",
      [("Location",80),("Post",110),("Name of Employee",200),
       ("Amount",110),("Starting Date",110),("Ending Date",110)]),
-    ("Vehicle Insurance Details", "#8B4513", "ins_vehicle",
+    ("Vehicle Insurance", "#8B4513", "ins_vehicle",
      [("Location",80),("Post",110),("Name of Employee",200),
       ("Amount",110),("Starting Date",110),("Ending Date",110)]),
     ("Stock Insurance",           "#1E4D2B", "ins_stock",
@@ -2350,7 +2488,7 @@ _INS_SECTIONS = [
 ]
 
 
-class InsuranceTab(QWidget):
+class InsuranceTab(QWidget, _PrintExportMixin):
     def __init__(self):
         super().__init__()
         self._can_edit = True
@@ -2370,6 +2508,8 @@ class InsuranceTab(QWidget):
         lbl.setFont(_bold_font(13))
         lbl.setStyleSheet("color:#1e293b;")
         tlay.addWidget(lbl)
+        tlay.addStretch()
+        self._init_print_export(tlay, "Insurance", table_getter=self._get_tables_for_export)
         layout.addWidget(top_bar)
 
         scroll = QScrollArea()
@@ -2406,7 +2546,6 @@ class InsuranceTab(QWidget):
                 "QPushButton:hover { background: rgba(255,255,255,0.35); }"
                 "QPushButton:pressed { background: rgba(255,255,255,0.15); }"
             )
-            add_btn.clicked.connect(lambda _, t=tbl: t.add_row())
             hdr_lay.addWidget(add_btn)
 
             c_lay.addWidget(hdr_row)
@@ -2419,8 +2558,7 @@ class InsuranceTab(QWidget):
             tbl.setItemDelegateForColumn(4, UniversalCellDelegate(tbl, cell_type="date"))
             tbl.setItemDelegateForColumn(5, UniversalCellDelegate(tbl, cell_type="date"))
 
-            # Re-wire button now that tbl exists
-            add_btn.clicked.disconnect()
+            # Wire button to its table now that tbl is defined
             add_btn.clicked.connect(lambda _, t=tbl: t.add_row())
 
             c_lay.addWidget(tbl)
@@ -2430,6 +2568,10 @@ class InsuranceTab(QWidget):
         c_lay.addStretch()
         scroll.setWidget(container)
         layout.addWidget(scroll)
+
+    def _get_tables_for_export(self):
+        """Collect all insurance sub-tables for export/print."""
+        return [{"title": tname, "table": tbl} for tname, tbl in self._tables]
 
     def set_company_path(self, path: str):
         company_name = os.path.basename(os.path.normpath(path))
@@ -2455,7 +2597,7 @@ _BONUS_HEADERS = ["Location", "Post", "Name of Employee", "Diwali Bonus", "Remar
 _BONUS_WIDTHS  = [90, 110, 200, 120, 220]
 
 
-class BonusTab(QWidget):
+class BonusTab(QWidget, _PrintExportMixin):
     def __init__(self):
         super().__init__()
         self._can_edit = True
@@ -2473,6 +2615,7 @@ class BonusTab(QWidget):
         lbl.setStyleSheet("color:#1e293b;")
         tlay.addWidget(lbl)
         tlay.addStretch()
+        self._init_print_export(tlay, "Bonus Details")
 
         self._btn_add = QPushButton("+ Add Row")
         self._btn_add.setStyleSheet(_BTN_PRIMARY)
@@ -2503,7 +2646,7 @@ class BonusTab(QWidget):
 # ===========================================================================
 # TEAM LIST TAB
 # ===========================================================================
-class TeamListTab(QWidget):
+class TeamListTab(QWidget, _PrintExportMixin):
     def __init__(self):
         super().__init__()
         self._can_edit = True
@@ -2525,6 +2668,7 @@ class TeamListTab(QWidget):
         lbl.setStyleSheet("color:#1e293b;")
         tlay.addWidget(lbl)
         tlay.addStretch()
+        self._init_print_export(tlay, "Team List", table_getter=self._get_tables_for_export)
 
         self._btn_add_yr  = QPushButton("+ Add Year")
         self._btn_add_yr.setStyleSheet(_BTN_SECONDARY)
@@ -2549,6 +2693,14 @@ class TeamListTab(QWidget):
 
         self.table = _DbTable("team_list_data", headers, widths, row_count=40)
         layout.addWidget(self.table)
+
+    
+    def _get_tables_for_export(self):
+        truncate_groups = []
+        base_col = 4 # S.N, Location, Post, Name
+        for i in range(len(self._year_labels)):
+            truncate_groups.append((base_col + i*3, base_col + i*3 + 1, base_col + i*3 + 2))
+        return [{"title": "Team List", "table": self.table, "truncate_groups": truncate_groups}]
 
     def _add_year(self):
         if not self._can_edit:
@@ -2617,7 +2769,7 @@ def _fmt(val):
         return str(val)
 
 
-class AnilHisabTab(QWidget):
+class AnilHisabTab(QWidget, _PrintExportMixin):
     def __init__(self):
         super().__init__()
         self._can_edit = True
@@ -2639,6 +2791,7 @@ class AnilHisabTab(QWidget):
         lbl.setStyleSheet("color:#1e293b;")
         tlay.addWidget(lbl)
         tlay.addStretch()
+        self._init_print_export(tlay, "Anil Dai Hisab")
 
         self._btn_add = QPushButton("+ Add Row")
         self._btn_add.setStyleSheet(_BTN_PRIMARY)
