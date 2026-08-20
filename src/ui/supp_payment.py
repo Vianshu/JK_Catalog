@@ -185,7 +185,7 @@ class _DbTable(QTableWidget):
         self.setHorizontalHeaderLabels(headers)
         self.horizontalHeader().setHighlightSections(False)
         self.horizontalHeader().setStretchLastSection(True)
-        self.horizontalHeader().setMinimumSectionSize(60)
+        self.horizontalHeader().setMinimumSectionSize(20)
         self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.verticalHeader().setDefaultSectionSize(26)
         self.verticalHeader().setVisible(False)
@@ -433,7 +433,7 @@ class _SectionCard(QFrame):
         self.table.verticalHeader().setDefaultSectionSize(26)
         self.table.horizontalHeader().setHighlightSections(False)
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.horizontalHeader().setMinimumSectionSize(60)
+        self.table.horizontalHeader().setMinimumSectionSize(20)
         self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.table.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustToContents)
@@ -451,6 +451,19 @@ class _SectionCard(QFrame):
                 self.table.setColumnWidth(i, spec[1])
                 if len(spec) > 2 and spec[2] is not None:
                     self.table.setItemDelegateForColumn(i, spec[2])
+            # Load any saved custom column widths (user may have resized them)
+            if db_name:
+                try:
+                    saved_widths = db.execute_query(
+                        db_name,
+                        "SELECT col_index, col_width FROM tp_section_cols WHERE section_id=? ORDER BY col_index",
+                        (section_id,)
+                    ) or []
+                    for col_idx, col_w in saved_widths:
+                        if col_w and int(col_idx) < self.table.columnCount():
+                            self.table.setColumnWidth(int(col_idx), int(col_w))
+                except Exception:
+                    pass
 
         self.table.horizontalHeader().sectionDoubleClicked.connect(self._rename_col)
         self.table.horizontalHeader().sectionResized.connect(
@@ -679,7 +692,7 @@ class _SectionCard(QFrame):
             self._saving = False
 
     def _save_cols(self):
-        if not self._db_name or self._fixed_cols:
+        if not self._db_name:
             return
         conn = self._db.get_connection(self._db_name)
         if not conn:
@@ -689,10 +702,12 @@ class _SectionCard(QFrame):
             cur.execute("DELETE FROM tp_section_cols WHERE section_id=?", (self.section_id,))
             for c in range(self.table.columnCount()):
                 h = self.table.horizontalHeaderItem(c)
+                # For fixed-col tables, only persist widths (names come from hardcoded specs)
+                col_name = (h.text() if h else "") if not self._fixed_cols else (h.text() if h else "")
                 cur.execute(
                     "INSERT INTO tp_section_cols(section_id,col_index,col_name,col_width)"
                     " VALUES(?,?,?,?)",
-                    (self.section_id, c, h.text() if h else "", self.table.columnWidth(c)))
+                    (self.section_id, c, col_name, self.table.columnWidth(c)))
             conn.commit()
         except Exception as e:
             conn.rollback()
@@ -1081,7 +1096,7 @@ class TodayPaymentTab(QWidget, _PrintExportMixin):
             ],
             "Demand Loans (DL)": [
                 ("S.N",        40,  None),
-                ("Party Name", 200, None),
+                ("Party Name", 200, party_delegate),
                 ("Amount",      110, None),
                 ("Expiry Date",110, date_delegate),
                 ("Day's left",    200, None),
@@ -1124,7 +1139,8 @@ class TodayPaymentTab(QWidget, _PrintExportMixin):
         self._rebuild_section_views()
 
     def _reload_party_list(self):
-        """Load Sundry Creditors list and mapping dicts for the Payments party autocomplete."""
+        """Load Sundry Creditors list and mapping dicts for the Payments party autocomplete.
+        Falls back to supplier_records names if no Tally ledger data is found."""
         self._guid_to_name = {}
         self._name_to_guid = {}
         self._alias_to_guid = {}
@@ -1168,6 +1184,26 @@ class TodayPaymentTab(QWidget, _PrintExportMixin):
                     pass
         except Exception as e:
             print("[TodayPayment] Could not load party list:", e)
+
+        # --- Fallback / merge: also include supplier_records names ---
+        # This ensures the dropdown always contains the Record tab parties
+        # even when no Tally sync has been done yet.
+        try:
+            conn = self._db.get_connection(self._db_name)
+            if conn:
+                cur = conn.cursor()
+                cur.execute("SELECT name FROM supplier_records WHERE name IS NOT NULL AND LTRIM(RTRIM(name)) != '' ORDER BY sort_order")
+                supp_names = [row[0].strip() for row in cur.fetchall() if row[0] and row[0].strip()]
+                # Merge: add any names not already in the list
+                existing_lower = {n.lower() for n in self._party_list}
+                for sn in supp_names:
+                    if sn.lower() not in existing_lower:
+                        self._party_list.append(sn)
+                        existing_lower.add(sn.lower())
+                self._party_list.sort()
+        except Exception as e:
+            print("[TodayPayment] Could not merge supplier_records into party list:", e)
+
 
     def refresh_ledger_maps(self):
         """Re-load party maps from DB after a Tally sync, then repaint all party columns.
@@ -1674,8 +1710,7 @@ class _AccCard(QFrame):
             is_amount = fkey == "rakam"
 
             lbl = QLabel(f"{flabel_np}:")
-            lbl.setFont(_norm_font(9))  # Increased from 7pt
-            lbl.setFixedWidth(75)       # Fixed width acts like an Excel column
+            lbl.setFont(_norm_font(11))  # Increased from 9pt
             lbl.setStyleSheet(
                 f"color:{'#065f3a' if is_amount and is_company else accent if is_amount else '#6b7280'};"
                 f"font-weight:{'600' if is_amount else '400'};"
@@ -1683,11 +1718,11 @@ class _AccCard(QFrame):
             )
 
             edit = QLineEdit(val)
-            edit.setFont(_norm_font(10) if not is_amount else _bold_font(11)) # Increased
+            edit.setFont(_norm_font(12) if not is_amount else _bold_font(13)) # Increased
             edit.setStyleSheet(_field_ss(accent, is_amount))
             edit.setReadOnly(not can_edit)
-            edit.setFixedHeight(26)  # Taller row height to fit bigger font
-            edit.setMinimumWidth(120)
+            edit.setFixedHeight(30)  # Taller row height to fit bigger font
+            edit.setMinimumWidth(180)
             edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             if is_amount:
                 edit.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -1832,11 +1867,11 @@ class _SupplierSection(QFrame):
         # Supplier name
         self._name_edit = QLineEdit(name)
         self._name_edit.setPlaceholderText("Supplier / Party Name...")
-        self._name_edit.setFont(_bold_font(10))
+        self._name_edit.setFont(_bold_font(12))
         self._name_edit.setStyleSheet("""
             QLineEdit {
                 background:transparent; border:none;
-                color:#111827; font-size:10pt; font-weight:600;
+                color:#111827; font-size:12pt; font-weight:600;
             }
             QLineEdit:focus {
                 border-bottom:1px solid #1e7a4b;
@@ -2866,7 +2901,7 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
             self.table.setColumnWidth(i, w)
         self.table.horizontalHeader().setHighlightSections(False)
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.horizontalHeader().setMinimumSectionSize(60)
+        self.table.horizontalHeader().setMinimumSectionSize(20)
         self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.table.verticalHeader().setDefaultSectionSize(26)
         self.table.verticalHeader().setVisible(False)
@@ -3026,7 +3061,7 @@ class _StyledTable(QWidget):
         self.table.verticalHeader().setDefaultSectionSize(26)
         self.table.horizontalHeader().setHighlightSections(False)
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.horizontalHeader().setMinimumSectionSize(60)
+        self.table.horizontalHeader().setMinimumSectionSize(20)
         self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.table.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
         self.table.setMinimumHeight(60)
