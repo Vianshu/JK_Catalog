@@ -1,4 +1,5 @@
 import os
+import re as _re
 from datetime import date as _date
 from PyQt6.QtWidgets import *
 from PyQt6.QtCore import *
@@ -7,6 +8,18 @@ from PyQt6.QtPrintSupport import QPrintPreviewDialog, QPrinter
 from src.logic.db_manager import get_db_manager, build_logical_name
 from src.ui.table_nav_mixin import ExcelTableMixin, UniversalCellDelegate
 from src.ui.ui_helpers import pick_export_folder
+
+# def _strip_punct(text: str) -> str:
+#     """Strip all non-alphanumeric characters for fuzzy / strict matching.
+#     Handles spaces, dots, hyphens, commas and any other punctuation so that
+#     'pvc.bocket-ganga' and 'pvcbocketganga' both match 'pvc bocket ganga'."""
+#     return _re.sub(r'[^a-z0-9]', '', text.lower())
+
+def _normalize(text: str) -> str:
+    """Strip spaces and dots for product name matching.
+    'pvc bocket ganga', 'pvc.bocket.ganga' and 'pvcbocketganga' all match each other.
+    Use _strip_punct (above, commented out) to also strip hyphens, commas, etc."""
+    return text.lower().replace(" ", "").replace(".", "")
 
 # ── Part No Override Mapping ──────────────────────────────────────────────────
 # Item names that should display a fixed Part No in the Godown List,
@@ -72,10 +85,17 @@ class _GodownSortProxyModel(QSortFilterProxyModel):
         self.invalidate()          # force re-sort
 
     def filterAcceptsRow(self, source_row, source_parent):
-        """Accept rows that contain the current prefix (case-insensitive)."""
+        """Accept rows that contain the current prefix (case-insensitive).
+        Spaces and dots are stripped so 'pvc.bocket ganga' and
+        'pvcbocketganga' both match 'pvc bocket ganga'."""
         idx = self.sourceModel().index(source_row, 0, source_parent)
         text = self.sourceModel().data(idx, Qt.ItemDataRole.DisplayRole) or ""
-        return self._prefix in text.lower()
+        if not self._prefix:
+            return True
+        # Strip spaces and dots before comparing (use _strip_punct for full punct stripping)
+        p = _normalize(self._prefix)
+        t = _normalize(text)
+        return p in t
 
     def lessThan(self, left, right):
         """Starts-with wins; within each tier sort alphabetically."""
@@ -95,6 +115,7 @@ class _GodownSortProxyModel(QSortFilterProxyModel):
 class _GodownDelegate(UniversalCellDelegate):
     """UniversalCellDelegate subclass for the Godown List.
     Tab key commits the current value and moves down — identical to Enter.
+    Col 0 enforces strict space-stripped validation on manual typing.
     Applies ONLY to this table; all other tables retain default Tab behaviour.
     """
     def eventFilter(self, editor, event):
@@ -120,6 +141,35 @@ class _GodownDelegate(UniversalCellDelegate):
                     QTimer.singleShot(0, lambda r=row: t.setCurrentCell(r + 1, t.currentColumn()))
             return True   # consume the Tab — don't let Qt move right
         return super().eventFilter(editor, event)
+
+    def setModelData(self, editor, model, index):
+        """Col 0 only: accept typed text only if it is a perfect match after stripping
+        spaces and dots. 'pvcbocketganga' and 'pvc.bocket ganga' both match 'pvc bocket ganga'.
+        If no match is found, rejects the edit and prompts the user to use the dropdown."""
+        if index.column() == 0:
+            from PyQt6.QtWidgets import QMessageBox
+            typed = editor.text().strip()
+            if typed:
+                # Use _strip_punct(typed) here to also strip hyphens, commas, etc.
+                typed_clean = _normalize(typed)
+                data_list = self._autocomplete_items
+                if callable(data_list):
+                    data_list = data_list()
+                if data_list:
+                    match = None
+                    for item in data_list:
+                        if _normalize(item) == typed_clean:  # swap _normalize → _strip_punct for full match
+                            match = item  # canonical name with correct spacing
+                            break
+                    if match:
+                        editor.setText(match)  # auto-correct to canonical form before saving
+                    else:
+                        QMessageBox.warning(
+                            editor.parent(), "Item Not Found",
+                            "Please select an exact product name from the dropdown."
+                        )
+                        return  # reject — do not write to model
+        super().setModelData(editor, model, index)
 
 
 class GodownListUI(ExcelTableMixin, QWidget):
@@ -351,6 +401,23 @@ class GodownListUI(ExcelTableMixin, QWidget):
     def _excel_on_navigate(self):
         """Commit the col-0 overlay editor (if open) before moving away."""
         self._cleanup_active_editor()
+
+    def _excel_on_enter(self, row, col):
+        """Custom Enter routing for the Godown List:
+          Col 2 (प्रति कार्टुन) → Col 4 (जम्मा कार्टुन) same row
+          Col 4 (जम्मा कार्टुन) → Col 5 (गोदाम) same row
+          All other cols       → next row, same col (default behaviour)
+        """
+        self._excel_on_navigate()  # flush any open col-0 overlay
+        t = self._excel_table
+        if col == 1:                              # Col 2 (0-indexed = 1)
+            self._nav_set_current(row, 3)         # → Col 4 (0-indexed = 3)
+        elif col == 3:                            # Col 4 (0-indexed = 3)
+            self._nav_set_current(row, 4)         # → Col 5 (0-indexed = 4)
+        else:
+            if row < t.rowCount() - 1:
+                self._nav_set_current(row + 1, col)
+        return True
 
     def _on_cell_changed(self, cur_row=None, cur_col=None, prev_row=None, prev_col=None):
         pass

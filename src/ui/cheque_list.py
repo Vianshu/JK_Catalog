@@ -451,6 +451,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             self.table.setRowHidden(r, not found)
 
         self.update_summary()
+        self.table.resizeColumnsToContents()  # re-fit columns after rows are shown/hidden
     
     # ================= DB =================
     def save_cheques_to_db(self):
@@ -1067,6 +1068,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         super().showEvent(event)
         self._reload_dropdown_data()
         self.update_summary()
+        self.table.resizeColumnsToContents()  # re-fit columns every time the tab is opened
     
     def refresh_ledger_maps(self):
         """Re-load guid_to_name / name_to_guid from row_ledger_data after a Tally ledger sync.

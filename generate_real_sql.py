@@ -40,7 +40,7 @@ sql_statements = [
 ]
 
 # -----------------
-# 1. Record Sheet (39 cards, exact S.N. mapping)
+# 1. Record Sheet (39 cards, sequential normal numbering 1 to 39)
 # -----------------
 sql_statements.append("SET IDENTITY_INSERT supplier_records ON;")
 
@@ -53,13 +53,11 @@ for i, start_idx in enumerate(sn_indices):
     if not supplier_name: 
         continue
         
-    try:
-        sn_val = int(block.loc[0, 'S.N.'])
-    except:
-        continue
+    seq_id = i + 1
     
-    sql_statements.append(f"INSERT INTO supplier_records (id, name, sort_order) VALUES ({sn_val}, N'{supplier_name}', {sn_val});")
-    sql_statements.append(f"DECLARE @Supp{sn_val} INT = {sn_val};")
+    sql_statements.append(f"INSERT INTO supplier_records (id, name, sort_order) VALUES ({seq_id}, N'{supplier_name}', {seq_id});")
+    sql_statements.append(f"DECLARE @Supp{seq_id} INT = {seq_id};")
+
 
     
     accounts = [
@@ -95,7 +93,7 @@ for i, start_idx in enumerate(sn_indices):
         jamma = acc_data.get('जम्मा गर्ने', '')
         
         sql = (f"INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) "
-               f"VALUES (@Supp{sn_val}, {acc_index}, N'{acc['type']}', N'{naam}', N'{thegana}', N'{baik}', N'{khata}', N'{rakam}', N'{jamma}');")
+               f"VALUES (@Supp{seq_id}, {acc_index}, N'{acc['type']}', N'{naam}', N'{thegana}', N'{baik}', N'{khata}', N'{rakam}', N'{jamma}');")
         sql_statements.append(sql)
         acc_index += 1
     sql_statements.append('')

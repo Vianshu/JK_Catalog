@@ -158,6 +158,10 @@ class UniversalCellDelegate(QStyledItemDelegate):
                         editor.textEdited.connect(
                             lambda text, e=editor, dl=data_list: _enforce_match(e, text, dl)
                         )
+                    # Single-action: picking from dropdown commits immediately (no double-Enter)
+                    completer.activated.connect(
+                        lambda _, e=editor: QTimer.singleShot(0, lambda: self._commit_and_move(e))
+                    )
         return editor
 
     def updateEditorGeometry(self, editor, option, index):
@@ -190,6 +194,11 @@ class UniversalCellDelegate(QStyledItemDelegate):
         
         super().setEditorData(editor, index)
 
+        # F2 / Edit Mode: deselect all text and place cursor at end (not at start)
+        # Uses singleShot(0) so it runs after Qt's own internal selectAll() call finishes.
+        if isinstance(editor, QLineEdit) and getattr(self._owner, '_is_edit_mode', False):
+            QTimer.singleShot(0, lambda e=editor: (e.deselect(), e.setCursorPosition(len(e.text()))))
+
     def setModelData(self, editor, model, index):
         cell_type = index.data(CELL_TYPE_ROLE) or self._cell_type
         
@@ -220,6 +229,22 @@ class UniversalCellDelegate(QStyledItemDelegate):
         if self._owner and hasattr(self._owner, '_is_edit_mode'):
             self._owner._is_edit_mode = False
         super().destroyEditor(editor, index)
+
+    def _commit_and_move(self, editor):
+        """Commit the editor and trigger Enter navigation after a dropdown selection.
+        This eliminates the 'double Enter' issue — one action commits and moves cursor."""
+        from PyQt6.QtWidgets import QStyledItemDelegate
+        # Guard: editor may already be closed by the time singleShot fires
+        try:
+            self.commitData.emit(editor)
+            self.closeEditor.emit(editor, QStyledItemDelegate.EndEditHint.NoHint)
+        except RuntimeError:
+            return
+        # Trigger the table's Enter handler (moves down, or to custom column in Godown)
+        owner = self._owner
+        if owner and hasattr(owner, '_excel_on_enter') and hasattr(owner, '_excel_table'):
+            t = owner._excel_table
+            QTimer.singleShot(0, lambda: owner._excel_on_enter(t.currentRow(), t.currentColumn()))
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +283,12 @@ class ExcelTableMixin:
                 col = t.currentColumn()
                 key = event.key()
 
-                if self._is_edit_mode:
+                # F2 = Edit Mode: open editor without clearing text, cursor at end
+                if key == Qt.Key.Key_F2:
+                    self._is_edit_mode = True
+                    # Fall through to Qt's default which opens the editor via EditKeyPressed
+
+                if self._is_edit_mode and key != Qt.Key.Key_F2:
                     return False
 
                 if key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right):

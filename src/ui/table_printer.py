@@ -176,12 +176,23 @@ def _paint_tables(printer, page_range=None):
         active_headers = [headers[c] for c in active_cols]
         active_data = [[rd[c] for c in active_cols] for rd in data_rows]
         
-        # Pagination — track how much vertical space is used on the current page.
+        # --- Measure the height this supplier table would occupy ---
+        table_h = 0
+        if t_title:
+            table_h += title_height
+        if show_headers:
+            table_h += header_height
+        table_h += len(active_data) * row_height
+        # account for the spacer gap after each supplier
+        table_h += row_height  # conservative spacer
+
+        # Pagination — smart bin-packing: start a new page only if the table
+        # doesn't fit on the current page (avoids one-supplier-per-page waste).
         if not pages:
             pages.append([])
             used = 0
-        else:
-            # Force a page break for every new table, per user rules
+        elif used + table_h > page_h:
+            # This supplier won't fit — start a fresh page
             pages.append([])
             used = 0
 
@@ -211,7 +222,7 @@ def _paint_tables(printer, page_range=None):
             pages[-1].append(("row", rd, col_widths, row_height))
             used += row_height
 
-        # Add a visible gap between tables if there is room on the current page
+        # Add a visible gap between suppliers if there is room on the current page
         if used + title_height <= page_h:
             pages[-1].append(("spacer", None, title_height))
             used += title_height

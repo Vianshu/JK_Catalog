@@ -178,6 +178,7 @@ class _DbTable(QTableWidget):
         self._loading = False
         self._can_edit = True
         self._min_rows = max(0, row_count)  # Bug 1b: minimum visible rows after load
+        self._is_edit_mode = False           # tracks F2 edit mode (cursor at end, no selection)
 
         self.setFont(_norm_font())
         self.setAlternatingRowColors(True)
@@ -295,7 +296,13 @@ class _DbTable(QTableWidget):
         self._do_save()
 
     def keyPressEvent(self, event):
-        if self._can_edit and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+        if event.key() == Qt.Key.Key_F2 and self._can_edit:
+            # F2 = Edit Mode: open the editor without clearing text;
+            # UniversalCellDelegate.setEditorData will place the cursor at the end
+            # with no selection because _is_edit_mode is True.
+            self._is_edit_mode = True
+            super().keyPressEvent(event)   # Qt opens the editor via EditKeyPressed
+        elif self._can_edit and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             for it in self.selectedItems():
                 it.setText("")
         else:
@@ -1059,14 +1066,20 @@ class TodayPaymentTab(QWidget, _PrintExportMixin):
             self._rebuild_multi_grid()
 
     def _display_party_cb(self, index):
-        """Translate GUIDs back to Hindi names for display."""
+        """Translate stored GUIDs back to display names.
+        Three possible states for the cell value:
+          1. A valid GUID with a matching entry → show the ledger name
+          2. A plain text name (free-typed, or legacy data with no GUID) → show as-is
+          3. An orphaned GUID (Tally entry was deleted) → show as-is silently
+        """
         val = index.data(Qt.ItemDataRole.DisplayRole)
-        val_str = str(val or "")
+        val_str = str(val or "").strip()
+        if not val_str:
+            return val
+        # Case 1: stored GUID maps to a known name
         if val_str in self._guid_to_name:
             return self._guid_to_name[val_str]
-        # Fallback to raw string (legacy)
-        if "-" in val_str and len(val_str) > 10:  # Looks like a GUID
-            print(f"[DEBUG] _display_party_cb failed to find GUID '{val_str}'. Keys available: {len(self._guid_to_name)}")
+        # Case 2 & 3: plain name or orphaned GUID — just show the raw value, no log noise
         return val
 
     def _set_party_cb(self, text, index):
@@ -1082,7 +1095,9 @@ class TodayPaymentTab(QWidget, _PrintExportMixin):
     def _build_core_section_specs(self):
         """Build column specs for the Payments core section."""
         date_delegate = UniversalCellDelegate(self, cell_type="date")
-        party_delegate = UniversalCellDelegate(self, cell_type="autocomplete", autocomplete_items=lambda: self._party_list)
+        party_delegate = UniversalCellDelegate(self, cell_type="autocomplete",
+                                               autocomplete_items=lambda: self._party_list,
+                                               enforce_match=False)  # allow free typing
         party_delegate._display_cb = self._display_party_cb
         party_delegate._set_model_cb = self._set_party_cb
 
@@ -1103,7 +1118,7 @@ class TodayPaymentTab(QWidget, _PrintExportMixin):
                 ("Gap",    50, None),
                 ("Notes",    50, None),
             ],
-            "Purchase (Today)": [
+            "Today": [
                 ("Date",      110,  date_delegate),
                 ("Party Name",200,  party_delegate),
                 ("To",      130,  None),
@@ -1115,7 +1130,7 @@ class TodayPaymentTab(QWidget, _PrintExportMixin):
                 ("Remain Cash",     110,  None),
                 ("Bank Cash",   180,  None),
             ],
-            "Purchase (Upcoming)": [
+            "Upcoming": [
                 ("Date",      110,  date_delegate),
                 ("Party Name",200,  party_delegate),
                 ("To",      130,  None),
@@ -1161,7 +1176,7 @@ class TodayPaymentTab(QWidget, _PrintExportMixin):
                     continue
                 try:
                     cur = conn.cursor()
-                    cur.execute("SELECT GUID, Alias, Name FROM row_ledger_data WHERE [Group] LIKE '%Sundry Creditors%'")
+                    cur.execute("SELECT GUID, Alias, Name FROM row_ledger_data")
                     for guid, alias, name in cur.fetchall():
                         guid_str = str(guid).strip() if guid else ""
                         if not guid_str: continue
@@ -1259,9 +1274,9 @@ class TodayPaymentTab(QWidget, _PrintExportMixin):
         _CORE = [
             ("Payments",            "#1565C0", 0),
             ("Demand Loans (DL)",   "#2E7D32", 1),
-            ("Purchase (Today)",    "#00695C", 2),
+            ("Today",               "#00695C", 2),
             ("Account Table",       "#E65100", 3),
-            ("Purchase (Upcoming)", "#4527A0", 4),
+            ("Upcoming",            "#4527A0", 4),
             ("Limits & LC",         "#B71C1C", 5),
         ]
         conn = self._db.get_connection(self._db_name)
@@ -1696,6 +1711,7 @@ class _AccCard(QFrame):
         self.setStyleSheet(self._norm_ss)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("Click to select  |  Right-click to delete")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
 
@@ -1705,32 +1721,51 @@ class _AccCard(QFrame):
         lay.setVerticalSpacing(0)
         lay.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
+        fm_cache = {}  # font → QFontMetrics, computed once per font object
+
         for fkey, flabel_np, flabel_en in _REC_FIELDS:
             val = acc_data.get(fkey, "")
             is_amount = fkey == "rakam"
 
             lbl = QLabel(f"{flabel_np}:")
-            lbl.setFont(_norm_font(11))  # Increased from 9pt
+            lbl.setFont(_norm_font(14))
             lbl.setStyleSheet(
                 f"color:{'#065f3a' if is_amount and is_company else accent if is_amount else '#6b7280'};"
                 f"font-weight:{'600' if is_amount else '400'};"
                 f"background:transparent; padding-right:4px;"
             )
 
+            edit_font = _bold_font(18) if is_amount else _norm_font(16)
             edit = QLineEdit(val)
-            edit.setFont(_norm_font(12) if not is_amount else _bold_font(13)) # Increased
+            edit.setFont(edit_font)
             edit.setStyleSheet(_field_ss(accent, is_amount))
             edit.setReadOnly(not can_edit)
-            edit.setFixedHeight(30)  # Taller row height to fit bigger font
-            edit.setMinimumWidth(180)
+            edit.setFixedHeight(36)
+            # Compute min-width from actual text content so card expands to fit data
+            if edit_font not in fm_cache:
+                from PyQt6.QtGui import QFontMetrics
+                fm_cache[edit_font] = QFontMetrics(edit_font)
+            text_px = fm_cache[edit_font].horizontalAdvance(val) + 24  # 12px padding each side
+            edit.setMinimumWidth(max(200, text_px))
             edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             if is_amount:
                 edit.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             edit.editingFinished.connect(self._save)
             edit.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             edit.customContextMenuRequested.connect(self._show_context_menu)
+
+            # Real-time resize: recalculate min-width as the user types
+            _fm = fm_cache[edit_font]  # capture for closure
+            _card = self            # capture self for closure
+            def _on_text_changed(text, fm=_fm, e=edit, card=_card):
+                needed = fm.horizontalAdvance(text) + 24
+                e.setMinimumWidth(max(200, needed))
+                card.updateGeometry()
+            edit.textChanged.connect(_on_text_changed)
+
             lay.addRow(lbl, edit)
             self._field_edits.append((fkey, edit))
+
 
     # ------------------------------------------------------------------
     def _show_context_menu(self, _):
@@ -1910,7 +1945,7 @@ class _SupplierSection(QFrame):
             col = QWidget()
             col.setStyleSheet("background:transparent;")
             # Fixed horizontal size so column hugs its card content width
-            col.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+            col.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
             col_lay = QVBoxLayout(col)
             col_lay.setContentsMargins(0, 0, 0, 0)
             col_lay.setSpacing(0)
@@ -1919,7 +1954,7 @@ class _SupplierSection(QFrame):
                 # -- cards in a fixed-size container so header can match its width --
                 cards_widget = QWidget()
                 cards_widget.setStyleSheet("background:transparent;")
-                cards_widget.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+                cards_widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
                 cards_row_lay = QHBoxLayout(cards_widget)
                 cards_row_lay.setContentsMargins(0, 0, 0, 0)
                 cards_row_lay.setSpacing(0)
@@ -1928,7 +1963,7 @@ class _SupplierSection(QFrame):
                         supplier_id, acc_idx, acc_data,
                         db, db_name, is_co, can_edit, refresh_fn=self._refresh_fn, parent=body)
                     card.setMinimumWidth(240)
-                    card.setMaximumWidth(350)
+                    # No max-width cap — let card grow to fit its content
                     # Use installEventFilter instead of monkey-patching mousePressEvent
                     # so child QLineEdit widgets keep native click-to-position-cursor behavior
                     card.installEventFilter(self)
@@ -2376,8 +2411,9 @@ class RecordTab(QWidget, _PrintExportMixin):
             max_pairs = max(len(company_cards), len(personal_cards), 1)
             n_fields  = len(_REC_FIELDS)
 
-            # Layout: 1 supplier-name row + per-pair (1 type-header + n_fields + 1 spacer)
-            total_rows = 1 + max_pairs * (1 + n_fields + 1)
+            # No Row 0 for supplier name — title already carries the name
+            # Layout: per-pair (1 type-header + n_fields + 1 spacer)
+            total_rows = max_pairs * (1 + n_fields + 1)
 
             # 3 columns:  Field Label  |  Company Value  |  Personal Value
             tbl = QTableWidget(total_rows, 3)
@@ -2386,12 +2422,7 @@ class RecordTab(QWidget, _PrintExportMixin):
             def _set(r, c, text, _t=tbl):
                 _t.setItem(r, c, QTableWidgetItem(str(text) if text else ""))
 
-            # Row 0 — Supplier name
-            _set(0, 0, supplier_name)
-            _set(0, 1, "")
-            _set(0, 2, "")
-
-            row = 1
+            row = 0
             for pair_idx in range(max_pairs):
                 co = company_cards[pair_idx]  if pair_idx < len(company_cards)  else None
                 pe = personal_cards[pair_idx] if pair_idx < len(personal_cards) else None
@@ -2456,9 +2487,13 @@ class RecordTab(QWidget, _PrintExportMixin):
         images = []
         for sec in selected:
             ow, oh = sec.width(), sec.height()
+            # Add a small height buffer to absorb the 1px→2px border inflation
+            # that happens when a section is selected (selected border = 2px vs 1px).
+            # Without this, the bottom gets clipped by exactly that difference.
+            h_buffer = 4
 
             # Render at 3x without touching the live widget at all
-            img = QImage(ow * scale, oh * scale, QImage.Format.Format_ARGB32_Premultiplied)
+            img = QImage(ow * scale, (oh + h_buffer) * scale, QImage.Format.Format_ARGB32_Premultiplied)
             img.fill(bg)
 
             painter = QPainter(img)
@@ -2469,6 +2504,7 @@ class RecordTab(QWidget, _PrintExportMixin):
             sec.render(painter)
             painter.end()
             images.append(img)
+
 
         max_w = max(img.width() for img in images)
         total_h = scaled_margin + sum(img.height() + scaled_margin for img in images)

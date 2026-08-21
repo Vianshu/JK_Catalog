@@ -1,4 +1,4 @@
-﻿-- USE [YOUR_DATABASE_NAME];
+USE [JK_HW_Divison_082083_e867f96e];
 GO
 
 PRINT 'Clearing existing supplier payment tables...'
@@ -38,170 +38,170 @@ DECLARE @Supp5 INT = 5;
 INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp5, 0, N'Company Account', N'युनिवर्सल ट्रेडिग़ सेन्टर प्रा. ली.', N'काठमान्डु', N'एभरेष्ट बैक लिमिटॆड', N'01000-1052-00942', N'chq rs- 92500', N'जे.के. हार्डवेयर & कम्पनी, Brt');
 INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp5, 1, N'Personal Account', N'युनिवर्सल ट्रेडिग़ सेन्टर प्रा. ली.', N'Tripureshwor', N'NMB BANK', N'0820-0698-2880-0016', N'chq rs- 170000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (10, N'Manokamna ,brj', 10);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (6, N'Manokamna ,brj', 6);
+DECLARE @Supp6 INT = 6;
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp6, 0, N'Company Account', N'Manokamna overseas', N'बिरगज', N'ग्लोबल बैक', N'110-1010-005203', N'cash rs-300000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp6, 1, N'Personal Account', N'Pawan kumar Agrawal', N'बिरगज', N'ग्लोबल बैक', N'110-70100-14846', N'', N'JITENDRA');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp6, 2, N'Other Account 1', N'Manokamna overseas', N'बिरगज', N'ग्लोबल बैक', N'0110-10100-65362', N'chq rs-78715.9', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+
+INSERT INTO supplier_records (id, name, sort_order) VALUES (7, N'Kailashpati International, Brj', 7);
+DECLARE @Supp7 INT = 7;
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp7, 0, N'Company Account', N'Kailashpati international', N'बीरगज', N'Macchapucchure bank Ltd', N'1870-990-5036-00015', N'cash rs-96850', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+
+INSERT INTO supplier_records (id, name, sort_order) VALUES (8, N'Balaji metal, Hetoda', 8);
+DECLARE @Supp8 INT = 8;
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp8, 0, N'Company Account', N'Balaji Metal Industries', N'Hetoda', N'mega bank', N'01000-1013-9993', N'chq rs-120000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp8, 1, N'Personal Account', N'Om prakash Bajaj', N'teku', N'Everest', N'0100-0501-0011-41', N'cash rs- 215118', N'jitendra');
+
+INSERT INTO supplier_records (id, name, sort_order) VALUES (9, N'गनेश ट्रेडिग सेन्टर', 9);
+DECLARE @Supp9 INT = 9;
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp9, 0, N'Company Account', N'गनेश ट्रेडिग सेन्टर', N'विरगज', N'एभरेष्ट बैक लिमिटॆड', N'00600-105200-347', N'', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp9, 1, N'Personal Account', N'Atlantic Overseas', N'विरगज', N'GLOBAL', N'110-101-000-6050', N'', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+
+INSERT INTO supplier_records (id, name, sort_order) VALUES (10, N'Bikash ji ,brj', 10);
 DECLARE @Supp10 INT = 10;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp10, 0, N'Company Account', N'Manokamna overseas', N'बिरगज', N'ग्लोबल बैक', N'110-1010-005203', N'cash rs-300000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp10, 1, N'Personal Account', N'Pawan kumar Agrawal', N'बिरगज', N'ग्लोबल बैक', N'110-70100-14846', N'', N'JITENDRA');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp10, 2, N'Other Account 1', N'Manokamna overseas', N'बिरगज', N'ग्लोबल बैक', N'0110-10100-65362', N'chq rs-78715.9', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp10, 0, N'Company Account', N'Tulip Polymer Industries', N'बीरगज', N'Nabil Bank Ltd.', N'050-101-7500-991', N'', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp10, 1, N'Personal Account', N'Kushagra International', N'बीरगज', N'एभरेष्ट बैक लिमिटॆड', N'0060-0105-2014-95', N'chq rs-192106.78', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp10, 2, N'Other Account 1', N'Win Win Hardware Products', N'बीरगज', N'Siddharth bank Ltd.', N'002-165-79101', N'chq Rs. 12000.60', N'जे.के. हार्डवेयर & कम्पनी, Brt');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (11, N'Kailashpati International, Brj', 11);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (11, N'ASIA TOOLS', 11);
 DECLARE @Supp11 INT = 11;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp11, 0, N'Company Account', N'Kailashpati international', N'बीरगज', N'Macchapucchure bank Ltd', N'1870-990-5036-00015', N'cash rs-96850', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp11, 0, N'Company Account', N'Asia Tools House', N'ktm', N'Prabhu Bank', N'1140-106-1196-00011', N'chq rs-50000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp11, 1, N'Personal Account', N'Mahadev Tiwari', N'ktm', N'Prabhu Bank', N'1140-13880-8100-012', N'cash rs- 63000', N'jitendra');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (12, N'Balaji metal, Hetoda', 12);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (12, N'Priya Impex', 12);
 DECLARE @Supp12 INT = 12;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp12, 0, N'Company Account', N'Balaji Metal Industries', N'Hetoda', N'mega bank', N'01000-1013-9993', N'chq rs-120000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp12, 1, N'Personal Account', N'Om prakash Bajaj', N'teku', N'Everest', N'0100-0501-0011-41', N'cash rs- 215118', N'jitendra');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp12, 0, N'Company Account', N'Priya Impex', N'Druber Marg Branch', N'Nepal Investment Bank', N'00159-020-250-610', N'chq rs-105000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp12, 1, N'Personal Account', N'Mukesh kumar singhal', N'Tripureshwor branch', N'Global ime bank', N'34070-1000-2550', N'', N'jitendra agrawal');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp12, 2, N'Other Account 1', N'Aarna international pvt ltd', N'Ktm', N'NIMB Bank', N'0010-10103-10505', N'chq rs-150000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (17, N'गनेश ट्रेडिग सेन्टर', 17);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (13, N'Binayak Enterprises', 13);
+DECLARE @Supp13 INT = 13;
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp13, 0, N'Company Account', N'Binayak Overseas Trade Pvt.Ltd', N'ktm', N'Kumari Bank', N'0050-3018-7610-0001', N'chq rs-184171.92', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp13, 1, N'Personal Account', N'GANESH DATTA JOSHI', N'TRIPURESHWOR', N'LUMBINI BIKAS BANK LTD.', N'0311-1020-3647-6400-0001', N'RS-80000', N'jitendra agrawal');
+
+INSERT INTO supplier_records (id, name, sort_order) VALUES (14, N'Start International', 14);
+DECLARE @Supp14 INT = 14;
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp14, 0, N'Company Account', N'Star International', N'बीरगज', N'एभरेष्ट बैक लिमिटॆड', N'00600-105201511', N'chq rs-141216/-', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+
+INSERT INTO supplier_records (id, name, sort_order) VALUES (15, N'shruti enterprises', 15);
+DECLARE @Supp15 INT = 15;
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp15, 0, N'Company Account', N'shruti enterprises', N'बीरगज', N'एभरेष्ट बैक लिमिटॆड', N'0060-0105-200689', N'chq rs- 220000', N'जे.के. हार्डवेयर & कम्पनी, BRT');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp15, 1, N'Personal Account', N'Vinay bansal', N'बीरगज', N'एभरेष्ट बैक लिमिटॆड', N'600-501-211-258', N'cash rs- 100000', N'jitendra agrawal');
+
+INSERT INTO supplier_records (id, name, sort_order) VALUES (16, N'shree om ji trade international', 16);
+DECLARE @Supp16 INT = 16;
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp16, 0, N'Company Account', N'श्री ओम जी ट्रेड ईन्टरनेशनल', N'बीरगज', N'Nepal investment bank', N'003590-2025-0283', N'', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp16, 1, N'Personal Account', N'sangita kumari agrawal', N'बीरगज', N'laxmi bank', N'0011-9000-146', N'', N'jitnedra');
+
+INSERT INTO supplier_records (id, name, sort_order) VALUES (17, N'Lotus Plastic Udhyog', 17);
 DECLARE @Supp17 INT = 17;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp17, 0, N'Company Account', N'गनेश ट्रेडिग सेन्टर', N'विरगज', N'एभरेष्ट बैक लिमिटॆड', N'00600-105200-347', N'', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp17, 1, N'Personal Account', N'Atlantic Overseas', N'विरगज', N'GLOBAL', N'110-101-000-6050', N'', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp17, 0, N'Company Account', N'Lotus Plastic udhyog', N'Kalimati', N'Nepal Investment bank', N'01759-01025-0221', N'CHQ RS- 183791.86', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp17, 1, N'Personal Account', N'tamanna traders', N'Kalimati', N'Nepal Investment bank', N'01759-01025-0306', N'chq rs- 665000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp17, 2, N'Other Account 1', N'Lotus Plastic udhyog', N'Kalimati', N'Everest Bank', N'0370-0105-2000-63', N'CHQ RS- 183791.86', N'जे.के. हार्डवेयर & कम्पनी, Brt');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (18, N'Bikash ji ,brj', 18);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (18, N'Kelash hw, brj', 18);
 DECLARE @Supp18 INT = 18;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp18, 0, N'Company Account', N'Tulip Polymer Industries', N'बीरगज', N'Nabil Bank Ltd.', N'050-101-7500-991', N'', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp18, 1, N'Personal Account', N'Kushagra International', N'बीरगज', N'एभरेष्ट बैक लिमिटॆड', N'0060-0105-2014-95', N'chq rs-192106.78', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp18, 2, N'Other Account 1', N'Win Win Hardware Products', N'बीरगज', N'Siddharth bank Ltd.', N'002-165-79101', N'chq Rs. 12000.60', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp18, 0, N'Company Account', N'Nirika Traders', N'बीरगज', N'Nepal Investment bank', N'0030-10500-03615', N'', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp18, 1, N'Personal Account', N'nitesh kumar Agrawal', N'बीरगज', N'Nepal Investment bank', N'0030-509000-2652', N'', N'jitendra');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (19, N'ASIA TOOLS', 19);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (19, N'New Famous Tar Jali, Brj', 19);
 DECLARE @Supp19 INT = 19;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp19, 0, N'Company Account', N'Asia Tools House', N'ktm', N'Prabhu Bank', N'1140-106-1196-00011', N'chq rs-50000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp19, 1, N'Personal Account', N'Mahadev Tiwari', N'ktm', N'Prabhu Bank', N'1140-13880-8100-012', N'cash rs- 63000', N'jitendra');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp19, 0, N'Company Account', N'New Famous Tar Jali Udhyog', N'बीरगज', N'Nepal invesment bank.', N'0030-1050-0029-98', N'chq rs-135000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp19, 1, N'Personal Account', N'Ram Asis Prasad Kurmi', N'', N'Kumari Bank', N'00300-7575-4200-001', N'cash rs-90700.64', N'jitendra');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (20, N'Priya Impex', 20);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (20, N'icon, ktm', 20);
 DECLARE @Supp20 INT = 20;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp20, 0, N'Company Account', N'Priya Impex', N'Druber Marg Branch', N'Nepal Investment Bank', N'00159-020-250-610', N'chq rs-105000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp20, 1, N'Personal Account', N'Mukesh kumar singhal', N'Tripureshwor branch', N'Global ime bank', N'34070-1000-2550', N'', N'jitendra agrawal');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp20, 2, N'Other Account 1', N'Aarna international pvt ltd', N'Ktm', N'NIMB Bank', N'0010-10103-10505', N'chq rs-150000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp20, 0, N'Company Account', N'ICON Traders', N'Teku Branch', N'Prabhu Bank Limited', N'1140-1137-9940-0011', N'chq rs-102908.73', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp20, 1, N'Personal Account', N'Prashant Mahesheka', N'Bhat Bateni Branch, Kathmandu', N'Laxmi Sunrise Bank Ltd', N'0142-4005-337', N'cash rs-100000', N'personal name');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (22, N'Binayak Enterprises', 22);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (21, N'omex, brj', 21);
+DECLARE @Supp21 INT = 21;
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp21, 0, N'Company Account', N'New Omax international', N'बीरगज', N'NMB BANK', N'019-01168-3570-0016', N'chq rs-140000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp21, 1, N'Personal Account', N'OMAX MANUFACTURING', N'बीरगज', N'NMB BANK', N'019-0146-4318-0000-27', N'chq rs- 50000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+
+INSERT INTO supplier_records (id, name, sort_order) VALUES (22, N'Arvind bandhu', 22);
 DECLARE @Supp22 INT = 22;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp22, 0, N'Company Account', N'Binayak Overseas Trade Pvt.Ltd', N'ktm', N'Kumari Bank', N'0050-3018-7610-0001', N'chq rs-184171.92', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp22, 1, N'Personal Account', N'GANESH DATTA JOSHI', N'TRIPURESHWOR', N'LUMBINI BIKAS BANK LTD.', N'0311-1020-3647-6400-0001', N'RS-80000', N'jitendra agrawal');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp22, 0, N'Company Account', N'Arvind Bandhu', N'बीरगज', N'Everest Bank', N'0060-0105-2002-84', N'chq rs- 96182.77', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp22, 1, N'Personal Account', N'Nirmal Kumar agrawal', N'बीरगज', N'NMB bank', N'01900-5268-1300-011', N'cash rs- 131150', N'jitendra');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (23, N'Start International', 23);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (23, N'Satyam Techno', 23);
 DECLARE @Supp23 INT = 23;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp23, 0, N'Company Account', N'Star International', N'बीरगज', N'एभरेष्ट बैक लिमिटॆड', N'00600-105201511', N'chq rs-141216/-', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp23, 0, N'Company Account', N'Satyam Techno Packs Pvt. Ltd.', N'Halchowk Branch', N'Nabil Bank LTD.', N'320 101 7500 654', N'chq rs- 92449.82', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp23, 1, N'Personal Account', N'Rajesh Paudel', N'Halchowk Branch', N'Nabil bank ltd.', N'032 0101 7500 806', N'cash rs- 15500', N'jitendra');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (24, N'shruti enterprises', 24);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (24, N'Jagdamba Metal, Brj', 24);
 DECLARE @Supp24 INT = 24;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp24, 0, N'Company Account', N'shruti enterprises', N'बीरगज', N'एभरेष्ट बैक लिमिटॆड', N'0060-0105-200689', N'chq rs- 220000', N'जे.के. हार्डवेयर & कम्पनी, BRT');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp24, 1, N'Personal Account', N'Vinay bansal', N'बीरगज', N'एभरेष्ट बैक लिमिटॆड', N'600-501-211-258', N'cash rs- 100000', N'jitendra agrawal');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp24, 0, N'Company Account', N'Jagdamba Metal Udhyog', N'बीरगज', N'एभरेष्ट बैक लिमिटॆड', N'00600-1052-01353', N'chq rs- 233765.92', N'जे.के. हार्डवेयर & कम्पनी, Brt');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (25, N'shree om ji trade international', 25);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (25, N'Shiv Enterprises, Brj', 25);
 DECLARE @Supp25 INT = 25;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp25, 0, N'Company Account', N'श्री ओम जी ट्रेड ईन्टरनेशनल', N'बीरगज', N'Nepal investment bank', N'003590-2025-0283', N'', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp25, 1, N'Personal Account', N'sangita kumari agrawal', N'बीरगज', N'laxmi bank', N'0011-9000-146', N'', N'jitnedra');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp25, 0, N'Company Account', N'Shiv Enterprises', N'Birgunj', N'Machhapuchhre bank ltd', N'0040 0235 5550  0017', N'chq rs- 275000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp25, 1, N'Personal Account', N'Jay Ma Vaishno Enterprises', N'Birgunj', N'Machhapuchhre bank ltd', N'0040 0533 8430 0011', N'chq rs-115938', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp25, 2, N'Other Account 1', N'Rajendra Sharma', N'Birgunj', N'Machhapuchhre bank ltd', N'0040-0004-2980-0011', N'Rs-', N'Jitendra');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (26, N'Lotus Plastic Udhyog', 26);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (26, N'Rani sati, Brj', 26);
 DECLARE @Supp26 INT = 26;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp26, 0, N'Company Account', N'Lotus Plastic udhyog', N'Kalimati', N'Nepal Investment bank', N'01759-01025-0221', N'CHQ RS- 183791.86', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp26, 1, N'Personal Account', N'tamanna traders', N'Kalimati', N'Nepal Investment bank', N'01759-01025-0306', N'chq rs- 665000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp26, 2, N'Other Account 1', N'Lotus Plastic udhyog', N'Kalimati', N'Everest Bank', N'0370-0105-2000-63', N'CHQ RS- 183791.86', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp26, 0, N'Company Account', N'Royal Hardware pvt ltd', N'Birgunj', N'global bank', N'1101 0100 63407', N'chq rs- 67636.63', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp26, 1, N'Personal Account', N'Krishna Gopal Keyal', N'', N'Siddhartha Bank', N'0021-5129-121', N'cash rs-49615', N'Jitendra');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (27, N'Kelash hw, brj', 27);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (27, N'Pashupati plastic Ind, Ktm', 27);
 DECLARE @Supp27 INT = 27;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp27, 0, N'Company Account', N'Nirika Traders', N'बीरगज', N'Nepal Investment bank', N'0030-10500-03615', N'', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp27, 1, N'Personal Account', N'nitesh kumar Agrawal', N'बीरगज', N'Nepal Investment bank', N'0030-509000-2652', N'', N'jitendra');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp27, 0, N'Company Account', N'Pashupati Plastic Industries', N'', N'Prabhu Bank', N'1880 1524 8870 0013', N'chq rs- 57600', N'जे.के. हार्डवेयर & कम्पनी, Brt');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (28, N'New Famous Tar Jali, Brj', 28);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (28, N'Sri Maruti Mangal, hattiguda', 28);
 DECLARE @Supp28 INT = 28;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp28, 0, N'Company Account', N'New Famous Tar Jali Udhyog', N'बीरगज', N'Nepal invesment bank.', N'0030-1050-0029-98', N'chq rs-135000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp28, 1, N'Personal Account', N'Ram Asis Prasad Kurmi', N'', N'Kumari Bank', N'00300-7575-4200-001', N'cash rs-90700.64', N'jitendra');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp28, 0, N'Company Account', N'Shree Maruti Mangal', N'Hattigauda', N'Prabhu Bank', N'1000 1346 7050 0016', N'chq rs- 180000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp28, 1, N'Personal Account', N'Touchstone Multipurpose Co-operative ltd', N'New road', N'Global Ime Bank', N'3020 1010 0021 50', N'cash rs-71180', N'personal name');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (29, N'icon, ktm', 29);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (29, N'Bimal Spark House Pvt. Ltd.,Lalitpur', 29);
 DECLARE @Supp29 INT = 29;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp29, 0, N'Company Account', N'ICON Traders', N'Teku Branch', N'Prabhu Bank Limited', N'1140-1137-9940-0011', N'chq rs-102908.73', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp29, 1, N'Personal Account', N'Prashant Mahesheka', N'Bhat Bateni Branch, Kathmandu', N'Laxmi Sunrise Bank Ltd', N'0142-4005-337', N'cash rs-100000', N'personal name');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp29, 0, N'Company Account', N'Bimal Spark House Pvt. Ltd.', N'Lalitpur', N'Nabil Bank', N'2380 1017 5002 49', N'chq rs- 800000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp29, 1, N'Personal Account', N'Future Exim Pvt.Ltd', N'Dhobighat', N'Global Bank', N'1050-1010-0027-69', N'chq rs- 500000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp29, 2, N'Other Account 1', N'Future Exim Pvt.Ltd', N'Dhobighat', N'Sanima Bank', N'9030-1001-0000-134', N'chq rs- 400000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (30, N'omex, brj', 30);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (30, N'R R Hardware Center, Brj', 30);
 DECLARE @Supp30 INT = 30;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp30, 0, N'Company Account', N'New Omax international', N'बीरगज', N'NMB BANK', N'019-01168-3570-0016', N'chq rs-140000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp30, 1, N'Personal Account', N'OMAX MANUFACTURING', N'बीरगज', N'NMB BANK', N'019-0146-4318-0000-27', N'chq rs- 50000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp30, 0, N'Company Account', N'R R Hardware Center, Brj', N'', N'Machhapuchchhre bank limited', N'0040 0002 0350 0042', N'chq rs- 45007.9', N'जे.के. हार्डवेयर & कम्पनी, Brt');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (32, N'Arvind bandhu', 32);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (31, N'Crystal Trade Link', 31);
+DECLARE @Supp31 INT = 31;
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp31, 0, N'Company Account', N'Crystal Trade Link', N'', N'Prabhu Bank Limited', N'0320-1529-2630-0016', N'chq rs-40755', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp31, 1, N'Personal Account', N'Crystal Trade Link', N'', N'Everest Bank Limited', N'0100-0105-2013-84', N'chq rs-', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp31, 2, N'Other Account 1', N'Pradip Agrawal', N'', N'Everest Bank Limited', N'0020-0501-0062-40', N'cash rs-54000', N'personal name');
+
+INSERT INTO supplier_records (id, name, sort_order) VALUES (32, N'Gahawamai Enterprises,Brj', 32);
 DECLARE @Supp32 INT = 32;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp32, 0, N'Company Account', N'Arvind Bandhu', N'बीरगज', N'Everest Bank', N'0060-0105-2002-84', N'chq rs- 96182.77', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp32, 1, N'Personal Account', N'Nirmal Kumar agrawal', N'बीरगज', N'NMB bank', N'01900-5268-1300-011', N'cash rs- 131150', N'jitendra');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp32, 0, N'Company Account', N'Gahawamai Enterprises,Brj', N'', N'Machhapuchhre', N'0040-0533-6560-0017', N'chq rs-255390', N'जे.के. हार्डवेयर & कम्पनी, Brt');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (33, N'Satyam Techno', 33);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (33, N'R R Hardware Center, Brj', 33);
 DECLARE @Supp33 INT = 33;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp33, 0, N'Company Account', N'Satyam Techno Packs Pvt. Ltd.', N'Halchowk Branch', N'Nabil Bank LTD.', N'320 101 7500 654', N'chq rs- 92449.82', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp33, 1, N'Personal Account', N'Rajesh Paudel', N'Halchowk Branch', N'Nabil bank ltd.', N'032 0101 7500 806', N'cash rs- 15500', N'jitendra');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp33, 0, N'Company Account', N'R.R Hardware Center', N'Birgunj', N'Machhapuchhre', N'0040-0002-0350-0042', N'chq rs-76496.48', N'जे.के. हार्डवेयर & कम्पनी, Brt');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (34, N'Jagdamba Metal, Brj', 34);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (34, N'Tara Paint & Chemical Insudtries Pvt. Ltd.', 34);
 DECLARE @Supp34 INT = 34;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp34, 0, N'Company Account', N'Jagdamba Metal Udhyog', N'बीरगज', N'एभरेष्ट बैक लिमिटॆड', N'00600-1052-01353', N'chq rs- 233765.92', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp34, 0, N'Company Account', N'TARA PAINTS & CHEMICAL INDUSTRIES PVT LTD', N'Birgunj', N'Kumari', N'0030-2488-9300-0021', N'chq rs-100000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (35, N'Shiv Enterprises, Brj', 35);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (35, N'Himal Wire Netting Industrirs', 35);
 DECLARE @Supp35 INT = 35;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp35, 0, N'Company Account', N'Shiv Enterprises', N'Birgunj', N'Machhapuchhre bank ltd', N'0040 0235 5550  0017', N'chq rs- 275000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp35, 1, N'Personal Account', N'Jay Ma Vaishno Enterprises', N'Birgunj', N'Machhapuchhre bank ltd', N'0040 0533 8430 0011', N'chq rs-115938', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp35, 2, N'Other Account 1', N'Rajendra Sharma', N'Birgunj', N'Machhapuchhre bank ltd', N'0040-0004-2980-0011', N'Rs-', N'Jitendra');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp35, 0, N'Company Account', N'Himal Wire Netting Industrirs', N'Birgunj', N'Machhapuchhre', N'0040-9905-5340-0025', N'chq rs-114319.25', N'जे.के. हार्डवेयर & कम्पनी, Brt');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (36, N'Rani sati, Brj', 36);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (36, N'Global Marketing, Brj', 36);
 DECLARE @Supp36 INT = 36;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp36, 0, N'Company Account', N'Royal Hardware pvt ltd', N'Birgunj', N'global bank', N'1101 0100 63407', N'chq rs- 67636.63', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp36, 1, N'Personal Account', N'Krishna Gopal Keyal', N'', N'Siddhartha Bank', N'0021-5129-121', N'cash rs-49615', N'Jitendra');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp36, 0, N'Company Account', N'Global Marketing', N'Birgunj', N'Everest Bank Ltd', N'0060-0105-2010-70', N'chq rs-43758.6', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp36, 1, N'Personal Account', N'Bharat Bhushan Sarraf', N'Birgunj', N'Everest Bank Ltd', N'0060-0501-2013-95', N'cash rs- 49741.4', N'personal name');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (37, N'Pashupati plastic Ind, Ktm', 37);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (37, N'Rituraaj Impex', 37);
 DECLARE @Supp37 INT = 37;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp37, 0, N'Company Account', N'Pashupati Plastic Industries', N'', N'Prabhu Bank', N'1880 1524 8870 0013', N'chq rs- 57600', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp37, 0, N'Company Account', N'Rituraaj Impex', N'Birgunj', N'prabhu bank', N'1880-1534-6760-0010', N'chq no-33840', N'जे.के. हार्डवेयर & कम्पनी, Brt');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (38, N'Sri Maruti Mangal, hattiguda', 38);
+INSERT INTO supplier_records (id, name, sort_order) VALUES (38, N'LAXMI BANK', 38);
 DECLARE @Supp38 INT = 38;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp38, 0, N'Company Account', N'Shree Maruti Mangal', N'Hattigauda', N'Prabhu Bank', N'1000 1346 7050 0016', N'chq rs- 180000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp38, 1, N'Personal Account', N'Touchstone Multipurpose Co-operative ltd', N'New road', N'Global Ime Bank', N'3020 1010 0021 50', N'cash rs-71180', N'personal name');
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp38, 0, N'Company Account', N'जे.के. हार्डवेयर & कम्पनी, Brt', N'Brt', N'Laxmi Bank', N'0061-1036-434', N'chq no-10,85,000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
 
-INSERT INTO supplier_records (id, name, sort_order) VALUES (40, N'Bimal Spark House Pvt. Ltd.,Lalitpur', 40);
-DECLARE @Supp40 INT = 40;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp40, 0, N'Company Account', N'Bimal Spark House Pvt. Ltd.', N'Lalitpur', N'Nabil Bank', N'2380 1017 5002 49', N'chq rs- 800000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp40, 1, N'Personal Account', N'Future Exim Pvt.Ltd', N'Dhobighat', N'Global Bank', N'1050-1010-0027-69', N'chq rs- 500000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp40, 2, N'Other Account 1', N'Future Exim Pvt.Ltd', N'Dhobighat', N'Sanima Bank', N'9030-1001-0000-134', N'chq rs- 400000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-
-INSERT INTO supplier_records (id, name, sort_order) VALUES (41, N'R R Hardware Center, Brj', 41);
-DECLARE @Supp41 INT = 41;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp41, 0, N'Company Account', N'R R Hardware Center, Brj', N'', N'Machhapuchchhre bank limited', N'0040 0002 0350 0042', N'chq rs- 45007.9', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-
-INSERT INTO supplier_records (id, name, sort_order) VALUES (42, N'Crystal Trade Link', 42);
-DECLARE @Supp42 INT = 42;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp42, 0, N'Company Account', N'Crystal Trade Link', N'', N'Prabhu Bank Limited', N'0320-1529-2630-0016', N'chq rs-40755', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp42, 1, N'Personal Account', N'Crystal Trade Link', N'', N'Everest Bank Limited', N'0100-0105-2013-84', N'chq rs-', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp42, 2, N'Other Account 1', N'Pradip Agrawal', N'', N'Everest Bank Limited', N'0020-0501-0062-40', N'cash rs-54000', N'personal name');
-
-INSERT INTO supplier_records (id, name, sort_order) VALUES (43, N'Gahawamai Enterprises,Brj', 43);
-DECLARE @Supp43 INT = 43;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp43, 0, N'Company Account', N'Gahawamai Enterprises,Brj', N'', N'Machhapuchhre', N'0040-0533-6560-0017', N'chq rs-255390', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-
-INSERT INTO supplier_records (id, name, sort_order) VALUES (44, N'R R Hardware Center, Brj', 44);
-DECLARE @Supp44 INT = 44;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp44, 0, N'Company Account', N'R.R Hardware Center', N'Birgunj', N'Machhapuchhre', N'0040-0002-0350-0042', N'chq rs-76496.48', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-
-INSERT INTO supplier_records (id, name, sort_order) VALUES (45, N'Tara Paint & Chemical Insudtries Pvt. Ltd.', 45);
-DECLARE @Supp45 INT = 45;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp45, 0, N'Company Account', N'TARA PAINTS & CHEMICAL INDUSTRIES PVT LTD', N'Birgunj', N'Kumari', N'0030-2488-9300-0021', N'chq rs-100000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-
-INSERT INTO supplier_records (id, name, sort_order) VALUES (46, N'Himal Wire Netting Industrirs', 46);
-DECLARE @Supp46 INT = 46;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp46, 0, N'Company Account', N'Himal Wire Netting Industrirs', N'Birgunj', N'Machhapuchhre', N'0040-9905-5340-0025', N'chq rs-114319.25', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-
-INSERT INTO supplier_records (id, name, sort_order) VALUES (47, N'Global Marketing, Brj', 47);
-DECLARE @Supp47 INT = 47;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp47, 0, N'Company Account', N'Global Marketing', N'Birgunj', N'Everest Bank Ltd', N'0060-0105-2010-70', N'chq rs-43758.6', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp47, 1, N'Personal Account', N'Bharat Bhushan Sarraf', N'Birgunj', N'Everest Bank Ltd', N'0060-0501-2013-95', N'cash rs- 49741.4', N'personal name');
-
-INSERT INTO supplier_records (id, name, sort_order) VALUES (48, N'Rituraaj Impex', 48);
-DECLARE @Supp48 INT = 48;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp48, 0, N'Company Account', N'Rituraaj Impex', N'Birgunj', N'prabhu bank', N'1880-1534-6760-0010', N'chq no-33840', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-
-INSERT INTO supplier_records (id, name, sort_order) VALUES (49, N'LAXMI BANK', 49);
-DECLARE @Supp49 INT = 49;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp49, 0, N'Company Account', N'जे.के. हार्डवेयर & कम्पनी, Brt', N'Brt', N'Laxmi Bank', N'0061-1036-434', N'chq no-10,85,000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
-
-INSERT INTO supplier_records (id, name, sort_order) VALUES (50, N'Salasar Tools and Hardware', 50);
-DECLARE @Supp50 INT = 50;
-INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp50, 0, N'Company Account', N'SALASAR TOOLS AND HARDWARE', N'Teku', N'Laxmi Bank', N'1661-6948-0201-1079', N'chq no-145000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
+INSERT INTO supplier_records (id, name, sort_order) VALUES (39, N'Salasar Tools and Hardware', 39);
+DECLARE @Supp39 INT = 39;
+INSERT INTO supplier_accounts (supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma) VALUES (@Supp39, 0, N'Company Account', N'SALASAR TOOLS AND HARDWARE', N'Teku', N'Laxmi Bank', N'1661-6948-0201-1079', N'chq no-145000', N'जे.के. हार्डवेयर & कम्पनी, Brt');
 
 SET IDENTITY_INSERT supplier_records OFF;
 
@@ -654,9 +654,9 @@ INSERT INTO bonus_data (row_idx, col_idx, cell_text) VALUES (22, 2, N'Team--Basi
 PRINT 'Populating Today Payment...'
 INSERT INTO tp_sections (sort_order, name, header_color, is_core) VALUES (0, N'Payments', N'#1565C0', 1);
 INSERT INTO tp_sections (sort_order, name, header_color, is_core) VALUES (1, N'Demand Loans (DL)', N'#2E7D32', 1);
-INSERT INTO tp_sections (sort_order, name, header_color, is_core) VALUES (2, N'Purchase (Today)', N'#00695C', 1);
+INSERT INTO tp_sections (sort_order, name, header_color, is_core) VALUES (2, N'Today', N'#00695C', 1);
 INSERT INTO tp_sections (sort_order, name, header_color, is_core) VALUES (3, N'Account Table', N'#E65100', 1);
-INSERT INTO tp_sections (sort_order, name, header_color, is_core) VALUES (4, N'Purchase (Upcoming)', N'#4527A0', 1);
+INSERT INTO tp_sections (sort_order, name, header_color, is_core) VALUES (4, N'Upcoming', N'#4527A0', 1);
 INSERT INTO tp_sections (sort_order, name, header_color, is_core) VALUES (5, N'Limits & LC', N'#B71C1C', 1);
 INSERT INTO tp_section_data (section_id, row_idx, col_idx, cell_text) SELECT id, 0, 1, N'Macha Bank' FROM tp_sections WHERE name=N'Payments';
 INSERT INTO tp_section_data (section_id, row_idx, col_idx, cell_text) SELECT id, 0, 2, N'macha' FROM tp_sections WHERE name=N'Payments';
