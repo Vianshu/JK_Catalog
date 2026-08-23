@@ -237,6 +237,10 @@ class FinalDataUI(ExcelTableMixin, QWidget):
         company_name = os.path.basename(path)
         self.final_db_name = build_logical_name(company_name, company_path=path)
         self.row_data_db_name = build_logical_name(company_name, company_path=path)
+        # Clear image-map cache so a fresh fingerprint is built for the new company.
+        # Without this, stale fingerprints from the previous session/company would
+        # prevent the auto-sync from detecting folder changes on first tab-switch.
+        self._img_map_cache = None
         # Load image_folder immediately so auto-sync can detect changes without a
         # manual Tally sync being run first (previously only set in load_and_sync_data).
         self.image_folder = ""
@@ -1112,7 +1116,7 @@ class FinalDataUI(ExcelTableMixin, QWidget):
             # sets self._duplicate_images on the main thread using the returned value.
             cursor = conn.cursor()
             # Fetch current path too so we can skip unchanged rows
-            cursor.execute("SELECT GUID, Image_Name, Image_Path FROM catalog")
+            cursor.execute("SELECT GUID, Image_Name, Image_Path, Image_Date FROM catalog")
             rows = cursor.fetchall()
 
             # Cache file-modify dates per unique path (avoids redundant os.stat calls
@@ -1123,18 +1127,20 @@ class FinalDataUI(ExcelTableMixin, QWidget):
             missing_updates = []  # (guid,)            — no image and path not already empty
             skipped         = 0
 
-            for rid, img_name, current_path in rows:
+            for rid, img_name, current_path, current_date in rows:
                 clean = img_name.lower().strip() if img_name else ""
                 current_path = current_path or ""
 
                 if clean in img_map:
                     path = img_map[clean]
-                    if path == current_path:
-                        skipped += 1   # already correct — nothing to write
-                        continue
                     if path not in _date_cache:
                         _date_cache[path] = self.get_file_modify_date(path)
-                    found_updates.append((path, _date_cache[path], rid))
+                    new_date = _date_cache[path]
+                    if path == current_path and new_date == (current_date or ""):
+                        skipped += 1   # path AND date unchanged — truly nothing to write
+                        continue
+                    # Path changed OR same path but image was replaced (mtime differs)
+                    found_updates.append((path, new_date, rid))
                 else:
                     if current_path == "":
                         skipped += 1   # already empty — nothing to write
@@ -1474,17 +1480,23 @@ class FinalDataUI(ExcelTableMixin, QWidget):
         if not self.image_folder or not os.path.exists(self.image_folder):
             return {}, {}
 
-        # ── build folder fingerprint (filename + mtime) ────────────────────
-        # Using hash(frozenset((filename_lower, mtime))) so that renames,
-        # additions AND deletions are all detected — not just count/mtime changes.
+        # ── build folder fingerprint (filename + mtime + size) ───────────────
+        # Including file size alongside mtime catches the common case where an
+        # image is deleted and replaced with a new one of the same name but the
+        # copy operation preserved the original timestamp (e.g. WhatsApp downloads,
+        # robocopy /COPYALL, or network-share writes that round mtime).
         sigs = set()
         for root, _, files in os.walk(self.image_folder):
             for f in files:
+                full = os.path.join(root, f)
                 try:
-                    mt = os.path.getmtime(os.path.join(root, f))
+                    st = os.stat(full)
+                    mt = st.st_mtime
+                    sz = st.st_size
                 except OSError:
                     mt = 0.0
-                sigs.add((f.lower(), mt))
+                    sz = 0
+                sigs.add((f.lower(), mt, sz))
         fingerprint = (self.image_folder, hash(frozenset(sigs)))
 
         # ── return cached result if folder is unchanged ─────────────────────
@@ -1549,15 +1561,21 @@ class FinalDataUI(ExcelTableMixin, QWidget):
             logger.info("AutoImageSync: skipping — worker already running")
             return False
 
-        # Fingerprint: hash(frozenset((filename_lower, mtime))) — detects renames too
+        # Fingerprint: hash(frozenset((filename_lower, mtime, size)))
+        # Size is included alongside mtime so that replacing an image with a new
+        # one of the same name (and preserved timestamp) is still detected.
         sigs = set()
         for root, _, files in os.walk(self.image_folder):
             for f in files:
+                full = os.path.join(root, f)
                 try:
-                    mt = os.path.getmtime(os.path.join(root, f))
+                    st = os.stat(full)
+                    mt = st.st_mtime
+                    sz = st.st_size
                 except OSError:
                     mt = 0.0
-                sigs.add((f.lower(), mt))
+                    sz = 0
+                sigs.add((f.lower(), mt, sz))
         new_fp = (self.image_folder, hash(frozenset(sigs)))
 
         cached = getattr(self, '_img_map_cache', None)

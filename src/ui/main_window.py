@@ -298,13 +298,13 @@ class MainWindow(QWidget):
         self._perm_poll_timer.timeout.connect(self._poll_permissions)
         self._security_mgr = None  # Initialized on login
 
-        # ── 24-hour automatic backup ──────────────────────────────────────────
-        # Hybrid trigger: fires every 24h while the app is open AND on
-        # login if the company hasn’t been backed up in the past 24 hours.
+        # ── 12-hour automatic backup ──────────────────────────────────────────
+        # Hybrid trigger: fires every 12h while the app is open AND on
+        # login if the company hasn’t been backed up in the past 12 hours.
         # Backups are PER-COMPANY and saved to a user-chosen folder.
-        _24H_MS = 24 * 60 * 60 * 1_000  # 24 hours in milliseconds
+        _12H_MS = 12 * 60 * 60 * 1_000  # 12 hours in milliseconds
         self._auto_backup_timer = QTimer(self)
-        self._auto_backup_timer.setInterval(_24H_MS)
+        self._auto_backup_timer.setInterval(_12H_MS)
         self._auto_backup_timer.timeout.connect(self._run_auto_backup)
         # Persistent settings for backup: folder path + per-company last-run timestamps
         self._backup_settings = QSettings("TallySync", "AutoBackup")
@@ -1764,15 +1764,15 @@ class MainWindow(QWidget):
             UserManagerDialog(self.current_company, self.current_company_path, parent=self).exec()
 
     def _check_startup_backup(self, company_path: str):
-        """Run a backup immediately on login if the last backup is >24 hours old.
+        """Run a backup immediately on login if the last backup is >12 hours old.
 
         Reads the per-data-path last-backup timestamp from QSettings and triggers
         _run_auto_backup if needed.  Uses a short QTimer.singleShot delay so the
         main window has fully painted before the (potentially slow) backup starts.
-        All companies sharing the same data path share one backup cycle per 24h.
+        All companies sharing the same data path share one backup cycle per 12h.
         """
         from datetime import datetime, timezone
-        _24H = 24 * 60 * 60  # seconds
+        _12H = 12 * 60 * 60  # seconds
 
         # Key is based on the DATA PATH folder (parent of company), not the company.
         # This ensures all companies in the same data path share one backup per 24h.
@@ -1783,7 +1783,7 @@ class MainWindow(QWidget):
         now_ts    = datetime.now(timezone.utc).timestamp()
 
         elapsed = now_ts - last_ts
-        if elapsed >= _24H:
+        if elapsed >= _12H:
             logger.info(
                 f"[AutoBackup] Last backup for data path '{data_key}' was "
                 f"{elapsed/3600:.1f}h ago — running startup backup."
@@ -1869,7 +1869,7 @@ class MainWindow(QWidget):
                     self.user_session, "auto_backup", module="system",
                     detail=f"Auto-backup: {getattr(self, '_pending_backup_file', '')}"
                 )
-            # Prune: keep only the 7 most recent backups for this data path
+            # Prune: keep only the 14 most recent backups for this data path
             try:
                 folder = getattr(self, '_pending_backup_dir', '')
                 prefix = f"JK_AutoBackup_{data_key}_"
@@ -1877,7 +1877,7 @@ class MainWindow(QWidget):
                     f for f in os.listdir(folder)
                     if f.startswith(prefix) and f.endswith(".jkbackup")
                 )
-                for old in backups[:max(0, len(backups) - 7)]:
+                for old in backups[:max(0, len(backups) - 14)]:
                     try:
                         os.remove(os.path.join(folder, old))
                         logger.info(f"[AutoBackup] Pruned: {old}")
@@ -1943,10 +1943,11 @@ class MainWindow(QWidget):
 
         from datetime import datetime
         # Derive keys from the DATA PATH (parent of company), not the company itself.
-        # This ensures all companies in the same data path share one backup per 24h.
+        # This ensures all companies in the same data path share one backup per 12h.
         data_path        = os.path.dirname(os.path.normpath(company_path))
         data_key         = os.path.basename(data_path) if os.path.basename(data_path) else "DataRoot"
-        today_str        = datetime.now().strftime("%Y-%m-%d")
+        # Include AM/PM so we allow 2 backups per day (12-hour schedule)
+        today_str        = datetime.now().strftime("%Y-%m-%d_%p")
         data_backup_dir  = os.path.join(backup_folder, data_key)
 
         try:
@@ -1955,12 +1956,12 @@ class MainWindow(QWidget):
             logger.error(f"[AutoBackup] Could not create backup folder: {e}")
             return
 
-        # Guard 1: same-day file check (cross-user, cross-company)
+        # Guard 1: same half-day file check (cross-user, cross-company)
         prefix = f"JK_AutoBackup_{data_key}_{today_str}"
         existing = [f for f in os.listdir(data_backup_dir)
                     if f.startswith(prefix) and f.endswith(".jkbackup")]
         if existing:
-            logger.info(f"[AutoBackup] Today's backup already exists for '{data_key}': {existing[0]} — skipping.")
+            logger.info(f"[AutoBackup] This half-day's backup already exists for '{data_key}': {existing[0]} — skipping.")
             return
 
         timestamp   = datetime.now().strftime("%Y-%m-%d_%H-%M")

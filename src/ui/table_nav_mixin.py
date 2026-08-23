@@ -367,13 +367,47 @@ class UniversalCellDelegate(QStyledItemDelegate):
                         self._owner._bypass_fuzzy_match = True
                     plain = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return,
                                       Qt.KeyboardModifier.NoModifier)
-                    return super().eventFilter(obj, plain)
+                    # Capture row/col BEFORE committing, so any synchronous navigation
+                    # triggered by itemChanged (e.g. handle_item_changed) doesn't change
+                    # what _excel_on_enter sees as the origin cell.
+                    t = getattr(self._owner, '_excel_table', None)
+                    r = t.currentRow() if t else -1
+                    c = t.currentColumn() if t else 0
+
+                    result = super().eventFilter(obj, plain)
+                    if self._owner and hasattr(self._owner, '_bypass_fuzzy_match'):
+                        self._owner._bypass_fuzzy_match = False
+                    
+                    # For ExcelTableMixin tables (Godown, ChequeList, …) trigger
+                    # column-aware navigation — same as _commit_and_move does for
+                    # normal Enter.  _SectionCard (supp_payment) has no
+                    # _excel_on_enter so it is unaffected.
+                    owner = self._owner
+                    if t and owner and hasattr(owner, '_excel_on_enter'):
+                        QTimer.singleShot(
+                            15,
+                            lambda r=r, c=c: owner._excel_on_enter(r, c))
+                    return result
                 else:
-                    # Plain Enter: if popup is visible hand off to _TallyCompleter.eventFilter
+                    # Plain Enter
                     if isinstance(obj, QLineEdit):
-                        c = obj.completer()
-                        if c and c.popup() and c.popup().isVisible():
+                        c_obj = obj.completer()
+                        # If popup is visible, hand off to _TallyCompleter.eventFilter
+                        if c_obj and c_obj.popup() and c_obj.popup().isVisible():
                             return False  # skip delegate; completer runs next (LIFO)
+                    
+                    # Popup is closed (or no completer) → commit and navigate
+                    t = getattr(self._owner, '_excel_table', None)
+                    r = t.currentRow() if t else -1
+                    c = t.currentColumn() if t else 0
+                    
+                    result = super().eventFilter(obj, event)
+                    
+                    owner = self._owner
+                    if t and owner and hasattr(owner, '_excel_on_enter'):
+                        QTimer.singleShot(15, lambda r=r, c=c: owner._excel_on_enter(r, c))
+                    return result
+
         return super().eventFilter(obj, event)
 
     def setModelData(self, editor, model, index):
@@ -395,8 +429,6 @@ class UniversalCellDelegate(QStyledItemDelegate):
         elif cell_type == "autocomplete":
             # Ctrl+Enter bypass: save exactly what was typed — skip GUID lookup and normalization
             if getattr(self._owner, '_bypass_fuzzy_match', False):
-                if self._owner is not None:
-                    self._owner._bypass_fuzzy_match = False
                 raw = editor.text().strip() if isinstance(editor, QLineEdit) else ""
                 model.setData(index, raw, Qt.ItemDataRole.EditRole)
                 return
@@ -417,6 +449,14 @@ class UniversalCellDelegate(QStyledItemDelegate):
         """Commit the editor and trigger Enter navigation after a dropdown selection.
         This eliminates the 'double Enter' issue — one action commits and moves cursor."""
         from PyQt6.QtWidgets import QStyledItemDelegate
+        
+        # Capture row/col BEFORE committing, so any synchronous navigation
+        # triggered by itemChanged (e.g. handle_item_changed) doesn't change
+        # what _excel_on_enter sees as the origin cell.
+        t = getattr(self._owner, '_excel_table', None)
+        r = t.currentRow() if t else -1
+        c = t.currentColumn() if t else 0
+        
         # Guard: editor may already be closed by the time singleShot fires
         try:
             self.commitData.emit(editor)
@@ -425,11 +465,11 @@ class UniversalCellDelegate(QStyledItemDelegate):
             self.closeEditor.emit(editor, QStyledItemDelegate.EndEditHint.SubmitModelCache)
         except RuntimeError:
             return
+            
         # Trigger Godown / cheque list Enter-column routing (ExcelTableMixin tables)
         owner = self._owner
-        if owner and hasattr(owner, '_excel_on_enter') and hasattr(owner, '_excel_table'):
-            t = owner._excel_table
-            QTimer.singleShot(0, lambda: owner._excel_on_enter(t.currentRow(), t.currentColumn()))
+        if t and owner and hasattr(owner, '_excel_on_enter'):
+            QTimer.singleShot(15, lambda r=r, c=c: owner._excel_on_enter(r, c))
 
 
 # ---------------------------------------------------------------------------

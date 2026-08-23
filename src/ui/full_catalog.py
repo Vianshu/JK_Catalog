@@ -893,7 +893,14 @@ class FullCatalogUI(QWidget):
         if self._build_silent:
             QApplication.restoreOverrideCursor()
 
+        # Always invalidate the product lookup cache before re-rendering.
+        # After an image sync, Image_Path / Image_Date in the DB have changed but
+        # _product_lookup_cache still holds stale product dicts keyed by group+sg.
+        # Without this, get_items_for_page_dynamic() would render the old image.
+        self.logic.invalidate_cache()
+
         self.refresh_catalog_data()
+
 
         if result["success"]:
             # Track build result for debounce logic

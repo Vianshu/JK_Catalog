@@ -75,12 +75,12 @@ class _GodownDelegate(UniversalCellDelegate):
     def eventFilter(self, editor, event):
         from PyQt6.QtCore import QEvent, Qt
         if event.type() == QEvent.Type.KeyPress:
-            key  = event.key()
-            ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+            key = event.key()
 
             if key == Qt.Key.Key_Tab:
                 from PyQt6.QtGui import QKeyEvent
                 from PyQt6.QtWidgets import QLineEdit
+                from PyQt6.QtCore import QTimer
                 # If the autocomplete popup is open, commit its highlighted item first.
                 # Without this, the synthetic plain-Return we send below reaches
                 # UniversalCellDelegate.eventFilter while popup.isVisible() is still True,
@@ -91,7 +91,6 @@ class _GodownDelegate(UniversalCellDelegate):
                         pop = c.popup()
                         cur_idx = pop.currentIndex()
                         pop.hide()
-                        # Determine the item to commit (same logic as _TallyCompleter.eventFilter)
                         top_text = None
                         m = pop.model()
                         if cur_idx.isValid() and m:
@@ -100,36 +99,25 @@ class _GodownDelegate(UniversalCellDelegate):
                             top_text = c._proxy.data(
                                 c._proxy.index(0, 0), Qt.ItemDataRole.DisplayRole)
                         if top_text:
-                            c._typed_text = top_text   # prevent _do_restore from reverting
+                            c._typed_text = top_text
                             editor.setText(top_text)
-                # Convert Tab → Return and let Qt's built-in delegate mechanism
-                # handle commitData / closeEditor atomically.
+                # Convert Tab -> Return so Qt's built-in delegate commits atomically.
                 ret_event = QKeyEvent(
                     QEvent.Type.KeyPress,
                     Qt.Key.Key_Return,
                     Qt.KeyboardModifier.NoModifier,
                 )
-                super().eventFilter(editor, ret_event)   # commits via Qt internals
-                # Schedule downward navigation (editor is closed by now)
-                t = getattr(self._owner, '_excel_table', None)
-                if t:
-                    row = t.currentRow()
-                    if row < t.rowCount() - 1:
-                        from PyQt6.QtCore import QTimer
-                        QTimer.singleShot(0, lambda r=row: t.setCurrentCell(r + 1, t.currentColumn()))
-                return True   # consume the Tab — don't let Qt move right
-
-            elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and ctrl:
-                # Ctrl+Enter: commit typed text (bypass fuzzy match) then navigate.
-                # super() sets the bypass flag and commits via QStyledItemDelegate.
-                result = super().eventFilter(editor, event)
-                t = getattr(self._owner, '_excel_table', None)
-                if t:
-                    row = t.currentRow()
-                    if row < t.rowCount() - 1:
-                        from PyQt6.QtCore import QTimer
-                        QTimer.singleShot(0, lambda r=row: t.setCurrentCell(r + 1, t.currentColumn()))
-                return result
+                # Capture row/col BEFORE commit so handle_item_changed navigation
+                # doesn't shift the cursor before _excel_on_enter fires.
+                owner = self._owner
+                t = owner._excel_table if (owner and hasattr(owner, '_excel_table')) else None
+                r_tab = t.currentRow() if t else -1
+                c_tab = t.currentColumn() if t else 0
+                super().eventFilter(editor, ret_event)
+                # Tab is "identical to Enter" — use the same column-aware routing.
+                if t and owner and hasattr(owner, '_excel_on_enter'):
+                    QTimer.singleShot(15, lambda r=r_tab, c=c_tab: owner._excel_on_enter(r, c))
+                return True   # consume Tab
 
         return super().eventFilter(editor, event)
 
@@ -461,12 +449,11 @@ class GodownListUI(ExcelTableMixin, QWidget):
         try:
             # Column 0 (Alias) - apply lookup logic
             if col == 0 and text:
+                # Exact lookup only: substring fallback removed.
+                # When autocomplete fires (_on_activated), it sets the EXACT item name
+                # which matches here. When Ctrl+Enter saves raw partial text, no match
+                # is found, and the text stays exactly as typed.
                 data = self._alias_lookup.get(text.lower())
-                if not data and self._alias_lookup:
-                    for key in getattr(self, '_sorted_alias_keys', sorted(self._alias_lookup.keys())):
-                        if text.lower() in key:
-                            data = self._alias_lookup[key]
-                            break
                 if data:
                     item_name = data["Item_Name"]
                     item.setText(item_name)
@@ -475,40 +462,22 @@ class GodownListUI(ExcelTableMixin, QWidget):
                     if p_no.lower() == "none": p_no = ""
                     p_no = _apply_part_no_override(item_name, p_no)
                     self.table.setItem(row, 5, self.create_table_item(p_no, Qt.AlignmentFlag.AlignCenter, True))
-                    
                     if not self.table.item(row, 1): self.set_item_locked(row, 1, "", should_lock=False)
                     if not self.table.item(row, 3): self.set_item_locked(row, 3, "", should_lock=False)
                     if not self.table.item(row, 4): self.set_item_locked(row, 4, "", should_lock=False)
                     if not self.table.item(row, 6): self.set_item_locked(row, 6, "", should_lock=False)
-                    
                     cn_was_freed = False
                     if _is_cn_excluded(p_no):
                         existing_cn_item = self.table.item(row, 6)
                         if existing_cn_item and existing_cn_item.text().strip():
                             self.set_item_locked(row, 6, "", should_lock=False)
                             cn_was_freed = True
-                            
-                    from PyQt6.QtCore import QTimer
-                    def _move_and_edit(r=row):
-                        self._nav_set_current(r, 1)
-                        if self.table.item(r, 1):
-                            self.table.editItem(self.table.item(r, 1))
-                    QTimer.singleShot(0, _move_and_edit)
                     if cn_was_freed: self._reassign_empty_cns()
                     self.save_data_to_db()
                     return
                 else:
-                    unit_val = self.table.item(row, 2).text() if self.table.item(row, 2) else ""
-                    pno_val  = self.table.item(row, 5).text() if self.table.item(row, 5) else ""
-                    self.set_item_locked(row, 2, unit_val, should_lock=False)
-                    self.set_item_locked(row, 5, pno_val,  should_lock=False)
-                    if not self.table.item(row, 1): self.set_item_locked(row, 1, "", should_lock=False)
-                    from PyQt6.QtCore import QTimer
-                    def _move_and_edit_else(r=row):
-                        self._nav_set_current(r, 1)
-                        if self.table.item(r, 1):
-                            self.table.editItem(self.table.item(r, 1))
-                    QTimer.singleShot(0, _move_and_edit_else)
+                    # No exact match — save as-is (free typing / Ctrl+Enter).
+                    # Navigation is handled by _excel_on_enter (scheduled by the delegate).
                     self.save_data_to_db()
 
             # Column 1 (प्रति कार्टुन) - Right align + numeric validation
