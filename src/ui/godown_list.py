@@ -64,52 +64,6 @@ def _apply_part_no_override(item_name: str, current_part_no: str) -> str:
     return _CLEAN_PART_NO_OVERRIDE.get(clean_key, current_part_no)
 
 
-class _GodownSortProxyModel(QSortFilterProxyModel):
-    """Proxy model for the Godown col-0 completer.
-
-    Sorts the dropdown so that **starts-with** matches appear at the top
-    and **contains** matches appear below them — identical to Tally's
-    autocomplete behaviour.  Without this, Qt orders results by their
-    original position in the source list, which means items starting with
-    a completely different letter can float to the top just because they
-    contain the typed letter somewhere in the middle.
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._prefix = ""
-        self.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-
-    def set_prefix(self, text: str):
-        self._prefix = text.lower()
-        self.invalidate()          # force re-sort
-
-    def filterAcceptsRow(self, source_row, source_parent):
-        """Accept rows that contain the current prefix (case-insensitive).
-        Spaces and dots are stripped so 'pvc.bocket ganga' and
-        'pvcbocketganga' both match 'pvc bocket ganga'."""
-        idx = self.sourceModel().index(source_row, 0, source_parent)
-        text = self.sourceModel().data(idx, Qt.ItemDataRole.DisplayRole) or ""
-        if not self._prefix:
-            return True
-        # Strip spaces and dots before comparing (use _strip_punct for full punct stripping)
-        p = _normalize(self._prefix)
-        t = _normalize(text)
-        return p in t
-
-    def lessThan(self, left, right):
-        """Starts-with wins; within each tier sort alphabetically."""
-        lv = (self.sourceModel().data(left,  Qt.ItemDataRole.DisplayRole) or "").lower()
-        rv = (self.sourceModel().data(right, Qt.ItemDataRole.DisplayRole) or "").lower()
-        p  = self._prefix
-        l_starts = lv.startswith(p)
-        r_starts = rv.startswith(p)
-        if l_starts != r_starts:
-            return l_starts  # starts-with rows sort first
-        return lv < rv       # alphabetical within same tier
-
-
-
 
 
 class _GodownDelegate(UniversalCellDelegate):
@@ -120,55 +74,87 @@ class _GodownDelegate(UniversalCellDelegate):
     """
     def eventFilter(self, editor, event):
         from PyQt6.QtCore import QEvent, Qt
-        if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Tab:
-            from PyQt6.QtGui import QKeyEvent
-            # Convert Tab → Return and let Qt's built-in delegate mechanism
-            # handle commitData / closeEditor atomically. This avoids the
-            # "does not belong to this view" error that occurs when we emit
-            # those signals ourselves on an editor that may already be closing.
-            ret_event = QKeyEvent(
-                QEvent.Type.KeyPress,
-                Qt.Key.Key_Return,
-                Qt.KeyboardModifier.NoModifier,
-            )
-            super().eventFilter(editor, ret_event)   # commits via Qt internals
-            # Schedule downward navigation (editor is closed by now)
-            t = getattr(self._owner, '_excel_table', None)
-            if t:
-                row = t.currentRow()
-                if row < t.rowCount() - 1:
-                    from PyQt6.QtCore import QTimer
-                    QTimer.singleShot(0, lambda r=row: t.setCurrentCell(r + 1, t.currentColumn()))
-            return True   # consume the Tab — don't let Qt move right
+        if event.type() == QEvent.Type.KeyPress:
+            key  = event.key()
+            ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+
+            if key == Qt.Key.Key_Tab:
+                from PyQt6.QtGui import QKeyEvent
+                from PyQt6.QtWidgets import QLineEdit
+                # If the autocomplete popup is open, commit its highlighted item first.
+                # Without this, the synthetic plain-Return we send below reaches
+                # UniversalCellDelegate.eventFilter while popup.isVisible() is still True,
+                # causing it to return False (skip commit) and leave the editor open.
+                if isinstance(editor, QLineEdit):
+                    c = editor.completer()
+                    if c and c.popup() and c.popup().isVisible():
+                        pop = c.popup()
+                        cur_idx = pop.currentIndex()
+                        pop.hide()
+                        # Determine the item to commit (same logic as _TallyCompleter.eventFilter)
+                        top_text = None
+                        m = pop.model()
+                        if cur_idx.isValid() and m:
+                            top_text = m.data(cur_idx, Qt.ItemDataRole.DisplayRole)
+                        if not top_text and hasattr(c, '_proxy') and c._proxy.rowCount() > 0:
+                            top_text = c._proxy.data(
+                                c._proxy.index(0, 0), Qt.ItemDataRole.DisplayRole)
+                        if top_text:
+                            c._typed_text = top_text   # prevent _do_restore from reverting
+                            editor.setText(top_text)
+                # Convert Tab → Return and let Qt's built-in delegate mechanism
+                # handle commitData / closeEditor atomically.
+                ret_event = QKeyEvent(
+                    QEvent.Type.KeyPress,
+                    Qt.Key.Key_Return,
+                    Qt.KeyboardModifier.NoModifier,
+                )
+                super().eventFilter(editor, ret_event)   # commits via Qt internals
+                # Schedule downward navigation (editor is closed by now)
+                t = getattr(self._owner, '_excel_table', None)
+                if t:
+                    row = t.currentRow()
+                    if row < t.rowCount() - 1:
+                        from PyQt6.QtCore import QTimer
+                        QTimer.singleShot(0, lambda r=row: t.setCurrentCell(r + 1, t.currentColumn()))
+                return True   # consume the Tab — don't let Qt move right
+
+            elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and ctrl:
+                # Ctrl+Enter: commit typed text (bypass fuzzy match) then navigate.
+                # super() sets the bypass flag and commits via QStyledItemDelegate.
+                result = super().eventFilter(editor, event)
+                t = getattr(self._owner, '_excel_table', None)
+                if t:
+                    row = t.currentRow()
+                    if row < t.rowCount() - 1:
+                        from PyQt6.QtCore import QTimer
+                        QTimer.singleShot(0, lambda r=row: t.setCurrentCell(r + 1, t.currentColumn()))
+                return result
+
         return super().eventFilter(editor, event)
 
+
     def setModelData(self, editor, model, index):
-        """Col 0 only: accept typed text only if it is a perfect match after stripping
-        spaces and dots. 'pvcbocketganga' and 'pvc.bocket ganga' both match 'pvc bocket ganga'.
-        If no match is found, rejects the edit and prompts the user to use the dropdown."""
+        """Col 0 only: if the typed text matches a known item (space/dot-stripped),
+        auto-correct to the canonical form. If no match, save the text as-is (free typing allowed).
+        Ctrl+Enter bypasses all matching — saves exactly what was typed."""
         if index.column() == 0:
-            from PyQt6.QtWidgets import QMessageBox
+            # Ctrl+Enter bypass: skip normalization, let UniversalCellDelegate save raw
+            if getattr(self._owner, '_bypass_fuzzy_match', False):
+                super().setModelData(editor, model, index)  # UniversalCellDelegate handles bypass
+                return
             typed = editor.text().strip()
             if typed:
-                # Use _strip_punct(typed) here to also strip hyphens, commas, etc.
                 typed_clean = _normalize(typed)
                 data_list = self._autocomplete_items
                 if callable(data_list):
                     data_list = data_list()
                 if data_list:
-                    match = None
                     for item in data_list:
-                        if _normalize(item) == typed_clean:  # swap _normalize → _strip_punct for full match
-                            match = item  # canonical name with correct spacing
+                        if _normalize(item) == typed_clean:
+                            editor.setText(item)  # auto-correct to canonical form
                             break
-                    if match:
-                        editor.setText(match)  # auto-correct to canonical form before saving
-                    else:
-                        QMessageBox.warning(
-                            editor.parent(), "Item Not Found",
-                            "Please select an exact product name from the dropdown."
-                        )
-                        return  # reject — do not write to model
+                    # No match → fall through and save typed text as-is (free typing)
         super().setModelData(editor, model, index)
 
 
@@ -185,6 +171,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
         self.final_db_name = ""
         self._active_editor = None  # Track (row, editor) for cleanup
         self._pre_cn       = ""    # CN value before the user starts editing col 6
+        self._bypass_fuzzy_match = False  # set True by Ctrl+Enter to skip normalization
         # _is_edit_mode is initialised by ExcelTableMixin._init_excel_table()
         
         # Debounced save timer — saves 1 second after last edit instead of on every keystroke
@@ -213,7 +200,9 @@ class GodownListUI(ExcelTableMixin, QWidget):
         if hasattr(self, 'table'):
             self.table.setRowCount(0) 
             self.load_data_from_db()
-            self.update_completer()
+            # (final_data is refreshed by load_final_data_from_db above;
+            #  the _GodownDelegate reads it dynamically via lambda so no
+            #  separate completer update is needed here.)
             # Ensure at least 50 empty buffer rows, scaling with product count
             named_count = sum(
                 1 for r in range(self.table.rowCount())
@@ -283,14 +272,6 @@ class GodownListUI(ExcelTableMixin, QWidget):
                 total_ctn NVARCHAR(MAX), godown NVARCHAR(MAX), part_no NVARCHAR(MAX), cn NVARCHAR(MAX)
             )
         """)
-
-    # ---------------- COMPLETER ----------------
-    def update_completer(self):
-        self.completer = None
-        if self.final_data:
-            self.completer = QCompleter(self.final_data)  # final_data is now a list of alias strings
-            self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-            self.completer.setFilterMode(Qt.MatchFlag.MatchContains)
 
     # ---------------- UI ----------------
     def init_ui(self):
@@ -387,13 +368,13 @@ class GodownListUI(ExcelTableMixin, QWidget):
         self.btn_excel.setToolTip("" if can_edit else "🔒 Export disabled — display only")
 
 
-    # ---------------- SHOW EVENT ----------------
+
     def showEvent(self, event):
         """Reload stock_items data every time the tab becomes visible."""
         super().showEvent(event)
         if self.company_path:
             self.load_final_data_from_db(self.company_path)
-            self.update_completer()
+            # final_data is read dynamically by _GodownDelegate — no separate update needed
 
 
     # ── ExcelTableMixin overrides ────────────────────────────────────────────
@@ -404,16 +385,19 @@ class GodownListUI(ExcelTableMixin, QWidget):
 
     def _excel_on_enter(self, row, col):
         """Custom Enter routing for the Godown List:
+          Col 1 (सामानको नाम)  → Col 2 (प्रति कार्टुन) same row
           Col 2 (प्रति कार्टुन) → Col 4 (जम्मा कार्टुन) same row
           Col 4 (जम्मा कार्टुन) → Col 5 (गोदाम) same row
-          All other cols       → next row, same col (default behaviour)
+          All other cols        → next row, same col (default behaviour)
         """
         self._excel_on_navigate()  # flush any open col-0 overlay
         t = self._excel_table
-        if col == 1:                              # Col 2 (0-indexed = 1)
-            self._nav_set_current(row, 3)         # → Col 4 (0-indexed = 3)
-        elif col == 3:                            # Col 4 (0-indexed = 3)
-            self._nav_set_current(row, 4)         # → Col 5 (0-indexed = 4)
+        if col == 0:                              # Col 1 (सामानको नाम)
+            self._nav_set_current(row, 1)         # → Col 2 (प्रति कार्टुन)
+        elif col == 1:                            # Col 2 (प्रति कार्टुन)
+            self._nav_set_current(row, 3)         # → Col 4 (जम्मा कार्टुन)
+        elif col == 3:                            # Col 4 (जम्मा कार्टुन)
+            self._nav_set_current(row, 4)         # → Col 5 (गोदाम)
         else:
             if row < t.rowCount() - 1:
                 self._nav_set_current(row + 1, col)

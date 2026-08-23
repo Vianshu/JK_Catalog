@@ -253,13 +253,17 @@ class CompanyCreateForm(QWidget):
         # Show parent path to user
         self.fields[4].setText(parent_path) 
         
-        # Load global backup path
+        # Load backup path — try SQL first (company-specific, shared across users),
+        # fallback to local config.json for first-time / backwards compat.
+        backup_loaded = False
+        # For add mode, no company path yet — skip SQL and use local config
         from src.utils.path_utils import get_app_dir
         config_file = os.path.join(get_app_dir(), "config.json")
         if os.path.exists(config_file):
             try:
                 with open(config_file, 'r', encoding='utf-8') as f:
                     self.fields[6].setText(json.load(f).get("backup_path", ""))
+                    backup_loaded = True
             except Exception: pass
         
     def load_for_alter(self, company_path):
@@ -303,14 +307,25 @@ class CompanyCreateForm(QWidget):
                         self.fields[5].setText(d.get("image_path", ""))
             except Exception: pass
             
-        # Load global backup path
-        from src.utils.path_utils import get_app_dir
-        config_file = os.path.join(get_app_dir(), "config.json")
-        if os.path.exists(config_file):
-            try:
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    self.fields[6].setText(json.load(f).get("backup_path", ""))
-            except Exception: pass
+        # Load backup path — SQL first (company-specific), fallback to local config.json
+        backup_path_sql = ""
+        try:
+            from src.logic.security_manager import SecurityManager
+            sm_bp = SecurityManager(self.base_folder_path)
+            backup_path_sql = sm_bp.get_backup_path(company_path)
+        except Exception:
+            pass
+        if backup_path_sql:
+            self.fields[6].setText(backup_path_sql)
+        else:
+            # Fallback: local config.json (old installs that haven't saved to SQL yet)
+            from src.utils.path_utils import get_app_dir
+            config_file = os.path.join(get_app_dir(), "config.json")
+            if os.path.exists(config_file):
+                try:
+                    with open(config_file, 'r', encoding='utf-8') as f:
+                        self.fields[6].setText(json.load(f).get("backup_path", ""))
+                except Exception: pass
 
     def back_to_list(self):
         self.back_callback()
@@ -381,10 +396,16 @@ class CompanyCreateForm(QWidget):
             except Exception: pass
                 
             # Initialize empty report data in SQL (ensures table exists)
-            save_report_json({}, str(target_path))
+            # IMPORTANT: Only for NEW companies — calling this in edit mode would
+            # wipe all existing CRM pending data (report_data table reset to empty).
+            if not self.edit_mode:
+                save_report_json({}, str(target_path))
 
-            # 2. Register in Secure DB
-            cid = self.security.register_company(display_name, str(final_folder_path), img_path, user, password)
+            # 2. Register in Secure DB (saves display_name, image_path, backup_path)
+            cid = self.security.register_company(
+                display_name, str(final_folder_path), img_path, user, password,
+                backup_path=backup_path
+            )
             if cid:
                 logger.info(f"Company registered: name='{display_name}', path='{final_folder_path}', id={cid}")
             else:

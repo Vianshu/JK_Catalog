@@ -143,11 +143,16 @@ class SecurityManager:
                 display_name NVARCHAR(255) NOT NULL,
                 folder_path NVARCHAR(500) UNIQUE NOT NULL,
                 image_path NVARCHAR(500),
+                backup_path NVARCHAR(500),
                 session_timeout_min INT DEFAULT 30,
                 max_login_attempts INT DEFAULT 5,
                 created_at DATETIME DEFAULT GETDATE()
             )
         """)
+        # Migration: add backup_path column if it doesn't exist yet (existing installs)
+        if not self.db.table_has_column(self._db_security, "companies", "backup_path"):
+            self.db.add_column(self._db_security, "companies", "backup_path", "NVARCHAR(500)")
+            logger.info("Schema migration: added backup_path column to companies")
 
         self.db.ensure_table(self._db_security, "roles", """
             CREATE TABLE roles (
@@ -292,7 +297,8 @@ class SecurityManager:
     # COMPANY MANAGEMENT
     # ═══════════════════════════════════════════════════════════════════════════
 
-    def register_company(self, display_name, folder_path, image_path, admin_user, admin_pass):
+    def register_company(self, display_name, folder_path, image_path, admin_user, admin_pass,
+                         backup_path=""):
         """Register a new company with its admin user + default roles.
 
         If company exists (same path), updates details.
@@ -316,14 +322,14 @@ class SecurityManager:
             if row:
                 company_id = row[0]
                 cursor.execute("""
-                    UPDATE companies SET display_name = ?, image_path = ? WHERE id = ?
-                """, (display_name, image_path, company_id))
+                    UPDATE companies SET display_name = ?, image_path = ?, backup_path = ? WHERE id = ?
+                """, (display_name, image_path, backup_path, company_id))
             else:
                 cursor.execute("""
-                    INSERT INTO companies (display_name, folder_path, image_path)
+                    INSERT INTO companies (display_name, folder_path, image_path, backup_path)
                     OUTPUT INSERTED.id
-                    VALUES (?, ?, ?)
-                """, (display_name, folder_path, image_path))
+                    VALUES (?, ?, ?, ?)
+                """, (display_name, folder_path, image_path, backup_path))
                 company_id = int(cursor.fetchone()[0])
 
                 # Create default roles for new company
@@ -863,6 +869,41 @@ class SecurityManager:
             return set()
 
     # ═══════════════════════════════════════════════════════════════════════════
+    # BACKUP PATH HELPERS
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def get_backup_path(self, folder_path):
+        """Return the shared backup_path for this company (empty string if not set)."""
+        conn = self.db.get_connection(self._db_security)
+        if not conn:
+            return ""
+        try:
+            cursor = conn.cursor()
+            fp = os.path.normpath(os.path.abspath(folder_path))
+            cursor.execute("SELECT backup_path FROM companies WHERE folder_path = ?", (fp,))
+            row = cursor.fetchone()
+            return (row[0] or "").strip() if row else ""
+        except Exception as e:
+            logger.warning(f"get_backup_path error: {e}")
+            return ""
+
+    def set_backup_path(self, folder_path, backup_path):
+        """Persist a shared backup_path for this company in SQL."""
+        conn = self.db.get_connection(self._db_security)
+        if not conn:
+            return
+        try:
+            cursor = conn.cursor()
+            fp = os.path.normpath(os.path.abspath(folder_path))
+            cursor.execute(
+                "UPDATE companies SET backup_path = ? WHERE folder_path = ?",
+                (backup_path.strip(), fp)
+            )
+            conn.commit()
+        except Exception as e:
+            logger.warning(f"set_backup_path error: {e}")
+
+    # ═══════════════════════════════════════════════════════════════════════════
     # AUDIT LOGGING
     # ═══════════════════════════════════════════════════════════════════════════
 
@@ -1053,7 +1094,7 @@ class SecurityManager:
         """Get all companies for the current data path.
         
         Returns:
-            list of dicts: [{id, display_name, folder_path, image_path}, ...]
+            list of dicts: [{id, display_name, folder_path, image_path, backup_path}, ...]
         """
         conn = self.db.get_connection(self._db_security)
         if not conn:
@@ -1061,10 +1102,17 @@ class SecurityManager:
         
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT id, display_name, folder_path, image_path FROM companies ORDER BY display_name")
+            cursor.execute(
+                "SELECT id, display_name, folder_path, image_path, backup_path "
+                "FROM companies ORDER BY display_name"
+            )
             rows = cursor.fetchall()
             return [
-                {"id": r[0], "display_name": r[1], "folder_path": r[2], "image_path": r[3]}
+                {
+                    "id": r[0], "display_name": r[1],
+                    "folder_path": r[2], "image_path": r[3],
+                    "backup_path": (r[4] or "").strip()
+                }
                 for r in rows
             ]
         except Exception as e:

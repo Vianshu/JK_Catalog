@@ -206,7 +206,9 @@ class _DbTable(QTableWidget):
     def apply_edit_mode(self, can_edit: bool):
         self._can_edit = can_edit
         self.setEditTriggers(
-            QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.AnyKeyPressed
+            QTableWidget.EditTrigger.DoubleClicked
+            | QTableWidget.EditTrigger.AnyKeyPressed
+            | QTableWidget.EditTrigger.EditKeyPressed
             if can_edit else QTableWidget.EditTrigger.NoEditTriggers
         )
 
@@ -297,16 +299,21 @@ class _DbTable(QTableWidget):
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_F2 and self._can_edit:
-            # F2 = Edit Mode: open the editor without clearing text;
-            # UniversalCellDelegate.setEditorData will place the cursor at the end
-            # with no selection because _is_edit_mode is True.
+            # Set flag BEFORE super() so setEditorData sees it.
+            # Qt opens the editor via EditKeyPressed trigger inside super().
             self._is_edit_mode = True
-            super().keyPressEvent(event)   # Qt opens the editor via EditKeyPressed
+            super().keyPressEvent(event)
         elif self._can_edit and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             for it in self.selectedItems():
                 it.setText("")
         else:
             super().keyPressEvent(event)
+
+    def closeEditor(self, editor, hint):
+        """Reset F2 edit-mode flag when any editor closes so normal typing
+        never inherits the 'cursor at end, no selection' F2 behaviour."""
+        self._is_edit_mode = False
+        super().closeEditor(editor, hint)
 
     # ── Right-click context menu with Delete Row ──────────────────────────
 
@@ -367,6 +374,8 @@ class _SectionCard(QFrame):
         self._can_edit = False
         self._today_tab_ref = None
         self._saving = False
+        self._is_edit_mode = False        # F2 support: cursor at end, no selection
+        self._bypass_fuzzy_match = False  # Ctrl+Enter: save typed text as-is
         
         # Resizing state
         self._resizing = False
@@ -447,8 +456,10 @@ class _SectionCard(QFrame):
         self.table.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.MinimumExpanding)
         self.table.setMinimumHeight(60)
 
-        # Apply cell delegate for seamless editing
-        self.table.setItemDelegate(UniversalCellDelegate(self.table))
+        # Apply cell delegate — owner is the _SectionCard so setEditorData
+        # can read self._is_edit_mode for F2 cursor-at-end behaviour.
+        self.table.setItemDelegate(UniversalCellDelegate(self))
+        self.table.installEventFilter(self)  # intercept F2 on the table
 
         if self._fixed_cols and self._col_specs:
             headers = [s[0] for s in self._col_specs]
@@ -506,10 +517,18 @@ class _SectionCard(QFrame):
         if card_width is not None and card_width >= 300 and card_width != 450:
             self.setFixedWidth(card_width)
             self._card_fixed_width = card_width
-            
+
         self._load()
-        
+        self._setup_enter_navigation()  # connect Enter-moves-down for all delegates
+
     def eventFilter(self, source, event):
+        # F2 on the table: set flag then let Qt open the editor via EditKeyPressed
+        if source is self.table and event.type() == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_F2 and self._can_edit:
+                self._is_edit_mode = True
+                # Pass through — Qt's QAbstractItemView keyPressEvent handles F2
+                # via EditKeyPressed trigger (added in set_edit_mode)
+                return False
         if source == self.grip:
             if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
                 self._resizing = True
@@ -859,7 +878,9 @@ class _SectionCard(QFrame):
     def set_edit_mode(self, can_edit):
         self._can_edit = can_edit
         self.table.setEditTriggers(
-            QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.AnyKeyPressed
+            QTableWidget.EditTrigger.DoubleClicked
+            | QTableWidget.EditTrigger.AnyKeyPressed
+            | QTableWidget.EditTrigger.EditKeyPressed
             if can_edit else QTableWidget.EditTrigger.NoEditTriggers)
         self._btn_row.setEnabled(can_edit)
         if not self._fixed_cols:
@@ -871,8 +892,37 @@ class _SectionCard(QFrame):
         delegate = self.table.itemDelegateForColumn(col_idx)
         if hasattr(delegate, '_data_getter'):
             pass  # data_getter is a lambda; just reassign delegate
-        new_delegate = UniversalCellDelegate(self.table, cell_type="autocomplete", autocomplete_items=lambda dl=data_list: dl)
+        new_delegate = UniversalCellDelegate(self, cell_type="autocomplete", autocomplete_items=lambda dl=data_list: dl)
         self.table.setItemDelegateForColumn(col_idx, new_delegate)
+        self._connect_nav(new_delegate)  # enable Enter-moves-down on the new delegate
+
+    # ── Enter-key navigation: commit and move to next row ─────────────────
+
+    def _setup_enter_navigation(self):
+        """Connect closeEditor signals from all current delegates to the move-down handler."""
+        self._connect_nav(self.table.itemDelegate())
+        for col in range(self.table.columnCount()):
+            d = self.table.itemDelegateForColumn(col)
+            if d is not None and d is not self.table.itemDelegate():
+                self._connect_nav(d)
+
+    def _connect_nav(self, delegate):
+        """Connect delegate.closeEditor → _on_editor_close_for_nav (once per delegate)."""
+        if delegate and not getattr(delegate, '_nav_connected', False):
+            delegate.closeEditor.connect(self._on_editor_close_for_nav)
+            delegate._nav_connected = True
+
+    def _on_editor_close_for_nav(self, editor, hint):
+        """Move selection to the next row when Enter commits the editor.
+        SubmitModelCache = Enter pressed (not Tab, not Escape, not dropdown selection)."""
+        from PyQt6.QtWidgets import QAbstractItemDelegate
+        if hint == QAbstractItemDelegate.EndEditHint.SubmitModelCache:
+            cur = self.table.currentIndex()
+            if cur.isValid():
+                next_row = cur.row() + 1
+                if next_row < self.table.rowCount():
+                    QTimer.singleShot(0, lambda r=next_row, c=cur.column():
+                        self.table.setCurrentCell(r, c))
 
 
 # ===========================================================================
@@ -1083,14 +1133,42 @@ class TodayPaymentTab(QWidget, _PrintExportMixin):
         return val
 
     def _set_party_cb(self, text, index):
-        """Lookup alias or name and store GUID in the model."""
-        txt_lower = text.strip().lower()
+        """Lookup alias or name and store GUID in the model.
+        Matching order:
+          1. Exact alias match (case-insensitive)
+          2. Exact name match (case-insensitive)
+          3. Normalized match — strip spaces & punctuation — so 'balajiMetal'
+             and 'balaji.metal' both resolve to 'Balaji Metal Industries, Hetauda'
+          4. No match → store typed text as-is (free typing allowed)
+        """
+        import re as _re
+        def _norm(s): return _re.sub(r'[\s\.\,\-\_\/\\]', '', s.lower())
+
+        txt_stripped = text.strip()
+        txt_lower = txt_stripped.lower()
+        txt_norm = _norm(txt_stripped)
+
+        # 1 & 2: exact match
         guid = self._alias_to_guid.get(txt_lower) or self._name_to_guid.get(txt_lower)
+
+        # 3: normalized match
+        if not guid and txt_norm:
+            for name_key, g in self._name_to_guid.items():
+                if _norm(name_key) == txt_norm:
+                    guid = g
+                    break
+            if not guid:
+                for alias_key, g in self._alias_to_guid.items():
+                    if _norm(alias_key) == txt_norm:
+                        guid = g
+                        break
+
         # We must use Qt.ItemDataRole.EditRole to actually store it in the underlying cell text
         if guid:
             index.model().setData(index, guid, Qt.ItemDataRole.EditRole)
         else:
-            index.model().setData(index, text, Qt.ItemDataRole.EditRole)
+            index.model().setData(index, txt_stripped, Qt.ItemDataRole.EditRole)
+
 
     def _build_core_section_specs(self):
         """Build column specs for the Payments core section."""

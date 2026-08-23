@@ -1914,17 +1914,28 @@ class MainWindow(QWidget):
             logger.warning("[AutoBackup] Skipped — no company loaded.")
             return
 
-        # Load backup folder from config.json
+        # Load backup folder — SQL first (company-specific, shared across users),
+        # fallback to local config.json for old installs.
         backup_folder = ""
-        from src.utils.path_utils import get_app_dir
-        config_file = os.path.join(get_app_dir(), "config.json")
-        if os.path.exists(config_file):
-            try:
-                import json as _json
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    backup_folder = _json.load(f).get("backup_path", "").strip()
-            except Exception:
-                pass
+        try:
+            data_path = os.path.dirname(os.path.normpath(company_path))
+            from src.logic.security_manager import SecurityManager
+            _sm = SecurityManager(data_path)
+            backup_folder = _sm.get_backup_path(company_path)
+        except Exception:
+            pass
+
+        if not backup_folder:
+            # Fallback: local config.json (backwards compat for installs before SQL backup_path)
+            from src.utils.path_utils import get_app_dir
+            config_file = os.path.join(get_app_dir(), "config.json")
+            if os.path.exists(config_file):
+                try:
+                    import json as _json
+                    with open(config_file, 'r', encoding='utf-8') as f:
+                        backup_folder = _json.load(f).get("backup_path", "").strip()
+                except Exception:
+                    pass
 
         if not backup_folder or not os.path.isdir(backup_folder):
             logger.warning("[AutoBackup] Skipped — backup folder not set or missing.")
