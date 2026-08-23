@@ -817,7 +817,10 @@ class MainWindow(QWidget):
         if hasattr(fcp, 'logic'):
             fcp.logic.invalidate_cache()
         fcp._last_build_no_changes = False  # Bypass debounce
-        fcp.build_catalog(silent=True)
+        # image_sync=True: if a catalog build is already running (race with the
+        # tab-switch build that fired simultaneously), set _pending_image_sync so
+        # _on_build_finished queues a follow-up build instead of silently dropping.
+        fcp.build_catalog(silent=True, image_sync=True)
         logger.info(f"_on_image_sync_done: triggered catalog rebuild (tab={current})")
 
     def init_main_pages(self):

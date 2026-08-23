@@ -63,6 +63,13 @@ class PixmapCache:
         Re-loads from source if the file's mtime has changed.
         """
         if not path or not os.path.exists(path):
+            # File is gone — evict any stale cached pixmap + mtime for this
+            # path so that if the same filename reappears (e.g. user deletes then
+            # pastes a new image with the same name) we reload from disk rather
+            # than serving the old cached pixmap.
+            if path and path in cls._mtimes:
+                cls._invalidate_path(path)
+                cls._mtimes.pop(path, None)
             return None
 
         try:

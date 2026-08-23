@@ -153,6 +153,7 @@ class FullCatalogUI(QWidget):
         self._build_worker = None
         self._last_build_time = 0
         self._last_build_no_changes = False
+        self._pending_image_sync = False  # Set when image_sync_done fires during a running build
         self._zoom_factor = 1.0  # Current zoom level (1.0 = 100%)
 
         self._user_session = None    # Set by main_window after login
@@ -836,7 +837,7 @@ class FullCatalogUI(QWidget):
     # BUILD CATALOG
     # ───────────────────────────────────────────────────────────────────────────
 
-    def build_catalog(self, silent=False):
+    def build_catalog(self, silent=False, image_sync=False):
         """Build/refresh the catalog with change detection.
         Runs heavy operations in a background thread."""
         if not self.logic.catalog_db_path:
@@ -846,6 +847,12 @@ class FullCatalogUI(QWidget):
 
         # Prevent concurrent builds
         if self._build_worker and self._build_worker.isRunning():
+            # If this call came from an image sync, remember to re-run once the
+            # current build finishes — otherwise the synced image data is never
+            # picked up by the catalog view.
+            if image_sync:
+                self._pending_image_sync = True
+                logger.debug("build_catalog: build running — queued pending_image_sync")
             return
 
         # Debounce: skip silent builds if last check was <10s ago with no changes
@@ -953,6 +960,17 @@ class FullCatalogUI(QWidget):
                 logger.error(f"Auto-Build Error: {result['error']}")
 
         self._build_worker = None
+
+        # Drain pending image-sync build: if image_sync_done fired while the
+        # previous build was running, we queued a flag rather than dropping it.
+        # Now that the worker slot is free, fire one more silent build so the
+        # freshly synced Image_Path / Image_Date values reach the catalog view.
+        if self._pending_image_sync:
+            self._pending_image_sync = False
+            logger.info("build_catalog: draining pending_image_sync — starting follow-up build")
+            self.logic.invalidate_cache()
+            self._last_build_no_changes = False
+            self.build_catalog(silent=True, image_sync=True)
 
     # ── Item 3: Missing Image Alert ─────────────────────────────────────────
 
