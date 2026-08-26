@@ -2485,13 +2485,14 @@ class _AccCard(QFrame):
             edit.editingFinished.connect(self._save)
             
             def _adjust_width(txt, ed=edit):
+                txt = str(txt)
                 fm = ed.fontMetrics()
                 # 30px padding for margins and borders
                 w = fm.horizontalAdvance(txt) + 30
                 # Don't let it get too small
                 ed.setMinimumWidth(max(150, w))
             edit.textChanged.connect(_adjust_width)
-            _adjust_width(val)
+            _adjust_width(str(val))
 
             lay.addRow(lbl, edit)
             self._field_edits.append((fkey, edit))
