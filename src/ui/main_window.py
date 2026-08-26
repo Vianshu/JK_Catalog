@@ -22,6 +22,7 @@ from src.ui.price_list import PriceListUI
 from src.ui.godown_list import GodownListUI
 from src.ui.sales_chat import SalesChatUI
 from src.ui.supp_payment import SuppPaymentUI
+from src.ui.supp_payment_v2 import SuppPaymentV2UI
 from src.ui.vat_pages import BalanceUI, StockUI
 from src.ui.super_master import SuperMasterUI
 from src.ui.pur_import import PurImportUI
@@ -257,6 +258,7 @@ class PageIndex:
     CALENDAR = 16
     LEDGER_ROW_DATA = 17
     SECURITY = 18
+    SUPP_PAYMENT_V2 = 19
 
 class MainWindow(QWidget):
 
@@ -601,6 +603,7 @@ class MainWindow(QWidget):
             ("🏠 &Godown List", lambda: self.main_stack.setCurrentIndex(PageIndex.GODOWN), False, None, "tab.godown"),
             ("📈 &Sales Chat", lambda: self.main_stack.setCurrentIndex(PageIndex.SALES_CHAT), False, None, "tab.sales_chat"),
             ("💸 Supp. Pa&yment", lambda: self.main_stack.setCurrentIndex(PageIndex.SUPP_PAYMENT), False, None, "tab.supp_payment"),
+            ("✨ Today Pymt &V2", lambda: self.main_stack.setCurrentIndex(PageIndex.SUPP_PAYMENT_V2), False, None, "tab.supp_payment"),
             ("🏷 Pri&ce List", lambda: self.main_stack.setCurrentIndex(PageIndex.PRICE_LIST), False, None, "tab.price_list"),
             ("📥 Pur &Import", self.handle_pur_import, False, None, "tab.pur_import"),
             ("📊 Cos&t Sheet", self.handle_int_cost_sheet, False, None, "tab.int_cost_sheet"),
@@ -879,6 +882,9 @@ class MainWindow(QWidget):
 
         self.security_page = SecurityUI(self)
         self.main_stack.addWidget(self.security_page) # Index 18
+
+        self.supp_payment_v2_page = SuppPaymentV2UI()
+        self.main_stack.addWidget(self.supp_payment_v2_page) # Index 19
     # --- Helper UI Functions ---
 
     # Shared teal-themed scrollbar style for all per-menu QScrollAreas
@@ -1069,6 +1075,11 @@ class MainWindow(QWidget):
             supp_widget = self.main_stack.widget(PageIndex.SUPP_PAYMENT)
             if supp_widget and hasattr(supp_widget, 'set_company_path'):
                 session.register("Supp. Payment", supp_widget,
+                    lambda page, path: page.set_company_path(path))
+
+            supp_v2_widget = self.main_stack.widget(PageIndex.SUPP_PAYMENT_V2)
+            if supp_v2_widget and hasattr(supp_v2_widget, 'set_company_path'):
+                session.register("Today Pymt V2", supp_v2_widget,
                     lambda page, path: page.set_company_path(path))
         
             if hasattr(self, 'reports_page'):
@@ -1325,6 +1336,10 @@ class MainWindow(QWidget):
         supp_payment = self.main_stack.widget(12)
         if supp_payment and hasattr(supp_payment, 'apply_edit_mode'):
             supp_payment.apply_edit_mode(s.can("supp_payment.edit"))
+
+        supp_payment_v2 = self.main_stack.widget(19)
+        if supp_payment_v2 and hasattr(supp_payment_v2, 'apply_edit_mode'):
+            supp_payment_v2.apply_edit_mode(s.can("supp_payment.edit"))
 
         # Price List — editable Excel sheet
         price_list = self.main_stack.widget(8)

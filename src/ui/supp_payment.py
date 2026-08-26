@@ -529,7 +529,7 @@ class _SectionCard(QFrame):
                 # Pass through — Qt's QAbstractItemView keyPressEvent handles F2
                 # via EditKeyPressed trigger (added in set_edit_mode)
                 return False
-        if source == self.grip:
+        if getattr(self, 'grip', None) and source == self.grip:
             if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
                 self._resizing = True
                 self._resize_start_x = event.globalPosition().x()
