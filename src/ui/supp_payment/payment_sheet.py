@@ -219,7 +219,7 @@ class PaymentSheet(QWidget):
         """Bug 1c: Wire DB so all table data persists across restarts."""
         company_name = os.path.basename(os.path.normpath(path))
         self._db_name = build_logical_name(company_name, company_path=path)
-        from src.utils.db_manager import get_db_manager
+        from src.logic.db_manager import get_db_manager
         get_db_manager().ensure_database_exists(self._db_name, path)
         self._ensure_db_table()
         for tbl in self._tables:
