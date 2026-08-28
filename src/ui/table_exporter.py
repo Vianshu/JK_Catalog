@@ -1,131 +1,229 @@
 import os
 import xlsxwriter
 from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtGui import QColor
 from src.ui.table_nav_mixin import get_visual_text
 
-def export_tables_to_excel(export_folder: str, filename: str, tables_data: list, parent=None, grid_cols=1, title_on_left=False):
+
+def _round_int(val: str) -> str:
+    """Try to parse val as a float and return as rounded int string. Returns val unchanged on failure."""
+    try:
+        cleaned = val.replace(",", "").strip()
+        f = float(cleaned)
+        return str(int(round(f)))
+    except Exception:
+        return val
+
+
+def _qt_color_to_hex(qt_color) -> str | None:
+    """Convert a QColor or QBrush to a hex string like '#rrggbb', or None if it's default/white."""
+    try:
+        if hasattr(qt_color, "color"):
+            qt_color = qt_color.color()   # QBrush -> QColor
+        if not isinstance(qt_color, QColor) or not qt_color.isValid():
+            return None
+        r, g, b = qt_color.red(), qt_color.green(), qt_color.blue()
+        if (r, g, b) == (255, 255, 255) or (r, g, b) == (0, 0, 0):
+            return None  # skip default white/black backgrounds
+        return f"#{r:02X}{g:02X}{b:02X}"
+    except Exception:
+        return None
+
+
+def export_tables_to_excel(export_folder: str, filename: str, tables_data: list,
+                           parent=None, grid_cols=1, title_on_left=False):
     """
     Export one or more QTableWidgets to a single Excel sheet.
-    tables_data: list of dicts with keys: 'title', 'table'
+    tables_data: list of dicts with keys:
+      - 'title': str
+      - 'table': QTableWidget
+      - 'grid_col': int (optional, explicit grid column)
+      - 'header_color': str (optional, hex color for the header row, e.g. '#dbeafe')
+      - 'round_int_cols': set of column indices to round to nearest integer
     """
     if not export_folder:
         if parent:
-            QMessageBox.warning(parent, "Set Location", "Please set an export location first using the 'Set Location' button (or equivalent).")
+            QMessageBox.warning(parent, "Set Location",
+                                "Please set an export location first using the 'Set Location' button (or equivalent).")
         return False
 
     path = os.path.join(export_folder, filename)
-    
+
     try:
         workbook = xlsxwriter.Workbook(path)
         sheet = workbook.add_worksheet("Data")
-        
-        bold_format = workbook.add_format({'bold': True})
+
+        # Format cache: keyed by (bold, bg_color_hex_or_None, border)
+        _fmt_cache = {}
+
+        def _get_fmt(bold=False, bg=None, border=1, align_right=False):
+            key = (bold, bg, border, align_right)
+            if key not in _fmt_cache:
+                props = {"border": border}
+                if bold:
+                    props["bold"] = True
+                if bg:
+                    props["bg_color"] = bg
+                if align_right:
+                    props["align"] = "right"
+                _fmt_cache[key] = workbook.add_format(props)
+            return _fmt_cache[key]
+
         title_format = workbook.add_format({
-            'bold': True,
-            'align': 'center',
-            'valign': 'vcenter',
-            'font_size': 13,
-            'bg_color': '#f8fafc',
-            'border': 1
+            "bold": True, "align": "center", "valign": "vcenter",
+            "font_size": 13, "bg_color": "#f8fafc", "border": 1
         })
-        header_format = workbook.add_format({
-            'bold': True,
-            'bg_color': '#f1f5f9',
-            'border': 1
-        })
-        cell_format = workbook.add_format({'border': 1})
-        
+
+        # Pre-compute per-grid-column widths when explicit grid_col is used,
+        # so we get exactly 1 blank separator column between grid columns.
+        grid_col_starts = {}  # grid_col_index -> excel start column
+        has_explicit_gc = any("grid_col" in t for t in tables_data)
+        if has_explicit_gc:
+            per_gc_max = {}  # grid_col -> max table col count in that column
+            for t in tables_data:
+                gc = min(t.get("grid_col", 0), grid_cols - 1)
+                n = t.get("table").columnCount() + (1 if title_on_left else 0)
+                per_gc_max[gc] = max(per_gc_max.get(gc, 0), n)
+            offset = 0
+            for gc in range(grid_cols):
+                grid_col_starts[gc] = offset
+                offset += per_gc_max.get(gc, 0) + 1  # +1 = exactly one blank separator col
+
         # Track the maximum row used in each column so we know where to place the next item
-        # We divide the layout into `grid_cols` columns.
         col_max_rows = [0] * grid_cols
-        
+
         for i, table_info in enumerate(tables_data):
-            title = table_info.get("title")
-            table = table_info.get("table")
+            title          = table_info.get("title")
+            table          = table_info.get("table")
+            header_color   = table_info.get("header_color", "#f1f5f9")
+            round_int_cols = set(table_info.get("round_int_cols", []))
+            no_border_cells = set(table_info.get("no_border_cells", [])) # set of (r, c)
             
-            # Find the grid column with the minimum height
-            grid_c = col_max_rows.index(min(col_max_rows))
-            
-            # Start position
+            merged_cells_to_skip = set()
+
+            # Use explicit grid_col if provided, otherwise pick the shortest column
+            if "grid_col" in table_info:
+                grid_c = min(table_info["grid_col"], grid_cols - 1)
+                start_col = grid_col_starts[grid_c]
+            else:
+                grid_c = col_max_rows.index(min(col_max_rows))
+                # For auto-placement, use even spacing based on widest table
+                max_cols_per_grid = max(
+                    [t.get("table").columnCount() + (1 if title_on_left else 0) for t in tables_data],
+                    default=1
+                )
+                start_col = grid_c * (max_cols_per_grid + 1)
+
+
             current_row = col_max_rows[grid_c]
-            
-            # Determine how many columns this item takes
+
             col_count = table.columnCount()
-            total_cols_needed = col_count + (1 if title_on_left and title else 0)
-            
-            # Assuming each grid column gets spaced by a fixed gap (e.g. 1 blank col)
-            # Find the starting excel column for this grid column
-            # We'll calculate it by looking at previous items, but for simplicity, 
-            # let's just make each grid column a fixed width of max cols
-            max_cols_per_grid = max([t.get("table").columnCount() + (1 if title_on_left else 0) for t in tables_data], default=1)
-            start_col = grid_c * (max_cols_per_grid + 1)
-            
-            title_written = False
-            
+
             if title:
                 if title_on_left:
-                    # Write title on the left, spanning all rows of the table
                     row_count = table.rowCount()
                     end_row = current_row + max(row_count - 1, 0)
                     if table.horizontalHeader().isVisible():
-                        end_row += 1 # account for header row
+                        end_row += 1
                     if end_row > current_row:
                         sheet.merge_range(current_row, start_col, end_row, start_col, title, title_format)
                     else:
                         sheet.write(current_row, start_col, title, title_format)
-                    
-                    # Shift table to the right
                     start_col += 1
-                    title_written = True
                 else:
-                    # Write title above the table
                     end_col = start_col + max(col_count - 1, 0)
                     if end_col > start_col:
                         sheet.merge_range(current_row, start_col, current_row, end_col, title, title_format)
                     else:
                         sheet.write(current_row, start_col, title, title_format)
                     current_row += 1
-                
-            # Write Headers (only if visible)
+
+            # Write Headers
             if table.horizontalHeader().isVisible():
+                hdr_fmt = _get_fmt(bold=True, bg=header_color or "#f1f5f9", border=1)
                 for c in range(col_count):
                     h_item = table.horizontalHeaderItem(c)
                     h_text = h_item.text() if h_item else f"Col {c}"
-                    sheet.write(current_row, start_col + c, h_text, header_format)
+                    sheet.write(current_row, start_col + c, h_text, hdr_fmt)
                 current_row += 1
-            
+
             # Write Data
             row_count = table.rowCount()
             for r in range(row_count):
                 is_empty = True
-                row_data = []
+                row_data  = []
+                row_bgs   = []
                 for c in range(col_count):
                     val = get_visual_text(table, r, c)
+                    # Round to int for specified columns
+                    if val and c in round_int_cols:
+                        val = _round_int(val)
                     row_data.append(val)
                     if val:
                         is_empty = False
-                
-                # If we have title on left, we MUST write even empty rows to maintain alignment
+
+                    # Read cell background color
+                    item = table.item(r, c)
+                    bg_hex = None
+                    if item:
+                        bg_hex = _qt_color_to_hex(item.background())
+                    row_bgs.append(bg_hex)
+
                 if not is_empty or title_on_left:
                     for c, val in enumerate(row_data):
+                        if (current_row, start_col + c) in merged_cells_to_skip:
+                            continue
+                            
+                        bg_hex = row_bgs[c]
+                        is_num = bool(val and val.replace(".", "", 1).replace(",", "").replace("-", "", 1).isdigit())
+                        
+                        has_border = 0 if (r, c) in no_border_cells else 1
+                        fmt = _get_fmt(bg=bg_hex, border=has_border, align_right=is_num)
+                        
+                        r_span = table.rowSpan(r, c)
+                        c_span = table.columnSpan(r, c)
+                        
+                        # Apply merge
+                        if r_span > 1 or c_span > 1:
+                            for rr in range(r_span):
+                                for cc in range(c_span):
+                                    if rr == 0 and cc == 0: continue
+                                    merged_cells_to_skip.add((current_row + rr, start_col + c + cc))
+                            
+                            # Write merge range
+                            try:
+                                if is_num:
+                                    num_val = float(val.replace(",", ""))
+                                    if c in round_int_cols:
+                                        num_val = int(round(num_val))
+                                    sheet.merge_range(current_row, start_col + c, current_row + r_span - 1, start_col + c + c_span - 1, num_val, fmt)
+                                else:
+                                    sheet.merge_range(current_row, start_col + c, current_row + r_span - 1, start_col + c + c_span - 1, val, fmt)
+                            except Exception:
+                                sheet.merge_range(current_row, start_col + c, current_row + r_span - 1, start_col + c + c_span - 1, val or "", fmt)
+                            continue
+
                         try:
-                            if val and val.replace('.','',1).isdigit():
-                                sheet.write_number(current_row, start_col + c, float(val), cell_format)
+                            if is_num:
+                                num_val = float(val.replace(",", ""))
+                                if c in round_int_cols:
+                                    sheet.write_number(current_row, start_col + c, int(round(num_val)), fmt)
+                                else:
+                                    sheet.write_number(current_row, start_col + c, num_val, fmt)
                             else:
-                                sheet.write(current_row, start_col + c, val, cell_format)
-                        except:
-                            sheet.write(current_row, start_col + c, val, cell_format)
+                                sheet.write(current_row, start_col + c, val, fmt)
+                        except Exception:
+                            sheet.write(current_row, start_col + c, val or "", fmt)
                     current_row += 1
-            
+
             # Blank spacer row between tables
             current_row += 2
-            
-            # Update the max row tracker for this grid column
+
             col_max_rows[grid_c] = current_row
-            
+
         workbook.close()
         return True
-        
+
     except Exception as e:
         if parent:
             QMessageBox.critical(parent, "Export Error", f"Failed to export Excel:\n{str(e)}")

@@ -5,6 +5,8 @@
 3. **Inno Setup Builds**: After compiling with PyInstaller, always build the installer using Inno Setup Compiler. Use the `JK_Catalog_Multi_Setup.iss` script.
 4. **No Automated EXE Builds**: NEVER run PyInstaller or Inno Setup (ISCC) to create an EXE automatically after completing a task. You must wait for the user to explicitly say "check" or "check 1" in their message before starting a build. If they do not explicitly ask for a build or say "check", do not run the build commands.
 5. **No Automated Git Commits**: DO NOT run `git commit` automatically after completing tasks. Only commit when explicitly asked by the user, or when triggered by the `check 1` command.
+6. **No running application** : never run python main.py , never.
+
 
 # Issue Reporting Assumptions
 - **Default to Client**: When the user reports a bug or issue without specifying where it occurred, always assume it happened on the **client's machine** (not the developer's local machine). Do not check local logs or local databases to confirm — instead, guide the user on how to gather evidence from the client side (e.g., ask for the client's `error.log`, query their SQL Server, or ask what the client was doing before the issue occurred).

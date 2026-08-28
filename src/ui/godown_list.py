@@ -257,9 +257,22 @@ class GodownListUI(ExcelTableMixin, QWidget):
         self.db.ensure_table(self.godown_db_name, "stock", """
             CREATE TABLE stock (
                 item_name NVARCHAR(MAX), qty_per_ctn NVARCHAR(MAX), unit NVARCHAR(MAX),
-                total_ctn NVARCHAR(MAX), godown NVARCHAR(MAX), part_no NVARCHAR(MAX), cn NVARCHAR(MAX)
+                total_ctn NVARCHAR(MAX), godown NVARCHAR(MAX), part_no NVARCHAR(MAX), cn NVARCHAR(MAX),
+                sort_order INT DEFAULT 0
             )
         """)
+        # Migrate existing tables that don't have sort_order yet
+        try:
+            conn = self.db.get_connection(self.godown_db_name)
+            if conn:
+                cur = conn.cursor()
+                # Check if sort_order column exists
+                cur.execute("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='stock' AND COLUMN_NAME='sort_order'")
+                if cur.fetchone()[0] == 0:
+                    cur.execute("ALTER TABLE stock ADD sort_order INT DEFAULT 0")
+                    conn.commit()
+        except Exception as e:
+            print(f"[GODOWN] init_db migration error: {e}")
 
     # ---------------- UI ----------------
     def init_ui(self):
@@ -317,9 +330,13 @@ class GodownListUI(ExcelTableMixin, QWidget):
         # Inline stylesheet overrides global QSS cascade for font (Devanagari support)
         from src.ui.table_nav_mixin import UNIVERSAL_TABLE_STYLE
         self.table.setStyleSheet(UNIVERSAL_TABLE_STYLE + """
+            QTableWidget {
+                gridline-color: #94a3b8;
+            }
             QTableWidget, QLineEdit { font-family: 'Noto Sans Devanagari'; font-size: 14pt; }
             QHeaderView::section { font-family: 'Noto Sans Devanagari'; font-weight: bold; font-size: 14pt; }
         """)
+        self.table.setShowGrid(True)
         
         self.table.itemChanged.connect(self.handle_item_changed)
         self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
@@ -585,7 +602,8 @@ class GodownListUI(ExcelTableMixin, QWidget):
             return
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM stock")
+            # ORDER BY sort_order so Save & Sort order is respected after restart
+            cursor.execute("SELECT item_name, qty_per_ctn, unit, total_ctn, godown, part_no, cn FROM stock ORDER BY sort_order, (SELECT 0)")
             rows = cursor.fetchall()
         except Exception as e:
             print(f"[GODOWN] load_data_from_db query failed: {e}")
@@ -627,6 +645,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
             # Build all rows first, then send in one batch (executemany)
             # This is far faster than individual INSERT calls over a network connection.
             rows_to_insert = []
+            sort_idx = 0
             for r in range(self.table.rowCount()):
                 row_data = tuple(
                     self.table.item(r, c).text() if self.table.item(r, c) else ""
@@ -636,7 +655,8 @@ class GodownListUI(ExcelTableMixin, QWidget):
                 # Empty buffer rows are recreated fresh on every load via
                 # ensure_minimum_rows + _fill_all_cn_gaps — no need to persist them.
                 if row_data[0].strip():
-                    rows_to_insert.append(row_data)
+                    rows_to_insert.append(row_data + (sort_idx,))
+                    sort_idx += 1
 
             # Skip the DB round-trip entirely if nothing has changed since last save.
             import hashlib, json as _json
@@ -649,7 +669,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
 
             cur.execute("DELETE FROM stock")
             if rows_to_insert:
-                cur.executemany("INSERT INTO stock VALUES (?,?,?,?,?,?,?)", rows_to_insert)
+                cur.executemany("INSERT INTO stock VALUES (?,?,?,?,?,?,?,?)", rows_to_insert)
             conn.commit()
         except Exception as e:
             conn.rollback()

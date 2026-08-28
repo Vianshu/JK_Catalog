@@ -459,13 +459,30 @@ class ReportsUI(QWidget):
         self.refresh_report_data()
 
     def refresh_report_data(self):
-        # Mirror the exact last sync time from the Final Data tab
+        # Read last sync timestamp directly from THIS company's own database
+        # (not from final_data_page.sync_lbl which can show another company's sync)
         try:
-            main_win = self.window()
-            if hasattr(main_win, 'final_data_page'):
-                self.lbl_last_sync.setText(main_win.final_data_page.sync_lbl.text())
+            if self.current_company_path:
+                from src.logic.db_manager import get_db_manager, build_logical_name
+                db = get_db_manager()
+                company_name = os.path.basename(self.current_company_path)
+                db_name = build_logical_name(company_name, company_path=self.current_company_path)
+                conn = db.get_connection(db_name)
+                if conn:
+                    row = conn.cursor().execute(
+                        "SELECT MAX(Update_date) FROM catalog"
+                    ).fetchone()
+                    if row and row[0]:
+                        self.lbl_last_sync.setText(f"Last Sync: {row[0]}")
+                    else:
+                        self.lbl_last_sync.setText("Last Sync: No data")
+                else:
+                    self.lbl_last_sync.setText("Last Sync: N/A")
+            else:
+                self.lbl_last_sync.setText("Last Sync: N/A")
         except Exception as e:
-            logger.warning(f"Failed to sync label from final_data_page: {e}")
+            logger.warning(f"refresh_report_data: failed to read sync timestamp: {e}")
+            self.lbl_last_sync.setText("Last Sync: N/A")
 
         if not self.current_company_path:
             self.table.setRowCount(0)

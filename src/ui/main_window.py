@@ -21,8 +21,7 @@ from src.ui.payment_list import PaymentListUI
 from src.ui.price_list import PriceListUI
 from src.ui.godown_list import GodownListUI
 from src.ui.sales_chat import SalesChatUI
-from src.ui.supp_payment import SuppPaymentUI
-from src.ui.supp_payment_v2 import SuppPaymentV2UI
+from src.ui.supp_payment import SuppPaymentV2UI
 from src.ui.vat_pages import BalanceUI, StockUI
 from src.ui.super_master import SuperMasterUI
 from src.ui.pur_import import PurImportUI
@@ -258,7 +257,6 @@ class PageIndex:
     CALENDAR = 16
     LEDGER_ROW_DATA = 17
     SECURITY = 18
-    SUPP_PAYMENT_V2 = 19
 
 class MainWindow(QWidget):
 
@@ -603,7 +601,6 @@ class MainWindow(QWidget):
             ("🏠 &Godown List", lambda: self.main_stack.setCurrentIndex(PageIndex.GODOWN), False, None, "tab.godown"),
             ("📈 &Sales Chat", lambda: self.main_stack.setCurrentIndex(PageIndex.SALES_CHAT), False, None, "tab.sales_chat"),
             ("💸 Supp. Pa&yment", lambda: self.main_stack.setCurrentIndex(PageIndex.SUPP_PAYMENT), False, None, "tab.supp_payment"),
-            ("✨ Today Pymt &V2", lambda: self.main_stack.setCurrentIndex(PageIndex.SUPP_PAYMENT_V2), False, None, "tab.supp_payment"),
             ("🏷 Pri&ce List", lambda: self.main_stack.setCurrentIndex(PageIndex.PRICE_LIST), False, None, "tab.price_list"),
             ("📥 Pur &Import", self.handle_pur_import, False, None, "tab.pur_import"),
             ("📊 Cos&t Sheet", self.handle_int_cost_sheet, False, None, "tab.int_cost_sheet"),
@@ -866,7 +863,7 @@ class MainWindow(QWidget):
         self.main_stack.addWidget(self.godown_page)        # 10
         
         self.main_stack.addWidget(SalesChatUI())           # 11
-        self.supp_payment_page = SuppPaymentUI()
+        self.supp_payment_page = SuppPaymentV2UI()
         self.main_stack.addWidget(self.supp_payment_page)  # 12
         self.main_stack.addWidget(BalanceUI())             # 13
         self.main_stack.addWidget(StockUI())               # 14
@@ -883,8 +880,7 @@ class MainWindow(QWidget):
         self.security_page = SecurityUI(self)
         self.main_stack.addWidget(self.security_page) # Index 18
 
-        self.supp_payment_v2_page = SuppPaymentV2UI()
-        self.main_stack.addWidget(self.supp_payment_v2_page) # Index 19
+
     # --- Helper UI Functions ---
 
     # Shared teal-themed scrollbar style for all per-menu QScrollAreas
@@ -1077,10 +1073,6 @@ class MainWindow(QWidget):
                 session.register("Supp. Payment", supp_widget,
                     lambda page, path: page.set_company_path(path))
 
-            supp_v2_widget = self.main_stack.widget(PageIndex.SUPP_PAYMENT_V2)
-            if supp_v2_widget and hasattr(supp_v2_widget, 'set_company_path'):
-                session.register("Today Pymt V2", supp_v2_widget,
-                    lambda page, path: page.set_company_path(path))
         
             if hasattr(self, 'reports_page'):
                 session.register("Reports", self.reports_page,
@@ -1332,14 +1324,11 @@ class MainWindow(QWidget):
         if sales_chat and hasattr(sales_chat, 'apply_edit_mode'):
             sales_chat.apply_edit_mode(s.can("sales_chat.edit"))
 
-        # Supplier Payment — editable Excel sheet
-        supp_payment = self.main_stack.widget(12)
+        # Supplier Payment
+        supp_payment = self.main_stack.widget(PageIndex.SUPP_PAYMENT)
         if supp_payment and hasattr(supp_payment, 'apply_edit_mode'):
             supp_payment.apply_edit_mode(s.can("supp_payment.edit"))
 
-        supp_payment_v2 = self.main_stack.widget(19)
-        if supp_payment_v2 and hasattr(supp_payment_v2, 'apply_edit_mode'):
-            supp_payment_v2.apply_edit_mode(s.can("supp_payment.edit"))
 
         # Price List — editable Excel sheet
         price_list = self.main_stack.widget(8)
@@ -2262,3 +2251,42 @@ class MainWindow(QWidget):
                         self.reports_page.refresh_report_data()
                 else:
                     QMessageBox.critical(self, "Error", "Failed to update CRM.")
+
+    # ─── CLOSE EVENT — wait for any running backup ────────────────────────────
+
+    def closeEvent(self, event):
+        """If a backup is currently running, wait for it to finish before closing.
+        
+        Rule (per AGENTS.md user preference):
+          - If a backup is already running → ignore the close, show a message,
+            connect to the worker's finished signal to close automatically when done.
+          - If no backup is running → close immediately (no new backup triggered here).
+        
+        The backup-on-12h-rule is handled at startup / periodic timer, not on close.
+        """
+        worker = getattr(self, '_backup_worker', None)
+        if worker is not None and worker.isRunning():
+            # Ignore the close request — tell user we're waiting
+            event.ignore()
+            self._show_backup_toast("🔄  Waiting for backup to finish before closing…", running=True)
+
+            # Connect a one-shot slot that will close the app once backup is done
+            def _close_when_done(success: bool, msg: str):
+                # Disconnect to avoid being called again if worker somehow re-emits
+                try:
+                    worker.finished.disconnect(_close_when_done)
+                except (TypeError, RuntimeError):
+                    pass
+                logger.info(f"[AutoBackup] Backup finished (success={success}) — closing app now.")
+                # Use QApplication.quit() so the event loop exits cleanly
+                from PyQt6.QtWidgets import QApplication
+                QApplication.quit()
+
+            try:
+                worker.finished.connect(_close_when_done)
+            except Exception:
+                # If connection fails for any reason, close immediately to avoid being stuck
+                event.accept()
+        else:
+            # No backup running — close normally
+            event.accept()
