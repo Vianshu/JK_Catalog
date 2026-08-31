@@ -130,15 +130,15 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
         from PyQt6.QtGui import QBrush, QColor
         menu.setStyleSheet(_MENU_STYLE)
 
-        a_add_above = menu.addAction("Γ₧ò  Add Row Above")
-        a_add_below = menu.addAction("Γ₧ò  Add Row Below")
+        a_add_above = menu.addAction("\u2191  Add Row Above")
+        a_add_below = menu.addAction("\u2193  Add Row Below")
         menu.addSeparator()
 
-        a_del = menu.addAction("🗑  Delete Row")
+        a_del = menu.addAction("\u2715  Delete Row")
         menu.addSeparator()
-        a_color = menu.addAction("🎨  Set Cell Color")
-        a_text_color = menu.addAction("🖋  Set Text Color")
-        a_clear = menu.addAction("🧹  Clear Colors")
+        a_color = menu.addAction("\u25cf  Set Cell Color")
+        a_text_color = menu.addAction("\u25d0  Set Text Color")
+        a_clear = menu.addAction("\u25cb  Clear Colors")
         
         act = menu.exec(self.table.viewport().mapToGlobal(pos))
         

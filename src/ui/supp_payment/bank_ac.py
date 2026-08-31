@@ -352,6 +352,10 @@ class _SupplierSection(QFrame):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
 
+        # Install event filter on hdr background frame so clicking anywhere
+        # on the supplier name panel also triggers section selection
+        hdr.installEventFilter(self)
+
         root.addWidget(hdr)
 
         # ΓòÉΓòÉ Two-column body ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
@@ -439,8 +443,9 @@ class _SupplierSection(QFrame):
                 # Do NOT return True — QTextEdit still needs to process cursor positioning
         elif event.type() == QEvent.Type.MouseButtonPress and (
             source in self._acc_cards or source in self._card_field_edits
+            or source is self.hdr
         ):
-            # Click anywhere on a card or its fields → select this supplier section
+            # Click anywhere on a card, its fields, or supplier header → select this section
             if hasattr(self, 'click_callback'):
                 try:
                     self.click_callback(event, self)
@@ -789,7 +794,7 @@ class RecordTab(QWidget, _PrintExportMixin):
         """Show/hide supplier cards whose name matches the search query."""
         q = text.strip().lower()
         for s in self._sections:
-            name = s._name_edit.text().lower()
+            name = s._name_edit.toPlainText().lower()
             s.setVisible(not q or q in name)
 
     def _get_tables_for_excel(self):
@@ -1116,7 +1121,8 @@ class RecordTab(QWidget, _PrintExportMixin):
 
 
         max_w = max(img.width() for img in images)
-        total_h = scaled_margin + sum(img.height() + scaled_margin for img in images)
+        gap = 2 * scale          # 2px gap between cards (was full margin = 8px each side)
+        total_h = scaled_margin + sum(img.height() for img in images) + gap * max(len(images) - 1, 0) + scaled_margin
         
         # Stitch all scaled sections onto a final massive canvas
         result = QImage(max_w + scaled_margin * 2, total_h, QImage.Format.Format_ARGB32_Premultiplied)
@@ -1128,13 +1134,13 @@ class RecordTab(QWidget, _PrintExportMixin):
         y = scaled_margin
         for img in images:
             painter.drawImage(scaled_margin, y, img)
-            y += img.height() + scaled_margin
+            y += img.height() + gap
         painter.end()
 
         # Place the pristine high-resolution image directly on the clipboard
         QApplication.clipboard().setImage(result)
-        self._btn_image.setText("Γ£ô Copied")
-        QTimer.singleShot(2000, lambda: self._btn_image.setText("ΓÄÖ Copy"))
+        self.btn_copy_records.setText("\u2713 Copied!")
+        QTimer.singleShot(2000, lambda: self.btn_copy_records.setText(" Copy"))
 
     # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     def _add_supplier(self):

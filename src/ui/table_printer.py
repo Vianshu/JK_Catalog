@@ -191,6 +191,10 @@ def _paint_tables(printer, page_range=None):
             return widths
             
         active_cols = all_cols[:]
+        # If caller specifies a col_range, restrict to those columns only
+        col_range = table_info.get("col_range", None)
+        if col_range is not None:
+            active_cols = [c for c in active_cols if c in col_range]
         raw_widths = measure_widths(active_cols)
         
         # Truncate logic

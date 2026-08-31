@@ -116,7 +116,9 @@ class TeamListTab(QWidget, _PrintExportMixin):
         lbl.setStyleSheet("color:#1e293b;")
         tlay.addWidget(lbl)
         tlay.addStretch()
-        self._init_print_export(tlay, "Team List", table_getter=self._get_tables_for_export)
+        self._init_print_export(tlay, "Team List",
+                                   table_getter=self._get_tables_for_export,
+                                   print_table_getter=self._get_tables_for_print)
 
         self._btn_add_yr  = QPushButton("+ Add Year")
         self._btn_add_yr.setStyleSheet(_BTN_SECONDARY)
@@ -145,11 +147,41 @@ class TeamListTab(QWidget, _PrintExportMixin):
 
     
     def _get_tables_for_export(self):
+        """For Excel export — unchanged, all columns in one sheet."""
         truncate_groups = []
-        base_col = 4 # S.N, Location, Post, Name
+        base_col = 4  # S.N, Location, Post, Name
         for i in range(len(self._year_labels)):
             truncate_groups.append((base_col + i*3, base_col + i*3 + 1, base_col + i*3 + 2))
         return [{"title": "", "table": self.table, "truncate_groups": truncate_groups}]
+
+    def _get_tables_for_print(self):
+        """For print — split wide table into column-pages.
+        Fixed cols (0-3: SN/Location/Post/Name) repeat on every page.
+        Year groups (3 cols each) are distributed: up to YEARS_PER_PAGE per page.
+        """
+        YEARS_PER_PAGE = 3          # adjust if needed
+        fixed_cols = list(range(4)) # S.N, Location, Post, Name
+        year_groups = []
+        base = 4
+        for i in range(len(self._year_labels)):
+            year_groups.append([base + i*3, base + i*3 + 1, base + i*3 + 2])
+
+        tables = []
+        for page_idx in range(0, max(len(year_groups), 1), YEARS_PER_PAGE):
+            chunk = year_groups[page_idx : page_idx + YEARS_PER_PAGE]
+            col_range = set(fixed_cols)
+            for grp in chunk:
+                col_range.update(grp)
+            yr_names = [self._year_labels[page_idx + i]
+                        for i in range(len(chunk))]
+            page_title = "Team List — " + ", ".join(yr_names) if yr_names else "Team List"
+            tables.append({
+                "title": page_title,
+                "table": self.table,
+                "col_range": col_range,
+                "page_break_before": page_idx > 0,
+            })
+        return tables
 
     def _add_year(self):
         if not self._can_edit:

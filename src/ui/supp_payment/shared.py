@@ -263,6 +263,7 @@ QTableWidget {
 QTableWidget::item {
     padding: 6px;
     border-bottom: 1px solid #f1f5f9;
+    border-right: 1px solid #e2e8f0;
 }
 QHeaderView::section:horizontal {
     background: #f8fafc;
@@ -622,25 +623,25 @@ class _DbTable(QTableWidget):
         from PyQt6.QtGui import QBrush, QColor
 
         sel_rows = sorted({i.row() for i in self.selectedItems()})
-        lbl = f"🗑  Delete {len(sel_rows)} Row(s)" if sel_rows else "🗑  Delete Row"
+        lbl = f"\u2715  Delete {len(sel_rows)} Row(s)" if sel_rows else "\u2715  Delete Row"
         act_del = menu.addAction(lbl)
         act_del.setEnabled(bool(sel_rows) and self._can_edit)
 
         menu.addSeparator()
-        act_add_above = menu.addAction("Γ₧ò  Add Row Above")
+        act_add_above = menu.addAction("\u2191  Add Row Above")
         act_add_above.setEnabled(self._can_edit and bool(sel_rows))
 
-        act_add_below = menu.addAction("Γ₧ò  Add Row Below")
+        act_add_below = menu.addAction("\u2193  Add Row Below")
         act_add_below.setEnabled(self._can_edit and bool(sel_rows))
         
         menu.addSeparator()
-        act_add = menu.addAction("Γ₧ò  Add Row (Bottom)")
+        act_add = menu.addAction("\u2295  Add Row (Bottom)")
         act_add.setEnabled(self._can_edit)
 
         menu.addSeparator()
-        a_color = menu.addAction("🎨  Set Cell Color")
-        a_text_color = menu.addAction("🖋  Set Text Color")
-        a_clear = menu.addAction("🧹  Clear Colors")
+        a_color = menu.addAction("\u25cf  Set Cell Color")
+        a_text_color = menu.addAction("\u25d0  Set Text Color")
+        a_clear = menu.addAction("\u25cb  Clear Colors")
 
         chosen = menu.exec(event.globalPos())
 

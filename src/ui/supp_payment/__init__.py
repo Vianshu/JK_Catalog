@@ -80,6 +80,25 @@ class SuppPaymentV2UI(QWidget):
         self.tabs.setCurrentIndex(0)
         layout.addWidget(self.tabs)
 
+        from PyQt6.QtGui import QShortcut, QKeySequence
+        from PyQt6.QtCore import Qt as _Qt
+        _sc_next = QShortcut(QKeySequence("Ctrl+PageDown"), self)
+        _sc_next.setContext(_Qt.ShortcutContext.ApplicationShortcut)
+        _sc_next.activated.connect(self._next_tab)
+        _sc_prev = QShortcut(QKeySequence("Ctrl+PageUp"), self)
+        _sc_prev.setContext(_Qt.ShortcutContext.ApplicationShortcut)
+        _sc_prev.activated.connect(self._prev_tab)
+
+    def _next_tab(self):
+        idx = self.tabs.currentIndex() + 1
+        if idx >= self.tabs.count(): idx = 0
+        self.tabs.setCurrentIndex(idx)
+
+    def _prev_tab(self):
+        idx = self.tabs.currentIndex() - 1
+        if idx < 0: idx = self.tabs.count() - 1
+        self.tabs.setCurrentIndex(idx)
+
     def set_company_path(self, path: str):
         self._company_path = path  # remember for newly-added sheets
         for i in range(self.tabs.count()):
@@ -126,10 +145,10 @@ class SuppPaymentV2UI(QWidget):
         if idx == -1:
             return
         menu = QMenu(self)
-        ra = menu.addAction("Γ£Å Rename Sheet")
+        ra = menu.addAction("\u270e  Rename Sheet")
         # Only non-core (user-added) tabs can be deleted
         is_core = idx < self._CORE_TAB_COUNT
-        da = menu.addAction("🗑 Delete Sheet")
+        da = menu.addAction("\u2715  Delete Sheet")
         da.setEnabled(not is_core)
         act = menu.exec(self.tabs.tabBar().mapToGlobal(point))
         if act == ra:
