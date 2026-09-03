@@ -56,26 +56,25 @@ class InsuranceTab(QWidget, _PrintExportMixin):
         self._tables = []
         self._date_delegate = ModernTableDelegate(self, cell_type="date")
 
-        layout = QVBoxLayout(self)
+        layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-
-        # Top bar
-        top_bar = QWidget()
-        top_bar.setStyleSheet("background:#f8fafc; border-bottom:1px solid #e2e8f0;")
-        top_bar.setFixedHeight(42)
-        tlay = QHBoxLayout(top_bar)
-        tlay.setContentsMargins(16, 6, 16, 6)
-        lbl = QLabel("Insurance Details")
-        lbl.setFont(_bold_font(11))
-        lbl.setStyleSheet("color:#1e293b;")
-        tlay.addWidget(lbl)
-        tlay.addStretch()
-        self._init_print_export(tlay, "Insurance", table_getter=self._get_tables_for_export)
-        layout.addWidget(top_bar)
+        layout.setSpacing(0)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        layout.addWidget(scroll, 1)
+
+        # Right bar
+        right_bar = QWidget()
+        right_bar.setStyleSheet("background:#f8fafc; border-left:1px solid #e2e8f0;")
+        right_bar.setFixedWidth(52)
+        tlay = QVBoxLayout(right_bar)
+        tlay.setContentsMargins(6, 16, 6, 16)
+        tlay.setSpacing(12)
+        self._init_print_export(tlay, "Insurance", table_getter=self._get_tables_for_export, right_bar=right_bar)
+        tlay.addStretch()
+        layout.addWidget(right_bar, 0)
         scroll.setStyleSheet("QScrollArea{background:#f8fafc;}")
 
         container = QWidget()
@@ -132,8 +131,6 @@ class InsuranceTab(QWidget, _PrintExportMixin):
 
         c_lay.addStretch()
         scroll.setWidget(container)
-        layout.addWidget(scroll)
-
     def _recalc_table_height(self, tbl):
         if not tbl.isVisible():
             return

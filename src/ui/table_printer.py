@@ -266,7 +266,7 @@ def _paint_tables(printer, page_range=None):
                     pages[-1].append(("header", active_headers, col_widths, header_height, header_color))
                     used += header_height
 
-            pages[-1].append(("row", rd, col_widths, row_height, rd_bgs, rd_noh))
+            pages[-1].append(("row", rd, col_widths, row_height, rd_bgs, rd_noh, rd_idx, active_data_noh))
             used += row_height
 
         # Add a visible gap between suppliers if there is room on the current page
@@ -294,6 +294,10 @@ def _paint_tables(printer, page_range=None):
         if not first:
             printer.newPage()
         first = False
+        
+        # Fill the entire page with white before drawing anything.
+        # This prevents dark/black page backgrounds from bleeding through.
+        painter.fillRect(0, 0, page_w, page_h, QColor(255, 255, 255))
         
         y = 0
             
@@ -342,8 +346,10 @@ def _paint_tables(printer, page_range=None):
                 y += height
             elif item_type == "row":
                 _, col_texts, col_widths, height, *_row_extra = item
-                rd_bgs = _row_extra[0] if len(_row_extra) > 0 else None
-                rd_noh = _row_extra[1] if len(_row_extra) > 1 else None
+                rd_bgs         = _row_extra[0] if len(_row_extra) > 0 else None
+                rd_noh         = _row_extra[1] if len(_row_extra) > 1 else None
+                rd_idx         = _row_extra[2] if len(_row_extra) > 2 else 0
+                active_data_noh = _row_extra[3] if len(_row_extra) > 3 else []
                 painter.setFont(cell_font)
                 painter.setPen(pen)
                 x = 0
@@ -352,6 +358,11 @@ def _paint_tables(printer, page_range=None):
                     rect = QRect(x, y, col_widths[c], height)
                     
                     if not is_empty:
+                        # Always fill with white first, then overlay custom cell color if any.
+                        # Without this, Qt's alternating-row palette or printer defaults
+                        # can produce black/dark cell backgrounds.
+                        painter.fillRect(rect, QColor(255, 255, 255))
+
                         # Apply cell background color if present
                         cell_bg = rd_bgs[c] if rd_bgs and c < len(rd_bgs) else None
                         if cell_bg:
@@ -374,8 +385,8 @@ def _paint_tables(printer, page_range=None):
                             
                             # We can check the previous and next row's `hide_h` status if we look at `active_data_noh`.
                             # rd_idx is available.
-                            prev_hide_h = active_data_noh[rd_idx - 1][c] if rd_idx > 0 else False
-                            next_hide_h = active_data_noh[rd_idx + 1][c] if rd_idx < len(active_data_noh) - 1 else False
+                            prev_hide_h = active_data_noh[rd_idx - 1][c] if (rd_idx > 0 and rd_idx - 1 < len(active_data_noh)) else False
+                            next_hide_h = active_data_noh[rd_idx + 1][c] if (rd_idx + 1 < len(active_data_noh)) else False
                             
                             # We draw the TOP line if WE don't hide it AND the PREV doesn't hide it.
                             if not hide_h and not prev_hide_h:

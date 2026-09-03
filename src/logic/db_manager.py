@@ -818,10 +818,13 @@ class DBManager:
         try:
             cursor = conn.cursor()
             # Use native SQL Server IF NOT EXISTS to avoid race conditions (fixes 42S01)
+            # IMPORTANT: We must use dynamic SQL (EXEC) for CREATE TABLE because
+            # SQL Server parses the entire batch before execution. If the table
+            # exists, static CREATE TABLE will throw a parse error despite the IF guard.
             safe_sql = f"""
             IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[{table_name}]') AND type in (N'U'))
             BEGIN
-                {create_sql}
+                EXEC sp_executesql N'{create_sql.replace("'", "''")}'
             END
             """
             cursor.execute(safe_sql)
@@ -905,8 +908,11 @@ class DBManager:
     def acquire_app_lock(self, lock_name: str, timeout_ms: int = 0) -> bool:
         """Try to acquire a named SQL Server application lock (session-scoped).
 
-        Uses sp_getapplock on the shared 'master' connection so all users/processes
-        on the same SQL Server instance participate in the same mutex.
+        IMPORTANT: sp_getapplock is session-scoped, so the lock MUST be acquired
+        and released on the SAME connection. We keep a dedicated persistent
+        connection (_lock_conn) alive between acquire and release — never use the
+        one-shot get_master_connection() here because that opens a new connection
+        each time, making the lock invisible to the release call (SQL error 1223).
 
         Args:
             lock_name:  Logical name for the lock (max 255 chars).
@@ -916,11 +922,16 @@ class DBManager:
             True  — lock acquired (we own it now).
             False — lock is held by another session (or error).
         """
-        conn = self.get_master_connection()
-        if not conn:
+        try:
+            # Open a dedicated, persistent connection for this lock.
+            # Keep it alive on self so release_app_lock can use the same session.
+            conn_str = self._build_connection_string("master")
+            self._lock_conn = pyodbc.connect(conn_str, autocommit=True)
+        except Exception as e:
+            logger.warning(f"[AppLock] acquire_app_lock('{lock_name}') connect error: {e}")
             return False
         try:
-            cursor = conn.cursor()
+            cursor = self._lock_conn.cursor()
             # sp_getapplock returns:
             #   0 = granted synchronously
             #   1 = granted after waiting
@@ -937,13 +948,29 @@ class DBManager:
             )
             row = cursor.fetchone()
             rc = row[0] if row else -999
-            return rc in (0, 1)
+            if rc not in (0, 1):
+                # Could not acquire — close the connection immediately so we don't leak it.
+                try:
+                    self._lock_conn.close()
+                except Exception:
+                    pass
+                self._lock_conn = None
+                return False
+            return True
         except Exception as e:
             logger.warning(f"[AppLock] acquire_app_lock('{lock_name}') error: {e}")
+            try:
+                self._lock_conn.close()
+            except Exception:
+                pass
+            self._lock_conn = None
             return False
 
     def release_app_lock(self, lock_name: str) -> bool:
         """Release a previously acquired SQL Server application lock.
+
+        Must be called on the same instance (and same thread) as acquire_app_lock.
+        Uses the persistent _lock_conn kept open by acquire_app_lock, then closes it.
 
         Args:
             lock_name: Must match the name passed to acquire_app_lock.
@@ -951,8 +978,9 @@ class DBManager:
         Returns:
             True if released successfully, False on error.
         """
-        conn = self.get_master_connection()
+        conn = getattr(self, '_lock_conn', None)
         if not conn:
+            # Nothing to release — acquire was never called or already cleaned up.
             return False
         try:
             cursor = conn.cursor()
@@ -964,6 +992,13 @@ class DBManager:
         except Exception as e:
             logger.warning(f"[AppLock] release_app_lock('{lock_name}') error: {e}")
             return False
+        finally:
+            # Always close the dedicated lock connection after releasing.
+            try:
+                conn.close()
+            except Exception:
+                pass
+            self._lock_conn = None
 
     # ─── UTILITY ──────────────────────────────────────────────────────────────
 

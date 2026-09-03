@@ -31,10 +31,8 @@ from src.ui.cheque_list import ChequeListUI
 from src.ui.calendar_mapping import CalendarMappingUI
 from src.ui.ledger_row_data import LedgerRowDataUI
 from src.utils.app_logger import get_logger, set_company_context
-
 logger = get_logger(__name__)
-
-# Settings & Services
+from src.ui.supp_payment.shared import get_icon
 # Settings & Services
 from src.ui.settings import (
     CRMDialog, UserManagerDialog, SecurityUI,
@@ -313,6 +311,7 @@ class MainWindow(QWidget):
         # Shortcuts
         QShortcut(QKeySequence("Ctrl+Q"), self, activated=self.close)
         QShortcut(QKeySequence("Ctrl+M"), self, activated=self.toggle_min_max)
+        QShortcut(QKeySequence("Ctrl+B"), self, activated=self.toggle_sidebar)
         
         # Listen for taskbar toggling or screen size changes dynamically
         screen = QApplication.primaryScreen()
@@ -429,6 +428,84 @@ class MainWindow(QWidget):
     def maximize_window(self):
         """Use native maximize since we have a standard title bar."""
         self.showMaximized()
+        
+
+    def toggle_sidebar(self):
+        """Collapse or expand the sidebar with a smooth animation.
+        Animations are created once and reused to prevent memory leaks
+        from repeated object creation on every toggle call.
+        """
+        from PyQt6.QtCore import QPropertyAnimation, QEasingCurve, QParallelAnimationGroup
+
+        if not hasattr(self, '_sidebar_expanded'):
+            self._sidebar_expanded = True
+
+        is_expanded = self._sidebar_expanded
+
+        # The width we want to expand back to
+        target_expanded_width = getattr(self, '_sidebar_last_width', self.sidebar.width())
+        if target_expanded_width < 100:
+            target_expanded_width = 185
+
+        start_w = self.sidebar.width()
+        end_w = 40 if is_expanded else target_expanded_width
+
+        if is_expanded:
+            self._sidebar_last_width = start_w
+            # Zero margins so the 36px icon fits inside the 40px rail without clipping
+            self.sidebar.layout().setContentsMargins(0, 4, 0, 4)
+            # Hide contents immediately so they don't squish during animation
+            self.company_btn.hide()
+            self.nav_stack.hide()
+            self.lbl_logged_user.hide()
+            self.logout_btn.hide()
+
+        # Create animation objects once; reuse on subsequent calls
+        if not hasattr(self, '_sidebar_anim_group'):
+            self._sidebar_anim1 = QPropertyAnimation(self.sidebar, b"minimumWidth", self)
+            self._sidebar_anim1.setDuration(250)
+            self._sidebar_anim1.setEasingCurve(QEasingCurve.Type.InOutQuad)
+
+            self._sidebar_anim2 = QPropertyAnimation(self.sidebar, b"maximumWidth", self)
+            self._sidebar_anim2.setDuration(250)
+            self._sidebar_anim2.setEasingCurve(QEasingCurve.Type.InOutQuad)
+
+            self._sidebar_anim_group = QParallelAnimationGroup(self)
+            self._sidebar_anim_group.addAnimation(self._sidebar_anim1)
+            self._sidebar_anim_group.addAnimation(self._sidebar_anim2)
+
+        # Stop any running animation before reconfiguring
+        if self._sidebar_anim_group.state() == QParallelAnimationGroup.State.Running:
+            self._sidebar_anim_group.stop()
+
+        self._sidebar_anim1.setStartValue(start_w)
+        self._sidebar_anim1.setEndValue(end_w)
+        self._sidebar_anim2.setStartValue(start_w)
+        self._sidebar_anim2.setEndValue(end_w)
+
+        # Always disconnect before connecting to prevent duplicate slot accumulation.
+        # PyQt6 raises TypeError (not RuntimeError) when there are no connections yet.
+        try:
+            self._sidebar_anim_group.finished.disconnect()
+        except (RuntimeError, TypeError):
+            pass  # No connections yet on first call — safe to ignore
+
+        if is_expanded:
+            self._sidebar_anim_group.finished.connect(self._floating_toggle.show)
+        else:
+            self._floating_toggle.hide()
+            def on_expanded():
+                # Restore sidebar margins when expanding back to full width
+                self.sidebar.layout().setContentsMargins(10, 0, 10, 10)
+                if getattr(self, 'user_session', None):
+                    self.company_btn.show()
+                    self.lbl_logged_user.show()
+                    self.logout_btn.show()
+                self.nav_stack.show()
+            self._sidebar_anim_group.finished.connect(on_expanded)
+
+        self._sidebar_anim_group.start()
+        self._sidebar_expanded = not is_expanded
     
     def setup_ui(self):
         self.root_layout = QHBoxLayout(self)
@@ -455,20 +532,21 @@ class MainWindow(QWidget):
         self.sidebar.setFixedWidth(base_width)
         
         sidebar_layout = QVBoxLayout(self.sidebar)
-        sidebar_layout.setContentsMargins(10, 20, 10, 10)
+        sidebar_layout.setContentsMargins(10, 0, 10, 10)
         sidebar_layout.setSpacing(0)
 
-        # Company Display Button
-        self.company_btn = QPushButton("🏢 Select Company  ▼")
+        # Company Display Button (Acts as collapse toggle)
+        self.company_btn = QPushButton("Company Name")
         self.company_btn.setObjectName("CompanyDisplayBtn")
-        self.company_btn.clicked.connect(self.show_company_dropdown)
+        self.company_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.company_btn.clicked.connect(self.toggle_sidebar)
         self.company_btn.hide()
         sidebar_layout.addWidget(self.company_btn)
 
         # Item 2: Logged-in user label — added to sidebar near logout button
         self.lbl_logged_user = QLabel("")
         self.lbl_logged_user.setObjectName("LoggedUserLabel")
-        self.lbl_logged_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_logged_user.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.lbl_logged_user.hide()
 
         # Menu Navigation Stack — each page manages its own scrollbar
@@ -482,12 +560,12 @@ class MainWindow(QWidget):
         self.init_nav_menus()
         
         # Add nav_stack directly — no outer scroll wrapper needed
-        sidebar_layout.addWidget(self.nav_stack, 1)  # stretch factor 1 to fill space
+        sidebar_layout.addWidget(self.nav_stack, 1)
 
-        # Username label sits just above the logout button
+        # User Row (Name only)
         sidebar_layout.addWidget(self.lbl_logged_user)
 
-        # Logout Button
+        # Logout Button (Full width)
         self.logout_btn = QPushButton("🚪 LOGOUT")
         self.logout_btn.setObjectName("LogoutBtn")
         self.logout_btn.clicked.connect(self.back_to_login_screen)
@@ -540,6 +618,29 @@ class MainWindow(QWidget):
 
         self.content_layout.addWidget(self._backup_toast)
         self.root_layout.addWidget(self.content_container, 1)
+
+        # Floating Toggle Button (Visible only when sidebar is collapsed)
+        # Created last to ensure it sits on top of all other widgets in z-order
+        self._floating_toggle = QPushButton(self)
+        self._floating_toggle.setIcon(get_icon("menu.svg"))
+        from PyQt6.QtCore import QSize
+        self._floating_toggle.setIconSize(QSize(20, 20))
+        self._floating_toggle.setFixedSize(36, 36)
+        self._floating_toggle.setStyleSheet("""
+            QPushButton { 
+                background: transparent; 
+                border-radius: 6px;
+                border: 1px solid transparent;
+            } 
+            QPushButton:hover { 
+                background: rgba(255, 255, 255, 0.1); 
+                border: 1px solid rgba(255, 255, 255, 0.2);
+            }
+        """)
+        self._floating_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._floating_toggle.move(2, 12)
+        self._floating_toggle.clicked.connect(self.toggle_sidebar)
+        self._floating_toggle.hide()
 
     def init_nav_menus(self):
         """Define menus with Tally-style mnemonics (&Letter)."""
@@ -921,7 +1022,7 @@ class MainWindow(QWidget):
         inner = QWidget()
         inner.setStyleSheet("background: transparent;")
         layout = QVBoxLayout(inner)
-        layout.setContentsMargins(5, 10, 5, 10)
+        layout.setContentsMargins(5, 5, 5, 10)
         layout.setSpacing(4)
 
         for data in buttons_data:
@@ -962,6 +1063,7 @@ class MainWindow(QWidget):
         # ScrollBarAsNeeded means the scrollbar is invisible when all items
         # fit, and appears automatically only when they overflow.
         scroll = QScrollArea()
+        scroll.setAlignment(Qt.AlignmentFlag.AlignTop)
         scroll.setWidget(inner)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -1028,9 +1130,9 @@ class MainWindow(QWidget):
             self.user_session = user_session
             set_company_context(comp_name)
 
-            # Update UI with company name
+            # Update UI with company name (no building logo or dropdown arrow)
             clean_name = re.sub(r'\s*\(\d{4}[-/].*?\)', '', comp_name)
-            self.company_btn.setText(f"\U0001f3e2 {clean_name} \u25bc")
+            self.company_btn.setText(clean_name)
             self.company_btn.show()
 
             # Item 2: show logged-in username below company button

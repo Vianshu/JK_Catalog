@@ -110,17 +110,6 @@ class PaymentSheet(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        top_bar = QWidget()
-        top_bar.setStyleSheet("background:#f8fafc; border-bottom:1px solid #e2e8f0;")
-        top_bar.setFixedHeight(42)
-        tlay = QHBoxLayout(top_bar)
-        tlay.setContentsMargins(16, 6, 16, 6)
-        self._title_lbl = QLabel(cfg.get("tab", "Sheet"))
-        self._title_lbl.setFont(_bold_font(12))
-        self._title_lbl.setStyleSheet("color:#1e293b;")
-        tlay.addWidget(self._title_lbl)
-        layout.addWidget(top_bar)
-
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)

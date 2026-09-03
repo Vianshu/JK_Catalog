@@ -1,9 +1,13 @@
+# -*- coding: utf-8 -*-
 # =============================================================================
 # today_payment_tab.py — _SectionCardV2 + TodayPaymentTabV2
 # =============================================================================
 import os
 import re as _re
 import json as _json
+import logging as _logging
+
+_logger = _logging.getLogger(__name__)
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTableWidget,
@@ -61,6 +65,12 @@ class _SectionCardV2(QFrame):
         self._is_edit_mode = False        # F2 support: cursor at end, no selection
         self._bypass_fuzzy_match = False  # Ctrl+Enter: save typed text as-is
         self._header_color = color
+
+        # Debounce timer — restarted on every cell change, fires once 300 ms after the last keystroke.
+        # Using start() (not singleShot) prevents stacking multiple pending saves during rapid typing.
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.timeout.connect(self._save_data)
         
         # Resizing state
         self._resizing = False
@@ -107,7 +117,7 @@ class _SectionCardV2(QFrame):
         hlay.addWidget(self._btn_row)
 
         if not self._fixed_cols:
-            self._btn_gear = QPushButton("ΓÜÖ")
+            self._btn_gear = QPushButton("⚙")
             self._btn_gear.setFixedSize(28, 24)
             self._btn_gear.clicked.connect(self._show_gear)
             hlay.addWidget(self._btn_gear)
@@ -125,7 +135,7 @@ class _SectionCardV2(QFrame):
         self._hdr.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._hdr.customContextMenuRequested.connect(self._header_ctx)
 
-        # ---- Table ΓÇö visually unified with all other tables in the app ----
+        # ---- Table — visually unified with all other tables in the app ----
         # NOTE: _TABLE_STYLE is intentionally NOT applied here because its
         # item padding (4px 8px) creates a visible inset-box inside every cell
         # in the Today Payment cards. Alternating rows, font, and row height
@@ -138,11 +148,13 @@ class _SectionCardV2(QFrame):
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(26)
         _setup_smart_header(self.table)
+        self.table._card_ref = self   # used by header ctx menu for lock toggle
         self.table.horizontalHeader().setStretchLastSection(False)
         self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
-        self.table.setShowGrid(False)  # Remove native gridlines
+        self.table.setShowGrid(True)   # Native Qt gridlines (styled via gridline-color in QSS)
         self.table.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustToContents)
         self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
         self.table.setMinimumHeight(60)
@@ -190,6 +202,8 @@ class _SectionCardV2(QFrame):
         # Allow card to naturally shrink/grow unless setFixedWidth is called.
         self.setMinimumWidth(200)
         self._card_fixed_width = None  # Track original fixed width for single/multi toggle
+        self._in_single_view = False   # Track whether we're currently in single-view mode
+        self._cols_locked = False      # Track whether column widths are locked
 
         # Ignore 450 (the old DB default) to allow natural sizing.
         if card_width is not None and card_width >= 200 and card_width != 450:
@@ -246,8 +260,9 @@ class _SectionCardV2(QFrame):
             event.ignore()
 
     def dragLeaveEvent(self, event):
-        self.setStyleSheet("")
-
+        # Restore the card's original stylesheet — do NOT clear to "" which
+        # wipes all styling (background, border, border-radius) until repaint.
+        self.setStyleSheet("QFrame#CardFrame { background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; }")
     def dropEvent(self, event):
         self.setStyleSheet("")
         try:
@@ -255,7 +270,7 @@ class _SectionCardV2(QFrame):
         except ValueError:
             return
         if src_sid == self.section_id:
-            return  # dropped on self ΓÇö no-op
+            return  # dropped on self — no-op
         # Use the direct reference stored at construction time
         if self._today_tab_ref:
             self._today_tab_ref._swap_table_positions(src_sid, self.section_id)
@@ -477,7 +492,7 @@ class _SectionCardV2(QFrame):
                 QTimer.singleShot(0, _ref._update_all_calculations)
         except Exception as e:
             conn.rollback()
-            print("[ERROR] _SectionCardV2._save_data:", e)
+            _logger.error(f"[TodayPayment] _save_data section={self.section_id}: {e}")
         finally:
             self._saving = False
 
@@ -492,8 +507,7 @@ class _SectionCardV2(QFrame):
             cur.execute("DELETE FROM tp_section_cols WHERE section_id=?", (self.section_id,))
             for c in range(self.table.columnCount()):
                 h = self.table.horizontalHeaderItem(c)
-                # For fixed-col tables, only persist widths (names come from hardcoded specs)
-                col_name = (h.text() if h else "") if not self._fixed_cols else (h.text() if h else "")
+                col_name = h.text() if h else ""
                 cur.execute(
                     "INSERT INTO tp_section_cols(section_id,col_index,col_name,col_width)"
                     " VALUES(?,?,?,?)",
@@ -501,6 +515,7 @@ class _SectionCardV2(QFrame):
             conn.commit()
         except Exception as e:
             conn.rollback()
+            _logger.error(f"[TodayPayment] _save_cols section={self.section_id}: {e}")
 
     def _update_db(self, field, value):
         if not self._db_name:
@@ -515,7 +530,7 @@ class _SectionCardV2(QFrame):
             conn.commit()
         except Exception as e:
             conn.rollback()
-            print(f"[ERROR] _update_db('{field}'): {e}")
+            _logger.error(f"[TodayPayment] _update_db field='{field}' section={self.section_id}: {e}")
 
     def _delete_from_db(self):
         if not self._db_name:
@@ -554,7 +569,8 @@ class _SectionCardV2(QFrame):
 
             self._expand_column_to_contents(item.column())
             self._recalc_width()
-        QTimer.singleShot(300, self._save_data)
+        # Debounce: restart the 300 ms timer so rapid edits produce only one DB write.
+        self._save_timer.start(300)
 
     def _add_column(self):
         if not self._can_edit or self._fixed_cols:
@@ -715,7 +731,7 @@ class _SectionCardV2(QFrame):
                 cur.execute("UPDATE tp_sections SET header_color=? WHERE id=?", (self._header_color, self.section_id))
                 conn.commit()
             except Exception as e:
-                print("Failed to save header color:", e)
+                _logger.error(f"[TodayPayment] save header_color section={self.section_id}: {e}")
 
     def _show_gear(self):
         if self._fixed_cols:
@@ -753,14 +769,19 @@ class _SectionCardV2(QFrame):
             tw += self.table.columnWidth(c)
         if not self.table.verticalHeader().isHidden():
             tw += self.table.verticalHeader().width()
-        if self.table.verticalScrollBar().isVisible():
-            tw += self.table.verticalScrollBar().width()
-        
-        # Do not lock the table width so it can expand to fill the card!
-        
-        # Always tightly wrap the table columns to prevent white space and cut content.
+
+        # In single-view the card fills the full pane — do NOT lock the card width.
+        # Only tightly wrap in multi-view so the grid doesn’t bloat after toggling.
+        if getattr(self, '_in_single_view', False):
+            return
+
+        # Both scroll bars are permanently off (AlwaysOff), so no scrollbar width
+        # needs to be reserved. Tight-wrap exactly to the column sum.
         # Minimum 200px so empty (no-column) tables are still usable.
-        self.setFixedWidth(max(tw + 2, 200))
+        new_w = max(tw + 2, 200)
+        self.setFixedWidth(new_w)
+        # Keep _card_fixed_width in sync so single/multi toggle restores correctly.
+        self._card_fixed_width = new_w
 
     def _on_section_resized(self, logicalIndex, oldSize, newSize):
         if getattr(self, '_loading', False) or getattr(self, '_enforcing', False) or getattr(self, '_expanding', False): return
@@ -829,12 +850,14 @@ class _SectionCardV2(QFrame):
                          mode (larger cap). False for compact multi-view grid cards.
         """
         cols = self.table.columnCount()
-        hh = self.table.horizontalHeader().sizeHint().height() if cols else 0
+        hh = max(self.table.horizontalHeader().sizeHint().height(), 24) if cols else 0
         rh = sum(self.table.rowHeight(r) for r in range(self.table.rowCount()))
-        h = hh + rh + 6
+        # 10px buffer: covers grid-line, layout margins and any sub-pixel rounding
+        # that can cause the last row to be partially clipped.
+        h = hh + rh + 10
         # Single-view gets a larger cap (full-width pane, user can scroll the pane).
         # Multi-view gets a compact cap so cards don't dominate the grid.
-        max_h = 800 if single_view else 500
+        max_h = 800 if single_view else 600
         h = min(max(h, 60), max_h)
         self.table.setMinimumHeight(h)
         self._recalc_width()
@@ -844,6 +867,29 @@ class _SectionCardV2(QFrame):
         footer_h = self._footer_lbl.sizeHint().height() if self._footer_lbl.isVisible() else 0
         card_h = max(hdr_h + h + footer_h + 2, 80)
         self.setFixedHeight(card_h)
+
+    def _set_cols_locked(self, locked: bool, save_to_db: bool = True):
+        """Lock or unlock all column widths on this card's table."""
+        self._cols_locked = locked
+        hh = self.table.horizontalHeader()
+        if locked:
+            hh.setSectionResizeMode(hh.ResizeMode.Fixed)
+        else:
+            hh.setSectionResizeMode(hh.ResizeMode.Interactive)
+
+        # Persist to DB so state survives restarts
+        if save_to_db and self._db and self._db_name and self.section_id:
+            try:
+                conn = self._db.get_connection(self._db_name)
+                if conn:
+                    conn.cursor().execute(
+                        "UPDATE tp_sections SET cols_locked=? WHERE id=?",
+                        (1 if locked else 0, self.section_id)
+                    )
+                    conn.commit()
+            except Exception:
+                pass
+
 
     def set_edit_mode(self, can_edit):
         self._can_edit = can_edit
@@ -866,7 +912,7 @@ class _SectionCardV2(QFrame):
         self.table.setItemDelegateForColumn(col_idx, new_delegate)
         self._connect_nav(new_delegate)  # enable Enter-moves-down on the new delegate
 
-    # ΓöÇΓöÇ Enter-key navigation: commit and move to next row ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    # ── Enter-key navigation: commit and move to next row ─────────────────
 
     def _setup_enter_navigation(self):
         """Connect closeEditor signals from all current delegates to the move-down handler."""
@@ -877,15 +923,27 @@ class _SectionCardV2(QFrame):
                 self._connect_nav(d)
 
     def _connect_nav(self, delegate):
-        """Connect delegate.closeEditor ΓåÆ _on_editor_close_for_nav (once per delegate)."""
+        """Connect delegate.closeEditor → _on_editor_close_for_nav (once per delegate)."""
         if delegate and not getattr(delegate, '_nav_connected', False):
             delegate.closeEditor.connect(self._on_editor_close_for_nav)
             delegate._nav_connected = True
 
     def _on_editor_close_for_nav(self, editor, hint):
         """Move selection to the next row when Enter commits the editor.
-        SubmitModelCache = Enter pressed (not Tab, not Escape, not dropdown selection)."""
+        SubmitModelCache = Enter pressed (not Tab, not Escape, not dropdown selection).
+        Guard: only act if the editor belongs to THIS card's table to avoid the
+        'editor does not belong to this view' warning when cards are re-parented."""
         from PyQt6.QtWidgets import QAbstractItemDelegate
+        # Verify editor is a descendant of our table's viewport
+        vp = self.table.viewport()
+        w = editor
+        while w is not None:
+            if w is vp:
+                break
+            w = w.parent()
+        else:
+            return  # editor belongs to a different view — ignore
+
         if hint == QAbstractItemDelegate.EndEditHint.SubmitModelCache:
             cur = self.table.currentIndex()
             if cur.isValid():
@@ -893,6 +951,7 @@ class _SectionCardV2(QFrame):
                 if next_row < self.table.rowCount():
                     QTimer.singleShot(0, lambda r=next_row, c=cur.column():
                         self.table.setCurrentCell(r, c))
+
 
 
 # ===========================================================================
@@ -910,25 +969,27 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
         self._current_view = 1        # 0=single, 1=multi
         self._updating_calcs = False
 
-        main_layout = QVBoxLayout(self)
+        main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # ---- Top bar ----
-        top_bar = QWidget()
-        top_bar.setStyleSheet(
-            "background:#f8fafc; border-bottom:1px solid #e2e8f0;")
-        top_bar.setFixedHeight(48)
-        tlay = QHBoxLayout(top_bar)
-        tlay.setContentsMargins(16, 6, 16, 6)
+        # ---- Body: QStackedWidget switching between single and multi view ----
+        self._body_stack = QStackedWidget()
+        self._body_stack.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(self._body_stack, 1)
 
-        lbl = QLabel("Today Payment")
-        lbl.setFont(_bold_font(11))
-        lbl.setStyleSheet("color:#1e293b;")
-        tlay.addWidget(lbl)
-        tlay.addStretch()
+        # ---- Right bar ----
+        right_bar = QWidget()
+        right_bar.setStyleSheet("background:#f8fafc; border-left:1px solid #e2e8f0;")
+        right_bar.setFixedWidth(52)  # Slightly wider for icons
+        tlay = QVBoxLayout(right_bar)
+        tlay.setContentsMargins(6, 16, 6, 16)
+        tlay.setSpacing(12)
 
-        self._btn_add = QPushButton("+ New Table")
+        from src.ui.supp_payment.shared import get_icon
+        self._btn_add = QPushButton()
+        self._btn_add.setIcon(get_icon("add.svg"))
+        self._btn_add.setToolTip("New Table")
         self._btn_add.setStyleSheet(_BTN_PRIMARY)
         self._btn_add.setFixedHeight(32)
         self._btn_add.clicked.connect(self._add_section)
@@ -938,21 +999,34 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
         toggle_frame = QFrame()
         toggle_frame.setStyleSheet(
             "QFrame{background:#e2e8f0;border-radius:6px;}")
-        tgl = QHBoxLayout(toggle_frame)
+        tgl = QVBoxLayout(toggle_frame)  # Stack vertically in right bar
         tgl.setContentsMargins(3, 3, 3, 3)
         tgl.setSpacing(2)
 
-        _ts = ("QPushButton{border-radius:4px;padding:4px 16px;font-size:10pt;border:none;font-weight:500;}"
+        _ts = ("QPushButton{border-radius:4px;padding:8px 4px;font-size:11pt;border:none;font-weight:bold;}"
                "QPushButton:checked{background:#ffffff;color:#0f172a;border:1px solid #cbd5e1;}"
                "QPushButton:!checked{background:transparent;color:#64748b;}"
                "QPushButton:!checked:hover{color:#334155;}")
-        self._init_print_export(tlay, "Today Payment", supports_print=False, table_getter=self._get_tables_for_export)
+        def on_toggle_tp(expanded):
+            if expanded:
+                self._btn_add.setText(" Add Table")
+                self._btn_single.setText(" Single")
+                self._btn_stack.setText(" Multi")
+            else:
+                self._btn_add.setText("")
+                self._btn_single.setText("")
+                self._btn_stack.setText("")
+
+        self._init_print_export(tlay, "Today Payment", supports_print=False, table_getter=self._get_tables_for_export, right_bar=right_bar, on_toggle_cb=on_toggle_tp)
         self._export_grid_cols = 3  # TodayPayment uses 3-column grid layout in UI
 
-        self._btn_single = QPushButton("Single Table")
-        
+        self._btn_single = QPushButton()
+        self._btn_single.setIcon(get_icon("single.svg"))
+        self._btn_single.setToolTip("Single Table View")
         self._btn_single.setCheckable(True)
-        self._btn_stack  = QPushButton("Multi View")
+        self._btn_stack  = QPushButton()
+        self._btn_stack.setIcon(get_icon("multi.svg"))
+        self._btn_stack.setToolTip("Multi View")
         self._btn_stack.setCheckable(True)
         self._btn_stack.setChecked(True)
         for b in (self._btn_single, self._btn_stack):
@@ -961,14 +1035,12 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
         self._btn_single.clicked.connect(lambda: self._switch_view(0))
         self._btn_stack.clicked.connect(lambda: self._switch_view(1))
         tlay.addWidget(toggle_frame)
-        main_layout.addWidget(top_bar)
-
-        # ---- Body: QStackedWidget switching between single and multi view ----
-        self._body_stack = QStackedWidget()
-        self._body_stack.setContentsMargins(0, 0, 0, 0)
+        
+        tlay.addStretch()
+        main_layout.addWidget(right_bar, 0)
 
         # =====================================================================
-        # VIEW 0 ΓÇö Single Table (sidebar + full-width table)
+        # VIEW 0 — Single Table (sidebar + full-width table)
         # =====================================================================
         single_body = QWidget()
         single_body.setStyleSheet("background:#f8fafc;")
@@ -990,6 +1062,7 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
         s_lay.addWidget(s_label)
 
         self._sidebar_list = QListWidget()
+        self._sidebar_list.setFont(_norm_font())
         self._sidebar_list.setDragDropMode(
             QAbstractItemView.DragDropMode.InternalMove)
         self._sidebar_list.setDefaultDropAction(Qt.DropAction.MoveAction)
@@ -1035,7 +1108,7 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
         self._body_stack.addWidget(single_body)
 
         # =====================================================================
-        # VIEW 1 ΓÇö Multi View (2-column grid, no sidebar)
+        # VIEW 1 — Multi View (2-column grid, no sidebar)
         # =====================================================================
         multi_scroll = QScrollArea()
         multi_scroll.setWidgetResizable(True)
@@ -1057,9 +1130,6 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
         self._body_stack.addWidget(multi_scroll)
 
         self._body_stack.setCurrentIndex(1)   # default: multi view
-        main_layout.addWidget(self._body_stack)
-
-
     def _get_tables_for_export(self):
         """Collect all section card tables for the Excel export.
         Respects is_column_break so the grid layout matches the on-screen view.
@@ -1108,14 +1178,27 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
         if idx == 0:
             self._on_sidebar_select(self._sidebar_list.currentRow())
         else:
+            # Before rebuilding the multi-view grid, restore width constraints for every
+            # card that was left in single-view mode (setMinimumWidth(0) + setMaximumWidth
+            # QWIDGETSIZE_MAX were applied on entry to single-view). Without restoring them
+            # first, _rebuild_multi_grid places the card into a QVBoxLayout with no fixed
+            # width and the layout squashes it to an arbitrary narrow width.
+            for card in self._section_cards.values():
+                if getattr(card, '_in_single_view', False):
+                    card.setFrameShape(QFrame.Shape.StyledPanel)
+                    card.setFrameShadow(QFrame.Shadow.Raised)
+                    card.setLineWidth(1)
+                    card.setMaximumHeight(16777215)
+                    card._in_single_view = False
+                    card._recalc(single_view=False)  # re-applies setFixedWidth via _recalc_width
             self._rebuild_multi_grid()
 
     def _display_party_cb(self, index):
         """Translate stored GUIDs back to display names.
         Three possible states for the cell value:
-          1. A valid GUID with a matching entry ΓåÆ show the ledger name
-          2. A plain text name (free-typed, or legacy data with no GUID) ΓåÆ show as-is
-          3. An orphaned GUID (Tally entry was deleted) ΓåÆ show as-is silently
+          1. A valid GUID with a matching entry → show the ledger name
+          2. A plain text name (free-typed, or legacy data with no GUID) → show as-is
+          3. An orphaned GUID (Tally entry was deleted) → show as-is silently
         """
         val = index.data(Qt.ItemDataRole.DisplayRole)
         val_str = str(val or "").strip()
@@ -1124,7 +1207,7 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
         # Case 1: stored GUID maps to a known name
         if val_str in self._guid_to_name:
             return self._guid_to_name[val_str]
-        # Case 2 & 3: plain name or orphaned GUID ΓÇö just show the raw value, no log noise
+        # Case 2 & 3: plain name or orphaned GUID — just show the raw value, no log noise
         return val
 
     def _set_party_cb(self, text, index):
@@ -1132,9 +1215,9 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
         Matching order:
           1. Exact alias match (case-insensitive)
           2. Exact name match (case-insensitive)
-          3. Normalized match ΓÇö strip spaces & punctuation ΓÇö so 'balajiMetal'
+          3. Normalized match — strip spaces & punctuation — so 'balajiMetal'
              and 'balaji.metal' both resolve to 'Balaji Metal Industries, Hetauda'
-          4. No match ΓåÆ store typed text as-is (free typing allowed)
+          4. No match → store typed text as-is (free typing allowed)
         """
         import re as _re
         def _norm(s): return _re.sub(r'[\s\.\,\-\_\/\\]', '', s.lower())
@@ -1178,41 +1261,41 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
             "Payments": [
                 ("Date",      110,  date_delegate),
                 ("Party Name",200,  party_delegate),
-                ("To",      130,  None),
-                ("From", 110,  None),
-                ("Payment",    110,  None),
+                ("To",        130,  None),
+                ("From",      110,  None),
+                ("Payment",   110,  None),
             ],
             "Demand Loans (DL)": [
                 ("S.N",        40,  None),
-                ("DL No.",     120, None),
-                ("Amount",      110, None),
-                ("Expiry Date",110, date_delegate),
-                ("Day's left",    200, None),
-                ("Gap",    50, None),
-                ("Notes",    50, None),
+                ("DL No.",    120,  None),
+                ("Amount",    120,  None),
+                ("Expiry Date",120, date_delegate),
+                ("Day's left",  80, None),   # just a number, 80 is plenty
+                ("Gap",         65, None),   # signed number e.g. "-12"
+                ("Notes",      140, None),   # allow short note text
             ],
             "Today": [
                 ("Date",      110,  date_delegate),
                 ("Party Name",200,  party_delegate),
-                ("To",      130,  None),
-                ("From", 110,  None),
-                ("Payment",    110,  None),
+                ("To",        130,  None),
+                ("From",      110,  None),
+                ("Payment",   110,  None),
             ],
             "Account Table": [
-                ("Account",   200,  None),
-                ("Remain Cash",     110,  None),
-                ("Bank / Cash",   180,  None),
+                ("Account",      200,  None),
+                ("Remain Cash",  130,  None),
+                ("Bank / Cash",  150,  None),
             ],
             "Upcoming": [
                 ("Date",      110,  date_delegate),
                 ("Party Name",200,  party_delegate),
-                ("To",      130,  None),
-                ("From", 110,  None),
-                ("Payment",    110,  None),
+                ("To",        130,  None),
+                ("From",      110,  None),
+                ("Payment",   110,  None),
             ],
             "Limits & LC": [
-                ("Type",   260,  None),
-                ("Value",  180,  None),
+                ("Type",   290,  None),   # wide enough for "Remain demand loan limit"
+                ("Value",  140,  None),
             ],
         }
         return specs
@@ -1295,7 +1378,7 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
 
     def refresh_ledger_maps(self):
         """Re-load party maps from DB after a Tally sync, then repaint all party columns.
-        Safe to call at any time ΓÇö triggers no DB writes.
+        Safe to call at any time — triggers no DB writes.
         """
         try:
             self._reload_party_list()
@@ -1355,6 +1438,10 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
                     cur.execute("ALTER TABLE tp_sections ADD is_column_break BIT DEFAULT 0")
                     conn.commit()
                 except Exception: pass
+                try:
+                    cur.execute("ALTER TABLE tp_sections ADD cols_locked BIT DEFAULT 0")
+                    conn.commit()
+                except Exception: pass
         except Exception:
             pass
 
@@ -1411,12 +1498,12 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
 
         rows = self._db.execute_query(
             self._db_name,
-            "SELECT id, name, header_color, is_core, card_width, ISNULL(is_column_break, 0) FROM tp_sections ORDER BY sort_order, id"
+            "SELECT id, name, header_color, is_core, card_width, ISNULL(is_column_break, 0), ISNULL(cols_locked, 0) FROM tp_sections ORDER BY sort_order, id"
         ) or []
 
         core_specs = self._build_core_section_specs()
 
-        for sid, name, color, is_core, c_width, is_column_break in rows:
+        for sid, name, color, is_core, c_width, is_column_break, cols_locked in rows:
             col_specs = core_specs.get(name) if is_core else None
             card = _SectionCardV2(
                 sid, name or "Table", color or "",
@@ -1428,14 +1515,16 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
             card._today_tab_ref = self
             card.is_column_break = bool(is_column_break)   # direct reference, avoids broken parent-walk
             card.set_edit_mode(self._can_edit)
+            if cols_locked:
+                card._set_cols_locked(True, save_to_db=False)
             self._section_cards[sid] = card
             self._migrate_party_names_to_guid(card)
 
             # Sidebar entry
-            item = QListWidgetItem(f"  {name} Γå┤" if is_column_break else f"  {name}")
+            item = QListWidgetItem(f"  {name} →" if is_column_break else f"  {name}")
             item.setData(Qt.ItemDataRole.UserRole, sid)
             if is_core:
-                item.setToolTip("Core table ΓÇö cannot be deleted")
+                item.setToolTip("Core table — cannot be deleted")
             self._sidebar_list.addItem(item)
 
         # Populate the active view
@@ -1683,7 +1772,7 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
     def _on_sidebar_select(self, row):
         """Show the selected card in single-table view. No-op in multi view."""
         if self._current_view != 0:
-            return  # Only affects single view ΓÇö prevents grid gap bug
+            return  # Only affects single view — prevents grid gap bug
 
         # Remove any existing card from single pane; restore multi-view sizing
         while self._single_card_holder.count() > 0:
@@ -1697,13 +1786,11 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
                 w.setMinimumWidth(300)
                 # Undo the fixed height from _recalc() so multi-view can lay it out naturally
                 w.setMaximumHeight(16777215)
+                # Clear single-view flag BEFORE _recalc so _recalc_width runs normally
+                w._in_single_view = False
                 w._recalc(single_view=False)  # reapply compact height for multi-view grid
-                if getattr(w, '_card_fixed_width', None):
-                    w.setFixedWidth(w._card_fixed_width)
-                else:
-                    w.setMaximumWidth(16777215)
                 w.setParent(self._multi_container)  # re-park under multi
-                # Do NOT call hide() here ΓÇö Qt's explicit-hide flag persists through
+                # Do NOT call hide() here — Qt's explicit-hide flag persists through
                 # addWidget() and would cause cards to stay invisible in multi-view.
 
         if row < 0 or row >= self._sidebar_list.count():
@@ -1726,10 +1813,12 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
         card.setFrameShape(QFrame.Shape.NoFrame)
         card.setFrameShadow(QFrame.Shadow.Plain)
         card.setLineWidth(0)
-        card.setMinimumWidth(0)  # Qt's QWIDGETSIZE_MAX ΓÇö removes fixed width
+        card.setMinimumWidth(0)  # Qt's QWIDGETSIZE_MAX — removes fixed width
+        card.setMaximumWidth(16777215)
         # Ensure height is tight: remove any leftover fixed height from multi-view,
         # then let _recalc() compute the correct compact height.
         card.setMaximumHeight(16777215)
+        card._in_single_view = True
         card._recalc(single_view=True)  # use larger height cap in full-width single pane
         self._single_card_holder.addWidget(card, 0, Qt.AlignmentFlag.AlignTop)
 
@@ -1756,9 +1845,9 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
                 print("Error saving column break", e)
                 
             txt = item.text()
-            if new_val and not txt.endswith(" Γå┤"):
-                item.setText(txt + " Γå┤")
-            elif not new_val and txt.endswith(" Γå┤"):
+            if new_val and not txt.endswith(" →"):
+                item.setText(txt + " →")
+            elif not new_val and txt.endswith(" →"):
                 item.setText(txt[:-2])
                 
             if self._current_view == 1:
@@ -1802,7 +1891,7 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
             conn.commit()
         except Exception as e:
             conn.rollback()
-        # Only refresh the grid layout ΓÇö don't rebuild (that destroys and recreates cards)
+        # Only refresh the grid layout — don't rebuild (that destroys and recreates cards)
         if self._current_view == 1:
             self._rebuild_multi_grid()
         elif self._current_view == 0:

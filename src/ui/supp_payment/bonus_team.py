@@ -49,31 +49,40 @@ class BonusTab(QWidget, _PrintExportMixin):
         super().__init__()
         self._can_edit = True
 
-        layout = QVBoxLayout(self)
+        layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        top_bar = QWidget()
-        top_bar.setStyleSheet("background:#f8fafc; border-bottom:1px solid #e2e8f0;")
-        top_bar.setFixedHeight(48)
-        tlay = QHBoxLayout(top_bar)
-        tlay.setContentsMargins(16, 6, 16, 6)
-        lbl = QLabel("Bonus Details")
-        lbl.setFont(_bold_font(11))
-        lbl.setStyleSheet("color:#1e293b;")
-        tlay.addWidget(lbl)
-        tlay.addStretch()
+        self.table = _DbTable("bonus_data", _BONUS_HEADERS, _BONUS_WIDTHS, row_count=30)
+        layout.addWidget(self.table, 1)
+
+        right_bar = QWidget()
+        right_bar.setStyleSheet("background:#f8fafc; border-left:1px solid #e2e8f0;")
+        right_bar.setFixedWidth(52)
+        tlay = QVBoxLayout(right_bar)
+        tlay.setContentsMargins(6, 16, 6, 16)
+        tlay.setSpacing(12)
+        def on_toggle_bonus(expanded):
+            if expanded:
+                self._btn_add.setText(" Add Row")
+            else:
+                self._btn_add.setText("")
+
         self._init_print_export(tlay, "Bonus Details",
-                                  table_getter=lambda: [{"title": "", "table": self.table}])
+                                  table_getter=lambda: [{"title": "", "table": self.table}], right_bar=right_bar, on_toggle_cb=on_toggle_bonus)
 
-        self._btn_add = QPushButton("+ Add Row")
+        from src.ui.supp_payment.shared import get_icon
+        self._btn_add = QPushButton()
+        self._btn_add.setIcon(get_icon("add.svg"))
+        self._btn_add.setToolTip("Add Row")
         self._btn_add.setStyleSheet(_BTN_PRIMARY)
         self._btn_add.setFixedHeight(32)
         self._btn_add.clicked.connect(self._add_row)
         tlay.addWidget(self._btn_add)
-        layout.addWidget(top_bar)
-
-        self.table = _DbTable("bonus_data", _BONUS_HEADERS, _BONUS_WIDTHS, row_count=30)
-        layout.addWidget(self.table)
+        
+        tlay.addStretch()
+        
+        layout.addWidget(right_bar, 0)
 
     def _add_row(self):
         if not self._can_edit:
@@ -103,36 +112,9 @@ class TeamListTab(QWidget, _PrintExportMixin):
             "2078-79", "2077-78", "2076-77", "2075-76",
         ]
 
-        layout = QVBoxLayout(self)
+        layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-
-        top_bar = QWidget()
-        top_bar.setStyleSheet("background:#f8fafc; border-bottom:1px solid #e2e8f0;")
-        top_bar.setFixedHeight(48)
-        tlay = QHBoxLayout(top_bar)
-        tlay.setContentsMargins(16, 6, 16, 6)
-        lbl = QLabel("Team List")
-        lbl.setFont(_bold_font(11))
-        lbl.setStyleSheet("color:#1e293b;")
-        tlay.addWidget(lbl)
-        tlay.addStretch()
-        self._init_print_export(tlay, "Team List",
-                                   table_getter=self._get_tables_for_export,
-                                   print_table_getter=self._get_tables_for_print)
-
-        self._btn_add_yr  = QPushButton("+ Add Year")
-        self._btn_add_yr.setStyleSheet(_BTN_SECONDARY)
-        self._btn_add_yr.setFixedHeight(32)
-        self._btn_add_yr.clicked.connect(self._add_year)
-        tlay.addWidget(self._btn_add_yr)
-
-        
-        self._btn_add_emp = QPushButton("+ Add Employee")
-        self._btn_add_emp.setStyleSheet(_BTN_PRIMARY)
-        self._btn_add_emp.setFixedHeight(32)
-        self._btn_add_emp.clicked.connect(self._add_employee)
-        tlay.addWidget(self._btn_add_emp)
-        layout.addWidget(top_bar)
+        layout.setSpacing(0)
 
         total_cols = 4 + len(self._year_labels) * 3
         headers = ["S.N", "Location", "Post", "Name of Employee"]
@@ -143,7 +125,47 @@ class TeamListTab(QWidget, _PrintExportMixin):
             widths += [30, 90, 90]
 
         self.table = _DbTable("team_list_data", headers, widths, row_count=40)
-        layout.addWidget(self.table)
+        layout.addWidget(self.table, 1)
+
+        right_bar = QWidget()
+        right_bar.setStyleSheet("background:#f8fafc; border-left:1px solid #e2e8f0;")
+        right_bar.setFixedWidth(52)
+        tlay = QVBoxLayout(right_bar)
+        tlay.setContentsMargins(6, 16, 6, 16)
+        tlay.setSpacing(12)
+        
+        def on_toggle_team(expanded):
+            if expanded:
+                self._btn_add_yr.setText(" Add Year")
+                self._btn_add_emp.setText(" Add Employee")
+            else:
+                self._btn_add_yr.setText("")
+                self._btn_add_emp.setText("")
+
+        self._init_print_export(tlay, "Team List",
+                                  table_getter=self._get_tables_for_export,
+                                  print_table_getter=self._get_tables_for_print, right_bar=right_bar, on_toggle_cb=on_toggle_team)
+        
+        from src.ui.supp_payment.shared import get_icon
+        self._btn_add_yr = QPushButton()
+        self._btn_add_yr.setIcon(get_icon("add.svg"))
+        self._btn_add_yr.setToolTip("Add Year")
+        self._btn_add_yr.setStyleSheet(_BTN_PRIMARY)
+        self._btn_add_yr.setFixedHeight(32)
+        self._btn_add_yr.clicked.connect(self._add_year)
+        tlay.addWidget(self._btn_add_yr)
+
+        self._btn_add_emp = QPushButton()
+        self._btn_add_emp.setIcon(get_icon("user_add.svg"))
+        self._btn_add_emp.setToolTip("Add Employee")
+        self._btn_add_emp.setStyleSheet(_BTN_PRIMARY)
+        self._btn_add_emp.setFixedHeight(32)
+        self._btn_add_emp.clicked.connect(self._add_employee)
+        tlay.addWidget(self._btn_add_emp)
+        
+        tlay.addStretch()
+        
+        layout.addWidget(right_bar, 0)
 
     
     def _get_tables_for_export(self):

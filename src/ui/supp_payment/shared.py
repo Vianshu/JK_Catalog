@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # =============================================================================
 # supp_payment_shared.py — Shared constants, helpers, delegate, and _DbTable
 # Imported by all supp_payment_* sub-modules.
@@ -6,6 +7,7 @@
 # supp_payment.py  ΓÇô  Supplier Payment Module (Redesigned)
 # =============================================================================
 import os
+import weakref
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTableWidget,
     QTableWidgetItem, QPushButton, QTabWidget, QInputDialog,
@@ -18,30 +20,131 @@ from PyQt6.QtCore import (
     Qt, QTimer, QDate, QEvent, QMimeData, QSettings,
 )
 from PyQt6.QtGui import (
-    QFont, QColor, QBrush, QPixmap, QPainter, QKeySequence, QShortcut, QCursor, QImage,
+    QFont, QColor, QBrush, QPixmap, QPainter, QKeySequence, QShortcut, QCursor, QImage, QIcon,
 )
 from src.logic.db_manager import get_db_manager, build_logical_name
 
 from src.ui.table_exporter import export_tables_to_excel
 from src.ui.table_printer import print_tables_via_preview
 
+
+def get_icon(name):
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return QIcon(os.path.join(base, "icons", name))
+
 class _PrintExportMixin:
-    def _init_print_export(self, layout, title, supports_print=True, table_getter=None, print_table_getter=None):
+    _right_bar_expanded = False
+    # Stores (weakref_to_widget, apply_state_fn) pairs.
+    # Dead refs (widget destroyed) are pruned before each dispatch.
+    _right_bar_callbacks = []
+
+    @staticmethod
+    def _prune_callbacks():
+        """Remove entries whose widget has been garbage-collected."""
+        _PrintExportMixin._right_bar_callbacks = [
+            (wr, cb) for wr, cb in _PrintExportMixin._right_bar_callbacks
+            if wr() is not None
+        ]
+
+    def _init_print_export(self, layout, title, supports_print=True, table_getter=None, print_table_getter=None, right_bar=None, on_toggle_cb=None):
         self._export_title = title
         self._table_getter = table_getter if table_getter else lambda: [{"title": title, "table": self.table}]
         self._print_table_getter = print_table_getter if print_table_getter else self._table_getter
         self._export_grid_cols = 1
         self._export_title_on_left = False
 
-        self.btn_export = QPushButton("📊 Excel")
+        self.btn_export = QPushButton()
+        self.btn_export.setIcon(get_icon("excel.svg"))
+        self.btn_export.setToolTip("Export to Excel")
         self.btn_export.setStyleSheet(_BTN_PRIMARY)
         self.btn_export.clicked.connect(self._do_export)
-        layout.addWidget(self.btn_export)
 
         if supports_print:
-            self.btn_print = QPushButton("🖨 Print")
+            self.btn_print = QPushButton()
+            self.btn_print.setIcon(get_icon("print.svg"))
+            self.btn_print.setToolTip("Print")
             self.btn_print.setStyleSheet(_BTN_PRIMARY)
             self.btn_print.clicked.connect(self._do_print)
+
+        if right_bar:
+            self.btn_toggle = QPushButton()
+            self.btn_toggle.setIcon(get_icon("chevron-left.svg"))
+            from PyQt6.QtCore import QSize
+            self.btn_toggle.setIconSize(QSize(20, 20))
+            self.btn_toggle.setStyleSheet("""
+                QPushButton {
+                    background: #ffffff; 
+                    border: 1px solid #e2e8f0; 
+                    border-radius: 16px; 
+                }
+                QPushButton:hover {
+                    background: #f8fafc; 
+                    border: 1px solid #cbd5e1;
+                }
+                QPushButton:pressed {
+                    background: #f1f5f9;
+                }
+            """)
+            self.btn_toggle.setFixedSize(32, 32)
+            self.btn_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+            layout.insertWidget(0, self.btn_toggle, 0, Qt.AlignmentFlag.AlignHCenter)
+            
+            def apply_state(expanded):
+                # Guard: widget may have been deleted between callback registration and dispatch
+                try:
+                    if not right_bar or not self.btn_toggle:
+                        return
+                except RuntimeError:
+                    return
+                if expanded:
+                    right_bar.setFixedWidth(140)
+                    self.btn_toggle.setIcon(get_icon("chevron-right.svg"))
+                    self.btn_export.setText(" Excel")
+                    self.btn_export.setIcon(get_icon("excel.svg"))
+                    if supports_print: 
+                        self.btn_print.setText(" Print")
+                        self.btn_print.setIcon(get_icon("print.svg"))
+                else:
+                    right_bar.setFixedWidth(52)
+                    self.btn_toggle.setIcon(get_icon("chevron-left.svg"))
+                    self.btn_export.setText("")
+                    self.btn_export.setIcon(get_icon("excel.svg"))
+                    if supports_print: 
+                        self.btn_print.setText("")
+                        self.btn_print.setIcon(get_icon("print.svg"))
+                if on_toggle_cb: on_toggle_cb(expanded)
+
+            def on_toggle():
+                is_expanded = right_bar.width() > 60
+                new_state = not is_expanded
+                _PrintExportMixin._right_bar_expanded = new_state
+                # Prune dead widget refs before dispatching
+                _PrintExportMixin._prune_callbacks()
+                for _wr, cb in _PrintExportMixin._right_bar_callbacks:
+                    try:
+                        cb(new_state)
+                    except RuntimeError:
+                        pass  # C++ object already deleted — will be pruned next cycle
+                    except Exception:
+                        pass
+                
+            self.btn_toggle.clicked.connect(on_toggle)
+
+            # Keyboard shortcut — Ctrl+R toggles the right panel from anywhere in this tab
+            from PyQt6.QtGui import QShortcut, QKeySequence
+            _shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
+            _shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            _shortcut.activated.connect(on_toggle)
+            self.btn_toggle.setToolTip("Toggle sidebar  (Ctrl+R)")
+            
+            # Register with a weak-ref to self so dead tabs are auto-pruned
+            _PrintExportMixin._right_bar_callbacks.append((weakref.ref(self), apply_state))
+
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, lambda: apply_state(_PrintExportMixin._right_bar_expanded))
+
+        layout.addWidget(self.btn_export)
+        if supports_print:
             layout.addWidget(self.btn_print)
 
     def _do_export(self):
@@ -157,11 +260,7 @@ class ModernTableDelegate(UniversalCellDelegate):
             val = model.headerData(index.column(), Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
             if val is not None: header = str(val).lower()
         
-        # Draw single bottom border for row (extend x by 1 to make it continuous)
-        painter.setPen(QPen(QColor("#e2e8f0"), 1)) # slightly darker line to match Check.txt
-        bottom_left = option.rect.bottomLeft()
-        bottom_right = option.rect.bottomRight()
-        painter.drawLine(bottom_left.x(), bottom_left.y(), bottom_right.x() + 1, bottom_right.y())
+
         
         rect = option.rect
         rect.adjust(8, 4, -8, -4)
@@ -253,7 +352,7 @@ _TABLE_STYLE = UNIVERSAL_TABLE_STYLE + """
 QTableWidget {
     background: #ffffff;
     border: none;
-    gridline-color: #f1f5f9;
+    gridline-color: #94a3b8;
     color: #1e293b;
     font-size: 10pt;
     selection-background-color: #d1fae5;
@@ -262,24 +361,25 @@ QTableWidget {
 }
 QTableWidget::item {
     padding: 6px;
-    border-bottom: 1px solid #f1f5f9;
-    border-right: 1px solid #e2e8f0;
 }
 QHeaderView::section:horizontal {
-    background: #f8fafc;
+    background: #f1f5f9;
     color: #475569;
-    padding: 1px 4px;
-    min-height: 20px;
-    max-height: 24px;
+    padding: 2px 6px;
+    min-height: 22px;
+    max-height: 26px;
     border: none;
-    border-bottom: 2px solid #e2e8f0;
+    border-bottom: 1px solid #94a3b8;
+    border-right: 1px solid #94a3b8;
     font-weight: 700;
     font-size: 9pt;
     text-transform: uppercase;
 }
-QHeaderView::section:horizontal:first { border-radius: 8px 0 0 0; }
-QHeaderView::section:horizontal:last  { border-radius: 0 8px 0 0; }
+QHeaderView::section:horizontal:last {
+    border-right: none;
+}
 """
+
 
 _SECTION_HEADER_STYLE = (
     "background: #ffffff; color: {color}; padding: 14px 16px; "
@@ -377,6 +477,15 @@ def _setup_smart_header(table):
             is_stretch = hdr.stretchLastSection()
             act_stretch = menu.addAction("Stretch Last Column (On)" if is_stretch else "Stretch Last Column (Off)")
             
+            # Lock column widths (if table has a card ref with lock support, e.g. Today Payment cards)
+            card = getattr(table, '_card_ref', None)
+            has_lock_support = card and hasattr(card, '_cols_locked') and hasattr(card, '_set_cols_locked')
+            act_lock = None
+            if has_lock_support:
+                menu.addSeparator()
+                is_locked = getattr(card, '_cols_locked')
+                act_lock = menu.addAction("🔓  Unlock Column Widths" if is_locked else "🔒  Lock Column Widths")
+
             chosen = menu.exec(hdr.mapToGlobal(pos))
             if chosen == act_fit:
                 idx = hdr.logicalIndexAt(pos)
@@ -385,6 +494,8 @@ def _setup_smart_header(table):
                 table.resizeColumnsToContents()
             elif chosen == act_stretch:
                 hdr.setStretchLastSection(not is_stretch)
+            elif act_lock and chosen == act_lock:
+                card._set_cols_locked(not getattr(card, '_cols_locked'))
                 
         table._smart_hdr_menu = _show_menu
         hdr.customContextMenuRequested.connect(table._smart_hdr_menu)
@@ -614,7 +725,7 @@ class _DbTable(QTableWidget):
         self._is_edit_mode = False
         super().closeEditor(editor, hint)
 
-    # ΓöÇΓöÇ Right-click context menu with Delete Row ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    # ── Right-click context menu with Delete Row ──────────────────────────
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)

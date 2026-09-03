@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemDelegate,
 )
 from PyQt6.QtCore import (
-    Qt, QTimer, QDate, QEvent, QMimeData, QSettings, QRect,
+    Qt, QTimer, QDate, QEvent, QMimeData, QSettings, QRect, QPoint,
 )
 from PyQt6.QtGui import (
     QFont, QColor, QBrush, QPixmap, QPainter, QKeySequence,
@@ -29,7 +29,7 @@ from .shared import (
     _SCROLLBAR_STYLE, _TABLE_STYLE, _SECTION_HEADER_STYLE,
     _BTN_PRIMARY, _BTN_SECONDARY, _BTN_DANGER,
     _MENU_STYLE, _POPUP_STYLE, _CARD_MENU_STYLE,
-    _setup_smart_header, _DbTable,
+    _setup_smart_header, _DbTable, get_icon,
 )
 from src.ui.table_nav_mixin import UniversalCellDelegate
 
@@ -545,7 +545,7 @@ class _SupplierSection(QFrame):
             self._refresh_fn()
 
 
-class RecordTab(QWidget, _PrintExportMixin):
+class RecordTab(_PrintExportMixin, QWidget):
     def __init__(self):
         super().__init__()
         self._can_edit = True
@@ -555,87 +555,119 @@ class RecordTab(QWidget, _PrintExportMixin):
         self._last_clicked_idx = -1
         self.no_border_cols = [1]  # Col 1 is "Name", do not draw horizontal lines so it merges vertically
 
-        main_layout = QVBoxLayout(self)
+        main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # ΓòÉΓòÉ Compact dark header toolbar ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
-        hdr = QWidget()
-        hdr.setFixedHeight(44)
-        hdr.setStyleSheet("background:#064e3b; border-bottom:1px solid #065f46;")
-        hlay = QHBoxLayout(hdr)
-        hlay.setContentsMargins(14, 0, 14, 0)
-        hlay.setSpacing(6)
+        # ── Body Content ──
+        body_widget = QWidget()
+        body_layout = QVBoxLayout(body_widget)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+        main_layout.addWidget(body_widget, 1)
 
-        title = QLabel("🏦  Supplier Bank A/C")
-        title.setFont(_bold_font(11))
-        title.setStyleSheet("color:#e2e8f0; font-size:11pt;")
-        hlay.addWidget(title)
+        # (No top header anymore)
 
-        # Search bar
+        # ── Search Input (Inline in right bar) ──
         self._search = QLineEdit()
-        self._search.setPlaceholderText("🔍  Search supplier...")
-        self._search.setFixedHeight(26)
-        self._search.setFixedWidth(200)
+        self._search.setPlaceholderText("🔍 Search supplier...")
         self._search.setStyleSheet("""
-            QLineEdit{
-                background:#022c22;color:#ecfdf5;
-                border:1px solid #334155;border-radius:3px;
-                padding:0 8px;font-size:9pt;
+            QLineEdit {
+                background: #ecfdf5; 
+                border: 1px solid #059669; 
+                border-radius: 4px;
+                padding: 4px;
+                font-size: 10pt; 
+                color: #064e3b;
             }
-            QLineEdit:focus{border-color:#7dd3fc;}
         """)
+        self._search.setFixedHeight(32)
         self._search.textChanged.connect(self._filter_sections)
-        hlay.addWidget(self._search)
+        self._search.hide() # Hidden when collapsed
+
+        # ── Right Bar ──
+        right_bar = QWidget()
+        right_bar.setStyleSheet("background:#f8fafc; border-left:1px solid #e2e8f0;")
+        right_bar.setFixedWidth(52)
+        rlay = QVBoxLayout(right_bar)
+        rlay.setContentsMargins(6, 16, 6, 16)
+        rlay.setSpacing(12)
         
-        self._sel_status = QLabel("")
-        hlay.addWidget(self._sel_status)
-        
-        # Add copy shortcut for selected suppliers
+        rlay.addWidget(self._search)
+
+        self._btn_search = QPushButton()
+        self._btn_search.setIcon(get_icon("search.svg"))
+        self._btn_search.setToolTip("Search Account")
+        self._btn_search.setStyleSheet(_BTN_PRIMARY)
+        self._btn_search.setFixedHeight(32)
+        self._btn_search.clicked.connect(self.toggle_search)
+        rlay.addWidget(self._btn_search)
+
+        self._btn_add = QPushButton()
+        self._btn_add.setIcon(get_icon("user_add.svg"))
+        self._btn_add.setToolTip("Add Supplier Account")
+        self._btn_add.setStyleSheet(_BTN_PRIMARY)
+        self._btn_add.setFixedHeight(32)
+        self._btn_add.clicked.connect(lambda: self._add_supplier())
+        rlay.addWidget(self._btn_add)
+
+        self._btn_add_co = QPushButton()
+        self._btn_add_co.setIcon(get_icon("company_add.svg"))
+        self._btn_add_co.setToolTip("Add Company Account")
+        self._btn_add_co.setStyleSheet(_BTN_PRIMARY)
+        self._btn_add_co.setFixedHeight(32)
+        self._btn_add_co.clicked.connect(self._add_company_acct)
+        rlay.addWidget(self._btn_add_co)
+
+        self._btn_add_pe = QPushButton()
+        self._btn_add_pe.setIcon(get_icon("personal_add.svg"))
+        self._btn_add_pe.setToolTip("Add Personal Account")
+        self._btn_add_pe.setStyleSheet(_BTN_PRIMARY)
+        self._btn_add_pe.setFixedHeight(32)
+        self._btn_add_pe.clicked.connect(self._add_personal_acct)
+        rlay.addWidget(self._btn_add_pe)
+
         shortcut = QShortcut(QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_C), self)
         shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         shortcut.activated.connect(self._copy_selected_as_image)
-
-        hlay.addStretch()
-        
-        self.btn_copy_records = QPushButton(" Copy")
+        self.btn_copy_records = QPushButton()
+        self.btn_copy_records.setIcon(get_icon("copy.svg"))
+        self.btn_copy_records.setToolTip("Copy selected records to clipboard")
         self.btn_copy_records.setStyleSheet(_BTN_PRIMARY)
+        self.btn_copy_records.setFixedHeight(32)
         self.btn_copy_records.clicked.connect(self._copy_selected_as_image)
-        hlay.addWidget(self.btn_copy_records)
+        rlay.addWidget(self.btn_copy_records)
+
+        self._sel_status = QLabel("")
+        self._sel_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._sel_status.setWordWrap(True)
+        rlay.addWidget(self._sel_status)
+
+        def on_toggle_bank(expanded):
+            if expanded:
+                self._search.show()
+                self._btn_search.hide()
+                self._btn_add.setText(" Add Supplier")
+                self._btn_add_co.setText(" Add Company")
+                self._btn_add_pe.setText(" Add Personal")
+            else:
+                self._search.hide()
+                self._search.clear()
+                self._btn_search.show()
+                self._btn_add.setText("")
+                self._btn_add_co.setText("")
+                self._btn_add_pe.setText("")
+            self._update_status()
+
+        self._init_print_export(rlay, "Supplier Bank Accounts", table_getter=self._get_tables_for_excel, print_table_getter=self._get_tables_for_print, right_bar=right_bar, on_toggle_cb=on_toggle_bank)
+        self._export_title_on_left = True
         
-        self._init_print_export(hlay, "Supplier Bank Accounts", table_getter=self._get_tables_for_excel, print_table_getter=self._get_tables_for_print)
-        self._export_title_on_left = True  # Put supplier name on left to mimic UI
+        rlay.addStretch()
+        main_layout.addWidget(right_bar)
 
-        _BTN_HDR = """
-            QPushButton{{background:{bg};color:{fg};border:1px solid {bd};
-                border-radius:2px;padding:3px 10px;font-size:8pt;
-                font-weight:{fw};}}
-            QPushButton:hover{{background:{hv};}}
-            QPushButton:disabled{{background:#064e3b;color:#a7f3d0;border-color:#065f46;}}
-        """
 
-        def _hbtn(label, bg, fg, bd, hv, fw="400"):
-            b = QPushButton(label)
-            b.setFixedHeight(26)
-            b.setStyleSheet(_BTN_HDR.format(
-                bg=bg, fg=fg, bd=bd, hv=hv, fw=fw))
-            return b
 
-        self._btn_add = _hbtn("+ Supplier", "#1e3a52", "#7dd3fc", "#2d5a7a", "#1a3347", "600")
-        self._btn_add.clicked.connect(self._add_supplier)
-        hlay.addWidget(self._btn_add)
-
-        self._btn_add_co = _hbtn("+ Company Acc", "#0d3526", "#6ee7b7", "#1e5c40", "#0b2d20", "600")
-        self._btn_add_co.clicked.connect(self._add_company_acct)
-        hlay.addWidget(self._btn_add_co)
-
-        self._btn_add_pe = _hbtn("+ Personal Acc", "#0d2341", "#93c5fd", "#1a3f6b", "#0b1d34", "600")
-        self._btn_add_pe.clicked.connect(self._add_personal_acct)
-        hlay.addWidget(self._btn_add_pe)
-
-        main_layout.addWidget(hdr)
-
-        # ΓòÉΓòÉ Scroll area ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+        # ══ Scroll area ══════════════════════════════════════════════════
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -651,7 +683,16 @@ class RecordTab(QWidget, _PrintExportMixin):
         self._c_lay.setContentsMargins(8, 8, 8, 8)
         self._c_lay.setSpacing(0)  # No gap between supplier cards
         self._scroll.setWidget(self._container)
-        main_layout.addWidget(self._scroll)
+        body_layout.addWidget(self._scroll)
+
+    def toggle_search(self):
+        """Expand the right panel if collapsed, then focus the search input."""
+        # _right_bar_expanded defaults to False (collapsed) when missing — the opposite
+        # of what the old code assumed. This caused the expand to never trigger on first use.
+        is_expanded = getattr(_PrintExportMixin, '_right_bar_expanded', False)
+        if not is_expanded and getattr(self, 'btn_toggle', None):
+            self.btn_toggle.click()
+        self._search.setFocus()
 
         # Keyboard shortcuts removed    # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     def set_company_path(self, path: str):
@@ -1043,19 +1084,36 @@ class RecordTab(QWidget, _PrintExportMixin):
         n_sup = sum(1 for s in self._sections if s.is_selected())
         n_acc = sum(len(s.selected_cards()) for s in self._sections)
         total = n_sup if n_sup else n_acc
+        
+        is_expanded = self.btn_copy_records.parentWidget().width() > 60
+        base = " Copy" if is_expanded else ""
+        from src.ui.supp_payment.shared import _BTN_PRIMARY
         if total == 0:
-            self._sel_status.setText("ΓÇö")
-            self._sel_status.setStyleSheet(
-                "color:#64748b;padding:2px 8px;"
-                "border-radius:2px;border:1px solid #065f46;background:#064e3b;")
+            self.btn_copy_records.setText(base)
+            self.btn_copy_records.setStyleSheet(_BTN_PRIMARY)
         else:
-            label = (f"{n_sup} supplier{'s' if n_sup>1 else ''}"
-                     if n_sup else f"{n_acc} account card{'s' if n_acc>1 else ''}")
-            self._sel_status.setText(f"Γ£ô  {label} selected")
-            self._sel_status.setStyleSheet(
-                "color:#d1fae5;padding:2px 8px;"
-                "border-radius:2px;font-weight:bold;"
-                "border:1px solid #1e7a4b;background:#0d3526;")
+            self.btn_copy_records.setText(f"{base} ({total})")
+            # Fake 'active' style since we don't have _BTN_PRIMARY_ACTIVE in shared.py
+            self.btn_copy_records.setStyleSheet(_BTN_PRIMARY.replace("#059669", "#047857"))
+
+        if total == 0:
+            self._sel_status.setText("")
+            self._sel_status.setStyleSheet("")
+        else:
+            if is_expanded:
+                label = (f"{n_sup} supplier{'s' if n_sup>1 else ''}"
+                         if n_sup else f"{n_acc} account card{'s' if n_acc>1 else ''}")
+                self._sel_status.setText(f"✓ {label}")
+                self._sel_status.setStyleSheet(
+                    "color:#d1fae5;padding:4px;"
+                    "border-radius:2px;font-weight:bold;font-size:8pt;"
+                    "border:1px solid #1e7a4b;background:#0d3526;")
+            else:
+                self._sel_status.setText(f"✓\n{total}")
+                self._sel_status.setStyleSheet(
+                    "color:#d1fae5;padding:4px;"
+                    "border-radius:2px;font-weight:bold;font-size:8pt;"
+                    "border:1px solid #1e7a4b;background:#0d3526;")
 
     def _copy_selected_text(self):
         tables = self._get_tables_for_export()

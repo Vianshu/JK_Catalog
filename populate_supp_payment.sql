@@ -2,13 +2,26 @@ USE [JK_HW_Divison_082083_e867f96e];
 GO
 
 PRINT 'Clearing existing supplier payment tables...'
-DELETE FROM supplier_accounts;
-DELETE FROM supplier_records;
-DELETE FROM anil_ledger;
-DELETE FROM team_list_data;
-DELETE FROM bonus_data;
-DELETE FROM tp_sections;
-DELETE FROM tp_section_data;
+-- Drop existing tables if they exist
+PRINT 'Dropping existing tables...'
+IF OBJECT_ID('dbo.supplier_accounts', 'U') IS NOT NULL DROP TABLE dbo.supplier_accounts;
+IF OBJECT_ID('dbo.supplier_records', 'U') IS NOT NULL DROP TABLE dbo.supplier_records;
+IF OBJECT_ID('dbo.anil_ledger', 'U') IS NOT NULL DROP TABLE dbo.anil_ledger;
+IF OBJECT_ID('dbo.team_list_data', 'U') IS NOT NULL DROP TABLE dbo.team_list_data;
+IF OBJECT_ID('dbo.bonus_data', 'U') IS NOT NULL DROP TABLE dbo.bonus_data;
+IF OBJECT_ID('dbo.tp_section_data', 'U') IS NOT NULL DROP TABLE dbo.tp_section_data;
+IF OBJECT_ID('dbo.tp_sections', 'U') IS NOT NULL DROP TABLE dbo.tp_sections;
+
+-- Recreate empty table structures
+PRINT 'Creating table structures under dbo schema...'
+CREATE TABLE dbo.supplier_records (id INT IDENTITY PRIMARY KEY, name NVARCHAR(300), sort_order INT);
+CREATE TABLE dbo.supplier_accounts (id INT IDENTITY PRIMARY KEY, supplier_id INT, acc_index INT, acc_type NVARCHAR(100), naam NVARCHAR(300), thegana NVARCHAR(300), baik NVARCHAR(300), khata NVARCHAR(300), rakam NVARCHAR(100), jamma NVARCHAR(300), is_red INT DEFAULT 0);
+CREATE TABLE dbo.anil_ledger (id INT IDENTITY PRIMARY KEY, sort_order INT, start_date NVARCHAR(MAX), end_date NVARCHAR(MAX), days NVARCHAR(MAX), particular NVARCHAR(MAX), dr NVARCHAR(MAX), cr NVARCHAR(MAX), remarks NVARCHAR(MAX));
+CREATE TABLE dbo.team_list_data (row_idx INT NOT NULL, col_idx INT NOT NULL, cell_text NVARCHAR(MAX), PRIMARY KEY (row_idx, col_idx));
+CREATE TABLE dbo.bonus_data (row_idx INT NOT NULL, col_idx INT NOT NULL, cell_text NVARCHAR(MAX), PRIMARY KEY (row_idx, col_idx));
+CREATE TABLE dbo.tp_sections (id INT IDENTITY PRIMARY KEY, sort_order INT, name NVARCHAR(MAX), header_color NVARCHAR(MAX), is_core INT, cols_locked INT DEFAULT 0);
+CREATE TABLE dbo.tp_section_data (id INT IDENTITY PRIMARY KEY, section_id INT, row_idx INT, col_idx INT, cell_text NVARCHAR(MAX));
+
 
 PRINT 'Populating Supplier Records and Accounts...'
 SET IDENTITY_INSERT supplier_records ON;

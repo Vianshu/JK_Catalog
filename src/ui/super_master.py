@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QHeaderView, QMessageBox, QLabel, QLineEdit, QFrame
 )
 from PyQt6.QtCore import Qt, QEvent
-from src.logic.db_manager import get_db_manager, DB_SUPER, build_logical_name, build_shared_db_name
+from src.logic.db_manager import get_db_manager, DB_SUPER, build_shared_db_name
 from src.utils.app_logger import get_logger
 from src.ui.table_nav_mixin import ExcelTableMixin
 
@@ -220,36 +220,26 @@ class SuperMasterUI(ExcelTableMixin, QWidget):
             self.setup_db()  # Ensure DB and table exist on SQL Server
             logger.info(f"[SuperMaster] Using SQL Server DB: {self._super_db}")
 
-            # Read unique subgroups from row_data (per-company DB)
-            company_name = os.path.basename(company_path)
-            row_data_db = build_logical_name(company_name, company_path=company_path)
-            unique_subs = []
-            
-            if self.db.database_exists(row_data_db):
-                rows = self.db.execute_query(
-                    row_data_db,
-                    "SELECT DISTINCT SubGroup FROM stock_items WHERE SubGroup != ''"
-                )
-                unique_subs = [r[0] for r in rows] if rows else []
-
-            # Read saved super_master data
+            # Show the full shared super_master table — all subgroups across all companies
             saved_rows = self.db.execute_query(self._super_db, "SELECT id, MG_SN, Group_Name, SG_SN, Sub_Group FROM super_master")
-            saved = {r[4]: r for r in saved_rows} if saved_rows else {}
 
             self.table.blockSignals(True)
             self.table.setSortingEnabled(False)
             self.table.setRowCount(0)
-            for sub in unique_subs:
+            for r in (saved_rows or []):
+                sub = r[4]
+                if not sub:
+                    continue
                 row = self.table.rowCount()
                 self.table.insertRow(row)
-                data = saved.get(sub) or (None, "", "", "", sub)
-                mg_sn = str(data[1]) if data[1] else ""
-                sg_sn = str(data[3]) if data[3] else ""
-                cur_id = str(data[0]) if data[0] else (mg_sn + sg_sn)
-                display = [cur_id, mg_sn, str(data[2]) if data[2] else "", sg_sn, sub]
+                mg_sn  = str(r[1]) if r[1] else ""
+                grp    = str(r[2]) if r[2] else ""
+                sg_sn  = str(r[3]) if r[3] else ""
+                cur_id = str(r[0]) if r[0] else (mg_sn + sg_sn)
+                display = [cur_id, mg_sn, grp, sg_sn, sub]
                 for c in range(5):
                     it = QTableWidgetItem(display[c])
-                    if c in [0, 4]: 
+                    if c in [0, 4]:
                         it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
                         it.setBackground(Qt.GlobalColor.lightGray)
                     self.table.setItem(row, c, it)

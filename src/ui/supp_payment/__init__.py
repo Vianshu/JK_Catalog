@@ -6,7 +6,8 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTabWidget, QPushButton,
     QInputDialog, QMessageBox, QMenu,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QObject, QEvent
+
 
 from .shared          import _BTN_PRIMARY
 from .today_payment   import TodayPaymentTabV2
@@ -15,6 +16,41 @@ from .anil_hisab      import AnilHisabTab
 from .bonus_team      import TeamListTab, BonusTab
 from .insurance       import InsuranceTab
 from .payment_sheet   import PaymentSheet
+
+
+# ---------------------------------------------------------------------------
+class _TabNavFilter(QObject):
+    """Application-level event filter that intercepts Ctrl+PageUp/Down for the
+    supp_payment tab widget.  Installed on QApplication so it fires BEFORE any
+    child widget (including QTableWidget) can consume the key event.
+    Only acts when a descendant of the owning SuppPaymentV2UI has focus.
+    """
+    def __init__(self, owner: QWidget):
+        super().__init__(owner)
+        self._owner = owner   # SuppPaymentV2UI instance
+
+    def eventFilter(self, obj, event):
+        if event.type() in (QEvent.Type.KeyPress, QEvent.Type.ShortcutOverride):
+            # Use bitwise AND (&) because other modifiers (like NumLock) might be active
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                key = event.key()
+                if key in (Qt.Key.Key_PageDown, Qt.Key.Key_PageUp):
+                    # Only intercept when focus is inside our widget
+                    from PyQt6.QtWidgets import QApplication
+                    fw = QApplication.focusWidget()
+                    if fw is not None:
+                        w = fw
+                        while w is not None:
+                            if w is self._owner:
+                                # Focus is inside SuppPaymentV2UI — handle it
+                                if event.type() == QEvent.Type.KeyPress:
+                                    if key == Qt.Key.Key_PageDown:
+                                        self._owner._next_tab()
+                                    else:
+                                        self._owner._prev_tab()
+                                return True   # swallow — don't pass to child
+                            w = w.parentWidget()
+        return False   # pass everything else through unchanged
 
 
 # ===========================================================================
@@ -80,24 +116,33 @@ class SuppPaymentV2UI(QWidget):
         self.tabs.setCurrentIndex(0)
         layout.addWidget(self.tabs)
 
-        from PyQt6.QtGui import QShortcut, QKeySequence
-        from PyQt6.QtCore import Qt as _Qt
-        _sc_next = QShortcut(QKeySequence("Ctrl+PageDown"), self)
-        _sc_next.setContext(_Qt.ShortcutContext.ApplicationShortcut)
-        _sc_next.activated.connect(self._next_tab)
-        _sc_prev = QShortcut(QKeySequence("Ctrl+PageUp"), self)
-        _sc_prev.setContext(_Qt.ShortcutContext.ApplicationShortcut)
-        _sc_prev.activated.connect(self._prev_tab)
+        # App-level event filter: the ONLY reliable way to catch Ctrl+PageUp/Down
+        # before QTableWidget's own keyPressEvent accepts and swallows them.
+        from PyQt6.QtWidgets import QApplication
+        self._tab_key_filter = _TabNavFilter(self)
+        QApplication.instance().installEventFilter(self._tab_key_filter)
+
+    def closeEvent(self, event):
+        """Remove the app-level filter when the widget is destroyed."""
+        from PyQt6.QtWidgets import QApplication
+        try:
+            QApplication.instance().removeEventFilter(self._tab_key_filter)
+        except Exception:
+            pass
+        super().closeEvent(event)
 
     def _next_tab(self):
         idx = self.tabs.currentIndex() + 1
-        if idx >= self.tabs.count(): idx = 0
+        if idx >= self.tabs.count():
+            idx = 0
         self.tabs.setCurrentIndex(idx)
 
     def _prev_tab(self):
         idx = self.tabs.currentIndex() - 1
-        if idx < 0: idx = self.tabs.count() - 1
+        if idx < 0:
+            idx = self.tabs.count() - 1
         self.tabs.setCurrentIndex(idx)
+
 
     def set_company_path(self, path: str):
         self._company_path = path  # remember for newly-added sheets

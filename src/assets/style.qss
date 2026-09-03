@@ -12,6 +12,52 @@ QWidget {
     color: #1A2035;
 }
 
+/* Force explicit light backgrounds on system popups to prevent OS Dark Mode illegibility */
+QDialog, QMessageBox, QColorDialog, QInputDialog {
+    background-color: #ffffff;
+    color: #1A2035;
+}
+QMessageBox QLabel {
+    color: #1A2035;
+}
+
+/* QColorDialog internal widgets — all must be white/light or the picker turns black */
+QColorDialog QWidget,
+QColorDialog QLabel,
+QColorDialog QGroupBox,
+QColorDialog QGroupBox::title,
+QColorDialog QFrame,
+QColorDialog QStackedWidget {
+    background-color: #ffffff;
+    color: #1A2035;
+}
+QColorDialog QSpinBox,
+QColorDialog QLineEdit {
+    background-color: #ffffff;
+    color: #1A2035;
+    border: 1px solid #d1d5db;
+    border-radius: 3px;
+    padding: 2px 4px;
+}
+QColorDialog QAbstractItemView {
+    background-color: #ffffff;
+    color: #1A2035;
+    gridline-color: #e5e7eb;
+}
+QColorDialog QPushButton {
+    background-color: #f3f4f6;
+    color: #1A2035;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    padding: 4px 12px;
+}
+QColorDialog QPushButton:hover {
+    background-color: #e5e7eb;
+}
+QColorDialog QPushButton:pressed {
+    background-color: #d1d5db;
+}
+
 /* Force text contrast on Login/Launch widgets */
 #CompanyListWidget, #LoginDialog, #PathDialog, #FormContent, #ListHeader, #ListHeaderTitle {
     color: #1A2035;
@@ -171,11 +217,10 @@ QPushButton#CompanyDisplayBtn:hover {
 #LoggedUserLabel {
     color: rgba(255,255,255,0.85);
     font-size: 11px;
-    background-color: rgba(255,255,255,0.08);
-    border-radius: 6px;
-    padding: 4px 6px;
-    margin: 2px 4px 6px 4px;
-    qproperty-alignment: 'AlignCenter';
+    background-color: transparent;
+    border-radius: 4px;
+    padding: 4px 0px;
+    margin: 2px 6px 6px 6px;
 }
 
 #QuitHint {
