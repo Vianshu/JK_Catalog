@@ -103,6 +103,35 @@ class _ExportWorker(QThread):
             else:
                 self.finished.emit(False, str(e))
 
+
+class _CompanyExportWorker(QThread):
+    """Worker thread for single-company backup."""
+    progress = pyqtSignal(str, int, int)
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, company_path, output_file):
+        super().__init__()
+        self.company_path = company_path
+        self.output_file = output_file
+        self.is_cancelled = False
+
+    def run(self):
+        from src.logic.data_transfer import export_single_company
+        def on_progress(text, current, total):
+            if self.is_cancelled:
+                raise Exception("cancelled")
+            self.progress.emit(text, current, total)
+        try:
+            success, msg = export_single_company(
+                self.company_path, self.output_file, on_progress
+            )
+            self.finished.emit(success, msg)
+        except Exception as e:
+            if str(e) == "cancelled":
+                self.finished.emit(False, "Export cancelled by user")
+            else:
+                self.finished.emit(False, str(e))
+
 class _ImportWorker(QThread):
     progress = pyqtSignal(str, int, int)
     finished = pyqtSignal(bool, str)
@@ -127,6 +156,48 @@ class _ImportWorker(QThread):
                 self.finished.emit(False, "Import cancelled by user")
             else:
                 self.finished.emit(False, str(e))
+
+
+class _SelectiveImportWorker(QThread):
+    """Worker thread for selective restore (Temp DB merge approach)."""
+    progress = pyqtSignal(str, int, int)
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, backup_file, data_path, company_folder, modules):
+        super().__init__()
+        self.backup_file = backup_file
+        self.data_path = data_path
+        self.company_folder = company_folder
+        self.modules = modules  # list or dict
+        self.is_cancelled = False
+
+    def run(self):
+        from src.logic.db_manager import get_db_manager
+        from src.logic.data_transfer import selective_restore_company
+        def on_progress(text, current, total):
+            if self.is_cancelled:
+                raise Exception("cancelled")
+            self.progress.emit(text, current, total)
+        try:
+            success, msg = selective_restore_company(
+                self.backup_file,
+                self.data_path,
+                self.company_folder,
+                self.modules,
+                on_progress,
+            )
+            self.finished.emit(success, msg)
+        except Exception as e:
+            if str(e) == "cancelled":
+                self.finished.emit(False, "Selective restore cancelled")
+            else:
+                self.finished.emit(False, str(e))
+        finally:
+            try:
+                get_db_manager().close_thread_connections()
+            except Exception:
+                pass
+
 
 class AltKeyFilter(QObject):
     def __init__(self, main_window):
@@ -2094,53 +2165,159 @@ class MainWindow(QWidget):
 
 
     def handle_export_data(self):
-        """Export the current data path to a .jkbackup file (RBAC-protected)."""
+        """Backup data — prompts for Full Path or Company-only backup (RBAC-protected)."""
         if not self._check_permission("data.export", "Backup Data"):
             return
         if not hasattr(self, 'current_company_path') or not self.current_company_path:
             QMessageBox.warning(self, "No Company", "No company is currently loaded.")
             return
 
-        data_path = os.path.dirname(self.current_company_path)
+        company_path = self.current_company_path
+        data_path = os.path.dirname(company_path)
+        company_folder = os.path.basename(company_path)
+
         if not data_path or not os.path.isdir(data_path):
             QMessageBox.warning(self, "No Data Path", "Data path not found.")
             return
 
-        from PyQt6.QtWidgets import QFileDialog
+        # ── Backup mode picker ────────────────────────────────────────────────
+        from PyQt6.QtWidgets import (
+            QDialog, QVBoxLayout, QLabel, QPushButton, QFrame, QFileDialog
+        )
+
+        mode_dlg = QDialog(self)
+        mode_dlg.setWindowTitle("Backup — Choose What to Back Up")
+        mode_dlg.setFixedWidth(460)
+        mode_dlg.setModal(True)
+        mode_lay = QVBoxLayout(mode_dlg)
+        mode_lay.setContentsMargins(20, 20, 20, 16)
+        mode_lay.setSpacing(12)
+
+        hdr = QLabel("💾  What would you like to back up?")
+        hdr.setStyleSheet("font-size: 15px; font-weight: 700; color: #0f172a;")
+        mode_lay.addWidget(hdr)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #e2e8f0;")
+        mode_lay.addWidget(sep)
+
+        _choice = {"mode": None}
+
+        def _make_card(icon, title, description, color, key):
+            card = QFrame()
+            card.setStyleSheet(
+                f"QFrame {{ background: #ffffff; border: 1.5px solid #e2e8f0; "
+                f"border-radius: 8px; }}"
+                f"QFrame:hover {{ border-color: {color}; }}"
+            )
+            from PyQt6.QtWidgets import QHBoxLayout
+            cl = QVBoxLayout(card)
+            cl.setContentsMargins(14, 10, 14, 10)
+            cl.setSpacing(4)
+            t_lbl = QLabel(f"{icon}  <b>{title}</b>")
+            t_lbl.setStyleSheet(f"font-size: 13px; color: {color};")
+            cl.addWidget(t_lbl)
+            d_lbl = QLabel(description)
+            d_lbl.setWordWrap(True)
+            d_lbl.setStyleSheet("font-size: 11px; color: #64748b;")
+            cl.addWidget(d_lbl)
+            btn = QPushButton(f"  {title}  ")
+            btn.setFixedHeight(30)
+            btn.setStyleSheet(
+                f"QPushButton {{ background: {color}; color: #ffffff; border: none; "
+                f"border-radius: 5px; font-size: 11px; font-weight: 600; padding: 0 14px; }}"
+            )
+            bl = QHBoxLayout()
+            bl.addStretch()
+            bl.addWidget(btn)
+            cl.addLayout(bl)
+            def _pick(_, k=key):
+                _choice["mode"] = k
+                mode_dlg.accept()
+            btn.clicked.connect(_pick)
+            return card
+
+        mode_lay.addWidget(_make_card(
+            "🏢", "This Company Only",
+            f"Back up only '{company_folder}'. Faster — ideal as a daily safety "
+            "snapshot before making catalog or payment changes.",
+            "#059669", "company"
+        ))
+        mode_lay.addWidget(_make_card(
+            "💾", "Full Data Path",
+            "Back up ALL companies in this data path. Use this for machine migration "
+            "or full disaster recovery.",
+            "#1d4ed8", "full"
+        ))
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setFixedHeight(30)
+        cancel_btn.setStyleSheet(
+            "QPushButton { background: #f1f5f9; color: #374151; border: 1px solid #e2e8f0; "
+            "border-radius: 5px; font-size: 11px; padding: 0 14px; }"
+            "QPushButton:hover { background: #e2e8f0; }"
+        )
+        cancel_btn.clicked.connect(mode_dlg.reject)
+        mode_lay.addWidget(cancel_btn, alignment=Qt.AlignmentFlag.AlignRight)
+
+        if mode_dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        mode = _choice["mode"]
+
+        # ── File save dialog ──────────────────────────────────────────────────
+        import datetime
+        date_str = datetime.date.today().strftime("%Y%m%d")
+        if mode == "company":
+            default_name = f"{company_folder}_{date_str}.jkbackup"
+            title = f"Save Company Backup — {company_folder}"
+        else:
+            default_name = f"JK_FullPath_{date_str}.jkbackup"
+            title = "Save Full Data Path Backup"
+
         output_file, _ = QFileDialog.getSaveFileName(
-            self, "Backup Data",
-            os.path.expanduser("~/Desktop/JK_Backup.jkbackup"),
+            self, title,
+            os.path.join(os.path.expanduser("~/Desktop"), default_name),
             "JK Backup Files (*.jkbackup)"
         )
         if not output_file:
             return
 
-        self._export_progress = QProgressDialog("Starting export...", "Cancel", 0, 100, self)
-        self._export_progress.setWindowTitle("Exporting Data")
+        # ── Progress dialog ───────────────────────────────────────────────────
+        self._export_progress = QProgressDialog("Starting backup...", "Cancel", 0, 100, self)
+        self._export_progress.setWindowTitle(
+            "Backing Up Company" if mode == "company" else "Backing Up Full Path"
+        )
         self._export_progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._export_progress.setMinimumDuration(0)
         self._export_progress.show()
 
-        self._export_worker = _ExportWorker(data_path, output_file)
-        
+        if mode == "company":
+            self._export_worker = _CompanyExportWorker(company_path, output_file)
+        else:
+            self._export_worker = _ExportWorker(data_path, output_file)
+
         def update_progress(text, current, total):
             self._export_progress.setLabelText(text)
-            self._export_progress.setMaximum(total)
+            self._export_progress.setMaximum(max(total, 1))
             self._export_progress.setValue(current)
-            
+
         def on_cancel():
             self._export_worker.is_cancelled = True
-            
+
         def on_finished(success, msg):
             self._export_progress.close()
             if success:
-                QMessageBox.information(self, "Export Complete", msg)
+                QMessageBox.information(self, "Backup Complete", msg)
                 if self._security_mgr and self.user_session:
-                    self._security_mgr.log_action(self.user_session, "data_export",
-                        module="settings", detail=f"Exported to: {os.path.basename(output_file)}")
+                    self._security_mgr.log_action(
+                        self.user_session, "data_export",
+                        module="settings",
+                        detail=f"[{mode}] Exported to: {os.path.basename(output_file)}"
+                    )
             else:
                 if msg != "Export cancelled by user":
-                    QMessageBox.critical(self, "Export Failed", msg)
+                    QMessageBox.critical(self, "Backup Failed", msg)
                 else:
                     QMessageBox.information(self, "Cancelled", msg)
 
@@ -2149,12 +2326,351 @@ class MainWindow(QWidget):
         self._export_worker.finished.connect(on_finished)
         self._export_worker.start()
 
+
+    # ─── SELECTIVE RESTORE DIALOG ─────────────────────────────────────────────
+
+    def _show_selective_restore_dialog(self, backup_file, manifest):
+        """Show the SelectiveRestoreDialog and run the selective restore worker if confirmed."""
+        from PyQt6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
+            QGroupBox, QCheckBox, QListWidget, QListWidgetItem,
+            QPushButton, QFrame, QScrollArea, QWidget
+        )
+
+        data_path = os.path.dirname(self.current_company_path) if \
+            hasattr(self, 'current_company_path') and self.current_company_path else ""
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Selective Restore — Choose What to Restore")
+        dlg.setFixedWidth(520)
+        dlg.setModal(True)
+
+        root = QVBoxLayout(dlg)
+        root.setSpacing(14)
+        root.setContentsMargins(20, 20, 20, 16)
+
+        # ── Header ────────────────────────────────────────────────────────────
+        title_lbl = QLabel("🎯  Selective Restore")
+        title_lbl.setStyleSheet(
+            "font-size: 16px; font-weight: 700; color: #0f172a;"
+        )
+        root.addWidget(title_lbl)
+
+        sub_lbl = QLabel(f"File: <b>{os.path.basename(backup_file)}</b>")
+        sub_lbl.setStyleSheet("color: #475569; font-size: 13px;")
+        root.addWidget(sub_lbl)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #e2e8f0;")
+        root.addWidget(sep)
+
+        # ── Company picker ────────────────────────────────────────────────────
+        companies = [c["folder_name"] for c in manifest.get("company_databases", [])]
+        if not companies:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "No Companies",
+                "No company databases found in this backup file.")
+            dlg.reject()
+            return
+
+        co_box = QGroupBox("Company to Restore Into")
+        co_box.setStyleSheet(
+            "QGroupBox { font-weight: 600; font-size: 12px; color: #1e293b; "
+            "border: 1px solid #e2e8f0; border-radius: 6px; margin-top: 8px; padding-top: 6px; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 10px; }"
+        )
+        co_lay = QVBoxLayout(co_box)
+        co_combo = QComboBox()
+        co_combo.addItems(companies)
+        # Pre-select current company if it's in the backup
+        current_folder = os.path.basename(self.current_company_path) if \
+            hasattr(self, 'current_company_path') and self.current_company_path else ""
+        if current_folder in companies:
+            co_combo.setCurrentIndex(companies.index(current_folder))
+        co_lay.addWidget(co_combo)
+        root.addWidget(co_box)
+
+        # ── Module selection ──────────────────────────────────────────────────
+        mod_box = QGroupBox("Modules to Restore")
+        mod_box.setStyleSheet(co_box.styleSheet())
+        mod_lay = QVBoxLayout(mod_box)
+        mod_lay.setSpacing(6)
+
+        chk_catalog = QCheckBox("📁  Catalog, Final Data, CRM & Godown List")
+        chk_catalog.setStyleSheet("font-size: 12px; color: #0f172a; padding: 4px;")
+        chk_catalog.setChecked(True)
+        mod_lay.addWidget(chk_catalog)
+
+        # Supplier Payment + Cheque List + Ledger + sheet sub-selection
+        chk_supp = QCheckBox("💳  Supplier Payments, Cheque List & Ledgers")
+        chk_supp.setStyleSheet("font-size: 12px; color: #0f172a; padding: 4px;")
+        mod_lay.addWidget(chk_supp)
+
+        # Sheet sub-selection list (shown when chk_supp is checked)
+        sheet_frame = QFrame()
+        sheet_frame.setStyleSheet(
+            "QFrame { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 5px; }"
+        )
+        sheet_lay = QVBoxLayout(sheet_frame)
+        sheet_lay.setContentsMargins(8, 6, 8, 6)
+        sheet_lay.setSpacing(4)
+
+        sheet_hint = QLabel("Select specific sheets, or leave blank to restore all:")
+        sheet_hint.setStyleSheet("color: #64748b; font-size: 11px;")
+        sheet_lay.addWidget(sheet_hint)
+
+        sheet_list = QListWidget()
+        sheet_list.setFixedHeight(120)
+        sheet_list.setStyleSheet(
+            "QListWidget { background: #ffffff; border: 1px solid #e2e8f0; "
+            "border-radius: 4px; font-size: 12px; }"
+            "QListWidget::item { padding: 3px 6px; }"
+            "QListWidget::item:selected { background: #eff6ff; color: #1d4ed8; }"
+        )
+        sheet_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
+        sheet_lay.addWidget(sheet_list)
+
+        all_sheets_lbl = QLabel("(no sheets checked = restore ALL sheets)")
+        all_sheets_lbl.setStyleSheet("color: #94a3b8; font-size: 10px; font-style: italic;")
+        sheet_lay.addWidget(all_sheets_lbl)
+
+        sheet_frame.setVisible(False)
+        mod_lay.addWidget(sheet_frame)
+
+        def _update_warning():
+            msgs = []
+            if not any(cb.isChecked() for cb in (chk_catalog, chk_supp)):
+                msgs.append("⚠  Select at least one module group.")
+            
+            self._warn_lbl.setText("\n".join(msgs))
+            self._warn_lbl.setVisible(bool(msgs))
+
+        def _load_sheet_keys():
+            """Load distinct sheet_key values from the manifest (or live DB fallback) into sheet_list."""
+            sheet_list.clear()
+            folder = co_combo.currentText()
+            if not folder or not data_path:
+                sheet_list.addItem("(no company selected)")
+                sheet_list.item(0).setFlags(Qt.ItemFlag.NoItemFlags)
+                return
+
+            # Try to read payment_sheets from the manifest first (accurate to the backup)
+            company_meta = next((c for c in manifest.get("company_databases", []) 
+                               if c["folder_name"] == folder), None)
+            
+            if company_meta and "payment_sheets" in company_meta:
+                sheets = company_meta["payment_sheets"]
+                if sheets:
+                    for key in sheets:
+                        item = QListWidgetItem(str(key))
+                        sheet_list.addItem(item)
+                    all_sheets_lbl.setText("(Leave blank to restore all sheets)")
+                else:
+                    sheet_list.addItem("(no payment sheets found in backup)")
+                    sheet_list.item(0).setFlags(Qt.ItemFlag.NoItemFlags)
+                    all_sheets_lbl.setText("(Leave blank to restore all empty sheets)")
+                return
+
+            # Fallback for older backups: we cannot read the sheets from the .bak file
+            # without restoring it first. So we just tell the user we will restore everything.
+            sheet_list.addItem("✓ All Payment Sheets will be restored")
+            sheet_list.item(0).setFlags(Qt.ItemFlag.NoItemFlags)
+            all_sheets_lbl.setText("(Older backup: All sheets will be restored)")
+
+        def _toggle_sheet_frame(checked):
+            sheet_frame.setVisible(checked)
+            if checked:
+                _load_sheet_keys()
+
+        # Reload sheet list when the company selection changes (only if panel is visible)
+        co_combo.currentIndexChanged.connect(
+            lambda _: _load_sheet_keys() if sheet_frame.isVisible() else None
+        )
+
+        chk_supp.toggled.connect(_toggle_sheet_frame)
+        chk_catalog.toggled.connect(lambda _: _update_warning())
+        chk_supp.toggled.connect(lambda _: _update_warning())
+        root.addWidget(mod_box)
+
+        # ── Warning label ─────────────────────────────────────────────────────
+        self._warn_lbl = QLabel()
+        self._warn_lbl.setWordWrap(True)
+        self._warn_lbl.setStyleSheet(
+            "color: #b45309; font-size: 11px; background: #fffbeb; "
+            "border: 1px solid #fcd34d; border-radius: 5px; padding: 6px 10px;"
+        )
+        self._warn_lbl.setVisible(False)
+        root.addWidget(self._warn_lbl)
+
+        _update_warning()
+
+
+        # ── Buttons ───────────────────────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.setFixedHeight(34)
+        btn_cancel.setStyleSheet(
+            "QPushButton { background: #f1f5f9; color: #374151; border: 1px solid #e2e8f0; "
+            "border-radius: 6px; padding: 0 18px; font-size: 12px; }"
+            "QPushButton:hover { background: #e2e8f0; }"
+        )
+        btn_cancel.clicked.connect(dlg.reject)
+
+        btn_restore = QPushButton("🎯  Restore Selected")
+        btn_restore.setFixedHeight(34)
+        btn_restore.setDefault(True)
+        btn_restore.setStyleSheet(
+            "QPushButton { background: #2563eb; color: #ffffff; border: none; "
+            "border-radius: 6px; padding: 0 18px; font-size: 12px; font-weight: 600; }"
+            "QPushButton:hover { background: #1d4ed8; }"
+            "QPushButton:pressed { background: #1e40af; }"
+        )
+
+        def _on_restore():
+            if not any(cb.isChecked() for cb in (chk_catalog, chk_supp)):
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(dlg, "Nothing Selected",
+                    "Please select at least one module group to restore.")
+                return
+            dlg.accept()
+
+        btn_restore.clicked.connect(_on_restore)
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(btn_restore)
+        root.addLayout(btn_row)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        # ── Build modules parameter ───────────────────────────────────────────
+        company_folder = co_combo.currentText()
+        modules = []
+        if chk_catalog.isChecked():
+            modules.append("catalog_bundle")
+            modules.append("godown")
+        if chk_supp.isChecked():
+            modules.append("cheque_list")
+            # Sheet filtering: if user selected specific items in the list, use them
+            selected_sheets = [
+                sheet_list.item(i).text()
+                for i in range(sheet_list.count())
+                if sheet_list.item(i).isSelected()
+                   and sheet_list.item(i).flags() & Qt.ItemFlag.ItemIsSelectable
+            ]
+            if selected_sheets:
+                # Pass as dict to trigger per-sheet filtering
+                modules_param = {k: (selected_sheets if k == "supp_payment" else [])
+                                 for k in (modules + ["supp_payment"])}
+                modules = modules_param
+            else:
+                modules.append("supp_payment")
+
+        # ── Confirm ───────────────────────────────────────────────────────────
+        mod_labels = []
+        _modules_keys = modules if isinstance(modules, list) else modules.keys()
+        if "catalog_bundle" in _modules_keys:
+            mod_labels.append("Catalog, Final Data & Godown List")
+        if "supp_payment" in _modules_keys:
+            mod_labels.append("Supplier Payments, Cheque List & Ledgers")
+
+        from PyQt6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self, "Confirm Selective Restore",
+            f"Company:  {company_folder}\n\n"
+            f"Modules:  {', '.join(mod_labels)}\n\n"
+            f"⚠  The selected tables in the live database will be "
+            f"replaced with data from the backup.\n\n"
+            f"Proceed?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # ── Run worker ────────────────────────────────────────────────────────
+        self._sel_import_progress = QProgressDialog(
+            "Starting selective restore...", "Cancel", 0, 10, self
+        )
+        self._sel_import_progress.setWindowTitle("Selective Restore")
+        self._sel_import_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._sel_import_progress.setMinimumDuration(0)
+        self._sel_import_progress.show()
+
+        self._sel_import_worker = _SelectiveImportWorker(
+            backup_file, data_path, company_folder, modules
+        )
+
+        def _update_sel_progress(text, current, total):
+            self._sel_import_progress.setLabelText(text)
+            self._sel_import_progress.setMaximum(max(total, 1))
+            self._sel_import_progress.setValue(current)
+
+        def _cancel_sel():
+            self._sel_import_worker.is_cancelled = True
+
+        def _on_sel_finished(success, msg):
+            self._sel_import_progress.close()
+            if success:
+                # ── Refresh affected UI pages so changes appear immediately ──
+                _modules_restored = modules if isinstance(modules, list) else list(modules.keys())
+                _company_path = getattr(self, 'current_company_path', None)
+
+                if "supp_payment" in _modules_restored:
+                    if hasattr(self, 'supp_payment_page') and _company_path:
+                        try:
+                            self.supp_payment_page.set_company_path(_company_path)
+                        except Exception as _e:
+                            pass  # non-fatal
+
+                if "godown" in _modules_restored:
+                    if hasattr(self, 'godown_page') and hasattr(self.godown_page, 'load_data_from_db'):
+                        try:
+                            self.godown_page.load_data_from_db()
+                        except Exception:
+                            pass
+
+                if "cheque_list" in _modules_restored:
+                    if hasattr(self, 'cheque_list_page') and hasattr(self.cheque_list_page, 'set_company_path') and _company_path:
+                        try:
+                            self.cheque_list_page.set_company_path(_company_path)
+                        except Exception:
+                            pass
+
+                QMessageBox.information(self, "Selective Restore Complete",
+                    f"{msg}\n\nChanges are live immediately — no restart required.")
+                if self._security_mgr and self.user_session:
+                    self._security_mgr.log_action(
+                        self.user_session, "selective_restore",
+                        module="settings",
+                        detail=f"Restored {mod_labels} for '{company_folder}' "
+                               f"from {os.path.basename(backup_file)}"
+                    )
+            else:
+                cancelled_msgs = ("Selective restore cancelled", "cancelled")
+                if any(m in msg for m in cancelled_msgs):
+                    QMessageBox.information(self, "Cancelled", msg)
+                else:
+                    QMessageBox.critical(self, "Selective Restore Failed",
+                        f"{msg}\n\n✅ Your live data was NOT modified.")
+
+
+        self._sel_import_worker.progress.connect(_update_sel_progress)
+        self._sel_import_progress.canceled.connect(_cancel_sel)
+        self._sel_import_worker.finished.connect(_on_sel_finished)
+        self._sel_import_worker.start()
+
     def handle_import_data(self):
-        """Import data from a .jkbackup file (RBAC-protected)."""
+        """Import data from a .jkbackup file (RBAC-protected).
+
+        Presents two paths:
+          • Full System Restore  — original behaviour (RESTORE DATABASE into new path)
+          • Selective Restore    — Temp DB merge; only chosen modules are overwritten
+        """
         if not self._check_permission("data.import", "Import Data"):
             return
 
-        from PyQt6.QtWidgets import QFileDialog
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
         backup_file, _ = QFileDialog.getOpenFileName(
             self, "Select Backup File",
             os.path.expanduser("~/Desktop"),
@@ -2163,56 +2679,174 @@ class MainWindow(QWidget):
         if not backup_file:
             return
 
-        target_path = QFileDialog.getExistingDirectory(
-            self, "Select Destination Folder for Import"
-        )
-        if not target_path:
+        # ── Read manifest (fast — no SQL involved) ────────────────────────────
+        from src.logic.data_transfer import list_companies_in_backup
+        manifest, err = list_companies_in_backup(backup_file)
+        if not manifest:
+            QMessageBox.critical(self, "Invalid Backup File",
+                f"Cannot read backup:\n{err}")
             return
 
-        reply = QMessageBox.question(
-            self, "Confirm Import",
-            f"Import data from:\n  {os.path.basename(backup_file)}\n\n"
-            f"Into folder:\n  {target_path}\n\n"
-            f"Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        # ── Ask user which import mode they want ──────────────────────────────
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame
+        mode_dlg = QDialog(self)
+        mode_dlg.setWindowTitle("Import — Choose Restore Mode")
+        mode_dlg.setFixedWidth(480)
+        mode_dlg.setModal(True)
+        mode_lay = QVBoxLayout(mode_dlg)
+        mode_lay.setContentsMargins(20, 20, 20, 16)
+        mode_lay.setSpacing(12)
+
+        hdr = QLabel("📥  How would you like to import?")
+        hdr.setStyleSheet("font-size: 15px; font-weight: 700; color: #0f172a;")
+        mode_lay.addWidget(hdr)
+
+        file_lbl = QLabel(f"Backup: <b>{os.path.basename(backup_file)}</b>")
+        file_lbl.setStyleSheet("color: #475569; font-size: 12px;")
+        mode_lay.addWidget(file_lbl)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #e2e8f0;")
+        mode_lay.addWidget(sep)
+
+        _mode_result = {"choice": None}
+
+        def _make_mode_card(icon, title, description, color, key):
+            card = QFrame()
+            card.setStyleSheet(
+                f"QFrame {{ background: #ffffff; border: 1.5px solid #e2e8f0; "
+                f"border-radius: 8px; }}"
+                f"QFrame:hover {{ border-color: {color}; }}"
+            )
+            card.setCursor(Qt.CursorShape.PointingHandCursor)
+            cl = QVBoxLayout(card)
+            cl.setContentsMargins(14, 10, 14, 10)
+            cl.setSpacing(4)
+            t_lbl = QLabel(f"{icon}  <b>{title}</b>")
+            t_lbl.setStyleSheet(f"font-size: 13px; color: {color};")
+            cl.addWidget(t_lbl)
+            d_lbl = QLabel(description)
+            d_lbl.setWordWrap(True)
+            d_lbl.setStyleSheet("font-size: 11px; color: #64748b;")
+            cl.addWidget(d_lbl)
+
+            btn = QPushButton(f"  {title}  ")
+            btn.setFixedHeight(30)
+            btn.setStyleSheet(
+                f"QPushButton {{ background: {color}; color: #ffffff; border: none; "
+                f"border-radius: 5px; font-size: 11px; font-weight: 600; padding: 0 14px; }}"
+                f"QPushButton:hover {{ opacity: 0.9; }}"
+            )
+            bl = QHBoxLayout()
+            bl.addStretch()
+            bl.addWidget(btn)
+            cl.addLayout(bl)
+
+            def _pick(_, k=key):
+                _mode_result["choice"] = k
+                mode_dlg.accept()
+            btn.clicked.connect(_pick)
+            return card
+
+        mode_lay.addWidget(_make_mode_card(
+            "💾", "Full System Restore",
+            "Restore EVERYTHING into a new folder. Use this when moving to a new PC "
+            "or recovering from a total data loss. Existing data in the target folder "
+            "will be completely replaced.",
+            "#1d4ed8", "full"
+        ))
+        mode_lay.addWidget(_make_mode_card(
+            "🎯", "Selective Restore",
+            "Choose which modules to restore (Catalog Bundle or Supplier Payment) "
+            "into the current company. Only the selected tables are overwritten — "
+            "all other live data remains untouched.",
+            "#059669", "selective"
+        ))
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setFixedHeight(30)
+        cancel_btn.setStyleSheet(
+            "QPushButton { background: #f1f5f9; color: #374151; border: 1px solid #e2e8f0; "
+            "border-radius: 5px; font-size: 11px; padding: 0 14px; }"
+            "QPushButton:hover { background: #e2e8f0; }"
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        cancel_btn.clicked.connect(mode_dlg.reject)
+        mode_lay.addWidget(cancel_btn, alignment=Qt.AlignmentFlag.AlignRight)
+
+        if mode_dlg.exec() != QDialog.DialogCode.Accepted:
             return
+        choice = _mode_result["choice"]
 
-        self._import_progress = QProgressDialog("Starting import...", "Cancel", 0, 100, self)
-        self._import_progress.setWindowTitle("Importing Data")
-        self._import_progress.setWindowModality(Qt.WindowModality.WindowModal)
-        self._import_progress.setMinimumDuration(0)
-        self._import_progress.show()
+        # ── FULL SYSTEM RESTORE (original path) ───────────────────────────────
+        if choice == "full":
+            target_path = QFileDialog.getExistingDirectory(
+                self, "Select Destination Folder for Full Restore"
+            )
+            if not target_path:
+                return
 
-        self._import_worker = _ImportWorker(backup_file, target_path)
-        
-        def update_progress(text, current, total):
-            self._import_progress.setLabelText(text)
-            self._import_progress.setMaximum(total)
-            self._import_progress.setValue(current)
-            
-        def on_cancel():
-            self._import_worker.is_cancelled = True
-            
-        def on_finished(success, msg):
-            self._import_progress.close()
-            if success:
-                QMessageBox.information(self, "Import Complete",
-                    f"{msg}\n\nPlease switch company or restart to use imported data.")
-                if self._security_mgr and self.user_session:
-                    self._security_mgr.log_action(self.user_session, "data_import",
-                        module="settings", detail=f"Imported from: {os.path.basename(backup_file)} to {target_path}")
-            else:
-                if msg != "Import cancelled by user":
-                    QMessageBox.critical(self, "Import Failed", msg)
+            reply = QMessageBox.question(
+                self, "Confirm Full Restore",
+                f"Import data from:\n  {os.path.basename(backup_file)}\n\n"
+                f"Into folder:\n  {target_path}\n\n"
+                f"⚠  All existing data in that folder will be replaced.\n\n"
+                f"Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+            self._import_progress = QProgressDialog(
+                "Starting import...", "Cancel", 0, 100, self
+            )
+            self._import_progress.setWindowTitle("Full System Restore")
+            self._import_progress.setWindowModality(Qt.WindowModality.WindowModal)
+            self._import_progress.setMinimumDuration(0)
+            self._import_progress.show()
+
+            self._import_worker = _ImportWorker(backup_file, target_path)
+
+            def update_progress(text, current, total):
+                self._import_progress.setLabelText(text)
+                self._import_progress.setMaximum(total)
+                self._import_progress.setValue(current)
+
+            def on_cancel():
+                self._import_worker.is_cancelled = True
+
+            def on_finished(success, msg):
+                self._import_progress.close()
+                if success:
+                    QMessageBox.information(self, "Import Complete",
+                        f"{msg}\n\nPlease switch company or restart to use imported data.")
+                    if self._security_mgr and self.user_session:
+                        self._security_mgr.log_action(
+                            self.user_session, "data_import",
+                            module="settings",
+                            detail=f"Full restore from: {os.path.basename(backup_file)} to {target_path}"
+                        )
                 else:
-                    QMessageBox.information(self, "Cancelled", msg)
+                    if msg != "Import cancelled by user":
+                        QMessageBox.critical(self, "Import Failed", msg)
+                    else:
+                        QMessageBox.information(self, "Cancelled", msg)
 
-        self._import_worker.progress.connect(update_progress)
-        self._import_progress.canceled.connect(on_cancel)
-        self._import_worker.finished.connect(on_finished)
-        self._import_worker.start()
+            self._import_worker.progress.connect(update_progress)
+            self._import_progress.canceled.connect(on_cancel)
+            self._import_worker.finished.connect(on_finished)
+            self._import_worker.start()
+
+        # ── SELECTIVE RESTORE (Temp DB merge) ─────────────────────────────────
+        elif choice == "selective":
+            if not hasattr(self, 'current_company_path') or not self.current_company_path:
+                QMessageBox.warning(self, "No Company Loaded",
+                    "Please open a company first before using Selective Restore.\n"
+                    "Selective restore works within your current data path.")
+                return
+            self._show_selective_restore_dialog(backup_file, manifest)
+
+
 
     def handle_year_end(self):
         """Open the Year End wizard (permission: settings.year_end).

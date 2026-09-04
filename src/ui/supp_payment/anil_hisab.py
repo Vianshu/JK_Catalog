@@ -270,7 +270,7 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
         # Settings table for persisting UI state (e.g. start date lock)
         self._db.ensure_table(
             self._db_name, "anil_settings",
-            "CREATE TABLE anil_settings (key NVARCHAR(100) PRIMARY KEY, value NVARCHAR(MAX))"
+            "CREATE TABLE anil_settings ([key] NVARCHAR(100) PRIMARY KEY, value NVARCHAR(MAX))"
         )
         try:
             conn = self._db.get_connection(self._db_name)
@@ -290,7 +290,7 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
         try:
             rows = self._db.execute_query(
                 self._db_name,
-                "SELECT value FROM anil_settings WHERE key='start_date_locked'"
+                "SELECT value FROM anil_settings WHERE [key]='start_date_locked'"
             ) or []
             if rows:
                 self._start_date_locked = rows[0][0].strip() == '1'
@@ -305,9 +305,9 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
             if conn:
                 cur = conn.cursor()
                 cur.execute(
-                    "IF EXISTS (SELECT 1 FROM anil_settings WHERE key='start_date_locked') "
-                    "UPDATE anil_settings SET value=? WHERE key='start_date_locked' "
-                    "ELSE INSERT INTO anil_settings (key,value) VALUES ('start_date_locked',?)",
+                    "IF EXISTS (SELECT 1 FROM anil_settings WHERE [key]='start_date_locked') "
+                    "UPDATE anil_settings SET value=? WHERE [key]='start_date_locked' "
+                    "ELSE INSERT INTO anil_settings ([key],value) VALUES ('start_date_locked',?)",
                     (val, val)
                 )
                 conn.commit()

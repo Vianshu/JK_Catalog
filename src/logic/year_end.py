@@ -190,6 +190,9 @@ def _copy_dir_filtered(src_dir, dst_dir):
 def _process_cheque_year_end(db, db_name):
     """Option A: remove cleared cheques, keep pending cheques with original SNs.
 
+    Preserves party_guid (Tally GUID) and bank_ref (UUID) so that all Tally
+    ledger links and bank identity references survive the year-end rollover.
+
     Buffer rows (empty placeholders) are NOT recreated here; sync_cheque_rows()
     regenerates them automatically when the new company is first loaded.
     """
@@ -206,22 +209,54 @@ def _process_cheque_year_end(db, db_name):
             logger.info("[YearEnd] No cheques table - skipping")
             return
 
-        cursor.execute("""
-            SELECT sn, date, party, bank, chq_no, crm, amount, status, clear_date, narration
-            FROM   cheques
-            WHERE  ISNULL(LTRIM(RTRIM(CAST(clear_date AS NVARCHAR(MAX)))), '') = ''
-            ORDER  BY TRY_CAST(sn AS INT) ASC
-        """)
-        pending = cursor.fetchall()
+        # Detect whether the cheques table has the party_guid / bank_ref columns
+        # (added in the Tally sync migration). Older DBs will not have them yet.
+        cursor.execute(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+            "WHERE TABLE_NAME='cheques' ORDER BY ORDINAL_POSITION"
+        )
+        existing_cols = [r[0] for r in cursor.fetchall()]
+        has_guid = "party_guid" in existing_cols
+        has_bref = "bank_ref"   in existing_cols
 
-        cursor.execute("DELETE FROM cheques")
-        for chq in pending:
-            cursor.execute(
+        if has_guid and has_bref:
+            # ── Full schema (12-column) ──────────────────────────────────────
+            # Select ALL columns including Tally GUIDs so they survive rollover.
+            cursor.execute("""
+                SELECT sn, date, party, bank, chq_no, crm, amount,
+                       status, clear_date, narration, party_guid, bank_ref
+                FROM   cheques
+                WHERE  ISNULL(LTRIM(RTRIM(CAST(clear_date AS NVARCHAR(MAX)))), '') = ''
+                ORDER  BY TRY_CAST(sn AS INT) ASC
+            """)
+            pending = cursor.fetchall()
+            insert_sql = (
+                "INSERT INTO cheques"
+                " (sn, date, party, bank, chq_no, crm, amount,"
+                "  status, clear_date, narration, party_guid, bank_ref)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+            )
+        else:
+            # ── Legacy schema (10-column) — migration not yet applied ────────
+            cursor.execute("""
+                SELECT sn, date, party, bank, chq_no, crm, amount, status, clear_date, narration
+                FROM   cheques
+                WHERE  ISNULL(LTRIM(RTRIM(CAST(clear_date AS NVARCHAR(MAX)))), '') = ''
+                ORDER  BY TRY_CAST(sn AS INT) ASC
+            """)
+            pending = cursor.fetchall()
+            insert_sql = (
                 "INSERT INTO cheques"
                 " (sn, date, party, bank, chq_no, crm, amount, status, clear_date, narration)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?)",
-                tuple(chq)
+                " VALUES (?,?,?,?,?,?,?,?,?,?)"
             )
+
+        cursor.execute("DELETE FROM cheques")
+
+        if pending:
+            # Single batch insert — avoids N individual round-trips to SQL Server.
+            cursor.executemany(insert_sql, [tuple(row) for row in pending])
+
         conn.commit()
         logger.info(f"[YearEnd] Kept {len(pending)} pending cheque(s), removed cleared rows")
     except Exception as exc:

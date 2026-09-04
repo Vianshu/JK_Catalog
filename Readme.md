@@ -97,10 +97,16 @@ backup code/
 │   │   ├── group_test_tab.py       # Group testing/preview
 │   │   ├── catalog_price_list.py   # Catalog price list dialog
 │   │   ├── price_list.py           # Price list viewer
-│   │   ├── payment_list.py         # Payment list viewer
 │   │   ├── godown_list.py          # Godown list viewer
 │   │   ├── sales_chat.py           # Sales chat viewer
-│   │   ├── supp_payment.py         # Supplier payment viewer
+│   │   ├── supp_payment/           # Supplier Payment Module (Multi-tabbed Interface)
+│   │   │   ├── __init__.py         # Tab orchestrator (SuppPaymentV2UI)
+│   │   │   ├── today_payment.py    # Today Payment Tab
+│   │   │   ├── bank_ac.py          # Record Tab
+│   │   │   ├── anil_hisab.py       # Anil Hisab Tab
+│   │   │   ├── bonus_team.py       # Team & Bonus Lists
+│   │   │   ├── insurance.py        # Insurance details
+│   │   │   └── shared.py           # Shared Database & Styles
 │   │   ├── pur_import.py           # Purchase import dialog
 │   │   ├── int_cost_sheet.py       # Internal cost sheet dialog
 │   │   └── vat_pages.py            # Balance and stock VAT views

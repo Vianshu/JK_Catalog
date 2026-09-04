@@ -65,6 +65,33 @@ def _apply_part_no_override(item_name: str, current_part_no: str) -> str:
 
 
 
+class _GodownTable(QTableWidget):
+    """QTableWidget subclass for the Godown list.
+
+    Overrides closeEditor so that losing focus to an external window (Alt+Tab,
+    clicking another application, minimizing, etc.) does NOT cancel the active
+    cell editor.  Editing only finishes on an intentional user action such as
+    Enter, Tab, or Escape.
+
+    Qt calls closeEditor with EndEditHint.NoHint when it decides to dismiss the
+    editor due to a window-level focus-out event.  We intercept that specific
+    case and simply restore the edit triggers instead of actually closing the
+    editor, which keeps the typed text intact.
+    """
+    def closeEditor(self, editor, hint):
+        from PyQt6.QtWidgets import QAbstractItemDelegate
+        if hint == QAbstractItemDelegate.EndEditHint.NoHint:
+            # Focus lost to external window — do NOT cancel the editor.
+            # Just re-enable edit triggers so the table stays in a consistent
+            # state (they were disabled by _nav_set_current prior to commit).
+            self.setEditTriggers(
+                QAbstractItemView.EditTrigger.DoubleClicked |
+                QAbstractItemView.EditTrigger.AnyKeyPressed |
+                QAbstractItemView.EditTrigger.EditKeyPressed
+            )
+            return  # ← keep editor alive
+        super().closeEditor(editor, hint)
+
 
 class _GodownDelegate(UniversalCellDelegate):
     """UniversalCellDelegate subclass for the Godown List.
@@ -296,7 +323,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
         top.addStretch()
         layout.addLayout(top)
 
-        self.table = QTableWidget(200, 7)
+        self.table = _GodownTable(200, 7)
         self.table.setHorizontalHeaderLabels([
             "सामानको नाम", "प्रति कार्टुन", "UNIT",
             "जम्मा कार्टुन", "गोदाम", "Part No", "CN"
@@ -555,10 +582,11 @@ class GodownListUI(ExcelTableMixin, QWidget):
                     try:
                         if int(text) in _EXCLUDED_CNS:
                             item.setText(self._pre_cn)
-                            QMessageBox.warning(
+                            _reserved_text = text  # capture for deferred dialog
+                            QTimer.singleShot(0, lambda t=_reserved_text: QMessageBox.warning(
                                 self, "Invalid CN",
-                                f"CN {text} is reserved and cannot be assigned."
-                            )
+                                f"CN {t} is reserved and cannot be assigned."
+                            ))
                             _cn_rejected = True
                     except ValueError:
                         pass
@@ -574,10 +602,15 @@ class GodownListUI(ExcelTableMixin, QWidget):
                                 if other_name and other_name.text().strip():
                                     # Target CN belongs to a named row — reject, revert to old CN
                                     item.setText(self._pre_cn)
-                                    QMessageBox.warning(
+                                    # Defer warning: showing a QMessageBox here (while signals are
+                                    # still blocked and deferred editor timers are pending) pumps
+                                    # the Qt event loop and causes "wrapped C/C++ object deleted"
+                                    # crashes when those timers fire into an already-closed editor.
+                                    _dup_text = text  # capture for lambda closure
+                                    QTimer.singleShot(0, lambda t=_dup_text: QMessageBox.warning(
                                         self, "Cannot Swap",
-                                        f"CN {text} is assigned to a product.\nYou can only swap with an empty row."
-                                    )
+                                        f"CN {t} is assigned to a product.\nYou can only swap with an empty row."
+                                    ))
                                 else:
                                     # Target is an empty buffer row — swap allowed.
                                     # Only give _pre_cn if it's a real CN; if it's empty
@@ -821,6 +854,13 @@ class GodownListUI(ExcelTableMixin, QWidget):
             #   2. Named rows WITH Part No      — middle (Part No A→Z, any CN state)
             #   3. Empty buffer rows            — bottom (CN numerically)
             all_rows = named_no_partno + named_with_partno + empty_rows
+
+            # Clear Jamma Cartoon (col 3) cells that contain exactly "0".
+            # "0" is never a meaningful quantity — it was either mis-typed or
+            # left over from a default.  Non-zero values are left untouched.
+            for rd in all_rows:
+                if rd[3].strip() == "0":
+                    rd[3] = ""
             total_needed = max(200, len(named_rows) + 50)  # always 50+ buffer rows
             if self.table.rowCount() < total_needed:
                 self.table.setRowCount(total_needed)

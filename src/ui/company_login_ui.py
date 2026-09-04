@@ -685,8 +685,15 @@ class CompanyLoginUI(QWidget):
             QCoreApplication.processEvents()
         
         from src.logic.data_transfer import export_data_path
-        success, msg = export_data_path(self.current_data_path, output_file, on_progress)
-        progress.close()
+        # Disable the entire window for the duration of the export so that
+        # processEvents() cannot re-deliver button clicks and start a second
+        # nested export over the same DB connections / zip file.
+        self.setEnabled(False)
+        try:
+            success, msg = export_data_path(self.current_data_path, output_file, on_progress)
+        finally:
+            self.setEnabled(True)
+            progress.close()
         
         if success:
             QMessageBox.information(self, "Export Complete", msg)
@@ -737,8 +744,15 @@ class CompanyLoginUI(QWidget):
             QCoreApplication.processEvents()
         
         from src.logic.data_transfer import import_data_path
-        success, msg = import_data_path(backup_file, target_path, on_progress)
-        progress.close()
+        # Disable the entire window for the duration of the import so that
+        # processEvents() cannot re-deliver button clicks and trigger a second
+        # nested import competing for the same DB connections and temp files.
+        self.setEnabled(False)
+        try:
+            success, msg = import_data_path(backup_file, target_path, on_progress)
+        finally:
+            self.setEnabled(True)
+            progress.close()
         
         if success:
             QMessageBox.information(self, "Import Complete", msg)

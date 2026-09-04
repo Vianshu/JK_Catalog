@@ -325,8 +325,15 @@ class UniversalCellDelegate(QStyledItemDelegate):
             # Double-deferred: Qt's QLineEdit.focusInEvent schedules selectAll() via singleShot(0)
             # AFTER setEditorData returns (editor hasn't gained focus yet).  A nested singleShot
             # means our deselect runs one tick later, so it always wins.
-            QTimer.singleShot(0, lambda e=editor: QTimer.singleShot(
-                0, lambda: (e.deselect(), e.setCursorPosition(len(e.text())))))
+            def _deferred_cursor(e=editor):
+                def _apply():
+                    try:
+                        e.deselect()
+                        e.setCursorPosition(len(e.text()))
+                    except RuntimeError:
+                        pass  # editor already destroyed — safe to ignore
+                QTimer.singleShot(0, _apply)
+            QTimer.singleShot(0, _deferred_cursor)
 
         if cell_type == "date" and isinstance(editor, QLineEdit):
             # Pre-fill with whatever text is currently stored in the cell

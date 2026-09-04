@@ -1,0 +1,808 @@
+Created At: 2026-09-04T02:01:15+05:30
+Completed At: 2026-09-04T02:01:15+05:30
+File Path: `file:///c:/Users/HP/Desktop/project/backup%20code/src/logic/data_transfer.py`
+Total Lines: 1073
+Total Bytes: 45968
+Showing lines 1 to 800
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1: """
+2: Data Transfer — Import/Export data paths via SQL Server BACKUP/RESTORE.
+3: 
+4: Provides safe, portable data migration between machines:
+5:   - Export: BACKUP all databases for a data path → single .jkbackup file
+6:   - Import: RESTORE from .jkbackup → new data path with correct hashes
+7: 
+8: Usage:
+9:     from src.logic.data_transfer import export_data_path, import_data_path
+10:     export_data_path(data_path, output_file, progress_callback)
+11:     import_data_path(backup_file, target_data_path, progress_callback)
+12: """
+13: 
+14: import os
+15: import json
+16: import shutil
+17: import zipfile
+18: import tempfile
+19: from src.logic.db_manager import (
+20:     get_db_manager, DB_SECURITY, DB_SUPER, DB_CALENDAR,
+21:     build_shared_db_name, build_logical_name, save_data_origin
+22: )
+23: from src.utils.app_logger import get_logger
+24: 
+25: logger = get_logger(__name__)
+26: 
+27: 
+28: def export_data_path(data_path, output_file, progress_cb=None):
+29:     """Export an entire data path to a .jkbackup file.
+30:     
+31:     Backs up all SQL Server databases (shared + per-company) and
+32:     packages them with company folder contents into a single zip.
+33:     
+34:     Args:
+35:         data_path: Root data path to export
+36:         output_file: Destination .jkbackup file path
+37:         progress_cb: Optional callback(step_text, current, total)
+38:     
+39:     Returns:
+40:         tuple: (success: bool, message: str)
+41:     """
+42:     data_path = os.path.normpath(os.path.abspath(data_path))
+43:     db = get_db_manager()
+44:     
+45:     if not os.path.isdir(data_path):
+46:         return False, f"Data path does not exist: {data_path}"
+47:     
+48:     # Create a unique temp directory INSIDE the data path.
+49:     # SQL Server needs write access here — _grant_sql_server_permissions handles that.
+50:     temp_dir = tempfile.mkdtemp(prefix=".jk_export_", dir=data_path)
+51:     
+52:     try:
+53:         manifest = {
+54:             "version": 1,
+55:             "source_path": data_path,
+56:             "shared_databases": [],
+57:             "company_databases": [],
+58:             "companies": []
+59:         }
+60:         
+61:         def _get_payment_sheets(logical_db_name):
+62:             try:
+63:                 exists_rows = db.execute_query(
+64:                     logical_db_name,
+65:                     "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+66:                     "WHERE TABLE_NAME = 'payment_sheet_data'"
+67:                 )
+68:                 if exists_rows and exists_rows[0][0] > 0:
+69:                     rows = db.execute_query(
+70:                         logical_db_name,
+71:                         "SELECT DISTINCT sheet_key FROM payment_sheet_data "
+72:                         "WHERE sheet_key IS NOT NULL AND sheet_key != '' "
+73:                         "ORDER BY sheet_key"
+74:                     )
+75:                     return [r[0] for r in rows if r[0]]
+76:             except Exception:
+77:                 pass
+78:             return []
+79: 
+80:         
+81:         # Collect all databases to backup
+82:         all_dbs = []
+83:         
+84:         # Shared databases
+85:         for base_name in [DB_SECURITY, DB_SUPER, DB_CALENDAR]:
+86:             db_name = build_shared_db_name(base_name, data_path)
+87:             if db.database_exists(db_name):
+88:                 bak_file = f"{base_name}.bak"
+89:                 all_dbs.append((db_name, bak_file, "shared", base_name))
+90:                 manifest["shared_databases"].append({
+91:                     "base_name": base_name,
+92:                     "db_name": db_name,
+93:                     "bak_file": bak_file
+94:                 })
+95:         
+96:         # Company databases
+97:         for entry in os.listdir(data_path):
+98:             if entry.startswith('.jk_'):  # Skip our temp folders
+99:                 continue
+100:             company_path = os.path.join(data_path, entry)
+101:             if not os.path.isdir(company_path):
+102:                 continue
+103:             
+104:             info_file = os.path.join(company_path, "company_info.json")
+105:             if not os.path.exists(info_file):
+106:                 continue  # Not a company folder
+107:             
+108:             try:
+109:                 with open(info_file, 'r', encoding='utf-8') as f:
+110:                     info = json.load(f)
+111:                 display_name = info.get("display_name", entry)
+112:             except Exception:
+113:                 display_name = entry
+114:             
+115:             logical_name = build_logical_name(company_path=company_path)
+116:             bak_file = f"company_{entry}.bak"
+117:             
+118:             if db.database_exists(logical_name):
+119:                 all_dbs.append((logical_name, bak_file, "company", entry))
+120:                 payment_sheets = _get_payment_sheets(logical_name)
+121:                 manifest["company_databases"].append({
+122:                     "folder_name": entry,
+123:                     "display_name": display_name,
+124:                     "db_name": logical_name,
+125:                     "bak_file": bak_file,
+126:                     "payment_sheets": payment_sheets
+127:                 })
+128:             
+129:             manifest["companies"].append({
+130:                 "folder_name": entry,
+131:                 "display_name": display_name
+132:             })
+133:         
+134:         total_steps = len(all_dbs) + 2  # +1 for zipping, +1 for cleanup
+135:         current_step = 0
+136:         
+137:         # Backup each database
+138:         for db_name, bak_file, db_type, label in all_dbs:
+139:             current_step += 1
+140:             if progress_cb:
+141:                 progress_cb(f"Backing up: {label}", current_step, total_steps)
+142:             
+143:             bak_path = os.path.join(temp_dir, bak_file)
+144:             if not db.backup_database(db_name, bak_path):
+145:                 return False, f"Failed to backup database: {db_name}"
+146:             # Verify the .bak file was actually created
+147:             if not os.path.exists(bak_path):
+148:                 return False, f"Backup file not created: {bak_file}"
+149:         
+150:         # Write manifest
+151:         manifest_path = os.path.join(temp_dir, "manifest.json")
+152:         with open(manifest_path, 'w', encoding='utf-8') as f:
+153:             json.dump(manifest, f, indent=2)
+154:         
+155:         # Copy company folder contents (excluding MDF/LDF files)
+156:         folders_dir = os.path.join(temp_dir, "folders")
+157:         for company in manifest["companies"]:
+158:             src_folder = os.path.join(data_path, company["folder_name"])
+159:             dst_folder = os.path.join(folders_dir, company["folder_name"])
+160:             os.makedirs(dst_folder, exist_ok=True)
+161:             
+162:             for item in os.listdir(src_folder):
+163:                 item_path = os.path.join(src_folder, item)
+164:                 # Skip MDF/LDF files (they're in the .bak backup)
+165:                 if item.lower().endswith(('.mdf', '.ldf')):
+166:                     continue
+167:                 if os.path.isfile(item_path):
+168:                     shutil.copy2(item_path, os.path.join(dst_folder, item))
+169:                 elif os.path.isdir(item_path):
+170:                     shutil.copytree(item_path, os.path.join(dst_folder, item),
+171:                                     dirs_exist_ok=True)
+172:         
+173:         # Create the .jkbackup zip
+174:         current_step += 1
+175:         if progress_cb:
+176:             progress_cb("Creating backup file...", current_step, total_steps)
+177:         
+178:         with zipfile.ZipFile(output_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+179:             for root, dirs, files in os.walk(temp_dir):
+180:                 for file in files:
+181:                     file_path = os.path.join(root, file)
+182:                     arcname = os.path.relpath(file_path, temp_dir)
+183:                     zf.write(file_path, arcname)
+184:         
+185:         current_step += 1
+186:         if progress_cb:
+187:             progress_cb("Done!", current_step, total_steps)
+188:         
+189:         return True, f"Export complete: {output_file}"
+190:     
+191:     except Exception as e:
+192:         logger.error(f"export_data_path failed: {e}", exc_info=True)
+193:         return False, f"Export failed: {e}"
+194:     finally:
+195:         # Cleanup temp directory
+196:         shutil.rmtree(temp_dir, ignore_errors=True)
+197: 
+198: 
+199: def export_single_company(company_path, output_file, progress_cb=None):
+200:     """Export a single company to a .jkbackup file.
+201: 
+202:     Backs up:
+203:       - The company's own database
+204:       - The three shared databases (Security, SuperMaster, Calendar)
+205:       - The company folder's files (images, JSON configs, etc.)
+206: 
+207:     The shared databases are included so the backup is self-contained and
+208:     can be used as a source for Selective Restore on any machine.
+209: 
+210:     The manifest is tagged with ``backup_type = "company"`` and
+211:     ``company_folder`` so the import/restore UI knows this is a
+212:     single-company backup.
+213: 
+214:     Args:
+215:         company_path: Full path to the company folder (e.g. D:\\Data\\HW Divison)
+216:         output_file:  Destination .jkbackup file path
+217:         progress_cb:  Optional callback(step_text, current, total)
+218: 
+219:     Returns:
+220:         tuple: (success: bool, message: str)
+221:     """
+222:     company_path = os.path.normpath(os.path.abspath(company_path))
+223:     data_path = os.path.dirname(company_path)
+224:     company_folder = os.path.basename(company_path)
+225:     db = get_db_manager()
+226: 
+227:     if not os.path.isdir(company_path):
+228:         return False, f"Company folder does not exist: {company_path}"
+229: 
+230:     info_file = os.path.join(company_path, "company_info.json")
+231:     if not os.path.exists(info_file):
+232:         return False, f"Not a valid company folder (missing company_info.json): {company_path}"
+233: 
+234:     try:
+235:         with open(info_file, 'r', encoding='utf-8') as f:
+236:             info = json.load(f)
+237:         display_name = info.get("display_name", company_folder)
+238:     except Exception:
+239:         display_name = company_folder
+240: 
+241:     # Temp dir inside the data path so SQL Server can write .bak files there
+242:     temp_dir = tempfile.mkdtemp(prefix=".jk_coexport_", dir=data_path)
+243:     db._grant_sql_server_permissions(temp_dir)
+244: 
+245:     def emit(text, cur, tot):
+246:         if progress_cb:
+247:             progress_cb(text, cur, tot)
+248: 
+249:     try:
+250:         manifest = {
+251:             "version": 1,
+252:             "backup_type": "company",          # distinguishes from full path backup
+253:             "source_path": data_path,
+254:             "company_folder": company_folder,
+255:             "shared_databases": [],
+256:             "company_databases": [],
+257:             "companies": [{"folder_name": company_folder, "display_name": display_name}]
+258:         }
+259:         
+260:         def _get_payment_sheets(logical_db_name):
+261:             try:
+262:                 exists_rows = db.execute_query(
+263:                     logical_db_name,
+264:                     "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+265:                     "WHERE TABLE_NAME = 'payment_sheet_data'"
+266:                 )
+267:                 if exists_rows and exists_rows[0][0] > 0:
+268:                     rows = db.execute_query(
+269:                         logical_db_name,
+270:                         "SELECT DISTINCT sheet_key FROM payment_sheet_data "
+271:                         "WHERE sheet_key IS NOT NULL AND sheet_key != '' "
+272:                         "ORDER BY sheet_key"
+273:                     )
+274:                     return [r[0] for r in rows if r[0]]
+275:             except Exception:
+276:                 pass
+277:             return []
+278: 
+279:         all_dbs = []
+280: 
+281:         # ── Shared databases (Security, SuperMaster, Calendar) ────────────────
+282:         for base_name in [DB_SECURITY, DB_SUPER, DB_CALENDAR]:
+283:             db_name = build_shared_db_name(base_name, data_path)
+284:             if db.database_exists(db_name):
+285:                 bak_file = f"{base_name}.bak"
+286:                 all_dbs.append((db_name, bak_file, "shared", base_name))
+287:                 manifest["shared_databases"].append({
+288:                     "base_name": base_name,
+289:                     "db_name": db_name,
+290:                     "bak_file": bak_file
+291:                 })
+292: 
+293:         # ── Company database ──────────────────────────────────────────────────
+294:         logical_name = build_logical_name(company_path=company_path)
+295:         bak_file = f"company_{company_folder}.bak"
+296:         if not db.database_exists(logical_name):
+297:             return False, f"Database for company '{company_folder}' does not exist."
+298:         all_dbs.append((logical_name, bak_file, "company", company_folder))
+299:         payment_sheets = _get_payment_sheets(logical_name)
+300:         manifest["company_databases"].append({
+301:             "folder_name": company_folder,
+302:             "display_name": display_name,
+303:             "db_name": logical_name,
+304:             "bak_file": bak_file,
+305:             "payment_sheets": payment_sheets
+306:         })
+307: 
+308:         total_steps = len(all_dbs) + 2   # +1 zip, +1 done
+309:         current_step = 0
+310: 
+311:         # ── Backup each database ──────────────────────────────────────────────
+312:         for db_name, bak_fname, db_type, label in all_dbs:
+313:             current_step += 1
+314:             emit(f"Backing up: {label}", current_step, total_steps)
+315:             bak_path = os.path.join(temp_dir, bak_fname)
+316:             if not db.backup_database(db_name, bak_path):
+317:                 return False, f"Failed to backup database: {db_name}"
+318:             if not os.path.exists(bak_path):
+319:                 return False, f"Backup file not created: {bak_fname}"
+320: 
+321:         # ── Write manifest ────────────────────────────────────────────────────
+322:         manifest_path = os.path.join(temp_dir, "manifest.json")
+323:         with open(manifest_path, 'w', encoding='utf-8') as f:
+324:             json.dump(manifest, f, indent=2)
+325: 
+326:         # ── Copy company folder files ─────────────────────────────────────────
+327:         dst_folder = os.path.join(temp_dir, "folders", company_folder)
+328:         os.makedirs(dst_folder, exist_ok=True)
+329:         for item in os.listdir(company_path):
+330:             item_path = os.path.join(company_path, item)
+331:             if item.lower().endswith(('.mdf', '.ldf')):
+332:                 continue
+333:             if os.path.isfile(item_path):
+334:                 shutil.copy2(item_path, os.path.join(dst_folder, item))
+335:             elif os.path.isdir(item_path):
+336:                 shutil.copytree(item_path, os.path.join(dst_folder, item),
+337:                                 dirs_exist_ok=True)
+338: 
+339:         # ── Zip everything into .jkbackup ─────────────────────────────────────
+340:         current_step += 1
+341:         emit("Creating backup file...", current_step, total_steps)
+342:         with zipfile.ZipFile(output_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+343:             for root, dirs, files in os.walk(temp_dir):
+344:                 for file in files:
+345:                     file_path = os.path.join(root, file)
+346:                     arcname = os.path.relpath(file_path, temp_dir)
+347:                     zf.write(file_path, arcname)
+348: 
+349:         current_step += 1
+350:         emit("Done!", current_step, total_steps)
+351:         return True, f"Company backup complete: {os.path.basename(output_file)}"
+352: 
+353:     except Exception as e:
+354:         logger.error(f"export_single_company failed: {e}", exc_info=True)
+355:         return False, f"Company backup failed: {e}"
+356:     finally:
+357:         shutil.rmtree(temp_dir, ignore_errors=True)
+358: 
+359: 
+360: 
+361: def import_data_path(backup_file, target_data_path, progress_cb=None):
+362:     """Import a .jkbackup file into a target data path.
+363:     
+364:     Restores all SQL Server databases with path-appropriate names
+365:     and extracts company folder contents.
+366:     
+367:     Args:
+368:         backup_file: Path to the .jkbackup file
+369:         target_data_path: Destination data path folder
+370:         progress_cb: Optional callback(step_text, current, total)
+371:     
+372:     Returns:
+373:         tuple: (success: bool, message: str)
+374:     """
+375:     target_data_path = os.path.normpath(os.path.abspath(target_data_path))
+376:     db = get_db_manager()
+377:     
+378:     os.makedirs(target_data_path, exist_ok=True)
+379:     
+380:     # Extract to a unique temp directory INSIDE target path (SQL Server needs read access)
+381:     temp_dir = tempfile.mkdtemp(prefix=".jk_import_", dir=target_data_path)
+382:     
+383:     # Grant SQL Server read access to the temp dir
+384:     db._grant_sql_server_permissions(temp_dir)
+385:     
+386:     try:
+387:         with zipfile.ZipFile(backup_file, 'r') as zf:
+388:             # Zip-slip validation
+389:             for member in zf.namelist():
+390:                 target = os.path.abspath(os.path.join(temp_dir, member))
+391:                 if not target.startswith(os.path.abspath(temp_dir)):
+392:                     return False, "Invalid backup file: path traversal detected."
+393:             zf.extractall(temp_dir)
+394:         
+395:         # Read manifest
+396:         manifest_path = os.path.join(temp_dir, "manifest.json")
+397:         if not os.path.exists(manifest_path):
+398:             return False, "Invalid backup file: manifest.json not found"
+399:         
+400:         with open(manifest_path, 'r', encoding='utf-8') as f:
+401:             manifest = json.load(f)
+402:         
+403:         total_dbs = len(manifest.get("shared_databases", [])) + \
+404:                      len(manifest.get("company_databases", []))
+405:         total_steps = total_dbs + 3  # +1 extract folders, +1 update paths, +1 done
+406:         current_step = 0
+407:         
+408:         # 1. Extract company folders to target data path
+409:         current_step += 1
+410:         if progress_cb:
+411:             progress_cb("Extracting company folders...", current_step, total_steps)
+412:         
+413:         folders_dir = os.path.join(temp_dir, "folders")
+414:         if os.path.isdir(folders_dir):
+415:             for entry in os.listdir(folders_dir):
+416:                 src = os.path.join(folders_dir, entry)
+417:                 dst = os.path.join(target_data_path, entry)
+418:                 if os.path.isdir(src):
+419:                     shutil.copytree(src, dst, dirs_exist_ok=True)
+420:         
+421:         # 2. Restore shared databases
+422:         for shared_db in manifest.get("shared_databases", []):
+423:             current_step += 1
+424:             base_name = shared_db["base_name"]
+425:             bak_file = shared_db["bak_file"]
+426:             bak_path = os.path.join(temp_dir, bak_file)
+427:             
+428:             if progress_cb:
+429:                 progress_cb(f"Restoring: {base_name}", current_step, total_steps)
+430:             
+431:             new_db_name = build_shared_db_name(base_name, target_data_path)
+432:             
+433:             if not os.path.exists(bak_path):
+434:                 logger.warning(f"Backup file missing: {bak_path}")
+435:                 continue
+436:             
+437:             if not db.restore_database(new_db_name, bak_path, target_data_path):
+438:                 return False, f"Failed to restore: {base_name}"
+439:         
+440:         # 3. Restore company databases
+441:         for company_db in manifest.get("company_databases", []):
+442:             current_step += 1
+443:             folder_name = company_db["folder_name"]
+444:             bak_file = company_db["bak_file"]
+445:             bak_path = os.path.join(temp_dir, bak_file)
+446:             
+447:             if progress_cb:
+448:                 progress_cb(f"Restoring: {folder_name}", current_step, total_steps)
+449:             
+450:             company_path = os.path.join(target_data_path, folder_name)
+451:             os.makedirs(company_path, exist_ok=True)
+452:             new_db_name = build_logical_name(company_path=company_path)
+453:             
+454:             if not os.path.exists(bak_path):
+455:                 logger.warning(f"Backup file missing: {bak_path}")
+456:                 continue
+457:             
+458:             if not db.restore_database(new_db_name, bak_path, company_path):
+459:                 return False, f"Failed to restore: {folder_name}"
+460:         
+461:         # 4. Update folder_path in the restored Security DB
+462:         current_step += 1
+463:         if progress_cb:
+464:             progress_cb("Updating paths...", current_step, total_steps)
+465:         
+466:         new_security_name = build_shared_db_name(DB_SECURITY, target_data_path)
+467:         conn = db.get_connection(new_security_name)
+468:         if conn:
+469:             try:
+470:                 cursor = conn.cursor()
+471:                 source_path = manifest.get("source_path", "")
+472:                 if source_path:
+473:                     # Update all folder_path entries to point to new location
+474:                     cursor.execute("SELECT id, folder_path FROM companies")
+475:                     rows = cursor.fetchall()
+476:                     for row in rows:
+477:                         old_path = row[1]
+478:                         # Replace the source data path prefix with the target
+479:                         if old_path:
+480:                             # Get relative path from old source
+481:                             try:
+482:                                 rel_path = os.path.relpath(old_path, source_path)
+483:                                 new_path = os.path.normpath(
+484:                                     os.path.join(target_data_path, rel_path)
+485:                                 )
+486:                                 cursor.execute(
+487:                                     "UPDATE companies SET folder_path = ? WHERE id = ?",
+488:                                     (new_path, row[0])
+489:                                 )
+490:                             except ValueError:
+491:                                 pass  # Paths on different drives
+492:                     conn.commit()
+493:                     logger.info("Updated company folder paths in restored Security DB")
+494: 
+495:                 # Deduplicate: if multiple companies share the same folder_path,
+496:                 # keep only the one with the lowest id and delete the rest.
+497:                 # This happens when the user pre-created a company before importing.
+498:                 cursor.execute("""
+499:                     SELECT folder_path, MIN(id) AS keep_id
+500:                     FROM companies
+501:                     WHERE folder_path IS NOT NULL AND folder_path != ''
+502:                     GROUP BY folder_path
+503:                     HAVING COUNT(*) > 1
+504:                 """)
+505:                 dupes = cursor.fetchall()
+506:                 for folder_path_val, keep_id in dupes:
+507:                     cursor.execute(
+508:                         "DELETE FROM companies WHERE folder_path = ? AND id != ?",
+509:                         (folder_path_val, keep_id)
+510:                     )
+511:                     logger.info(
+512:                         f"[Import] Removed duplicate company entry for: {folder_path_val}"
+513:                     )
+514:                 if dupes:
+515:                     conn.commit()
+516:                     logger.info(f"[Import] Deduplication removed {len(dupes)} duplicate company entries.")
+517: 
+518:             except Exception as e:
+519:                 logger.warning(f"Could not update folder paths: {e}")
+520:         
+521:         # 5. Save data origin for the new path
+522:         save_data_origin(target_data_path)
+523:         
+524:         current_step += 1
+525:         if progress_cb:
+526:             progress_cb("Done!", current_step, total_steps)
+527:         
+528:         return True, f"Import complete! Data restored to: {target_data_path}"
+529:     
+530:     except zipfile.BadZipFile:
+531:         return False, "Invalid backup file: not a valid .jkbackup archive"
+532:     except Exception as e:
+533:         logger.error(f"import_data_path failed: {e}", exc_info=True)
+534:         return False, f"Import failed: {e}"
+535:     finally:
+536:         shutil.rmtree(temp_dir, ignore_errors=True)
+537: 
+538: 
+539: # ─── SELECTIVE RESTORE ────────────────────────────────────────────────────────
+540: 
+541: # Module definitions: which tables belong to which group.
+542: # Each group is a list of table names to merge.
+543: # NOTE: All data lives in the single company database (build_logical_name).
+544: 
+545: #: Tables belonging to the Catalog Bundle (Final Data + Catalog + CRM).
+546: #: These MUST always be restored together — never independently.
+547: CATALOG_BUNDLE_TABLES = [
+548:     # Final Data
+549:     "catalog",
+550:     # Catalog
+551:     "catalog_pages",
+552:     "subgroup_display_order",
+553:     "page_snapshots",
+554:     "build_config",
+555:     # CRM
+556:     "crm_names",
+557:     "report_data",
+558:     # Build history (part of catalog meta)
+559:     "build_history",
+560: ]
+561: 
+562: #: Tables belonging to Supplier Payment (can be restored independently).
+563: SUPP_PAYMENT_TABLES = [
+564:     "payment_sheet_data",
+565:     "supplier_records",
+566:     "supplier_accounts",
+567:     "anil_ledger",
+568:     "anil_settings",
+569:     "tp_sections",
+570:     "tp_section_cols",
+571:     "tp_section_data",
+572: ]
+573: 
+574: # Modules exposed to the UI
+575: SELECTABLE_MODULES = {
+576:     "catalog_bundle": {
+577:         "label": "Catalog Bundle (Final Data + Catalog + CRM)",
+578:         "tables": CATALOG_BUNDLE_TABLES,
+579:         "requires": [],          # no hard prerequisites
+580:     },
+581:     "supp_payment": {
+582:         "label": "Supplier Payment",
+583:         "tables": SUPP_PAYMENT_TABLES,
+584:         "requires": [],
+585:     },
+586: }
+587: 
+588: 
+589: def list_companies_in_backup(backup_file):
+590:     """Read the manifest from a .jkbackup without restoring anything.
+591: 
+592:     Returns:
+593:         tuple: (manifest dict, error string)
+594:                On success error string is empty. On failure manifest is None.
+595:     """
+596:     try:
+597:         with zipfile.ZipFile(backup_file, 'r') as zf:
+598:             if "manifest.json" not in zf.namelist():
+599:                 return None, "Invalid backup: manifest.json not found"
+600:             with zf.open("manifest.json") as f:
+601:                 manifest = json.load(f)
+602:         return manifest, ""
+603:     except zipfile.BadZipFile:
+604:         return None, "Not a valid .jkbackup file"
+605:     except Exception as e:
+606:         return None, str(e)
+607: 
+608: 
+609: def selective_restore_company(backup_file, target_data_path, company_folder_name,
+610:                                modules, progress_cb=None):
+611:     """Selectively restore chosen modules for one company from a full .jkbackup.
+612: 
+613:     Strategy:
+614:         1. Extract the company's .bak from the zip into a temp directory.
+615:         2. RESTORE it as a temporary DB (JK_TempRestore_<uuid>).
+616:         3. For each selected module, validate cross-references, then
+617:            DELETE existing rows from the live DB and INSERT from the temp DB
+618:            inside a single transaction on the live DB.
+619:         4. Drop the temp DB and clean up the temp directory.
+620: 
+621:     The live DB is never touched until the transaction commits, so a failure
+622:     at any point leaves the live data completely intact.
+623: 
+624:     Args:
+625:         backup_file:         Path to the .jkbackup file.
+626:         target_data_path:    The current live data path folder.
+627:         company_folder_name: The folder name of the company (e.g. "HW Divison 082083").
+628:         modules:             List of module keys to restore, e.g. ["catalog_bundle"].
+629:                              For "supp_payment", you may also pass
+630:                              {"supp_payment": ["Sheet1", "Sheet2"]} to filter sheets.
+631:         progress_cb:         Optional callback(step_text, current, total).
+632: 
+633:     Returns:
+634:         tuple: (success: bool, message: str)
+635:     """
+636:     import uuid
+637:     import time
+638: 
+639:     target_data_path = os.path.normpath(os.path.abspath(target_data_path))
+640:     db = get_db_manager()
+641: 
+642:     def emit(text, cur=0, tot=1):
+643:         if progress_cb:
+644:             progress_cb(text, cur, tot)
+645: 
+646:     emit("Reading backup manifest...", 0, 10)
+647: 
+648:     # ── 1. Read manifest ───────────────────────────────────────────────────────
+649:     manifest, err = list_companies_in_backup(backup_file)
+650:     if not manifest:
+651:         return False, f"Cannot read backup: {err}"
+652: 
+653:     # Find the company_db entry in the manifest
+654:     company_db_entry = None
+655:     for entry in manifest.get("company_databases", []):
+656:         if entry["folder_name"] == company_folder_name:
+657:             company_db_entry = entry
+658:             break
+659:     if not company_db_entry:
+660:         return False, f"Company '{company_folder_name}' not found in backup."
+661: 
+662:     bak_filename = company_db_entry["bak_file"]
+663: 
+664:     # ── 2. Extract the single .bak to a temp directory ────────────────────────
+665:     emit("Extracting backup file...", 1, 10)
+666:     company_path = os.path.join(target_data_path, company_folder_name)
+667:     temp_dir = tempfile.mkdtemp(prefix=".jk_selrestore_", dir=target_data_path)
+668:     db._grant_sql_server_permissions(temp_dir)
+669: 
+670:     try:
+671:         with zipfile.ZipFile(backup_file, 'r') as zf:
+672:             # Zip-slip guard
+673:             for member in zf.namelist():
+674:                 target = os.path.abspath(os.path.join(temp_dir, member))
+675:                 if not target.startswith(os.path.abspath(temp_dir)):
+676:                     return False, "Invalid backup: path traversal detected."
+677: 
+678:             # Only extract the specific .bak we need (and manifest)
+679:             for member in zf.namelist():
+680:                 if member in (bak_filename, "manifest.json"):
+681:                     zf.extract(member, temp_dir)
+682: 
+683:         bak_path = os.path.join(temp_dir, bak_filename)
+684:         if not os.path.exists(bak_path):
+685:             return False, f"Backup file for '{company_folder_name}' not found inside archive."
+686: 
+687:         # ── 3. RESTORE to a temporary database ────────────────────────────────
+688:         temp_db_name = f"JK_TempRestore_{uuid.uuid4().hex[:12]}"
+689:         emit(f"Restoring backup to temporary database...", 2, 10)
+690: 
+691:         if not db.restore_database(temp_db_name, bak_path, temp_dir):
+692:             return False, "Failed to restore backup to temporary database."
+693: 
+694:         emit("Temporary database ready. Validating data...", 3, 10)
+695: 
+696:         # ── 4. Determine the live DB logical name ─────────────────────────────
+697:         live_db_name = build_logical_name(
+698:             company_folder_name, company_path=company_path
+699:         )
+700: 
+701:         live_conn = db.get_connection(live_db_name)
+702:         if not live_conn:
+703:             return False, f"Cannot connect to live database '{live_db_name}'."
+704: 
+705:         # ── 5. Validate cross-references (read from temp DB only) ─────────────
+706:         if "catalog_bundle" in modules:
+707:             emit("Validating Catalog Bundle references...", 4, 10)
+708:             validation_ok, validation_msg = _validate_catalog_bundle(db, temp_db_name)
+709:             if not validation_ok:
+710:                 return False, f"Backup validation failed: {validation_msg}"
+711: 
+712:         # ── 6. Merge selected modules inside one transaction on live DB ────────
+713:         emit("Merging data into live database...", 5, 10)
+714:         cursor = live_conn.cursor()
+715: 
+716:         try:
+717:             # Normalize modules parameter: can be list of strings or dict {key: sheet_list}
+718:             module_keys = []
+719:             sheet_filter = None   # None means all sheets
+720:             if isinstance(modules, dict):
+721:                 module_keys = list(modules.keys())
+722:                 if "supp_payment" in modules and isinstance(modules["supp_payment"], list):
+723:                     sheet_filter = modules["supp_payment"]
+724:             else:
+725:                 module_keys = list(modules)
+726: 
+727:             for mod_key in module_keys:
+728:                 if mod_key == "catalog_bundle":
+729:                     _merge_catalog_bundle(cursor, live_db_name, temp_db_name)
+730:                 elif mod_key == "supp_payment":
+731:                     _merge_supp_payment(cursor, live_db_name, temp_db_name, sheet_filter)
+732:                 elif mod_key == "godown":
+733:                     _merge_simple_module(cursor, live_db_name, temp_db_name, GODOWN_TABLES)
+734:                 elif mod_key == "cheque_list":
+735:                     _merge_simple_module(cursor, live_db_name, temp_db_name, CHEQUE_LIST_TABLES)
+736: 
+737:             live_conn.commit()
+738:             logger.info(
+739:                 f"[SelectiveRestore] Committed modules {module_keys} "
+740:                 f"for '{company_folder_name}'"
+741:             )
+742: 
+743:         except Exception as e:
+744:             try:
+745:                 live_conn.rollback()
+746:             except Exception:
+747:                 pass
+748:             logger.error(f"[SelectiveRestore] Merge failed, rolled back: {e}", exc_info=True)
+749:             return False, f"Restore failed during merge (live data untouched): {e}"
+750: 
+751:         # ── 7. Sync filesystem files for Catalog Bundle (images etc.) ─────────
+752:         if "catalog_bundle" in module_keys:
+753:             emit("Syncing catalog image files...", 8, 10)
+754:             _sync_catalog_files(backup_file, company_folder_name, company_path, temp_dir)
+755: 
+756:         emit("Done!", 10, 10)
+757:         return True, f"Selective restore complete for '{company_folder_name}'."
+758: 
+759:     except Exception as e:
+760:         logger.error(f"selective_restore_company failed: {e}", exc_info=True)
+761:         return False, f"Selective restore failed: {e}"
+762:     finally:
+763:         # Always drop temp DB and clean up temp dir
+764:         try:
+765:             db.close_connection(temp_db_name)
+766:             db.drop_database(temp_db_name)
+767:         except Exception:
+768:             pass
+769:         shutil.rmtree(temp_dir, ignore_errors=True)
+770: 
+771: 
+772: # ─── INTERNAL HELPERS ─────────────────────────────────────────────────────────
+773: 
+774: def _validate_catalog_bundle(db, temp_db_name):
+775:     """Validate internal consistency of the Catalog Bundle in the temp DB.
+776: 
+777:     Checks:
+778:       1. Every GUID referenced in catalog_pages exists in the catalog table.
+779:       2. Every serial_no in report_data exists in catalog_pages.
+780: 
+781:     Returns:
+782:         (True, "") on success, or (False, reason) on failure.
+783:     """
+784:     try:
+785:         temp_conn = db.get_connection(temp_db_name)
+786:         if not temp_conn:
+787:             return False, "Cannot connect to temporary database for validation."
+788: 
+789:         # Check 1: catalog_pages → catalog (GUID cross-reference)
+790:         # catalog_pages.product_list contains JSON arrays of GUIDs.
+791:         # We skip this deep check here (it's a JSON parse) but verify the tables exist.
+792:         temp_tables = db.get_all_tables(temp_db_name)
+793: 
+794:         has_catalog = "catalog" in temp_tables
+795:         has_pages = "catalog_pages" in temp_tables
+796:         has_crm = "report_data" in temp_tables
+797: 
+798:         if not has_catalog:
+799:             return False, "Backup is missing the 'catalog' (Final Data) table."
+800:         if not has_pages:
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

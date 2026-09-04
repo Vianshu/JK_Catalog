@@ -918,10 +918,19 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             self.bank_table.blockSignals(False)
 
     def clear_completed_cheques(self):
-        reply = QMessageBox.question(self, "Confirm Clear", "Kya aap saare 'C' (Cleared) cheques hatana chahte hain?", 
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        reply = QMessageBox.question(
+            self, "Confirm Clear",
+            "Kya aap saare cleared cheques (jinka Clear Date bhara hua hai) hatana chahte hain?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
         if reply == QMessageBox.StandardButton.Yes:
-            self.db.execute_query(self.cheque_db_name, "DELETE FROM cheques WHERE status = 'C'", fetch=False)
+            # Cleared cheques are identified by a non-empty clear_date (column 8),
+            # NOT by status = 'C' (which is never written — 'c' is auto-corrected to 'Cash').
+            self.db.execute_query(
+                self.cheque_db_name,
+                "DELETE FROM cheques WHERE clear_date IS NOT NULL AND clear_date != ''",
+                fetch=False
+            )
             self.load_all_data()
 
     def set_company_path(self, path):

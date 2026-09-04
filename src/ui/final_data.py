@@ -237,6 +237,9 @@ class FinalDataUI(ExcelTableMixin, QWidget):
         company_name = os.path.basename(path)
         self.final_db_name = build_logical_name(company_name, company_path=path)
         self.row_data_db_name = build_logical_name(company_name, company_path=path)
+        # Reset sync label so refresh_table always re-reads it from THIS company's DB.
+        # Without this, the previous company's sync time is shown until a new sync runs.
+        self.sync_lbl.setText("Last Sync: N/A")
         # Clear image-map cache so a fresh fingerprint is built for the new company.
         # Without this, stale fingerprints from the previous session/company would
         # prevent the auto-sync from detecting folder changes on first tab-switch.

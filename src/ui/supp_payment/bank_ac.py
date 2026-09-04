@@ -517,7 +517,7 @@ class _SupplierSection(QFrame):
 
     def _delete_supplier(self):
         """Delete this entire supplier record + all its accounts."""
-        name = self._name_edit.text().strip() or f"Supplier #{self.supplier_id}"
+        name = self._name_edit.toPlainText().strip() or f"Supplier #{self.supplier_id}"
         msg = QMessageBox(self.window())
         msg.setWindowTitle("Delete Supplier")
         msg.setText(f"Delete supplier '{name}' and ALL its account cards?")
@@ -687,11 +687,16 @@ class RecordTab(_PrintExportMixin, QWidget):
 
     def toggle_search(self):
         """Expand the right panel if collapsed, then focus the search input."""
-        # _right_bar_expanded defaults to False (collapsed) when missing — the opposite
-        # of what the old code assumed. This caused the expand to never trigger on first use.
-        is_expanded = getattr(_PrintExportMixin, '_right_bar_expanded', False)
-        if not is_expanded and getattr(self, 'btn_toggle', None):
-            self.btn_toggle.click()
+        # Check the actual right-bar widget width instead of the shared class-level
+        # _right_bar_expanded flag, which is shared across ALL tabs using _PrintExportMixin
+        # and would wrongly report 'expanded' if any other tab had opened its sidebar.
+        btn = getattr(self, 'btn_toggle', None)
+        if btn:
+            # The right bar is collapsed when its width <= 60px (collapsed state = 52px)
+            right_bar = btn.parentWidget()
+            is_expanded = right_bar is not None and right_bar.width() > 60
+            if not is_expanded:
+                btn.click()
         self._search.setFocus()
 
         # Keyboard shortcuts removed    # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ

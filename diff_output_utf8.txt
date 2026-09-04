@@ -1,0 +1,1900 @@
+﻿diff --git a/Readme.md b/Readme.md
+index 694e314..1fc268b 100644
+--- a/Readme.md
++++ b/Readme.md
+@@ -97,10 +97,16 @@ backup code/
+ Γöé   Γöé   Γö£ΓöÇΓöÇ group_test_tab.py       # Group testing/preview
+ Γöé   Γöé   Γö£ΓöÇΓöÇ catalog_price_list.py   # Catalog price list dialog
+ Γöé   Γöé   Γö£ΓöÇΓöÇ price_list.py           # Price list viewer
+-Γöé   Γöé   Γö£ΓöÇΓöÇ payment_list.py         # Payment list viewer
+ Γöé   Γöé   Γö£ΓöÇΓöÇ godown_list.py          # Godown list viewer
+ Γöé   Γöé   Γö£ΓöÇΓöÇ sales_chat.py           # Sales chat viewer
+-Γöé   Γöé   Γö£ΓöÇΓöÇ supp_payment.py         # Supplier payment viewer
++Γöé   Γöé   Γö£ΓöÇΓöÇ supp_payment/           # Supplier Payment Module (Multi-tabbed Interface)
++Γöé   Γöé   Γöé   Γö£ΓöÇΓöÇ __init__.py         # Tab orchestrator (SuppPaymentV2UI)
++Γöé   Γöé   Γöé   Γö£ΓöÇΓöÇ today_payment.py    # Today Payment Tab
++Γöé   Γöé   Γöé   Γö£ΓöÇΓöÇ bank_ac.py          # Record Tab
++Γöé   Γöé   Γöé   Γö£ΓöÇΓöÇ anil_hisab.py       # Anil Hisab Tab
++Γöé   Γöé   Γöé   Γö£ΓöÇΓöÇ bonus_team.py       # Team & Bonus Lists
++Γöé   Γöé   Γöé   Γö£ΓöÇΓöÇ insurance.py        # Insurance details
++Γöé   Γöé   Γöé   ΓööΓöÇΓöÇ shared.py           # Shared Database & Styles
+ Γöé   Γöé   Γö£ΓöÇΓöÇ pur_import.py           # Purchase import dialog
+ Γöé   Γöé   Γö£ΓöÇΓöÇ int_cost_sheet.py       # Internal cost sheet dialog
+ Γöé   Γöé   ΓööΓöÇΓöÇ vat_pages.py            # Balance and stock VAT views
+diff --git a/src/logic/data_transfer.py b/src/logic/data_transfer.py
+index 1041928..1fcd145 100644
+--- a/src/logic/data_transfer.py
++++ b/src/logic/data_transfer.py
+@@ -24,6 +24,25 @@ from src.utils.app_logger import get_logger
+ 
+ logger = get_logger(__name__)
+ 
++# Map of tables to their primary key columns for reconstruction
++MISSING_TABLE_PKS = {
++    "payment_sheet_data": None,
++    "supplier_records": "id",
++    "supplier_accounts": "id",
++    "anil_ledger": "id",
++    "anil_settings": "[key]",
++    "tp_sections": "id",
++    "tp_section_cols": "id",
++    "tp_section_data": None,
++    "godown": "id",
++    "cheques": "id",
++    "bonus_data": "id",
++    "team_list_data": "id",
++    "ins_human": "id",
++    "ins_vehicle": "id",
++    "ins_stock": "id"
++}
++
+ 
+ def export_data_path(data_path, output_file, progress_cb=None):
+     """Export an entire data path to a .jkbackup file.
+@@ -58,6 +77,26 @@ def export_data_path(data_path, output_file, progress_cb=None):
+             "companies": []
+         }
+         
++        def _get_payment_sheets(logical_db_name):
++            try:
++                exists_rows = db.execute_query(
++                    logical_db_name,
++                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
++                    "WHERE TABLE_NAME = 'payment_sheet_data'"
++                )
++                if exists_rows and exists_rows[0][0] > 0:
++                    rows = db.execute_query(
++                        logical_db_name,
++                        "SELECT DISTINCT sheet_key FROM payment_sheet_data "
++                        "WHERE sheet_key IS NOT NULL AND sheet_key != '' "
++                        "ORDER BY sheet_key"
++                    )
++                    return [r[0] for r in rows if r[0]]
++            except Exception:
++                pass
++            return []
++
++        
+         # Collect all databases to backup
+         all_dbs = []
+         
+@@ -97,11 +136,13 @@ def export_data_path(data_path, output_file, progress_cb=None):
+             
+             if db.database_exists(logical_name):
+                 all_dbs.append((logical_name, bak_file, "company", entry))
++                payment_sheets = _get_payment_sheets(logical_name)
+                 manifest["company_databases"].append({
+                     "folder_name": entry,
+                     "display_name": display_name,
+                     "db_name": logical_name,
+-                    "bak_file": bak_file
++                    "bak_file": bak_file,
++                    "payment_sheets": payment_sheets
+                 })
+             
+             manifest["companies"].append({
+@@ -174,6 +215,168 @@ def export_data_path(data_path, output_file, progress_cb=None):
+         shutil.rmtree(temp_dir, ignore_errors=True)
+ 
+ 
++def export_single_company(company_path, output_file, progress_cb=None):
++    """Export a single company to a .jkbackup file.
++
++    Backs up:
++      - The company's own database
++      - The three shared databases (Security, SuperMaster, Calendar)
++      - The company folder's files (images, JSON configs, etc.)
++
++    The shared databases are included so the backup is self-contained and
++    can be used as a source for Selective Restore on any machine.
++
++    The manifest is tagged with ``backup_type = "company"`` and
++    ``company_folder`` so the import/restore UI knows this is a
++    single-company backup.
++
++    Args:
++        company_path: Full path to the company folder (e.g. D:\\Data\\HW Divison)
++        output_file:  Destination .jkbackup file path
++        progress_cb:  Optional callback(step_text, current, total)
++
++    Returns:
++        tuple: (success: bool, message: str)
++    """
++    company_path = os.path.normpath(os.path.abspath(company_path))
++    data_path = os.path.dirname(company_path)
++    company_folder = os.path.basename(company_path)
++    db = get_db_manager()
++
++    if not os.path.isdir(company_path):
++        return False, f"Company folder does not exist: {company_path}"
++
++    info_file = os.path.join(company_path, "company_info.json")
++    if not os.path.exists(info_file):
++        return False, f"Not a valid company folder (missing company_info.json): {company_path}"
++
++    try:
++        with open(info_file, 'r', encoding='utf-8') as f:
++            info = json.load(f)
++        display_name = info.get("display_name", company_folder)
++    except Exception:
++        display_name = company_folder
++
++    # Temp dir inside the data path so SQL Server can write .bak files there
++    temp_dir = tempfile.mkdtemp(prefix=".jk_coexport_", dir=data_path)
++    db._grant_sql_server_permissions(temp_dir)
++
++    def emit(text, cur, tot):
++        if progress_cb:
++            progress_cb(text, cur, tot)
++
++    try:
++        manifest = {
++            "version": 1,
++            "backup_type": "company",          # distinguishes from full path backup
++            "source_path": data_path,
++            "company_folder": company_folder,
++            "shared_databases": [],
++            "company_databases": [],
++            "companies": [{"folder_name": company_folder, "display_name": display_name}]
++        }
++        
++        def _get_payment_sheets(logical_db_name):
++            try:
++                exists_rows = db.execute_query(
++                    logical_db_name,
++                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
++                    "WHERE TABLE_NAME = 'payment_sheet_data'"
++                )
++                if exists_rows and exists_rows[0][0] > 0:
++                    rows = db.execute_query(
++                        logical_db_name,
++                        "SELECT DISTINCT sheet_key FROM payment_sheet_data "
++                        "WHERE sheet_key IS NOT NULL AND sheet_key != '' "
++                        "ORDER BY sheet_key"
++                    )
++                    return [r[0] for r in rows if r[0]]
++            except Exception:
++                pass
++            return []
++
++        all_dbs = []
++
++        # ΓöÇΓöÇ Shared databases (Security, SuperMaster, Calendar) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        for base_name in [DB_SECURITY, DB_SUPER, DB_CALENDAR]:
++            db_name = build_shared_db_name(base_name, data_path)
++            if db.database_exists(db_name):
++                bak_file = f"{base_name}.bak"
++                all_dbs.append((db_name, bak_file, "shared", base_name))
++                manifest["shared_databases"].append({
++                    "base_name": base_name,
++                    "db_name": db_name,
++                    "bak_file": bak_file
++                })
++
++        # ΓöÇΓöÇ Company database ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        logical_name = build_logical_name(company_path=company_path)
++        bak_file = f"company_{company_folder}.bak"
++        if not db.database_exists(logical_name):
++            return False, f"Database for company '{company_folder}' does not exist."
++        all_dbs.append((logical_name, bak_file, "company", company_folder))
++        payment_sheets = _get_payment_sheets(logical_name)
++        manifest["company_databases"].append({
++            "folder_name": company_folder,
++            "display_name": display_name,
++            "db_name": logical_name,
++            "bak_file": bak_file,
++            "payment_sheets": payment_sheets
++        })
++
++        total_steps = len(all_dbs) + 2   # +1 zip, +1 done
++        current_step = 0
++
++        # ΓöÇΓöÇ Backup each database ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        for db_name, bak_fname, db_type, label in all_dbs:
++            current_step += 1
++            emit(f"Backing up: {label}", current_step, total_steps)
++            bak_path = os.path.join(temp_dir, bak_fname)
++            if not db.backup_database(db_name, bak_path):
++                return False, f"Failed to backup database: {db_name}"
++            if not os.path.exists(bak_path):
++                return False, f"Backup file not created: {bak_fname}"
++
++        # ΓöÇΓöÇ Write manifest ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        manifest_path = os.path.join(temp_dir, "manifest.json")
++        with open(manifest_path, 'w', encoding='utf-8') as f:
++            json.dump(manifest, f, indent=2)
++
++        # ΓöÇΓöÇ Copy company folder files ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        dst_folder = os.path.join(temp_dir, "folders", company_folder)
++        os.makedirs(dst_folder, exist_ok=True)
++        for item in os.listdir(company_path):
++            item_path = os.path.join(company_path, item)
++            if item.lower().endswith(('.mdf', '.ldf')):
++                continue
++            if os.path.isfile(item_path):
++                shutil.copy2(item_path, os.path.join(dst_folder, item))
++            elif os.path.isdir(item_path):
++                shutil.copytree(item_path, os.path.join(dst_folder, item),
++                                dirs_exist_ok=True)
++
++        # ΓöÇΓöÇ Zip everything into .jkbackup ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        current_step += 1
++        emit("Creating backup file...", current_step, total_steps)
++        with zipfile.ZipFile(output_file, 'w', zipfile.ZIP_DEFLATED) as zf:
++            for root, dirs, files in os.walk(temp_dir):
++                for file in files:
++                    file_path = os.path.join(root, file)
++                    arcname = os.path.relpath(file_path, temp_dir)
++                    zf.write(file_path, arcname)
++
++        current_step += 1
++        emit("Done!", current_step, total_steps)
++        return True, f"Company backup complete: {os.path.basename(output_file)}"
++
++    except Exception as e:
++        logger.error(f"export_single_company failed: {e}", exc_info=True)
++        return False, f"Company backup failed: {e}"
++    finally:
++        shutil.rmtree(temp_dir, ignore_errors=True)
++
++
++
+ def import_data_path(backup_file, target_data_path, progress_cb=None):
+     """Import a .jkbackup file into a target data path.
+     
+@@ -350,3 +553,633 @@ def import_data_path(backup_file, target_data_path, progress_cb=None):
+         return False, f"Import failed: {e}"
+     finally:
+         shutil.rmtree(temp_dir, ignore_errors=True)
++
++
++# ΓöÇΓöÇΓöÇ SELECTIVE RESTORE ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++# Module definitions: which tables belong to which group.
++# Each group is a list of table names to merge.
++# NOTE: All data lives in the single company database (build_logical_name).
++
++#: Tables belonging to the Catalog Bundle (Final Data + Catalog + CRM).
++#: These MUST always be restored together ΓÇö never independently.
++CATALOG_BUNDLE_TABLES = [
++    # Final Data
++    "catalog",
++    # Catalog
++    "catalog_pages",
++    "subgroup_display_order",
++    "page_snapshots",
++    "build_config",
++    # CRM
++    "crm_names",
++    "report_data",
++    # Build history (part of catalog meta)
++    "build_history",
++]
++
++#: Tables belonging to Supplier Payment (can be restored independently).
++SUPP_PAYMENT_TABLES = [
++    "payment_sheet_data",
++    "supplier_records",
++    "supplier_accounts",
++    "anil_ledger",
++    "anil_settings",
++    "tp_sections",
++    "tp_section_cols",
++    "tp_section_data",
++    "bonus_data",
++    "team_list_data",
++    "ins_human",
++    "ins_vehicle",
++    "ins_stock"
++]
++
++GODOWN_TABLES = [
++  "stock",
++  "stock_items"
++]
++
++CHEQUE_LIST_TABLES = [
++  "cheques",
++  "bank_list",
++  "row_ledger_data"
++]
++
++# Modules exposed to the UI
++SELECTABLE_MODULES = {
++    "catalog_bundle": {
++        "label": "Catalog Bundle (Final Data + Catalog + CRM)",
++        "tables": CATALOG_BUNDLE_TABLES,
++        "requires": [],          # no hard prerequisites
++    },
++    "supp_payment": {
++        "label": "Supplier Payment",
++        "tables": SUPP_PAYMENT_TABLES,
++        "requires": [],
++    },
++}
++
++
++def list_companies_in_backup(backup_file):
++    """Read the manifest from a .jkbackup without restoring anything.
++
++    Returns:
++        tuple: (manifest dict, error string)
++               On success error string is empty. On failure manifest is None.
++    """
++    try:
++        with zipfile.ZipFile(backup_file, 'r') as zf:
++            if "manifest.json" not in zf.namelist():
++                return None, "Invalid backup: manifest.json not found"
++            with zf.open("manifest.json") as f:
++                manifest = json.load(f)
++        return manifest, ""
++    except zipfile.BadZipFile:
++        return None, "Not a valid .jkbackup file"
++    except Exception as e:
++        return None, str(e)
++
++
++def selective_restore_company(backup_file, target_data_path, company_folder_name,
++                               modules, progress_cb=None):
++    """Selectively restore chosen modules for one company from a full .jkbackup.
++
++    Strategy:
++        1. Extract the company's .bak from the zip into a temp directory.
++        2. RESTORE it as a temporary DB (JK_TempRestore_<uuid>).
++        3. For each selected module, validate cross-references, then
++           DELETE existing rows from the live DB and INSERT from the temp DB
++           inside a single transaction on the live DB.
++        4. Drop the temp DB and clean up the temp directory.
++
++    The live DB is never touched until the transaction commits, so a failure
++    at any point leaves the live data completely intact.
++
++    Args:
++        backup_file:         Path to the .jkbackup file.
++        target_data_path:    The current live data path folder.
++        company_folder_name: The folder name of the company (e.g. "HW Divison 082083").
++        modules:             List of module keys to restore, e.g. ["catalog_bundle"].
++                             For "supp_payment", you may also pass
++                             {"supp_payment": ["Sheet1", "Sheet2"]} to filter sheets.
++        progress_cb:         Optional callback(step_text, current, total).
++
++    Returns:
++        tuple: (success: bool, message: str)
++    """
++    import uuid
++    import time
++
++    target_data_path = os.path.normpath(os.path.abspath(target_data_path))
++    db = get_db_manager()
++
++    def emit(text, cur=0, tot=1):
++        if progress_cb:
++            progress_cb(text, cur, tot)
++
++    emit("Reading backup manifest...", 0, 10)
++
++    # ΓöÇΓöÇ 1. Read manifest ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++    manifest, err = list_companies_in_backup(backup_file)
++    if not manifest:
++        return False, f"Cannot read backup: {err}"
++
++    # Find the company_db entry in the manifest
++    company_db_entry = None
++    for entry in manifest.get("company_databases", []):
++        if entry["folder_name"] == company_folder_name:
++            company_db_entry = entry
++            break
++    if not company_db_entry:
++        return False, f"Company '{company_folder_name}' not found in backup."
++
++    bak_filename = company_db_entry["bak_file"]
++
++    # ΓöÇΓöÇ 2. Extract the single .bak to a temp directory ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++    emit("Extracting backup file...", 1, 10)
++    company_path = os.path.join(target_data_path, company_folder_name)
++    temp_dir = tempfile.mkdtemp(prefix=".jk_selrestore_", dir=target_data_path)
++    db._grant_sql_server_permissions(temp_dir)
++
++    try:
++        with zipfile.ZipFile(backup_file, 'r') as zf:
++            # Zip-slip guard
++            for member in zf.namelist():
++                target = os.path.abspath(os.path.join(temp_dir, member))
++                if not target.startswith(os.path.abspath(temp_dir)):
++                    return False, "Invalid backup: path traversal detected."
++
++            # Only extract the specific .bak we need (and manifest)
++            for member in zf.namelist():
++                if member in (bak_filename, "manifest.json"):
++                    zf.extract(member, temp_dir)
++
++        bak_path = os.path.join(temp_dir, bak_filename)
++        if not os.path.exists(bak_path):
++            return False, f"Backup file for '{company_folder_name}' not found inside archive."
++
++        # ΓöÇΓöÇ 3. RESTORE to a temporary database ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        temp_db_name = f"JK_TempRestore_{uuid.uuid4().hex[:12]}"
++        emit(f"Restoring backup to temporary database...", 2, 10)
++
++        if not db.restore_database(temp_db_name, bak_path, temp_dir):
++            return False, "Failed to restore backup to temporary database."
++
++        emit("Temporary database ready. Validating data...", 3, 10)
++
++        # ΓöÇΓöÇ 4. Determine the live DB logical name ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        live_db_name = build_logical_name(
++            company_folder_name, company_path=company_path
++        )
++
++        live_conn = db.get_connection(live_db_name)
++        if not live_conn:
++            return False, f"Cannot connect to live database '{live_db_name}'."
++
++        # ΓöÇΓöÇ 5. Validate cross-references (read from temp DB only) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        if "catalog_bundle" in modules:
++            emit("Validating Catalog Bundle references...", 4, 10)
++            validation_ok, validation_msg = _validate_catalog_bundle(db, temp_db_name)
++            if not validation_ok:
++                return False, f"Backup validation failed: {validation_msg}"
++
++        # ΓöÇΓöÇ 6. Merge selected modules inside one transaction on live DB ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        emit("Merging data into live database...", 5, 10)
++        cursor = live_conn.cursor()
++
++        try:
++            # Normalize modules parameter: can be list of strings or dict {key: sheet_list}
++            module_keys = []
++            sheet_filter = None   # None means all sheets
++            if isinstance(modules, dict):
++                module_keys = list(modules.keys())
++                if "supp_payment" in modules and isinstance(modules["supp_payment"], list):
++                    sheet_filter = modules["supp_payment"]
++            else:
++                module_keys = list(modules)
++
++            for mod_key in module_keys:
++                if mod_key == "catalog_bundle":
++                    _merge_catalog_bundle(cursor, live_db_name, temp_db_name)
++                elif mod_key == "supp_payment":
++                    _merge_supp_payment(cursor, live_db_name, temp_db_name, sheet_filter)
++                elif mod_key == "godown":
++                    _merge_simple_module(cursor, live_db_name, temp_db_name, GODOWN_TABLES)
++                elif mod_key == "cheque_list":
++                    _merge_simple_module(cursor, live_db_name, temp_db_name, CHEQUE_LIST_TABLES)
++
++            live_conn.commit()
++            logger.info(
++                f"[SelectiveRestore] Committed modules {module_keys} "
++                f"for '{company_folder_name}'"
++            )
++
++        except Exception as e:
++            try:
++                live_conn.rollback()
++            except Exception:
++                pass
++            logger.error(f"[SelectiveRestore] Merge failed, rolled back: {e}", exc_info=True)
++            return False, f"Restore failed during merge (live data untouched): {e}"
++
++        # ΓöÇΓöÇ 7. Sync filesystem files for Catalog Bundle (images etc.) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        if "catalog_bundle" in module_keys:
++            emit("Syncing catalog image files...", 8, 10)
++            _sync_catalog_files(backup_file, company_folder_name, company_path, temp_dir)
++
++        emit("Done!", 10, 10)
++        return True, f"Selective restore complete for '{company_folder_name}'."
++
++    except Exception as e:
++        logger.error(f"selective_restore_company failed: {e}", exc_info=True)
++        return False, f"Selective restore failed: {e}"
++    finally:
++        # Always drop temp DB and clean up temp dir
++        try:
++            db.close_connection(temp_db_name)
++            db.drop_database(temp_db_name)
++        except Exception:
++            pass
++        shutil.rmtree(temp_dir, ignore_errors=True)
++
++
++# ΓöÇΓöÇΓöÇ INTERNAL HELPERS ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++def _validate_catalog_bundle(db, temp_db_name):
++    """Validate internal consistency of the Catalog Bundle in the temp DB.
++
++    Checks:
++      1. Every GUID referenced in catalog_pages exists in the catalog table.
++      2. Every serial_no in report_data exists in catalog_pages.
++
++    Returns:
++        (True, "") on success, or (False, reason) on failure.
++    """
++    try:
++        temp_conn = db.get_connection(temp_db_name)
++        if not temp_conn:
++            return False, "Cannot connect to temporary database for validation."
++
++        # Check 1: catalog_pages ΓåÆ catalog (GUID cross-reference)
++        # catalog_pages.product_list contains JSON arrays of GUIDs.
++        # We skip this deep check here (it's a JSON parse) but verify the tables exist.
++        temp_tables = db.get_all_tables(temp_db_name)
++
++        has_catalog = "catalog" in temp_tables
++        has_pages = "catalog_pages" in temp_tables
++        has_crm = "report_data" in temp_tables
++
++        if not has_catalog:
++            return False, "Backup is missing the 'catalog' (Final Data) table."
++        if not has_pages:
++            return False, "Backup is missing the 'catalog_pages' (Catalog) table."
++
++        # Check 2: report_data serial_no ΓåÆ catalog_pages serial_no
++        if has_crm:
++            cursor = temp_conn.cursor()
++            cursor.execute("""
++                SELECT COUNT(*) FROM report_data rd
++                WHERE NOT EXISTS (
++                    SELECT 1 FROM catalog_pages cp
++                    WHERE CAST(cp.serial_no AS NVARCHAR) = rd.serial_no
++                )
++            """)
++            dangling = cursor.fetchone()[0]
++            if dangling > 0:
++                return (
++                    False,
++                    f"{dangling} CRM report entries reference pages that no longer "
++                    f"exist in the backup's Catalog. The backup may be internally inconsistent."
++                )
++
++        return True, ""
++
++    except Exception as e:
++        logger.warning(f"[SelectiveRestore] Validation error (non-fatal): {e}")
++        # Don't block a valid restore due to a validation query error.
++        return True, ""
++
++
++def _merge_catalog_bundle(cursor, live_db_name, temp_db_name):
++    """Delete existing Catalog Bundle rows in live DB and insert from temp DB.
++
++    Uses linked-server-style four-part name syntax:
++        INSERT INTO [live_db].[dbo].[table]
++        SELECT * FROM [temp_db].[dbo].[table]
++    This is a pure server-side operation ΓÇö no Python-level row iteration.
++    """
++    for table in CATALOG_BUNDLE_TABLES:
++        _, temp_b = _safe_ident(temp_db_name)
++        _, tbl_b = _safe_ident(table)
++        # Only merge tables that actually exist in the temp DB
++        cursor.execute(
++            f"SELECT TABLE_SCHEMA FROM [{temp_b}].INFORMATION_SCHEMA.TABLES "
++            "WHERE TABLE_NAME = ?",
++            (table,)
++        )
++        row = cursor.fetchone()
++        if not row:
++            logger.info(f"[SelectiveRestore] Skipping '{table}' ΓÇö not in backup.")
++            continue
++        temp_schema = row[0]
++        _, temp_s = _safe_ident(temp_schema)
++
++        _, live_b = _safe_ident(live_db_name)
++        cursor.execute(
++            f"SELECT COUNT(*) FROM [{live_b}].INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = ?",
++            (table,)
++        )
++        live_exists = cursor.fetchone()[0] > 0
++
++        if not live_exists:
++            # Create and populate missing table
++            cursor.execute(f"SELECT * INTO [{live_b}].[dbo].[{tbl_b}] FROM [{temp_b}].[{temp_s}].[{tbl_b}]")
++            logger.info(f"[SelectiveRestore] Cloned missing table '{table}' from temp DB.")
++
++            pk_col = MISSING_TABLE_PKS.get(table)
++            if pk_col:
++                try:
++                    cursor.execute(f"ALTER TABLE [{live_b}].[dbo].[{tbl_b}] ADD PRIMARY KEY ({pk_col})")
++                    logger.info(f"[SelectiveRestore] Reconstructed Primary Key on '{table}' ({pk_col}).")
++                except Exception as e:
++                    logger.warning(f"[SelectiveRestore] Failed to reconstruct PK on '{table}': {e}")
++            continue
++
++        cols = _get_common_columns(cursor, live_db_name, temp_db_name, table)
++        if not cols:
++            logger.warning(f"[SelectiveRestore] Cannot determine columns for '{table}', skipping.")
++            continue
++
++        col_list = ", ".join(f"[{c}]" for c in cols)
++
++        # DELETE then INSERT (inside the outer transaction) ΓÇö preserve original IDs
++        _replace_table_preserving_ids(
++            cursor, live_db_name, live_b, temp_b, temp_s, tbl_b, col_list, table
++        )
++        logger.info(f"[SelectiveRestore] Inserted '{table}' from temp DB to live DB.")
++
++
++def _merge_supp_payment(cursor, live_db_name, temp_db_name, sheet_filter=None):
++    """Merge Supplier Payment tables from temp DB to live DB.
++
++    If sheet_filter is a list of sheet_key strings, only those sheets are
++    restored in payment_sheet_data. All other Supplier Payment tables
++    (supplier_records, supplier_accounts, anil_ledger, etc.) are always
++    fully replaced when this module is selected.
++
++    Args:
++        sheet_filter: None = restore all sheets; list = restore only those sheet keys.
++    """
++    _, live_b = _safe_ident(live_db_name)
++    _, temp_b = _safe_ident(temp_db_name)
++
++    for table in SUPP_PAYMENT_TABLES:
++        cursor.execute(
++            f"SELECT TABLE_SCHEMA FROM [{temp_b}].INFORMATION_SCHEMA.TABLES "
++            "WHERE TABLE_NAME = ?",
++            (table,)
++        )
++        row = cursor.fetchone()
++        if not row:
++            logger.info(f"[SelectiveRestore] Skipping '{table}' ΓÇö not in backup.")
++            continue
++        temp_schema = row[0]
++        _, temp_s = _safe_ident(temp_schema)
++
++        _, tbl_b = _safe_ident(table)
++        _, live_b = _safe_ident(live_db_name)
++
++        cursor.execute(
++            f"SELECT COUNT(*) FROM [{live_b}].INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = ?",
++            (table,)
++        )
++        live_exists = cursor.fetchone()[0] > 0
++
++        if not live_exists:
++            if table == "payment_sheet_data" and sheet_filter is not None:
++                safe_keys = [k.replace("'", "''") for k in sheet_filter]
++                keys_str = ", ".join(f"'{k}'" for k in safe_keys)
++                if not keys_str:
++                    keys_str = "''"  # Fallback if empty list (though shouldn't happen)
++                cursor.execute(
++                    f"SELECT * INTO [{live_b}].[dbo].[{tbl_b}] FROM [{temp_b}].[{temp_s}].[{tbl_b}] "
++                    f"WHERE sheet_key IN ({keys_str})"
++                )
++                logger.info(f"[SelectiveRestore] Cloned missing table '{table}' with {len(sheet_filter)} sheets.")
++            else:
++                cursor.execute(f"SELECT * INTO [{live_b}].[dbo].[{tbl_b}] FROM [{temp_b}].[{temp_s}].[{tbl_b}]")
++                logger.info(f"[SelectiveRestore] Cloned missing table '{table}' from temp DB.")
++            
++            pk_col = MISSING_TABLE_PKS.get(table)
++            if pk_col:
++                try:
++                    cursor.execute(f"ALTER TABLE [{live_b}].[dbo].[{tbl_b}] ADD PRIMARY KEY ({pk_col})")
++                    logger.info(f"[SelectiveRestore] Reconstructed Primary Key on '{table}' ({pk_col}).")
++                except Exception as e:
++                    logger.warning(f"[SelectiveRestore] Failed to reconstruct PK on '{table}': {e}")
++            continue
++
++        # Get non-identity columns that exist in both DBs for safe insert
++        cols = _get_common_columns(cursor, live_db_name, temp_db_name, table)
++        if not cols:
++            continue
++
++        col_list = ", ".join(f"[{c}]" for c in cols)
++
++        if table == "payment_sheet_data" and sheet_filter is not None:
++            # Partial restore: only delete and re-insert the selected sheets
++            for sheet_key in sheet_filter:
++                safe_key = sheet_key.replace("'", "''")
++                cursor.execute(
++                    f"DELETE FROM [{live_b}].[dbo].[{tbl_b}] "
++                    f"WHERE sheet_key = '{safe_key}'"
++                )
++                cursor.execute(
++                    f"INSERT INTO [{live_b}].[dbo].[{tbl_b}] ({col_list}) "
++                    f"SELECT {col_list} FROM [{temp_b}].[{temp_s}].[{tbl_b}] "
++                    f"WHERE sheet_key = '{safe_key}'"
++                )
++                logger.info(
++                    f"[SelectiveRestore] Restored payment sheet '{sheet_key}'."
++                )
++        else:
++            # Full table replace ΓÇö preserve original IDs
++            _replace_table_preserving_ids(
++                cursor, live_db_name, live_b, temp_b, temp_s, tbl_b, col_list, table
++            )
++            logger.info(
++                f"[SelectiveRestore] Replaced '{table}' from temp DB."
++            )
++
++
++def _sync_catalog_files(backup_file, company_folder_name, company_path, temp_dir):
++    """Extract and overwrite company folder files (images, config) from the backup.
++
++    Only touches non-database files (excludes .mdf / .ldf).
++    This is called AFTER the SQL transaction has committed successfully.
++    """
++    try:
++        with zipfile.ZipFile(backup_file, 'r') as zf:
++            prefix = f"folders/{company_folder_name}/"
++            members = [m for m in zf.namelist() if m.startswith(prefix)]
++            for member in members:
++                # Zip-slip guard
++                target = os.path.abspath(os.path.join(temp_dir, member))
++                if not target.startswith(os.path.abspath(temp_dir)):
++                    continue
++                zf.extract(member, temp_dir)
++
++        src_folder = os.path.join(temp_dir, "folders", company_folder_name)
++        if os.path.isdir(src_folder):
++            for item in os.listdir(src_folder):
++                src_item = os.path.join(src_folder, item)
++                dst_item = os.path.join(company_path, item)
++                try:
++                    if os.path.isfile(src_item):
++                        shutil.copy2(src_item, dst_item)
++                    elif os.path.isdir(src_item):
++                        shutil.copytree(src_item, dst_item, dirs_exist_ok=True)
++                except Exception as e:
++                    logger.warning(f"[SelectiveRestore] Could not sync file '{item}': {e}")
++    except Exception as e:
++        logger.warning(f"[SelectiveRestore] File sync failed (non-fatal): {e}")
++
++
++def _merge_simple_module(cursor, live_db_name, temp_db_name, tables_list):
++    """Delete existing rows in live DB and insert from temp DB for simple tables.
++    
++    Used for Godown and Cheque List.
++    """
++    _, live_b = _safe_ident(live_db_name)
++    _, temp_b = _safe_ident(temp_db_name)
++
++    for table in tables_list:
++        cursor.execute(
++            f"SELECT TABLE_SCHEMA FROM [{temp_b}].INFORMATION_SCHEMA.TABLES "
++            "WHERE TABLE_NAME = ?",
++            (table,)
++        )
++        row = cursor.fetchone()
++        if not row:
++            logger.info(f"[SelectiveRestore] Skipping '{table}' ΓÇö not in backup.")
++            continue
++        temp_schema = row[0]
++        _, temp_s = _safe_ident(temp_schema)
++
++        _, tbl_b = _safe_ident(table)
++        
++        cursor.execute(
++            f"SELECT COUNT(*) FROM [{live_b}].INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = ?",
++            (table,)
++        )
++        live_exists = cursor.fetchone()[0] > 0
++
++        if not live_exists:
++            cursor.execute(f"SELECT * INTO [{live_b}].[dbo].[{tbl_b}] FROM [{temp_b}].[{temp_s}].[{tbl_b}]")
++            logger.info(f"[SelectiveRestore] Cloned missing table '{table}' from temp DB.")
++
++            pk_col = MISSING_TABLE_PKS.get(table)
++            if pk_col:
++                try:
++                    cursor.execute(f"ALTER TABLE [{live_b}].[dbo].[{tbl_b}] ADD PRIMARY KEY ({pk_col})")
++                    logger.info(f"[SelectiveRestore] Reconstructed Primary Key on '{table}' ({pk_col}).")
++                except Exception as e:
++                    logger.warning(f"[SelectiveRestore] Failed to reconstruct PK on '{table}': {e}")
++            continue
++
++        # Get non-identity columns that exist in both DBs for safe insert
++        cols = _get_common_columns(cursor, live_db_name, temp_db_name, table)
++        if not cols:
++            continue
++
++        col_list = ", ".join(f"[{c}]" for c in cols)
++
++        _replace_table_preserving_ids(
++            cursor, live_db_name, live_b, temp_b, temp_s, tbl_b, col_list, table
++        )
++        logger.info(f"[SelectiveRestore] Replaced '{table}' from temp DB.")
++
++def _replace_table_preserving_ids(cursor, live_db_name, live_b, temp_b, temp_s, tbl_b, col_list, table):
++    """Delete all rows from live table and re-insert from temp, preserving identity IDs.
++
++    Uses SET IDENTITY_INSERT ON so original primary key values are kept intact.
++    This is critical for tables with FK relationships (e.g. supplier_records /
++    supplier_accounts) where losing the original IDs breaks the join.
++    """
++    # Check if the table has an identity column in the live DB
++    cursor.execute(
++        f"""
++        SELECT COUNT(*) FROM [{live_b}].INFORMATION_SCHEMA.COLUMNS
++        WHERE TABLE_NAME = ?
++          AND COLUMNPROPERTY(
++              OBJECT_ID(QUOTENAME(?)+'.[dbo].'+QUOTENAME(?)),
++              COLUMN_NAME, 'IsIdentity'
++          ) = 1
++        """,
++        (table, live_db_name, table)
++    )
++    has_identity = cursor.fetchone()[0] > 0
++
++    # Get ALL columns (including identity) from temp, intersected with live
++    cursor.execute(
++        f"""
++        SELECT COLUMN_NAME FROM [{live_b}].INFORMATION_SCHEMA.COLUMNS
++        WHERE TABLE_NAME = ?
++        INTERSECT
++        SELECT COLUMN_NAME FROM [{temp_b}].INFORMATION_SCHEMA.COLUMNS
++        WHERE TABLE_NAME = ?
++        """,
++        (table, table)
++    )
++    all_cols = [r[0] for r in cursor.fetchall()]
++    full_col_list = ", ".join(f"[{c}]" for c in all_cols)
++
++    cursor.execute(f"DELETE FROM [{live_b}].[dbo].[{tbl_b}]")
++
++    if has_identity:
++        cursor.execute(f"SET IDENTITY_INSERT [{live_b}].[dbo].[{tbl_b}] ON")
++        try:
++            cursor.execute(
++                f"INSERT INTO [{live_b}].[dbo].[{tbl_b}] ({full_col_list}) "
++                f"SELECT {full_col_list} FROM [{temp_b}].[{temp_s}].[{tbl_b}]"
++            )
++        finally:
++            cursor.execute(f"SET IDENTITY_INSERT [{live_b}].[dbo].[{tbl_b}] OFF")
++    else:
++        cursor.execute(
++            f"INSERT INTO [{live_b}].[dbo].[{tbl_b}] ({col_list}) "
++            f"SELECT {col_list} FROM [{temp_b}].[{temp_s}].[{tbl_b}]"
++        )
++
++
++def _get_common_columns(cursor, live_db_name, temp_db_name, table):
++    """Get non-identity columns that exist in BOTH the live DB and temp DB.
++    
++    This protects against schema mismatches when restoring older backups 
++    into a newer application version with added columns.
++    """
++    _, live_b = _safe_ident(live_db_name)
++    _, temp_b = _safe_ident(temp_db_name)
++
++    cursor.execute(
++        f"""
++        SELECT COLUMN_NAME FROM [{live_b}].INFORMATION_SCHEMA.COLUMNS 
++        WHERE TABLE_NAME = ? 
++          AND COLUMNPROPERTY(OBJECT_ID(QUOTENAME(?)+'.[dbo].'+QUOTENAME(?)), COLUMN_NAME, 'IsIdentity') = 0
++        INTERSECT
++        SELECT COLUMN_NAME FROM [{temp_b}].INFORMATION_SCHEMA.COLUMNS 
++        WHERE TABLE_NAME = ?
++        """,
++        (table, live_db_name, table, table)
++    )
++    cols = [r[0] for r in cursor.fetchall()]
++    return cols
++
++
++def _safe_ident(name):
++    """Minimal safe identifier for four-part SQL names (no special chars expected)."""
++    safe_q = name.replace("'", "''")
++    safe_b = name.replace("]", "]]")
++    return safe_q, safe_b
++
+diff --git a/src/ui/final_data.py b/src/ui/final_data.py
+index 89eef89..3b2253b 100644
+--- a/src/ui/final_data.py
++++ b/src/ui/final_data.py
+@@ -237,6 +237,9 @@ class FinalDataUI(ExcelTableMixin, QWidget):
+         company_name = os.path.basename(path)
+         self.final_db_name = build_logical_name(company_name, company_path=path)
+         self.row_data_db_name = build_logical_name(company_name, company_path=path)
++        # Reset sync label so refresh_table always re-reads it from THIS company's DB.
++        # Without this, the previous company's sync time is shown until a new sync runs.
++        self.sync_lbl.setText("Last Sync: N/A")
+         # Clear image-map cache so a fresh fingerprint is built for the new company.
+         # Without this, stale fingerprints from the previous session/company would
+         # prevent the auto-sync from detecting folder changes on first tab-switch.
+diff --git a/src/ui/godown_list.py b/src/ui/godown_list.py
+index 47ded60..1a83c54 100644
+--- a/src/ui/godown_list.py
++++ b/src/ui/godown_list.py
+@@ -65,6 +65,33 @@ def _apply_part_no_override(item_name: str, current_part_no: str) -> str:
+ 
+ 
+ 
++class _GodownTable(QTableWidget):
++    """QTableWidget subclass for the Godown list.
++
++    Overrides closeEditor so that losing focus to an external window (Alt+Tab,
++    clicking another application, minimizing, etc.) does NOT cancel the active
++    cell editor.  Editing only finishes on an intentional user action such as
++    Enter, Tab, or Escape.
++
++    Qt calls closeEditor with EndEditHint.NoHint when it decides to dismiss the
++    editor due to a window-level focus-out event.  We intercept that specific
++    case and simply restore the edit triggers instead of actually closing the
++    editor, which keeps the typed text intact.
++    """
++    def closeEditor(self, editor, hint):
++        from PyQt6.QtWidgets import QAbstractItemDelegate
++        if hint == QAbstractItemDelegate.EndEditHint.NoHint:
++            # Focus lost to external window ΓÇö do NOT cancel the editor.
++            # Just re-enable edit triggers so the table stays in a consistent
++            # state (they were disabled by _nav_set_current prior to commit).
++            self.setEditTriggers(
++                QAbstractItemView.EditTrigger.DoubleClicked |
++                QAbstractItemView.EditTrigger.AnyKeyPressed |
++                QAbstractItemView.EditTrigger.EditKeyPressed
++            )
++            return  # ΓåÉ keep editor alive
++        super().closeEditor(editor, hint)
++
+ 
+ class _GodownDelegate(UniversalCellDelegate):
+     """UniversalCellDelegate subclass for the Godown List.
+@@ -296,7 +323,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
+         top.addStretch()
+         layout.addLayout(top)
+ 
+-        self.table = QTableWidget(200, 7)
++        self.table = _GodownTable(200, 7)
+         self.table.setHorizontalHeaderLabels([
+             "αñ╕αñ╛αñ«αñ╛αñ¿αñòαÑï αñ¿αñ╛αñ«", "αñ¬αÑìαñ░αññαñ┐ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿", "UNIT",
+             "αñ£αñ«αÑìαñ«αñ╛ αñòαñ╛αñ░αÑìαñƒαÑüαñ¿", "αñùαÑïαñªαñ╛αñ«", "Part No", "CN"
+@@ -555,10 +582,11 @@ class GodownListUI(ExcelTableMixin, QWidget):
+                     try:
+                         if int(text) in _EXCLUDED_CNS:
+                             item.setText(self._pre_cn)
+-                            QMessageBox.warning(
++                            _reserved_text = text  # capture for deferred dialog
++                            QTimer.singleShot(0, lambda t=_reserved_text: QMessageBox.warning(
+                                 self, "Invalid CN",
+-                                f"CN {text} is reserved and cannot be assigned."
+-                            )
++                                f"CN {t} is reserved and cannot be assigned."
++                            ))
+                             _cn_rejected = True
+                     except ValueError:
+                         pass
+@@ -574,10 +602,15 @@ class GodownListUI(ExcelTableMixin, QWidget):
+                                 if other_name and other_name.text().strip():
+                                     # Target CN belongs to a named row ΓÇö reject, revert to old CN
+                                     item.setText(self._pre_cn)
+-                                    QMessageBox.warning(
++                                    # Defer warning: showing a QMessageBox here (while signals are
++                                    # still blocked and deferred editor timers are pending) pumps
++                                    # the Qt event loop and causes "wrapped C/C++ object deleted"
++                                    # crashes when those timers fire into an already-closed editor.
++                                    _dup_text = text  # capture for lambda closure
++                                    QTimer.singleShot(0, lambda t=_dup_text: QMessageBox.warning(
+                                         self, "Cannot Swap",
+-                                        f"CN {text} is assigned to a product.\nYou can only swap with an empty row."
+-                                    )
++                                        f"CN {t} is assigned to a product.\nYou can only swap with an empty row."
++                                    ))
+                                 else:
+                                     # Target is an empty buffer row ΓÇö swap allowed.
+                                     # Only give _pre_cn if it's a real CN; if it's empty
+@@ -821,6 +854,13 @@ class GodownListUI(ExcelTableMixin, QWidget):
+             #   2. Named rows WITH Part No      ΓÇö middle (Part No AΓåÆZ, any CN state)
+             #   3. Empty buffer rows            ΓÇö bottom (CN numerically)
+             all_rows = named_no_partno + named_with_partno + empty_rows
++
++            # Clear Jamma Cartoon (col 3) cells that contain exactly "0".
++            # "0" is never a meaningful quantity ΓÇö it was either mis-typed or
++            # left over from a default.  Non-zero values are left untouched.
++            for rd in all_rows:
++                if rd[3].strip() == "0":
++                    rd[3] = ""
+             total_needed = max(200, len(named_rows) + 50)  # always 50+ buffer rows
+             if self.table.rowCount() < total_needed:
+                 self.table.setRowCount(total_needed)
+diff --git a/src/ui/main_window.py b/src/ui/main_window.py
+index b87c533..c9bd478 100644
+--- a/src/ui/main_window.py
++++ b/src/ui/main_window.py
+@@ -103,6 +103,35 @@ class _ExportWorker(QThread):
+             else:
+                 self.finished.emit(False, str(e))
+ 
++
++class _CompanyExportWorker(QThread):
++    """Worker thread for single-company backup."""
++    progress = pyqtSignal(str, int, int)
++    finished = pyqtSignal(bool, str)
++
++    def __init__(self, company_path, output_file):
++        super().__init__()
++        self.company_path = company_path
++        self.output_file = output_file
++        self.is_cancelled = False
++
++    def run(self):
++        from src.logic.data_transfer import export_single_company
++        def on_progress(text, current, total):
++            if self.is_cancelled:
++                raise Exception("cancelled")
++            self.progress.emit(text, current, total)
++        try:
++            success, msg = export_single_company(
++                self.company_path, self.output_file, on_progress
++            )
++            self.finished.emit(success, msg)
++        except Exception as e:
++            if str(e) == "cancelled":
++                self.finished.emit(False, "Export cancelled by user")
++            else:
++                self.finished.emit(False, str(e))
++
+ class _ImportWorker(QThread):
+     progress = pyqtSignal(str, int, int)
+     finished = pyqtSignal(bool, str)
+@@ -128,6 +157,48 @@ class _ImportWorker(QThread):
+             else:
+                 self.finished.emit(False, str(e))
+ 
++
++class _SelectiveImportWorker(QThread):
++    """Worker thread for selective restore (Temp DB merge approach)."""
++    progress = pyqtSignal(str, int, int)
++    finished = pyqtSignal(bool, str)
++
++    def __init__(self, backup_file, data_path, company_folder, modules):
++        super().__init__()
++        self.backup_file = backup_file
++        self.data_path = data_path
++        self.company_folder = company_folder
++        self.modules = modules  # list or dict
++        self.is_cancelled = False
++
++    def run(self):
++        from src.logic.db_manager import get_db_manager
++        from src.logic.data_transfer import selective_restore_company
++        def on_progress(text, current, total):
++            if self.is_cancelled:
++                raise Exception("cancelled")
++            self.progress.emit(text, current, total)
++        try:
++            success, msg = selective_restore_company(
++                self.backup_file,
++                self.data_path,
++                self.company_folder,
++                self.modules,
++                on_progress,
++            )
++            self.finished.emit(success, msg)
++        except Exception as e:
++            if str(e) == "cancelled":
++                self.finished.emit(False, "Selective restore cancelled")
++            else:
++                self.finished.emit(False, str(e))
++        finally:
++            try:
++                get_db_manager().close_thread_connections()
++            except Exception:
++                pass
++
++
+ class AltKeyFilter(QObject):
+     def __init__(self, main_window):
+         super().__init__()
+@@ -2094,53 +2165,159 @@ class MainWindow(QWidget):
+ 
+ 
+     def handle_export_data(self):
+-        """Export the current data path to a .jkbackup file (RBAC-protected)."""
++        """Backup data ΓÇö prompts for Full Path or Company-only backup (RBAC-protected)."""
+         if not self._check_permission("data.export", "Backup Data"):
+             return
+         if not hasattr(self, 'current_company_path') or not self.current_company_path:
+             QMessageBox.warning(self, "No Company", "No company is currently loaded.")
+             return
+ 
+-        data_path = os.path.dirname(self.current_company_path)
++        company_path = self.current_company_path
++        data_path = os.path.dirname(company_path)
++        company_folder = os.path.basename(company_path)
++
+         if not data_path or not os.path.isdir(data_path):
+             QMessageBox.warning(self, "No Data Path", "Data path not found.")
+             return
+ 
+-        from PyQt6.QtWidgets import QFileDialog
++        # ΓöÇΓöÇ Backup mode picker ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        from PyQt6.QtWidgets import (
++            QDialog, QVBoxLayout, QLabel, QPushButton, QFrame, QFileDialog
++        )
++
++        mode_dlg = QDialog(self)
++        mode_dlg.setWindowTitle("Backup ΓÇö Choose What to Back Up")
++        mode_dlg.setFixedWidth(460)
++        mode_dlg.setModal(True)
++        mode_lay = QVBoxLayout(mode_dlg)
++        mode_lay.setContentsMargins(20, 20, 20, 16)
++        mode_lay.setSpacing(12)
++
++        hdr = QLabel("≡ƒÆ╛  What would you like to back up?")
++        hdr.setStyleSheet("font-size: 15px; font-weight: 700; color: #0f172a;")
++        mode_lay.addWidget(hdr)
++
++        sep = QFrame()
++        sep.setFrameShape(QFrame.Shape.HLine)
++        sep.setStyleSheet("color: #e2e8f0;")
++        mode_lay.addWidget(sep)
++
++        _choice = {"mode": None}
++
++        def _make_card(icon, title, description, color, key):
++            card = QFrame()
++            card.setStyleSheet(
++                f"QFrame {{ background: #ffffff; border: 1.5px solid #e2e8f0; "
++                f"border-radius: 8px; }}"
++                f"QFrame:hover {{ border-color: {color}; }}"
++            )
++            from PyQt6.QtWidgets import QHBoxLayout
++            cl = QVBoxLayout(card)
++            cl.setContentsMargins(14, 10, 14, 10)
++            cl.setSpacing(4)
++            t_lbl = QLabel(f"{icon}  <b>{title}</b>")
++            t_lbl.setStyleSheet(f"font-size: 13px; color: {color};")
++            cl.addWidget(t_lbl)
++            d_lbl = QLabel(description)
++            d_lbl.setWordWrap(True)
++            d_lbl.setStyleSheet("font-size: 11px; color: #64748b;")
++            cl.addWidget(d_lbl)
++            btn = QPushButton(f"  {title}  ")
++            btn.setFixedHeight(30)
++            btn.setStyleSheet(
++                f"QPushButton {{ background: {color}; color: #ffffff; border: none; "
++                f"border-radius: 5px; font-size: 11px; font-weight: 600; padding: 0 14px; }}"
++            )
++            bl = QHBoxLayout()
++            bl.addStretch()
++            bl.addWidget(btn)
++            cl.addLayout(bl)
++            def _pick(_, k=key):
++                _choice["mode"] = k
++                mode_dlg.accept()
++            btn.clicked.connect(_pick)
++            return card
++
++        mode_lay.addWidget(_make_card(
++            "≡ƒÅó", "This Company Only",
++            f"Back up only '{company_folder}'. Faster ΓÇö ideal as a daily safety "
++            "snapshot before making catalog or payment changes.",
++            "#059669", "company"
++        ))
++        mode_lay.addWidget(_make_card(
++            "≡ƒÆ╛", "Full Data Path",
++            "Back up ALL companies in this data path. Use this for machine migration "
++            "or full disaster recovery.",
++            "#1d4ed8", "full"
++        ))
++
++        cancel_btn = QPushButton("Cancel")
++        cancel_btn.setFixedHeight(30)
++        cancel_btn.setStyleSheet(
++            "QPushButton { background: #f1f5f9; color: #374151; border: 1px solid #e2e8f0; "
++            "border-radius: 5px; font-size: 11px; padding: 0 14px; }"
++            "QPushButton:hover { background: #e2e8f0; }"
++        )
++        cancel_btn.clicked.connect(mode_dlg.reject)
++        mode_lay.addWidget(cancel_btn, alignment=Qt.AlignmentFlag.AlignRight)
++
++        if mode_dlg.exec() != QDialog.DialogCode.Accepted:
++            return
++        mode = _choice["mode"]
++
++        # ΓöÇΓöÇ File save dialog ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        import datetime
++        date_str = datetime.date.today().strftime("%Y%m%d")
++        if mode == "company":
++            default_name = f"{company_folder}_{date_str}.jkbackup"
++            title = f"Save Company Backup ΓÇö {company_folder}"
++        else:
++            default_name = f"JK_FullPath_{date_str}.jkbackup"
++            title = "Save Full Data Path Backup"
++
+         output_file, _ = QFileDialog.getSaveFileName(
+-            self, "Backup Data",
+-            os.path.expanduser("~/Desktop/JK_Backup.jkbackup"),
++            self, title,
++            os.path.join(os.path.expanduser("~/Desktop"), default_name),
+             "JK Backup Files (*.jkbackup)"
+         )
+         if not output_file:
+             return
+ 
+-        self._export_progress = QProgressDialog("Starting export...", "Cancel", 0, 100, self)
+-        self._export_progress.setWindowTitle("Exporting Data")
++        # ΓöÇΓöÇ Progress dialog ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        self._export_progress = QProgressDialog("Starting backup...", "Cancel", 0, 100, self)
++        self._export_progress.setWindowTitle(
++            "Backing Up Company" if mode == "company" else "Backing Up Full Path"
++        )
+         self._export_progress.setWindowModality(Qt.WindowModality.WindowModal)
+         self._export_progress.setMinimumDuration(0)
+         self._export_progress.show()
+ 
+-        self._export_worker = _ExportWorker(data_path, output_file)
+-        
++        if mode == "company":
++            self._export_worker = _CompanyExportWorker(company_path, output_file)
++        else:
++            self._export_worker = _ExportWorker(data_path, output_file)
++
+         def update_progress(text, current, total):
+             self._export_progress.setLabelText(text)
+-            self._export_progress.setMaximum(total)
++            self._export_progress.setMaximum(max(total, 1))
+             self._export_progress.setValue(current)
+-            
++
+         def on_cancel():
+             self._export_worker.is_cancelled = True
+-            
++
+         def on_finished(success, msg):
+             self._export_progress.close()
+             if success:
+-                QMessageBox.information(self, "Export Complete", msg)
++                QMessageBox.information(self, "Backup Complete", msg)
+                 if self._security_mgr and self.user_session:
+-                    self._security_mgr.log_action(self.user_session, "data_export",
+-                        module="settings", detail=f"Exported to: {os.path.basename(output_file)}")
++                    self._security_mgr.log_action(
++                        self.user_session, "data_export",
++                        module="settings",
++                        detail=f"[{mode}] Exported to: {os.path.basename(output_file)}"
++                    )
+             else:
+                 if msg != "Export cancelled by user":
+-                    QMessageBox.critical(self, "Export Failed", msg)
++                    QMessageBox.critical(self, "Backup Failed", msg)
+                 else:
+                     QMessageBox.information(self, "Cancelled", msg)
+ 
+@@ -2149,12 +2326,351 @@ class MainWindow(QWidget):
+         self._export_worker.finished.connect(on_finished)
+         self._export_worker.start()
+ 
++
++    # ΓöÇΓöÇΓöÇ SELECTIVE RESTORE DIALOG ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++    def _show_selective_restore_dialog(self, backup_file, manifest):
++        """Show the SelectiveRestoreDialog and run the selective restore worker if confirmed."""
++        from PyQt6.QtWidgets import (
++            QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
++            QGroupBox, QCheckBox, QListWidget, QListWidgetItem,
++            QPushButton, QFrame, QScrollArea, QWidget
++        )
++
++        data_path = os.path.dirname(self.current_company_path) if \
++            hasattr(self, 'current_company_path') and self.current_company_path else ""
++
++        dlg = QDialog(self)
++        dlg.setWindowTitle("Selective Restore ΓÇö Choose What to Restore")
++        dlg.setFixedWidth(520)
++        dlg.setModal(True)
++
++        root = QVBoxLayout(dlg)
++        root.setSpacing(14)
++        root.setContentsMargins(20, 20, 20, 16)
++
++        # ΓöÇΓöÇ Header ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        title_lbl = QLabel("≡ƒÄ»  Selective Restore")
++        title_lbl.setStyleSheet(
++            "font-size: 16px; font-weight: 700; color: #0f172a;"
++        )
++        root.addWidget(title_lbl)
++
++        sub_lbl = QLabel(f"File: <b>{os.path.basename(backup_file)}</b>")
++        sub_lbl.setStyleSheet("color: #475569; font-size: 13px;")
++        root.addWidget(sub_lbl)
++
++        sep = QFrame()
++        sep.setFrameShape(QFrame.Shape.HLine)
++        sep.setStyleSheet("color: #e2e8f0;")
++        root.addWidget(sep)
++
++        # ΓöÇΓöÇ Company picker ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        companies = [c["folder_name"] for c in manifest.get("company_databases", [])]
++        if not companies:
++            from PyQt6.QtWidgets import QMessageBox
++            QMessageBox.warning(self, "No Companies",
++                "No company databases found in this backup file.")
++            dlg.reject()
++            return
++
++        co_box = QGroupBox("Company to Restore Into")
++        co_box.setStyleSheet(
++            "QGroupBox { font-weight: 600; font-size: 12px; color: #1e293b; "
++            "border: 1px solid #e2e8f0; border-radius: 6px; margin-top: 8px; padding-top: 6px; }"
++            "QGroupBox::title { subcontrol-origin: margin; left: 10px; }"
++        )
++        co_lay = QVBoxLayout(co_box)
++        co_combo = QComboBox()
++        co_combo.addItems(companies)
++        # Pre-select current company if it's in the backup
++        current_folder = os.path.basename(self.current_company_path) if \
++            hasattr(self, 'current_company_path') and self.current_company_path else ""
++        if current_folder in companies:
++            co_combo.setCurrentIndex(companies.index(current_folder))
++        co_lay.addWidget(co_combo)
++        root.addWidget(co_box)
++
++        # ΓöÇΓöÇ Module selection ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        mod_box = QGroupBox("Modules to Restore")
++        mod_box.setStyleSheet(co_box.styleSheet())
++        mod_lay = QVBoxLayout(mod_box)
++        mod_lay.setSpacing(6)
++
++        chk_catalog = QCheckBox("≡ƒôü  Catalog, Final Data, CRM & Godown List")
++        chk_catalog.setStyleSheet("font-size: 12px; color: #0f172a; padding: 4px;")
++        chk_catalog.setChecked(True)
++        mod_lay.addWidget(chk_catalog)
++
++        # Supplier Payment + Cheque List + Ledger + sheet sub-selection
++        chk_supp = QCheckBox("≡ƒÆ│  Supplier Payments, Cheque List & Ledgers")
++        chk_supp.setStyleSheet("font-size: 12px; color: #0f172a; padding: 4px;")
++        mod_lay.addWidget(chk_supp)
++
++        # Sheet sub-selection list (shown when chk_supp is checked)
++        sheet_frame = QFrame()
++        sheet_frame.setStyleSheet(
++            "QFrame { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 5px; }"
++        )
++        sheet_lay = QVBoxLayout(sheet_frame)
++        sheet_lay.setContentsMargins(8, 6, 8, 6)
++        sheet_lay.setSpacing(4)
++
++        sheet_hint = QLabel("Select specific sheets, or leave blank to restore all:")
++        sheet_hint.setStyleSheet("color: #64748b; font-size: 11px;")
++        sheet_lay.addWidget(sheet_hint)
++
++        sheet_list = QListWidget()
++        sheet_list.setFixedHeight(120)
++        sheet_list.setStyleSheet(
++            "QListWidget { background: #ffffff; border: 1px solid #e2e8f0; "
++            "border-radius: 4px; font-size: 12px; }"
++            "QListWidget::item { padding: 3px 6px; }"
++            "QListWidget::item:selected { background: #eff6ff; color: #1d4ed8; }"
++        )
++        sheet_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
++        sheet_lay.addWidget(sheet_list)
++
++        all_sheets_lbl = QLabel("(no sheets checked = restore ALL sheets)")
++        all_sheets_lbl.setStyleSheet("color: #94a3b8; font-size: 10px; font-style: italic;")
++        sheet_lay.addWidget(all_sheets_lbl)
++
++        sheet_frame.setVisible(False)
++        mod_lay.addWidget(sheet_frame)
++
++        def _update_warning():
++            msgs = []
++            if not any(cb.isChecked() for cb in (chk_catalog, chk_supp)):
++                msgs.append("ΓÜá  Select at least one module group.")
++            
++            self._warn_lbl.setText("\n".join(msgs))
++            self._warn_lbl.setVisible(bool(msgs))
++
++        def _load_sheet_keys():
++            """Load distinct sheet_key values from the manifest (or live DB fallback) into sheet_list."""
++            sheet_list.clear()
++            folder = co_combo.currentText()
++            if not folder or not data_path:
++                sheet_list.addItem("(no company selected)")
++                sheet_list.item(0).setFlags(Qt.ItemFlag.NoItemFlags)
++                return
++
++            # Try to read payment_sheets from the manifest first (accurate to the backup)
++            company_meta = next((c for c in manifest.get("company_databases", []) 
++                               if c["folder_name"] == folder), None)
++            
++            if company_meta and "payment_sheets" in company_meta:
++                sheets = company_meta["payment_sheets"]
++                if sheets:
++                    for key in sheets:
++                        item = QListWidgetItem(str(key))
++                        sheet_list.addItem(item)
++                    all_sheets_lbl.setText("(Leave blank to restore all sheets)")
++                else:
++                    sheet_list.addItem("(no payment sheets found in backup)")
++                    sheet_list.item(0).setFlags(Qt.ItemFlag.NoItemFlags)
++                    all_sheets_lbl.setText("(Leave blank to restore all empty sheets)")
++                return
++
++            # Fallback for older backups: we cannot read the sheets from the .bak file
++            # without restoring it first. So we just tell the user we will restore everything.
++            sheet_list.addItem("Γ£ô All Payment Sheets will be restored")
++            sheet_list.item(0).setFlags(Qt.ItemFlag.NoItemFlags)
++            all_sheets_lbl.setText("(Older backup: All sheets will be restored)")
++
++        def _toggle_sheet_frame(checked):
++            sheet_frame.setVisible(checked)
++            if checked:
++                _load_sheet_keys()
++
++        # Reload sheet list when the company selection changes (only if panel is visible)
++        co_combo.currentIndexChanged.connect(
++            lambda _: _load_sheet_keys() if sheet_frame.isVisible() else None
++        )
++
++        chk_supp.toggled.connect(_toggle_sheet_frame)
++        chk_catalog.toggled.connect(lambda _: _update_warning())
++        chk_supp.toggled.connect(lambda _: _update_warning())
++        root.addWidget(mod_box)
++
++        # ΓöÇΓöÇ Warning label ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        self._warn_lbl = QLabel()
++        self._warn_lbl.setWordWrap(True)
++        self._warn_lbl.setStyleSheet(
++            "color: #b45309; font-size: 11px; background: #fffbeb; "
++            "border: 1px solid #fcd34d; border-radius: 5px; padding: 6px 10px;"
++        )
++        self._warn_lbl.setVisible(False)
++        root.addWidget(self._warn_lbl)
++
++        _update_warning()
++
++
++        # ΓöÇΓöÇ Buttons ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        btn_row = QHBoxLayout()
++        btn_row.addStretch()
++        btn_cancel = QPushButton("Cancel")
++        btn_cancel.setFixedHeight(34)
++        btn_cancel.setStyleSheet(
++            "QPushButton { background: #f1f5f9; color: #374151; border: 1px solid #e2e8f0; "
++            "border-radius: 6px; padding: 0 18px; font-size: 12px; }"
++            "QPushButton:hover { background: #e2e8f0; }"
++        )
++        btn_cancel.clicked.connect(dlg.reject)
++
++        btn_restore = QPushButton("≡ƒÄ»  Restore Selected")
++        btn_restore.setFixedHeight(34)
++        btn_restore.setDefault(True)
++        btn_restore.setStyleSheet(
++            "QPushButton { background: #2563eb; color: #ffffff; border: none; "
++            "border-radius: 6px; padding: 0 18px; font-size: 12px; font-weight: 600; }"
++            "QPushButton:hover { background: #1d4ed8; }"
++            "QPushButton:pressed { background: #1e40af; }"
++        )
++
++        def _on_restore():
++            if not any(cb.isChecked() for cb in (chk_catalog, chk_supp)):
++                from PyQt6.QtWidgets import QMessageBox
++                QMessageBox.warning(dlg, "Nothing Selected",
++                    "Please select at least one module group to restore.")
++                return
++            dlg.accept()
++
++        btn_restore.clicked.connect(_on_restore)
++        btn_row.addWidget(btn_cancel)
++        btn_row.addWidget(btn_restore)
++        root.addLayout(btn_row)
++
++        if dlg.exec() != QDialog.DialogCode.Accepted:
++            return
++
++        # ΓöÇΓöÇ Build modules parameter ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        company_folder = co_combo.currentText()
++        modules = []
++        if chk_catalog.isChecked():
++            modules.append("catalog_bundle")
++            modules.append("godown")
++        if chk_supp.isChecked():
++            modules.append("cheque_list")
++            # Sheet filtering: if user selected specific items in the list, use them
++            selected_sheets = [
++                sheet_list.item(i).text()
++                for i in range(sheet_list.count())
++                if sheet_list.item(i).isSelected()
++                   and sheet_list.item(i).flags() & Qt.ItemFlag.ItemIsSelectable
++            ]
++            if selected_sheets:
++                # Pass as dict to trigger per-sheet filtering
++                modules_param = {k: (selected_sheets if k == "supp_payment" else [])
++                                 for k in (modules + ["supp_payment"])}
++                modules = modules_param
++            else:
++                modules.append("supp_payment")
++
++        # ΓöÇΓöÇ Confirm ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        mod_labels = []
++        _modules_keys = modules if isinstance(modules, list) else modules.keys()
++        if "catalog_bundle" in _modules_keys:
++            mod_labels.append("Catalog, Final Data & Godown List")
++        if "supp_payment" in _modules_keys:
++            mod_labels.append("Supplier Payments, Cheque List & Ledgers")
++
++        from PyQt6.QtWidgets import QMessageBox
++        reply = QMessageBox.question(
++            self, "Confirm Selective Restore",
++            f"Company:  {company_folder}\n\n"
++            f"Modules:  {', '.join(mod_labels)}\n\n"
++            f"ΓÜá  The selected tables in the live database will be "
++            f"replaced with data from the backup.\n\n"
++            f"Proceed?",
++            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
++        )
++        if reply != QMessageBox.StandardButton.Yes:
++            return
++
++        # ΓöÇΓöÇ Run worker ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        self._sel_import_progress = QProgressDialog(
++            "Starting selective restore...", "Cancel", 0, 10, self
++        )
++        self._sel_import_progress.setWindowTitle("Selective Restore")
++        self._sel_import_progress.setWindowModality(Qt.WindowModality.WindowModal)
++        self._sel_import_progress.setMinimumDuration(0)
++        self._sel_import_progress.show()
++
++        self._sel_import_worker = _SelectiveImportWorker(
++            backup_file, data_path, company_folder, modules
++        )
++
++        def _update_sel_progress(text, current, total):
++            self._sel_import_progress.setLabelText(text)
++            self._sel_import_progress.setMaximum(max(total, 1))
++            self._sel_import_progress.setValue(current)
++
++        def _cancel_sel():
++            self._sel_import_worker.is_cancelled = True
++
++        def _on_sel_finished(success, msg):
++            self._sel_import_progress.close()
++            if success:
++                # ΓöÇΓöÇ Refresh affected UI pages so changes appear immediately ΓöÇΓöÇ
++                _modules_restored = modules if isinstance(modules, list) else list(modules.keys())
++                _company_path = getattr(self, 'current_company_path', None)
++
++                if "supp_payment" in _modules_restored:
++                    if hasattr(self, 'supp_payment_page') and _company_path:
++                        try:
++                            self.supp_payment_page.set_company_path(_company_path)
++                        except Exception as _e:
++                            pass  # non-fatal
++
++                if "godown" in _modules_restored:
++                    if hasattr(self, 'godown_page') and hasattr(self.godown_page, 'load_data_from_db'):
++                        try:
++                            self.godown_page.load_data_from_db()
++                        except Exception:
++                            pass
++
++                if "cheque_list" in _modules_restored:
++                    if hasattr(self, 'cheque_list_page') and hasattr(self.cheque_list_page, 'set_company_path') and _company_path:
++                        try:
++                            self.cheque_list_page.set_company_path(_company_path)
++                        except Exception:
++                            pass
++
++                QMessageBox.information(self, "Selective Restore Complete",
++                    f"{msg}\n\nChanges are live immediately ΓÇö no restart required.")
++                if self._security_mgr and self.user_session:
++                    self._security_mgr.log_action(
++                        self.user_session, "selective_restore",
++                        module="settings",
++                        detail=f"Restored {mod_labels} for '{company_folder}' "
++                               f"from {os.path.basename(backup_file)}"
++                    )
++            else:
++                cancelled_msgs = ("Selective restore cancelled", "cancelled")
++                if any(m in msg for m in cancelled_msgs):
++                    QMessageBox.information(self, "Cancelled", msg)
++                else:
++                    QMessageBox.critical(self, "Selective Restore Failed",
++                        f"{msg}\n\nΓ£à Your live data was NOT modified.")
++
++
++        self._sel_import_worker.progress.connect(_update_sel_progress)
++        self._sel_import_progress.canceled.connect(_cancel_sel)
++        self._sel_import_worker.finished.connect(_on_sel_finished)
++        self._sel_import_worker.start()
++
+     def handle_import_data(self):
+-        """Import data from a .jkbackup file (RBAC-protected)."""
++        """Import data from a .jkbackup file (RBAC-protected).
++
++        Presents two paths:
++          ΓÇó Full System Restore  ΓÇö original behaviour (RESTORE DATABASE into new path)
++          ΓÇó Selective Restore    ΓÇö Temp DB merge; only chosen modules are overwritten
++        """
+         if not self._check_permission("data.import", "Import Data"):
+             return
+ 
+-        from PyQt6.QtWidgets import QFileDialog
++        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+         backup_file, _ = QFileDialog.getOpenFileName(
+             self, "Select Backup File",
+             os.path.expanduser("~/Desktop"),
+@@ -2163,56 +2679,174 @@ class MainWindow(QWidget):
+         if not backup_file:
+             return
+ 
+-        target_path = QFileDialog.getExistingDirectory(
+-            self, "Select Destination Folder for Import"
+-        )
+-        if not target_path:
++        # ΓöÇΓöÇ Read manifest (fast ΓÇö no SQL involved) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        from src.logic.data_transfer import list_companies_in_backup
++        manifest, err = list_companies_in_backup(backup_file)
++        if not manifest:
++            QMessageBox.critical(self, "Invalid Backup File",
++                f"Cannot read backup:\n{err}")
+             return
+ 
+-        reply = QMessageBox.question(
+-            self, "Confirm Import",
+-            f"Import data from:\n  {os.path.basename(backup_file)}\n\n"
+-            f"Into folder:\n  {target_path}\n\n"
+-            f"Continue?",
+-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
++        # ΓöÇΓöÇ Ask user which import mode they want ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame
++        mode_dlg = QDialog(self)
++        mode_dlg.setWindowTitle("Import ΓÇö Choose Restore Mode")
++        mode_dlg.setFixedWidth(480)
++        mode_dlg.setModal(True)
++        mode_lay = QVBoxLayout(mode_dlg)
++        mode_lay.setContentsMargins(20, 20, 20, 16)
++        mode_lay.setSpacing(12)
++
++        hdr = QLabel("≡ƒôÑ  How would you like to import?")
++        hdr.setStyleSheet("font-size: 15px; font-weight: 700; color: #0f172a;")
++        mode_lay.addWidget(hdr)
++
++        file_lbl = QLabel(f"Backup: <b>{os.path.basename(backup_file)}</b>")
++        file_lbl.setStyleSheet("color: #475569; font-size: 12px;")
++        mode_lay.addWidget(file_lbl)
++
++        sep = QFrame()
++        sep.setFrameShape(QFrame.Shape.HLine)
++        sep.setStyleSheet("color: #e2e8f0;")
++        mode_lay.addWidget(sep)
++
++        _mode_result = {"choice": None}
++
++        def _make_mode_card(icon, title, description, color, key):
++            card = QFrame()
++            card.setStyleSheet(
++                f"QFrame {{ background: #ffffff; border: 1.5px solid #e2e8f0; "
++                f"border-radius: 8px; }}"
++                f"QFrame:hover {{ border-color: {color}; }}"
++            )
++            card.setCursor(Qt.CursorShape.PointingHandCursor)
++            cl = QVBoxLayout(card)
++            cl.setContentsMargins(14, 10, 14, 10)
++            cl.setSpacing(4)
++            t_lbl = QLabel(f"{icon}  <b>{title}</b>")
++            t_lbl.setStyleSheet(f"font-size: 13px; color: {color};")
++            cl.addWidget(t_lbl)
++            d_lbl = QLabel(description)
++            d_lbl.setWordWrap(True)
++            d_lbl.setStyleSheet("font-size: 11px; color: #64748b;")
++            cl.addWidget(d_lbl)
++
++            btn = QPushButton(f"  {title}  ")
++            btn.setFixedHeight(30)
++            btn.setStyleSheet(
++                f"QPushButton {{ background: {color}; color: #ffffff; border: none; "
++                f"border-radius: 5px; font-size: 11px; font-weight: 600; padding: 0 14px; }}"
++                f"QPushButton:hover {{ opacity: 0.9; }}"
++            )
++            bl = QHBoxLayout()
++            bl.addStretch()
++            bl.addWidget(btn)
++            cl.addLayout(bl)
++
++            def _pick(_, k=key):
++                _mode_result["choice"] = k
++                mode_dlg.accept()
++            btn.clicked.connect(_pick)
++            return card
++
++        mode_lay.addWidget(_make_mode_card(
++            "≡ƒÆ╛", "Full System Restore",
++            "Restore EVERYTHING into a new folder. Use this when moving to a new PC "
++            "or recovering from a total data loss. Existing data in the target folder "
++            "will be completely replaced.",
++            "#1d4ed8", "full"
++        ))
++        mode_lay.addWidget(_make_mode_card(
++            "≡ƒÄ»", "Selective Restore",
++            "Choose which modules to restore (Catalog Bundle or Supplier Payment) "
++            "into the current company. Only the selected tables are overwritten ΓÇö "
++            "all other live data remains untouched.",
++            "#059669", "selective"
++        ))
++
++        cancel_btn = QPushButton("Cancel")
++        cancel_btn.setFixedHeight(30)
++        cancel_btn.setStyleSheet(
++            "QPushButton { background: #f1f5f9; color: #374151; border: 1px solid #e2e8f0; "
++            "border-radius: 5px; font-size: 11px; padding: 0 14px; }"
++            "QPushButton:hover { background: #e2e8f0; }"
+         )
+-        if reply != QMessageBox.StandardButton.Yes:
++        cancel_btn.clicked.connect(mode_dlg.reject)
++        mode_lay.addWidget(cancel_btn, alignment=Qt.AlignmentFlag.AlignRight)
++
++        if mode_dlg.exec() != QDialog.DialogCode.Accepted:
+             return
++        choice = _mode_result["choice"]
+ 
+-        self._import_progress = QProgressDialog("Starting import...", "Cancel", 0, 100, self)
+-        self._import_progress.setWindowTitle("Importing Data")
+-        self._import_progress.setWindowModality(Qt.WindowModality.WindowModal)
+-        self._import_progress.setMinimumDuration(0)
+-        self._import_progress.show()
++        # ΓöÇΓöÇ FULL SYSTEM RESTORE (original path) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        if choice == "full":
++            target_path = QFileDialog.getExistingDirectory(
++                self, "Select Destination Folder for Full Restore"
++            )
++            if not target_path:
++                return
+ 
+-        self._import_worker = _ImportWorker(backup_file, target_path)
+-        
+-        def update_progress(text, current, total):
+-            self._import_progress.setLabelText(text)
+-            self._import_progress.setMaximum(total)
+-            self._import_progress.setValue(current)
+-            
+-        def on_cancel():
+-            self._import_worker.is_cancelled = True
+-            
+-        def on_finished(success, msg):
+-            self._import_progress.close()
+-            if success:
+-                QMessageBox.information(self, "Import Complete",
+-                    f"{msg}\n\nPlease switch company or restart to use imported data.")
+-                if self._security_mgr and self.user_session:
+-                    self._security_mgr.log_action(self.user_session, "data_import",
+-                        module="settings", detail=f"Imported from: {os.path.basename(backup_file)} to {target_path}")
+-            else:
+-                if msg != "Import cancelled by user":
+-                    QMessageBox.critical(self, "Import Failed", msg)
++            reply = QMessageBox.question(
++                self, "Confirm Full Restore",
++                f"Import data from:\n  {os.path.basename(backup_file)}\n\n"
++                f"Into folder:\n  {target_path}\n\n"
++                f"ΓÜá  All existing data in that folder will be replaced.\n\n"
++                f"Continue?",
++                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
++            )
++            if reply != QMessageBox.StandardButton.Yes:
++                return
++
++            self._import_progress = QProgressDialog(
++                "Starting import...", "Cancel", 0, 100, self
++            )
++            self._import_progress.setWindowTitle("Full System Restore")
++            self._import_progress.setWindowModality(Qt.WindowModality.WindowModal)
++            self._import_progress.setMinimumDuration(0)
++            self._import_progress.show()
++
++            self._import_worker = _ImportWorker(backup_file, target_path)
++
++            def update_progress(text, current, total):
++                self._import_progress.setLabelText(text)
++                self._import_progress.setMaximum(total)
++                self._import_progress.setValue(current)
++
++            def on_cancel():
++                self._import_worker.is_cancelled = True
++
++            def on_finished(success, msg):
++                self._import_progress.close()
++                if success:
++                    QMessageBox.information(self, "Import Complete",
++                        f"{msg}\n\nPlease switch company or restart to use imported data.")
++                    if self._security_mgr and self.user_session:
++                        self._security_mgr.log_action(
++                            self.user_session, "data_import",
++                            module="settings",
++                            detail=f"Full restore from: {os.path.basename(backup_file)} to {target_path}"
++                        )
+                 else:
+-                    QMessageBox.information(self, "Cancelled", msg)
++                    if msg != "Import cancelled by user":
++                        QMessageBox.critical(self, "Import Failed", msg)
++                    else:
++                        QMessageBox.information(self, "Cancelled", msg)
++
++            self._import_worker.progress.connect(update_progress)
++            self._import_progress.canceled.connect(on_cancel)
++            self._import_worker.finished.connect(on_finished)
++            self._import_worker.start()
++
++        # ΓöÇΓöÇ SELECTIVE RESTORE (Temp DB merge) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        elif choice == "selective":
++            if not hasattr(self, 'current_company_path') or not self.current_company_path:
++                QMessageBox.warning(self, "No Company Loaded",
++                    "Please open a company first before using Selective Restore.\n"
++                    "Selective restore works within your current data path.")
++                return
++            self._show_selective_restore_dialog(backup_file, manifest)
++
+ 
+-        self._import_worker.progress.connect(update_progress)
+-        self._import_progress.canceled.connect(on_cancel)
+-        self._import_worker.finished.connect(on_finished)
+-        self._import_worker.start()
+ 
+     def handle_year_end(self):
+         """Open the Year End wizard (permission: settings.year_end).
+diff --git a/src/ui/supp_payment/anil_hisab.py b/src/ui/supp_payment/anil_hisab.py
+index 0f15e85..cc71d51 100644
+--- a/src/ui/supp_payment/anil_hisab.py
++++ b/src/ui/supp_payment/anil_hisab.py
+@@ -270,7 +270,7 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
+         # Settings table for persisting UI state (e.g. start date lock)
+         self._db.ensure_table(
+             self._db_name, "anil_settings",
+-            "CREATE TABLE anil_settings (key NVARCHAR(100) PRIMARY KEY, value NVARCHAR(MAX))"
++            "CREATE TABLE anil_settings ([key] NVARCHAR(100) PRIMARY KEY, value NVARCHAR(MAX))"
+         )
+         try:
+             conn = self._db.get_connection(self._db_name)
+@@ -290,7 +290,7 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
+         try:
+             rows = self._db.execute_query(
+                 self._db_name,
+-                "SELECT value FROM anil_settings WHERE key='start_date_locked'"
++                "SELECT value FROM anil_settings WHERE [key]='start_date_locked'"
+             ) or []
+             if rows:
+                 self._start_date_locked = rows[0][0].strip() == '1'
+@@ -305,9 +305,9 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
+             if conn:
+                 cur = conn.cursor()
+                 cur.execute(
+-                    "IF EXISTS (SELECT 1 FROM anil_settings WHERE key='start_date_locked') "
+-                    "UPDATE anil_settings SET value=? WHERE key='start_date_locked' "
+-                    "ELSE INSERT INTO anil_settings (key,value) VALUES ('start_date_locked',?)",
++                    "IF EXISTS (SELECT 1 FROM anil_settings WHERE [key]='start_date_locked') "
++                    "UPDATE anil_settings SET value=? WHERE [key]='start_date_locked' "
++                    "ELSE INSERT INTO anil_settings ([key],value) VALUES ('start_date_locked',?)",
+                     (val, val)
+                 )
+                 conn.commit()
+diff --git a/src/ui/table_nav_mixin.py b/src/ui/table_nav_mixin.py
+index c355867..15fd993 100644
+--- a/src/ui/table_nav_mixin.py
++++ b/src/ui/table_nav_mixin.py
+@@ -325,8 +325,15 @@ class UniversalCellDelegate(QStyledItemDelegate):
+             # Double-deferred: Qt's QLineEdit.focusInEvent schedules selectAll() via singleShot(0)
+             # AFTER setEditorData returns (editor hasn't gained focus yet).  A nested singleShot
+             # means our deselect runs one tick later, so it always wins.
+-            QTimer.singleShot(0, lambda e=editor: QTimer.singleShot(
+-                0, lambda: (e.deselect(), e.setCursorPosition(len(e.text())))))
++            def _deferred_cursor(e=editor):
++                def _apply():
++                    try:
++                        e.deselect()
++                        e.setCursorPosition(len(e.text()))
++                    except RuntimeError:
++                        pass  # editor already destroyed ΓÇö safe to ignore
++                QTimer.singleShot(0, _apply)
++            QTimer.singleShot(0, _deferred_cursor)
+ 
+         if cell_type == "date" and isinstance(editor, QLineEdit):
+             # Pre-fill with whatever text is currently stored in the cell

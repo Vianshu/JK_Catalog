@@ -1,0 +1,3 @@
+I have all the information I need. Now let me implement Phase 1 (backend) and Phase 2 (UI) together.
+
+**Phase 1 — Backend: Add `list_companies_in_backup` and `selective_restore_company` to `data_transfer.py`**
