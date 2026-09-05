@@ -8,7 +8,10 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QMarginsF, pyqtSignal
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter, QPrintPreviewDialog
 from PyQt6.QtGui import QPainter, QPageSize, QPageLayout
-from src.logic.report_store import load_crm_list, load_report_json, save_report_json
+from src.logic.report_store import (
+    load_crm_list, load_report_json, save_report_json,
+    stamp_print_date, get_last_print_date
+)
 from src.logic.catalog_logic import CatalogLogic
 from src.ui.a4_renderer import A4PageRenderer
 from src.ui.print_export import PrintExportDialog # Import the shared dialog
@@ -146,12 +149,21 @@ class ReportsUI(QWidget):
         # --- Report Table ---
         self.table = QTableWidget()
         self.table.setObjectName("ReportsTable")
-        headers = ["CRM Name", "Pending Pages", "Last Synced Pages"]
+        headers = ["CRM Name", "Pending Pages", "Last Synced Pages", "Print Date"]
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
         
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        # CRM Name — fixed narrow (5-char display)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(0, 65)
+        # Pending Pages — stretch to absorb extra space
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        # Last Synced Pages — stretch
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        # Print Date — fixed narrow (DD/MM HH:MM = 11 chars + padding)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(3, 115)
         
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
@@ -456,6 +468,14 @@ class ReportsUI(QWidget):
         except Exception as audit_err:
             logger.warning(f"update_pages_logic: audit log failed: {audit_err}")
 
+        # Stamp the last-print date so the Print Date column shows the actual
+        # time this user confirmed the job was done (not the report-open time).
+        # This MUST happen before refresh_report_data() so the table reads the new date.
+        try:
+            stamp_print_date(self.get_report_path(), crm_name)
+        except Exception as stamp_err:
+            logger.warning(f"update_pages_logic: stamp_print_date failed: {stamp_err}")
+
         self.refresh_report_data()
 
     def refresh_report_data(self):
@@ -502,6 +522,7 @@ class ReportsUI(QWidget):
             self.table.insertRow(row)
             data = report_db.get(name, {"pending": [], "recent": []})
             
+            # Col 0: CRM Name (truncated display — column is narrow for 5-char names)
             self.table.setItem(row, 0, QTableWidgetItem(name))
             
             p_list = data["pending"]
@@ -509,10 +530,15 @@ class ReportsUI(QWidget):
                 try: p_list.sort(key=lambda x: int(x) if str(x).isdigit() else float('inf'))
                 except Exception as e: p_list.sort()
             
+            # Col 1: Pending Pages
             p_pages = ", ".join(p_list) if p_list else "Completed"
             self.table.setItem(row, 1, QTableWidgetItem(p_pages))
+            # Col 2: Last Synced Pages
             r_pages = ", ".join(data["recent"]) if data["recent"] else "None"
             self.table.setItem(row, 2, QTableWidgetItem(r_pages))
+            # Col 3: Print Date — actual last-print timestamp (blank if never printed)
+            print_date = get_last_print_date(self.get_report_path(), name)
+            self.table.setItem(row, 3, QTableWidgetItem(print_date))
 
     def showEvent(self, event):
         super().showEvent(event)

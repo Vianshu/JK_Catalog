@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 # --- CRM & Report Data Functions (SQL Server via db_manager) ---
 
 from src.logic.db_manager import get_db_manager, build_logical_name
@@ -214,6 +215,82 @@ def save_report_json(data, company_path=""):
     except Exception as e:
         conn.rollback()
         logger.error(f"save_report_json failed: {e}", exc_info=True)
+
+
+
+# ── Print Log ────────────────────────────────────────────────────────────────
+
+def _ensure_print_log_table(db, db_name):
+    """Ensure the crm_print_log table exists (one row per successful print event)."""
+    db.ensure_table(db_name, "crm_print_log", """
+        CREATE TABLE crm_print_log (
+            id       INT IDENTITY(1,1) PRIMARY KEY,
+            crm_name NVARCHAR(255) NOT NULL,
+            print_date DATETIME     NOT NULL DEFAULT GETDATE()
+        )
+    """)
+
+
+def stamp_print_date(company_path, crm_name):
+    """Record a successful print event for *crm_name*.
+
+    Inserts one row into crm_print_log with the current server timestamp.
+    Called by update_pages_logic() only after the user confirms the print was
+    successful — so the stored time is the actual last-print time, never the
+    time the Reports tab was opened.
+    """
+    db_name = _get_catalog_db(company_path)
+    if not db_name:
+        return
+    db = get_db_manager()
+    _ensure_print_log_table(db, db_name)
+    conn = db.get_connection(db_name)
+    if not conn:
+        return
+    try:
+        conn.cursor().execute(
+            "INSERT INTO crm_print_log (crm_name, print_date) VALUES (?, GETDATE())",
+            (crm_name,)
+        )
+        conn.commit()
+        logger.info(f"stamp_print_date: stamped print for CRM '{crm_name}'")
+    except Exception as e:
+        logger.warning(f"stamp_print_date failed for '{crm_name}': {e}")
+
+
+def get_last_print_date(company_path, crm_name):
+    """Return the last print timestamp for *crm_name* as 'DD/MM HH:MM'.
+
+    Returns an empty string if the CRM has never been printed, so the caller
+    can display a clean empty cell without showing incorrect or fake data.
+    """
+    db_name = _get_catalog_db(company_path)
+    if not db_name:
+        return ""
+    db = get_db_manager()
+    _ensure_print_log_table(db, db_name)
+    try:
+        rows = db.execute_query(
+            db_name,
+            "SELECT MAX(print_date) FROM crm_print_log WHERE crm_name = ?",
+            (crm_name,)
+        )
+        if rows and rows[0][0] is not None:
+            val = rows[0][0]
+            # val may be a datetime object or a string depending on the DB driver
+            if isinstance(val, datetime):
+                return val.strftime("%d/%m %H:%M")
+            # Try parsing common SQL Server datetime string formats
+            for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+                try:
+                    return datetime.strptime(str(val)[:19], "%Y-%m-%d %H:%M:%S").strftime("%d/%m %H:%M")
+                except ValueError:
+                    pass
+            # Last resort — return raw truncated value
+            return str(val)[:11]
+    except Exception as e:
+        logger.warning(f"get_last_print_date failed for '{crm_name}': {e}")
+    return ""
 
 
 def add_pages_to_all_crms(page_serial_numbers, company_path):

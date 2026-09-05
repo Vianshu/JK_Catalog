@@ -66,32 +66,8 @@ def _apply_part_no_override(item_name: str, current_part_no: str) -> str:
 
 
 class _GodownTable(QTableWidget):
-    """QTableWidget subclass for the Godown list.
-
-    Overrides closeEditor so that losing focus to an external window (Alt+Tab,
-    clicking another application, minimizing, etc.) does NOT cancel the active
-    cell editor.  Editing only finishes on an intentional user action such as
-    Enter, Tab, or Escape.
-
-    Qt calls closeEditor with EndEditHint.NoHint when it decides to dismiss the
-    editor due to a window-level focus-out event.  We intercept that specific
-    case and simply restore the edit triggers instead of actually closing the
-    editor, which keeps the typed text intact.
-    """
-    def closeEditor(self, editor, hint):
-        from PyQt6.QtWidgets import QAbstractItemDelegate
-        if hint == QAbstractItemDelegate.EndEditHint.NoHint:
-            # Focus lost to external window — do NOT cancel the editor.
-            # Just re-enable edit triggers so the table stays in a consistent
-            # state (they were disabled by _nav_set_current prior to commit).
-            self.setEditTriggers(
-                QAbstractItemView.EditTrigger.DoubleClicked |
-                QAbstractItemView.EditTrigger.AnyKeyPressed |
-                QAbstractItemView.EditTrigger.EditKeyPressed
-            )
-            return  # ← keep editor alive
-        super().closeEditor(editor, hint)
-
+    """QTableWidget subclass for the Godown list."""
+    pass
 
 class _GodownDelegate(UniversalCellDelegate):
     """UniversalCellDelegate subclass for the Godown List.
@@ -101,6 +77,17 @@ class _GodownDelegate(UniversalCellDelegate):
     """
     def eventFilter(self, editor, event):
         from PyQt6.QtCore import QEvent, Qt
+
+        # Clean approach: If the editor loses focus because the whole application window
+        # lost focus (e.g. user Alt-Tabbed to browser), we ignore the FocusOut event.
+        # This prevents Qt's default behaviour (which destroys the editor) and keeps
+        # the editor as the active focus widget internally so when the window reactivates,
+        # the cursor is right where it was.
+        if event.type() == QEvent.Type.FocusOut:
+            if event.reason() == Qt.FocusReason.ActiveWindowFocusReason:
+                return True  # Consume the event to prevent editor destruction
+
+
         if event.type() == QEvent.Type.KeyPress:
             key = event.key()
 
@@ -477,6 +464,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
             self._pre_cn = item.text().strip() if item else ""
             
     def handle_item_changed(self, item):
+        from PyQt6.QtCore import QTimer  # needed by col-1 and col-6 deferred dialogs
         row = item.row()
         col = item.column()
         text = item.text().strip()
@@ -531,7 +519,6 @@ class GodownListUI(ExcelTableMixin, QWidget):
                     val = text.replace(",", "").replace(".", "").replace("-", "")
                     if val and not val.isdigit():
                         # Defer the warning + clear to after blockSignals(False) to avoid crash
-                        from PyQt6.QtCore import QTimer
                         def _warn_and_clear(it=item, tbl=self.table, owner=self):
                             tbl.blockSignals(True)
                             it.setText("")
@@ -808,6 +795,35 @@ class GodownListUI(ExcelTableMixin, QWidget):
                 self.table.blockSignals(False)
         self._fill_all_cn_gaps()
 
+    def _delete_row_if_zero_ctn(self, row):
+        """Delete a named row whose Jamma Carton (col 3) is exactly '0'.
+
+        Called after the col-3 value is committed (either by direct entry or
+        after arithmetic evaluation).  Rules:
+        - Only named rows (col 0 non-empty) are deleted.
+        - Empty buffer rows are left alone (their col 3 is always blank).
+        - After removal the freed CN is redistributed to a buffer row via
+          _reassign_empty_cns(), keeping CNs continuous and orphan-free.
+        - A debounced save is triggered so the DB reflects the deletion.
+        """
+        name_item = self.table.item(row, 0)
+        if not (name_item and name_item.text().strip()):
+            return  # buffer row — skip
+        ctn_item = self.table.item(row, 3)
+        if not (ctn_item and ctn_item.text().strip() == "0"):
+            return  # not zero — skip
+
+        self.table.blockSignals(True)
+        try:
+            self.table.removeRow(row)
+        finally:
+            self.table.blockSignals(False)
+
+        # Recycle the freed CN into the next available buffer slot
+        self._reassign_empty_cns()
+        # Persist the deletion
+        self._save_timer.start()
+
     def manual_save_and_sort(self, silent=False):
         """Save & Sort:
         1. Refresh Part No from stock_items (live DB lookup).
@@ -853,15 +869,16 @@ class GodownListUI(ExcelTableMixin, QWidget):
             #   1. Named rows with NO Part No  — top  (item name A→Z)
             #   2. Named rows WITH Part No      — middle (Part No A→Z, any CN state)
             #   3. Empty buffer rows            — bottom (CN numerically)
-            all_rows = named_no_partno + named_with_partno + empty_rows
+            # Named rows with Jamma Carton = 0 are fully removed (not just blanked)
+            # so they don't clutter the list.
+            all_rows = [
+                rd for rd in named_no_partno + named_with_partno + empty_rows
+                if not (rd[0].strip() and rd[3].strip() == "0")
+            ]
 
-            # Clear Jamma Cartoon (col 3) cells that contain exactly "0".
-            # "0" is never a meaningful quantity — it was either mis-typed or
-            # left over from a default.  Non-zero values are left untouched.
-            for rd in all_rows:
-                if rd[3].strip() == "0":
-                    rd[3] = ""
-            total_needed = max(200, len(named_rows) + 50)  # always 50+ buffer rows
+            # Count surviving named rows to size the table buffer
+            surviving_named = sum(1 for rd in all_rows if rd[0].strip())
+            total_needed = max(200, surviving_named + 50)  # always 50+ buffer rows
             if self.table.rowCount() < total_needed:
                 self.table.setRowCount(total_needed)
             # Build known names to decide lock state for Unit/Part No
