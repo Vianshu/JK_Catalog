@@ -962,6 +962,8 @@ class MainWindow(QWidget):
         if idx == 7 and hasattr(self, 'reports_page'):
             is_running = hasattr(self.full_catalog_page, '_build_worker') and self.full_catalog_page._build_worker is not None and self.full_catalog_page._build_worker.isRunning()
             self.reports_page.set_refreshing(is_running)
+            if not is_running:
+                self.reports_page.refresh_report_data()
 
     def on_catalog_built(self):
         """Called when Full Catalog finishes building in the background"""

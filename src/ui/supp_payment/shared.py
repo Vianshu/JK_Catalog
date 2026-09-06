@@ -690,7 +690,8 @@ class _DbTable(QTableWidget):
             for c in range(self.columnCount()):
                 self.setItem(r, c, QTableWidgetItem(""))
         self.blockSignals(False)
-        self._enforce_min_widths()
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, self._enforce_min_widths)
         self._loading = False
 
     def add_row(self):

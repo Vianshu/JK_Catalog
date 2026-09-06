@@ -490,7 +490,14 @@ class ReportsUI(QWidget):
                 conn = db.get_connection(db_name)
                 if conn:
                     row = conn.cursor().execute(
-                        "SELECT MAX(Update_date) FROM catalog"
+                        "SELECT TOP 1 Update_date FROM catalog "
+                        "WHERE Update_date IS NOT NULL AND Update_date != '' "
+                        "ORDER BY ("
+                        "   SUBSTRING(Update_date, 7, 4) + "
+                        "   SUBSTRING(Update_date, 4, 2) + "
+                        "   SUBSTRING(Update_date, 1, 2) + "
+                        "   SUBSTRING(Update_date, 11, 9)"
+                        ") DESC"
                     ).fetchone()
                     if row and row[0]:
                         self.lbl_last_sync.setText(f"Last Sync: {row[0]}")

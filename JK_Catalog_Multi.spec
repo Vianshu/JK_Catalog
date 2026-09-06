@@ -26,11 +26,12 @@ a = Analysis(
     binaries=[],
     # --- Bundled Data Files ---
     # These are extracted to sys._MEIPASS at runtime (read-only).
-    # Access via: get_asset_path("style.qss") or get_data_file_path(...)
     datas=[
         ('splash.png', '.'),                          # Splash image for PyQt
+        ('JK_Icon.ico', '.'),                         # Window Icon
         ('src/assets/style.qss', 'src/assets'),       # UI stylesheet
         ('src/assets/fonts', 'src/assets/fonts'),     # Bundled fonts (Noto Sans Devanagari, etc.)
+        ('src/ui/icons', 'src/ui/icons'),             # UI SVG Icons (Missing fix)
         ('config/cleaning_rules.json', 'config'),      # Product name cleaning rules
         ('config/catalog_config.json', 'config'),      # Per-company catalog header config
     ] + collect_data_files('nepali_datetime'),

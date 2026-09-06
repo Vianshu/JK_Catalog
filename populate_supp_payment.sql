@@ -873,4 +873,13 @@ INSERT INTO tp_section_data (section_id, row_idx, col_idx, cell_text) SELECT id,
 INSERT INTO tp_section_data (section_id, row_idx, col_idx, cell_text) SELECT id, 15, 4, N'116' FROM tp_sections WHERE name=N'Demand Loans (DL)';
 INSERT INTO tp_section_data (section_id, row_idx, col_idx, cell_text) SELECT id, 15, 5, N'6' FROM tp_sections WHERE name=N'Demand Loans (DL)';
 
+PRINT 'Granting permissions to all users...'
+GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.supplier_records TO public;
+GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.supplier_accounts TO public;
+GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.anil_ledger TO public;
+GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.team_list_data TO public;
+GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.bonus_data TO public;
+GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.tp_sections TO public;
+GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.tp_section_data TO public;
+PRINT 'Permissions granted successfully.'
 GO

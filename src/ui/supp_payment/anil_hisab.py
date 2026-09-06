@@ -149,8 +149,48 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
 
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._row_ctx)
+        
+        self.table.horizontalHeader().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.horizontalHeader().customContextMenuRequested.connect(self._header_ctx)
 
         self.table.cellChanged.connect(self._on_cell_changed)
+
+    def _header_ctx(self, pos):
+        if not self._can_edit:
+            return
+        
+        # safely extract x coordinate for logicalIndexAt
+        col = self.table.horizontalHeader().logicalIndexAt(pos.x())
+            
+        menu = QMenu(self)
+        menu.setStyleSheet(_MENU_STYLE)
+        
+        a_set_dr = menu.addAction("💰 Set Opening Dr (Row 1)")
+        act = menu.exec(self.table.horizontalHeader().viewport().mapToGlobal(pos))
+        
+        if act == a_set_dr:
+            from PyQt6.QtWidgets import QInputDialog
+            val, ok = QInputDialog.getText(self, "Opening Dr", "Enter Opening Dr Balance for Row 1:")
+            if ok:
+                val = val.strip()
+                if val:
+                    try:
+                        float(val.replace(",", ""))
+                    except ValueError:
+                        return
+                    
+                self.table.blockSignals(True)
+                if self.table.rowCount() == 0:
+                    self.table.insertRow(0)
+                    for c in range(self.table.columnCount()):
+                        self.table.setItem(0, c, self._a_item("", _C if c in (0,1,2) else _L if c in (3,7) else _R))
+                
+                new_dr = self._a_item(_fmt(val), _R)
+                new_dr.setFlags(new_dr.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(0, _ANIL_DR, new_dr)
+                self.table.blockSignals(False)
+                self._recalc_all()
+                self._save_all()
 
     def _row_ctx(self, pos):
         if not self._can_edit:
@@ -409,6 +449,9 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
             days_it.setFlags(days_it.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(r, 2, days_it)
 
+            if r == 0:
+                continue
+
             # Interest formula: DR = prev_balance × 18% / 365 × days (always computed)
             if days_val and days_val > 0 and r > 0:
                 prev_bal_it = self.table.item(r - 1, _ANIL_BAL)
@@ -425,6 +468,7 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
             new_dr.setFlags(new_dr.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(r, _ANIL_DR, new_dr)
         self.table.blockSignals(False)
+        self.table.resizeColumnsToContents()
 
     def _recalc_all(self):
         """Recalculate all Balance cells with signals fully blocked."""
