@@ -1960,26 +1960,45 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
             # 4. Limits & LC
             if limits_card:
                 limits_card.table.blockSignals(True)
-                used_lc = 0.0
+                used_lc    = 0.0
                 remain_dl_row = -1
                 remain_lc_row = -1
-                
+
+                # Fallback limits (used when the user has not yet added
+                # "DL Limit" / "LC Limit" rows to the Limits & LC card).
+                _DEFAULT_DL_LIMIT = 11_200_000.0
+                _DEFAULT_LC_LIMIT =  2_500_000.0
+
+                # Read user-defined limits from the card itself.
+                # The user can add rows like:
+                #   Type column  →  "DL Limit"    Value column → e.g. 15000000
+                #   Type column  →  "LC Limit"    Value column → e.g. 3000000
+                # If absent, the defaults above are used.
+                dl_limit_cap = _DEFAULT_DL_LIMIT
+                lc_limit_base = _DEFAULT_LC_LIMIT
+
                 for r in range(limits_card.table.rowCount()):
                     it_type = limits_card.table.item(r, 0)
                     if it_type and it_type.text():
                         t = it_type.text().strip().lower()
+                        it_val = limits_card.table.item(r, 1)
+                        raw_val = it_val.text().replace(",", "").strip() if it_val else ""
                         if "used lc" in t:
-                            it_val = limits_card.table.item(r, 1)
-                            if it_val and it_val.text():
-                                try: used_lc = float(it_val.text().replace(",", ""))
-                                except: pass
+                            try: used_lc = float(raw_val)
+                            except: pass
+                        elif t in ("dl limit", "demand loan limit"):
+                            try: dl_limit_cap = float(raw_val)
+                            except: pass
+                        elif t in ("lc limit", "lc base limit"):
+                            try: lc_limit_base = float(raw_val)
+                            except: pass
                         elif "remain demand loan limit" in t:
                             remain_dl_row = r
                         elif "remain lc limit" in t:
                             remain_lc_row = r
-                
-                remain_dl_limit = 11200000.0 - sum_dl
-                remain_lc_limit = 2500000.0 + remain_dl_limit - used_lc
+
+                remain_dl_limit = dl_limit_cap - sum_dl
+                remain_lc_limit = lc_limit_base + remain_dl_limit - used_lc
                 
                 from PyQt6.QtWidgets import QTableWidgetItem
                 if remain_dl_row == -1:
@@ -2133,7 +2152,6 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
             card.is_column_break = new_val
             try:
                 self._db.execute_query(self._db_name, "UPDATE tp_sections SET is_column_break=? WHERE id=?", (1 if new_val else 0, sid), fetch=False)
-                self._db.get_connection(self._db_name).commit()
             except Exception as e:
                 print("Error saving column break", e)
                 
