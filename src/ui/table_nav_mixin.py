@@ -190,7 +190,7 @@ def get_visual_text(table, r, c):
 
 UNIVERSAL_TABLE_STYLE = """
 QTableWidget {
-    gridline-color: #e2e8f0;
+    gridline-color: #64748b;
     background: #ffffff;
     alternate-background-color: #f8fafc;
     border: 1px solid #e2e8f0;
@@ -204,8 +204,10 @@ QTableWidget::item {
     padding: 0px;
 }
 QTableWidget::item:selected {
-    background-color: #dbeafe;
-    color: #1e40af;
+    /* Fill suppressed by delegate; QSS border as fallback for non-delegate tables */
+    background-color: transparent;
+    color: #1a2035;
+    border: 2px solid #059669;
 }
 QTableWidget::item:open {
     background-color: transparent;
@@ -239,9 +241,32 @@ class UniversalCellDelegate(QStyledItemDelegate):
                 option.text = str(display_text)
 
     def paint(self, painter, option, index):
-        """Delegate paint. The editor is opaque-white so it covers old text;
-        no special editing-state detection is needed here."""
-        super().paint(painter, option, index)
+        """Delegate paint with border-only selection.
+        
+        When a cell is selected we suppress Qt's default selection fill so that
+        custom cell background colors (set via setBackground) remain fully visible.
+        Instead we draw a 2px teal border around the selected cell.
+        """
+        from PyQt6.QtGui import QPen, QColor as _QC
+        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        if is_selected:
+            # Paint without the selection fill — copy option and clear the flag
+            opt = QStyleOptionViewItem(option)
+            opt.state = option.state & ~QStyle.StateFlag.State_Selected
+            super().paint(painter, opt, index)
+        else:
+            super().paint(painter, option, index)
+
+        # Draw teal 2px border on selected cell (border-only, no fill)
+        if is_selected:
+            painter.save()
+            sel_pen = QPen(_QC("#059669"))  # app accent teal
+            sel_pen.setWidth(2)
+            painter.setPen(sel_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            r = option.rect.adjusted(1, 1, -1, -1)
+            painter.drawRect(r)
+            painter.restore()
 
     def createEditor(self, parent, option, index):
         cell_type = index.data(CELL_TYPE_ROLE) or self._cell_type
@@ -424,8 +449,8 @@ class UniversalCellDelegate(QStyledItemDelegate):
             import re as _re
             val = editor.text().strip()
             if val and not _re.match(r'^\d{4}-\d{2}-\d{2}$', val):
-                from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.warning(
+                from src.ui.supp_payment.shared import _styled_warning
+                _styled_warning(
                     editor.parent(), "गलत फोर्मेट",
                     f"मिति YYYY-MM-DD फोर्मेन्ट मा लेख्नुहोस\nExample: 2082-01-15"
                 )

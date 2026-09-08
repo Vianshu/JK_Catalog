@@ -79,7 +79,7 @@ class VatBaseUI(QWidget):
     def show_menu(self, point):
         if not getattr(self, '_can_edit', True):
             return
-        idx = self.tabs.tabAt(point)
+        idx = self.tabs.tabBar().tabAt(point)
         if idx == -1: return
         menu = QMenu(self)
         menu.setObjectName("TabContextMenu")

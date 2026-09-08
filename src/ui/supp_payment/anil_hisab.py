@@ -169,8 +169,8 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
         act = menu.exec(self.table.horizontalHeader().viewport().mapToGlobal(pos))
         
         if act == a_set_dr:
-            from PyQt6.QtWidgets import QInputDialog
-            val, ok = QInputDialog.getText(self, "Opening Dr", "Enter Opening Dr Balance for Row 1:")
+            from .shared import _styled_get_text
+            val, ok = _styled_get_text(self, "Opening Dr", "Enter Opening Dr Balance for Row 1:")
             if ok:
                 val = val.strip()
                 if val:
@@ -199,7 +199,7 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
         r = item.row() if item else self.table.currentRow()
         col = self.table.columnAt(pos.x())  # detect which column was right-clicked
         menu = QMenu(self)
-        from PyQt6.QtWidgets import QColorDialog
+        from .shared import _styled_get_color
         from PyQt6.QtGui import QBrush, QColor
         menu.setStyleSheet(_MENU_STYLE)
 
@@ -252,7 +252,7 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
             self._recalc_all()
             self._save_all()
         elif act == a_color:
-            color = QColorDialog.getColor(parent=self)
+            color = _styled_get_color(self)
             if color.isValid():
                 self.table.blockSignals(True)
                 for idx in self.table.selectedIndexes():
@@ -265,7 +265,7 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
                 self.table.resizeColumnsToContents()
                 self._save_all()
         elif act == a_text_color:
-            color = QColorDialog.getColor(parent=self)
+            color = _styled_get_color(self)
             if color.isValid():
                 self.table.blockSignals(True)
                 for idx in self.table.selectedIndexes():

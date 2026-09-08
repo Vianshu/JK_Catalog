@@ -34,6 +34,7 @@ from .shared import (
     _BTN_PRIMARY, _BTN_SECONDARY, _BTN_DANGER,
     _MENU_STYLE, _POPUP_STYLE, _CARD_MENU_STYLE,
     _setup_smart_header, _DbTable,
+    _styled_get_text, _styled_question, _styled_info, _styled_get_color,
 )
 from src.ui.table_nav_mixin import UniversalCellDelegate
 
@@ -213,6 +214,253 @@ class _SectionCardV2(QFrame):
         self._load()
         self._setup_enter_navigation()  # connect Enter-moves-down for all delegates
 
+        # Extend the column header's right-click menu with add/remove column options.
+        # _setup_smart_header already connected its own handler; we replace it so we
+        # can include both the existing resize/lock actions AND column management.
+        _hdr = self.table.horizontalHeader()
+        _hdr.customContextMenuRequested.disconnect(self.table._smart_hdr_menu)
+        _hdr.customContextMenuRequested.connect(self._col_hdr_ctx)
+
+    # ------------------------------------------------------------------
+    # Column-aligned summary footer
+    # ------------------------------------------------------------------
+    def set_col_footer(self, col_values: dict, row_label: str = "Total"):
+        """Show a column-aligned summary row beneath the table.
+
+        col_values: {column_header_name: display_string_or_number}
+                    Only columns listed here get a value; others are blank.
+        row_label:  Text shown in the column IMMEDIATELY LEFT of the first value
+                    column, right-aligned (so it reads as a label for the value
+                    next to it). If the value column is the first column there
+                    is no left neighbour and the label is not shown.
+
+        The bar uses one QLabel per column, each fixed-width == column width,
+        so values sit exactly below their respective columns. Column-resize
+        events propagate automatically via sectionResized.
+        """
+        # Create the bar on first call
+        if not hasattr(self, '_col_footer_bar'):
+            bar = QWidget()
+            bar.setObjectName("ColFooterBar")
+            bar.setStyleSheet(
+                "#ColFooterBar {"
+                "  background: #f1f5f9;"
+                "  border-top: 1.5px solid #64748b;"
+                "  border-bottom-left-radius: 8px;"
+                "  border-bottom-right-radius: 8px;"
+                "}"
+            )
+            hlay = QHBoxLayout(bar)
+            hlay.setContentsMargins(0, 3, 0, 3)
+            hlay.setSpacing(0)
+            self._col_footer_bar  = bar
+            self._col_footer_hlay = hlay
+            self._col_footer_lbls: dict = {}
+            # Insert above _footer_lbl so stacking is: table | col_footer | footer_lbl
+            outer = self.layout()
+            idx   = outer.indexOf(self._footer_lbl)
+            outer.insertWidget(idx, bar)
+            # Keep aligned when the user drags a column boundary
+            self.table.horizontalHeader().sectionResized.connect(
+                self._update_col_footer_widths
+            )
+            bar.hide()
+
+        hlay = self._col_footer_hlay
+        # Rebuild labels to reflect current column count / order
+        while hlay.count():
+            item = hlay.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        self._col_footer_lbls.clear()
+
+        # Find the index of the first column that has a value —
+        # the row_label will go in the column directly to its left.
+        first_value_col = -1
+        for c in range(self.table.columnCount()):
+            hdr = self.table.horizontalHeaderItem(c)
+            col_name = hdr.text().strip() if hdr else ""
+            if col_name in col_values:
+                first_value_col = c
+                break
+        label_col = first_value_col - 1  # -1 means no left neighbour
+
+        for c in range(self.table.columnCount()):
+            hdr = self.table.horizontalHeaderItem(c)
+            col_name = hdr.text().strip() if hdr else ""
+            val = col_values.get(col_name)
+
+            lbl = QLabel()
+            lbl.setFixedWidth(self.table.columnWidth(c))
+            lbl.setFixedHeight(22)
+            lbl.setFont(_bold_font(10))
+
+            if c == label_col and row_label:
+                # Column immediately left of the value: right-aligned label
+                lbl.setText(row_label)
+                lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                lbl.setStyleSheet("color: #475569; padding-right: 6px; font-style: italic;")
+            elif val is not None:
+                # Value column: right-aligned bold number
+                text = f"{val:,.0f}" if isinstance(val, (int, float)) else str(val)
+                lbl.setText(text)
+                lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                lbl.setStyleSheet("color: #1e293b; padding-right: 8px; font-weight: 700;")
+            else:
+                lbl.setText("")
+
+            hlay.addWidget(lbl)
+            self._col_footer_lbls[c] = lbl
+
+        self._col_footer_bar.show()
+        # Hide the plain text footer when col-footer is active (avoid double line)
+        self._footer_lbl.hide()
+
+    def _update_col_footer_widths(self, logical_index: int, _old: int, new_size: int):
+        """Keep footer labels in sync when the user resizes a column."""
+        lbl = getattr(self, '_col_footer_lbls', {}).get(logical_index)
+        if lbl:
+            lbl.setFixedWidth(new_size)
+
+    # ------------------------------------------------------------------
+    # Column management (add / remove via right-click on column header)
+    # ------------------------------------------------------------------
+
+    def _col_hdr_ctx(self, pos):
+        """Extended column-header context menu: resize helpers + add/remove columns."""
+        hdr  = self.table.horizontalHeader()
+        logical = hdr.logicalIndexAt(pos)
+
+        menu = QMenu(self)
+        menu.setStyleSheet(_MENU_STYLE)
+
+        # ---- existing smart-header actions ----
+        a_fit     = menu.addAction("↔  Fit Column to Content")
+        a_fit_all = menu.addAction("↔  Fit All Columns to Content")
+        is_stretch = hdr.stretchLastSection()
+        a_stretch = menu.addAction(
+            "📌  Stretch Last Column (On)" if is_stretch else "📌  Stretch Last Column (Off)"
+        )
+        if self._cols_locked is not None:
+            menu.addSeparator()
+            a_lock = menu.addAction(
+                "🔓  Unlock Column Widths" if self._cols_locked else "🔒  Lock Column Widths"
+            )
+        else:
+            a_lock = None
+
+        # ---- column management ----
+        menu.addSeparator()
+        a_ins_l = menu.addAction("➕  Insert Column Left")
+        a_ins_r = menu.addAction("➕  Insert Column Right")
+        menu.addSeparator()
+        a_rename = menu.addAction("✏️  Rename Column")
+
+        # Only allow removing columns that are NOT part of the fixed spec
+        n_fixed = len(self._col_specs) if (self._fixed_cols and self._col_specs) else 0
+        a_remove = menu.addAction("🗑️  Remove Column")
+        a_remove.setEnabled(
+            logical >= n_fixed and self.table.columnCount() > 1
+        )
+
+        chosen = menu.exec(hdr.mapToGlobal(pos))
+
+        if chosen == a_fit:
+            self.table.resizeColumnToContents(logical)
+        elif chosen == a_fit_all:
+            self.table.resizeColumnsToContents()
+        elif chosen == a_stretch:
+            hdr.setStretchLastSection(not is_stretch)
+        elif a_lock and chosen == a_lock:
+            self._set_cols_locked(not self._cols_locked)
+        elif chosen == a_ins_l:
+            self._insert_col_at(logical)
+        elif chosen == a_ins_r:
+            self._insert_col_at(logical + 1)
+        elif chosen == a_rename:
+            self._do_rename_col(logical)
+        elif chosen == a_remove:
+            self._remove_col_at(logical)
+
+    def _insert_col_at(self, at_idx: int):
+        """Insert a blank column at position at_idx and persist the layout."""
+        if not self._can_edit:
+            return
+        name, ok = _styled_get_text(self, "Add Column", "Column name:")
+        if not ok or not name.strip():
+            return
+        self.table.insertColumn(at_idx)
+        self.table.setHorizontalHeaderItem(at_idx, QTableWidgetItem(name.strip()))
+        self.table.setColumnWidth(at_idx, 120)
+        self._save_cols()
+        self._recalc()
+
+    def _remove_col_at(self, col: int):
+        """Remove a user-added column (extra columns only) and persist the layout."""
+        if not self._can_edit:
+            return
+        hdr_item = self.table.horizontalHeaderItem(col)
+        col_name = hdr_item.text() if hdr_item else f"Column {col + 1}"
+        reply = _styled_question(
+            self, "Remove Column",
+            f"Remove column '{col_name}'? All data in this column will be lost.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self.table.removeColumn(col)
+        # Re-save all data so col_idx references stay correct
+        self._save_cols()
+        self._save_data()
+        self._recalc()
+
+    def _do_rename_col(self, col: int):
+        """Rename any column (fixed or extra) and persist."""
+        if not self._can_edit:
+            return
+        h   = self.table.horizontalHeaderItem(col)
+        old = h.text() if h else ""
+        new, ok = _styled_get_text(self, "Rename Column", "Column name:", text=old)
+        if ok and new.strip():
+            if not h:
+                h = QTableWidgetItem()
+                self.table.setHorizontalHeaderItem(col, h)
+            h.setText(new.strip())
+            self._save_cols()
+
+    # ------------------------------------------------------------------
+    # Formula recalculation
+    # ------------------------------------------------------------------
+
+    def _recalc_formulas(self):
+        """Re-evaluate all =IF() formula cells in this card's table.
+
+        MUST be called BEFORE any column-sum or 'Left money' calculation so
+        that the evaluated payment values are picked up by downstream totals.
+        """
+        from src.ui.supp_payment.shared import FORMULA_ROLE, _eval_if_formula
+        self.table.blockSignals(True)
+        try:
+            for r in range(self.table.rowCount()):
+                for c in range(self.table.columnCount()):
+                    it = self.table.item(r, c)
+                    if not it:
+                        continue
+                    formula = it.data(FORMULA_ROLE)
+                    if not formula:
+                        continue
+                    result = _eval_if_formula(formula, r, self.table)
+                    if result is not None:
+                        display = (
+                            str(int(result))
+                            if isinstance(result, float) and result.is_integer()
+                            else f"{result:.6g}"
+                        )
+                        it.setText(display)
+        finally:
+            self.table.blockSignals(False)
+
     def eventFilter(self, source, event):
         if getattr(self, 'table', None) and source is self.table and event.type() == QEvent.Type.KeyPress:
             if event.key() == Qt.Key.Key_F2 and self._can_edit:
@@ -303,6 +551,24 @@ class _SectionCardV2(QFrame):
                             self.table.setColumnWidth(idx, cw)
                         else:
                             self.table.setColumnWidth(idx, 120)
+            else:
+                # Fixed-cols table: check DB for user-added extra columns beyond the spec
+                if self._db_name:
+                    try:
+                        extra_cols = self._db.execute_query(
+                            self._db_name,
+                            "SELECT col_index, col_name, col_width FROM tp_section_cols "
+                            "WHERE section_id=? ORDER BY col_index", (self.section_id,)) or []
+                        n_fixed = len(self._col_specs) if self._col_specs else self.table.columnCount()
+                        for ci, cname, cw in extra_cols:
+                            if int(ci) >= n_fixed:
+                                extra_c = self.table.columnCount()
+                                self.table.insertColumn(extra_c)
+                                self.table.setHorizontalHeaderItem(
+                                    extra_c, QTableWidgetItem(cname or ""))
+                                self.table.setColumnWidth(extra_c, int(cw) if cw else 120)
+                    except Exception:
+                        pass
 
             # Safely try to fetch bg_color; if it fails (old db), fallback to without it
             try:
@@ -372,11 +638,19 @@ class _SectionCardV2(QFrame):
                 for ci, val_tuple in r_data.items():
                     if ci < self.table.columnCount():
                         txt, bg, fg = val_tuple
-                        it = QTableWidgetItem(txt)
+                        it = QTableWidgetItem()
                         if bg:
                             it.setBackground(QBrush(QColor(bg)))
                         if fg:
                             it.setForeground(QBrush(QColor(fg)))
+                        # Restore formula cells: store raw formula in FORMULA_ROLE,
+                        # evaluate and display the result as the cell text.
+                        if txt.startswith('=IF(') or txt.startswith('=if('):
+                            from src.ui.supp_payment.shared import FORMULA_ROLE
+                            it.setData(FORMULA_ROLE, txt)
+                            it.setText(txt)   # placeholder; _recalc_formulas() will overwrite
+                        else:
+                            it.setText(txt)
                         self.table.setItem(new_ri, int(ci), it)
                         
         finally:
@@ -388,7 +662,10 @@ class _SectionCardV2(QFrame):
                 
             self.table.horizontalHeader().blockSignals(False)
             self._loading = False
-            
+
+            # Re-evaluate formula cells FIRST so downstream sums (e.g. Payment
+            # total → Left money) pick up the correct values.
+            self._recalc_formulas()
             self._update_sum()
             self._recalc()
 
@@ -457,8 +734,12 @@ class _SectionCardV2(QFrame):
             for r in range(last_content + 1):
                 for c in range(self.table.columnCount()):
                     it = self.table.item(r, c)
-                    val = str(it.text()).strip() if it else ""
-                    
+                    # If this cell holds a formula, save the raw formula text so it
+                    # can be restored and re-evaluated correctly on next load.
+                    from src.ui.supp_payment.shared import FORMULA_ROLE
+                    formula = it.data(FORMULA_ROLE) if it else None
+                    val = formula if formula else (str(it.text()).strip() if it else "")
+
                     bg_color = ""
                     bg_data = it.data(Qt.ItemDataRole.BackgroundRole) if it else None
                     if bg_data:
@@ -586,7 +867,7 @@ class _SectionCardV2(QFrame):
         if not self._can_edit:
             return
         if not self._fixed_cols and self.table.columnCount() == 0:
-            QMessageBox.information(self, "No Columns", "Add at least one column first.")
+            _styled_info(self, "Cannot Delete", "Cannot delete the last row.")
             return
         r = self.table.rowCount()
         self.table.blockSignals(True)
@@ -603,7 +884,7 @@ class _SectionCardV2(QFrame):
             return
         h = self.table.horizontalHeaderItem(col)
         old = h.text() if h else ""
-        new, ok = QInputDialog.getText(self, "Rename Column", "Column name:", text=old)
+        new, ok = _styled_get_text(self, "Rename Column", "Column name:", text=old)
         if ok and new.strip():
             if not h:
                 h = QTableWidgetItem()
@@ -651,7 +932,7 @@ class _SectionCardV2(QFrame):
                 self._save_data()
                 self._recalc()
         elif act == a_color:
-            color = QColorDialog.getColor(parent=self)
+            color = _styled_get_color(self)
             if color.isValid():
                 self.table.blockSignals(True)
                 for idx in self.table.selectedIndexes():
@@ -664,7 +945,7 @@ class _SectionCardV2(QFrame):
                 self._expand_all_columns_to_contents()
                 self._save_data()
         elif act == a_text_color:
-            color = QColorDialog.getColor(parent=self)
+            color = _styled_get_color(self)
             if color.isValid():
                 self.table.blockSignals(True)
                 for idx in self.table.selectedIndexes():
@@ -692,7 +973,7 @@ class _SectionCardV2(QFrame):
         a_clear = menu.addAction("\u25cb  Default Color")
         act = menu.exec(self._hdr.mapToGlobal(pos))
         if act == a_color:
-            color = QColorDialog.getColor(parent=self)
+            color = _styled_get_color(self)
             if color.isValid():
                 self._header_color = color.name()
                 self._update_hdr_style()
@@ -744,8 +1025,7 @@ class _SectionCardV2(QFrame):
         a_del = menu.addAction("\u2715  Delete Table")
         act = menu.exec(self._btn_gear.mapToGlobal(self._btn_gear.rect().bottomLeft()))
         if act == a_ren:
-            new, ok = QInputDialog.getText(self, "Rename Table", "Name:",
-                                           text=self.title_lbl.text())
+            new, ok = _styled_get_text(self, "Rename Table", "Name:", text=self.title_lbl.text())
             if ok and new.strip():
                 self.title_lbl.setText(new.strip())
                 self._update_db("name", new.strip())
@@ -1006,7 +1286,8 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
         _ts = ("QPushButton{border-radius:4px;padding:8px 4px;font-size:11pt;border:none;font-weight:bold;}"
                "QPushButton:checked{background:#ffffff;color:#0f172a;border:1px solid #cbd5e1;}"
                "QPushButton:!checked{background:transparent;color:#64748b;}"
-               "QPushButton:!checked:hover{color:#334155;}")
+               "QPushButton:!checked:hover{color:#334155;}"
+               "QToolTip{background-color:#1e293b;color:#ffffff;border:none;padding:5px 9px;border-radius:4px;font-size:11px;}")
         def on_toggle_tp(expanded):
             if expanded:
                 self._btn_add.setText(" Add Table")
@@ -1551,6 +1832,12 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
                 return  # editor open — will retry via QTimer after commit
 
         try:
+            # --- Step 0: Re-evaluate ALL formula cells first ---
+            # This MUST happen before any column-sum or 'Left money' calculation
+            # so that formula cell values (e.g. Payment =IF(...)) are current.
+            for card in self._section_cards.values():
+                card._recalc_formulas()
+
             dl_card = None
             account_card = None
             today_card = None
@@ -1624,6 +1911,13 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
                     if days_left is not None:
                         prev_days_left = days_left
                 dl_card.table.blockSignals(False)
+
+            # DL Amount total footer — shown aligned under the "Amount" column
+            if dl_card:
+                dl_card.set_col_footer(
+                    {"Amount": sum_dl},
+                    row_label="Total Amount"
+                )
                 
             # 2. Account Table
             if account_card:
@@ -1640,9 +1934,10 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
                             try: sum_remain_cash += float(it.text().replace(",", ""))
                             except: pass
                 
-                account_card._footer_lbl.setText(f"Remain Cash Sum: {sum_remain_cash:,.0f}")
-                account_card._footer_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft)
-                account_card._footer_lbl.show()
+                account_card.set_col_footer(
+                    {"Remain Cash": sum_remain_cash},
+                    row_label="Remain Cash Sum"
+                )
                 
             # 3. Today Table
             if today_card:
@@ -1660,9 +1955,10 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
                             except: pass
                 
                 left_money = sum_remain_cash - sum_today_payment
-                today_card._footer_lbl.setText(f"Left money: {left_money:,.0f}")
-                today_card._footer_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-                today_card._footer_lbl.show()
+                today_card.set_col_footer(
+                    {"Payment": left_money},
+                    row_label="Left Money"
+                )
                 
             # 4. Limits & LC
             if limits_card:
@@ -1860,7 +2156,7 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
         if not res:
             return
         is_core, current_name = res[0]
-        new, ok = QInputDialog.getText(self, "Rename Table", "New name:", text=current_name)
+        new, ok = _styled_get_text(self, "Rename Table", "New name:", text=current_name)
         if ok and new.strip():
             item.setText(f"  {new.strip()}")
             conn = self._db.get_connection(self._db_name)
@@ -1901,7 +2197,7 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
     def _add_section(self):
         if not self._can_edit or not self._db_name:
             return
-        name, ok = QInputDialog.getText(self, "Add Table", "Table name:")
+        name, ok = _styled_get_text(self, "Add Table", "Table name:")
         if not ok or not name.strip():
             return
         res = self._db.execute_query(

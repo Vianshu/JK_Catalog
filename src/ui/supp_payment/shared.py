@@ -55,14 +55,12 @@ class _PrintExportMixin:
 
         self.btn_export = QPushButton()
         self.btn_export.setIcon(get_icon("excel.svg"))
-        self.btn_export.setToolTip("Export to Excel")
         self.btn_export.setStyleSheet(_BTN_PRIMARY)
         self.btn_export.clicked.connect(self._do_export)
 
         if supports_print:
             self.btn_print = QPushButton()
             self.btn_print.setIcon(get_icon("print.svg"))
-            self.btn_print.setToolTip("Print")
             self.btn_print.setStyleSheet(_BTN_PRIMARY)
             self.btn_print.clicked.connect(self._do_print)
 
@@ -83,6 +81,10 @@ class _PrintExportMixin:
                 }
                 QPushButton:pressed {
                     background: #f1f5f9;
+                }
+                QToolTip {
+                    background-color: #1e293b; color: #ffffff; border: none;
+                    padding: 5px 9px; border-radius: 4px; font-size: 11px;
                 }
             """)
             self.btn_toggle.setFixedSize(32, 32)
@@ -135,7 +137,6 @@ class _PrintExportMixin:
             _shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
             _shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             _shortcut.activated.connect(on_toggle)
-            self.btn_toggle.setToolTip("Toggle sidebar  (Ctrl+R)")
             
             # Register with a weak-ref to self so dead tabs are auto-pruned
             _PrintExportMixin._right_bar_callbacks.append((weakref.ref(self), apply_state))
@@ -196,6 +197,212 @@ from PyQt6.QtWidgets import QStyledItemDelegate, QStyle
 from PyQt6.QtGui import QPainter, QColor, QBrush, QPen, QFontMetrics, QFont
 from PyQt6.QtCore import Qt, QRect
 
+# ---------------------------------------------------------------------------
+# Safe arithmetic expression evaluator (used by ModernTableDelegate)
+# ---------------------------------------------------------------------------
+import ast as _ast
+import operator as _operator
+
+_ARITH_OPS = {
+    _ast.Add:  _operator.add,
+    _ast.Sub:  _operator.sub,
+    _ast.Mult: _operator.mul,
+    _ast.Div:  _operator.truediv,
+}
+_UNARY_OPS = {
+    _ast.USub: _operator.neg,
+    _ast.UAdd: _operator.pos,
+}
+
+def _split_top_level(s: str, sep: str = ',') -> list:
+    """Split *s* at top-level *sep* characters (ignoring those inside parens/brackets)."""
+    parts, depth, current = [], 0, []
+    for ch in s:
+        if ch in '([':
+            depth += 1; current.append(ch)
+        elif ch in ')]':
+            depth -= 1; current.append(ch)
+        elif ch == sep and depth == 0:
+            parts.append(''.join(current)); current = []
+        else:
+            current.append(ch)
+    if current:
+        parts.append(''.join(current))
+    return parts
+
+
+def _find_cmp_op_at_depth0(s: str):
+    """Return (op_str, start, end) of the first comparison operator at depth 0, or None."""
+    depth = 0
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        if ch in '([':   depth += 1
+        elif ch in ')]': depth -= 1
+        elif depth == 0:
+            two = s[i:i+2]
+            if two in ('<=', '>=', '<>', '!='):
+                return two, i, i + 2
+            if ch in '<>=':
+                return ch, i, i + 1
+        i += 1
+    return None
+
+
+def _eval_if_formula(formula_str: str, row: int, table) -> float | None:
+    """Evaluate  =IF(condition, true_val, false_val)  formulas.
+
+    Supported condition forms
+    ─────────────────────────
+    • Simple numeric comparison   →  0<1  |  5>=3  |  2=2
+    • Arithmetic comparison       →  10+5>12  |  (A+B)/2>0
+    • Date-distance pattern       →  MAX(ColName-TODAY(),0)<30
+      where ColName must match a column header in *table* (case-insensitive).
+
+    true_val and false_val may be any arithmetic expression understood by
+    _safe_eval_expr (numbers, +, -, *, /, parentheses).
+
+    Returns
+    ───────
+    float   – the evaluated result (true_val or false_val).
+    None    – the formula is syntactically malformed (caller shows raw text).
+    """
+    s = formula_str.strip()
+    if not s.upper().startswith('=IF('):
+        return None
+    if not s.endswith(')'):
+        return None
+
+    inner = s[4:-1]                          # strip  =IF(  and  )
+    parts = _split_top_level(inner)
+    if len(parts) != 3:
+        return None
+
+    cond_str  = parts[0].strip()
+    true_str  = parts[1].strip()
+    false_str = parts[2].strip()
+
+    true_val  = _safe_eval_expr(true_str)
+    false_val = _safe_eval_expr(false_str)
+    if true_val is None or false_val is None:
+        return None
+
+    # ── Condition branch 1: MAX(ColName-TODAY(),0) OP N ──────────────────
+    _date_m = _re.match(
+        r'^MAX\(\s*([\w\s]+?)\s*-\s*TODAY\(\)\s*,\s*0\s*\)'
+        r'\s*([<>]=?|<>|!=|=)\s*(-?\d+(?:\.\d+)?)\s*$',
+        cond_str, _re.IGNORECASE
+    )
+    if _date_m:
+        col_ref, op, thr_s = _date_m.groups()
+        col_ref   = col_ref.strip()
+        threshold = float(thr_s)
+
+        ref_col = next(
+            (c for c in range(table.columnCount())
+             if (h := table.horizontalHeaderItem(c)) and
+                h.text().strip().lower() == col_ref.lower()),
+            -1
+        )
+        if ref_col >= 0:
+            date_item = table.item(row, ref_col)
+            if date_item and date_item.text().strip():
+                from PyQt6.QtCore import QDate
+                d = QDate.fromString(date_item.text().strip(), "yyyy-MM-dd")
+                if d.isValid():
+                    days = max(QDate.currentDate().daysTo(d), 0)
+                    _cmp = {'<': days < threshold, '>': days > threshold,
+                            '<=': days <= threshold, '>=': days >= threshold,
+                            '=': days == threshold, '<>': days != threshold,
+                            '!=': days != threshold}
+                    return true_val if _cmp.get(op, False) else false_val
+        # Column not found or date invalid → use false_val as safe fallback
+        return false_val
+
+    # ── Condition branch 2: general arithmetic comparison ─────────────────
+    found = _find_cmp_op_at_depth0(cond_str)
+    if found:
+        op, start, end = found
+        left  = _safe_eval_expr(cond_str[:start].strip())
+        right = _safe_eval_expr(cond_str[end:].strip())
+        if left is not None and right is not None:
+            _cmp = {'<': left < right, '>': left > right,
+                    '<=': left <= right, '>=': left >= right,
+                    '=': left == right, '<>': left != right,
+                    '!=': left != right}
+            return true_val if _cmp.get(op, False) else false_val
+
+    return None   # truly malformed — caller will show the raw formula text
+
+
+def _safe_eval_expr(expr: str):
+    """Safely evaluate a pure arithmetic expression string.
+
+    Supported: numeric literals (int/float), +  -  *  /  ( )  and unary -.
+    Anything else (function calls, names, strings, …) raises ValueError,
+    which is caught here and causes None to be returned.
+
+    Returns:
+        float  — result of the expression, or
+        None   — if the expression is invalid / contains non-arithmetic nodes.
+    """
+    try:
+        tree = _ast.parse(expr.strip(), mode="eval")
+    except SyntaxError:
+        return None
+
+    def _eval(node):
+        if isinstance(node, _ast.Expression):
+            return _eval(node.body)
+        elif isinstance(node, _ast.Constant):
+            if not isinstance(node.value, (int, float)):
+                raise ValueError("non-numeric constant")
+            return float(node.value)
+        elif isinstance(node, _ast.BinOp):
+            op_fn = _ARITH_OPS.get(type(node.op))
+            if op_fn is None:
+                raise ValueError(f"unsupported operator: {type(node.op)}")
+            left  = _eval(node.left)
+            right = _eval(node.right)
+            if isinstance(node.op, _ast.Div) and right == 0:
+                raise ZeroDivisionError("division by zero")
+            return op_fn(left, right)
+        elif isinstance(node, _ast.UnaryOp):
+            op_fn = _UNARY_OPS.get(type(node.op))
+            if op_fn is None:
+                raise ValueError(f"unsupported unary op: {type(node.op)}")
+            return op_fn(_eval(node.operand))
+        elif isinstance(node, _ast.Call):
+            # Allow MAX(a,b,...) and MIN(a,b,...) only
+            func_name = ""
+            if isinstance(node.func, _ast.Name):
+                func_name = node.func.id.upper()
+            if func_name == "MAX":
+                return max(_eval(a) for a in node.args)
+            elif func_name == "MIN":
+                return min(_eval(a) for a in node.args)
+            else:
+                raise ValueError(f"disallowed function: {func_name}")
+        else:
+            raise ValueError(f"disallowed node: {type(node)}")
+
+    try:
+        return _eval(tree)
+    except (ValueError, ZeroDivisionError, TypeError, RecursionError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Formula role & =IF() evaluator (used by ModernTableDelegate + _SectionCardV2)
+# ---------------------------------------------------------------------------
+
+# Custom item-data role used to persist the raw formula text on the
+# QTableWidgetItem while the cell displays its evaluated result.
+FORMULA_ROLE = Qt.ItemDataRole.UserRole + 50
+
+import re as _re
+
+
 class ModernTableDelegate(UniversalCellDelegate):
     def __init__(self, parent=None, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
@@ -242,10 +449,11 @@ class ModernTableDelegate(UniversalCellDelegate):
         text = str(text).strip()
         
         # Background highlighting
+        # NOTE: we do NOT fill on selection — instead we draw a green border
+        # at the end of this method (matching UniversalCellDelegate behaviour).
+        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
         bg_brush = index.data(Qt.ItemDataRole.BackgroundRole)
-        if option.state & QStyle.StateFlag.State_Selected:
-            painter.fillRect(option.rect, QColor("#f1f5f9"))
-        elif bg_brush:
+        if bg_brush:
             # Safely extract color from brush to avoid PyQt overload resolution issues
             if isinstance(bg_brush, QBrush):
                 painter.fillRect(option.rect, bg_brush.color())
@@ -292,9 +500,6 @@ class ModernTableDelegate(UniversalCellDelegate):
             
         elif "amount" in header or "balance" in header or "rs" in header or "dr" in header or "cr" in header or "value" in header or "cash" in header or "bank" in header:
             painter.setPen(custom_fg if custom_fg else QColor("#1e293b"))
-            font = painter.font()
-            font.setFamily("Consolas")
-            painter.setFont(font)
             painter.drawText(rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, text)
             
         elif "party" in header or "name" in header or "particular" in header or "remarks" in header or "account" in header or "type" in header:
@@ -306,6 +511,88 @@ class ModernTableDelegate(UniversalCellDelegate):
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
             
         painter.restore()
+
+    def setEditorData(self, editor, index):
+        """If the cell holds a formula, show the raw formula in the editor
+        (not the evaluated result) so the user can inspect / modify it.
+        Falls back to the base-class behaviour for plain cells."""
+        from PyQt6.QtWidgets import QLineEdit
+        if isinstance(editor, QLineEdit):
+            formula = index.data(FORMULA_ROLE)
+            if formula:
+                editor.setText(str(formula))
+                return
+        super().setEditorData(editor, index)
+
+    def setModelData(self, editor, model, index):
+        """Intercept commit to evaluate formulas and arithmetic before saving.
+
+        Priority:
+          1. =IF(MAX(ColName-TODAY(),0) OP N, V, F) — date-conditional formula.
+             Stores the raw formula text in FORMULA_ROLE so it can be restored
+             in the editor on next click.  The *evaluated* number is written as
+             the display value and is what downstream calculations see.
+          2. Plain arithmetic  (+  -  *  /)  — evaluated immediately via
+             _safe_eval_expr; no formula is stored.
+          3. Everything else — passed through unchanged.
+
+        date / autocomplete cell-types are fully delegated to the base class.
+        """
+        from src.ui.table_nav_mixin import CELL_TYPE_ROLE
+        cell_type = index.data(CELL_TYPE_ROLE) or self._cell_type
+
+        if cell_type in ("date", "autocomplete"):
+            super().setModelData(editor, model, index)
+            return
+
+        from PyQt6.QtWidgets import QLineEdit
+        from PyQt6.QtCore import Qt as _Qt
+        if not isinstance(editor, QLineEdit):
+            super().setModelData(editor, model, index)
+            return
+
+        text = editor.text().strip()
+
+        # --- Priority 1: =IF() formula ---
+        if text.upper().startswith('=IF('):
+            owner_table = getattr(self._owner, 'table', None)
+            result = _eval_if_formula(text, index.row(), owner_table) if owner_table else None
+
+            # Store formula on the item so (a) editor restores it and (b) _save_data persists it
+            view = owner_table
+            if view:
+                it = view.item(index.row(), index.column())
+                if not it:
+                    from PyQt6.QtWidgets import QTableWidgetItem
+                    it = QTableWidgetItem()
+                    view.setItem(index.row(), index.column(), it)
+                it.setData(FORMULA_ROLE, text)
+
+            # Write the evaluated number as the visible cell value
+            if result is not None:
+                formatted = str(int(result)) if isinstance(result, float) and result.is_integer() else f"{result:.6g}"
+            else:
+                # Formula is malformed or references a missing column — keep
+                # the raw formula text visible so the user can see and fix it.
+                formatted = text
+            model.setData(index, formatted, _Qt.ItemDataRole.EditRole)
+            return
+
+        # --- Priority 2: plain arithmetic ---
+        import re as _re
+        _HAS_ARITH = bool(_re.search(r'\d[+\-*/]|[+\-*/]\d|[+\-*/]\s*\(', text))
+        if _HAS_ARITH:
+            result = _safe_eval_expr(text)
+            if result is not None:
+                if isinstance(result, float) and result.is_integer():
+                    formatted = str(int(result))
+                else:
+                    formatted = f"{result:.6g}"
+                model.setData(index, formatted, _Qt.ItemDataRole.EditRole)
+                return
+
+        # --- Priority 3: plain text ---
+        super().setModelData(editor, model, index)
 
 # ---------------------------------------------------------------------------
 # Shared font helpers
@@ -352,15 +639,20 @@ _TABLE_STYLE = UNIVERSAL_TABLE_STYLE + """
 QTableWidget {
     background: #ffffff;
     border: none;
-    gridline-color: #94a3b8;
+    gridline-color: #64748b;
     color: #1e293b;
     font-size: 10pt;
-    selection-background-color: #d1fae5;
-    selection-color: #064e3b;
+    selection-background-color: transparent;
+    selection-color: #1e293b;
     outline: none;
 }
 QTableWidget::item {
     padding: 6px;
+}
+QTableWidget::item:selected {
+    background-color: transparent;
+    color: #1e293b;
+    border: 2px solid #059669;
 }
 QHeaderView::section:horizontal {
     background: #f1f5f9;
@@ -369,8 +661,8 @@ QHeaderView::section:horizontal {
     min-height: 22px;
     max-height: 26px;
     border: none;
-    border-bottom: 1px solid #94a3b8;
-    border-right: 1px solid #94a3b8;
+    border-bottom: 1px solid #64748b;
+    border-right: 1px solid #64748b;
     font-weight: 700;
     font-size: 9pt;
     text-transform: uppercase;
@@ -394,6 +686,7 @@ QPushButton {
 }
 QPushButton:hover { background: #047857; }
 QPushButton:disabled { background: #94a3b8; }
+QToolTip { background-color: #1e293b; color: #ffffff; border: none; padding: 5px 9px; border-radius: 4px; font-size: 11px; }
 """
 
 _BTN_SECONDARY = """
@@ -425,14 +718,88 @@ _MENU_STYLE = """
 """
 
 _POPUP_STYLE = """
-    QMessageBox { background: #ffffff; color: #0f172a; }
-    QMessageBox QLabel { color: #0f172a; font-size: 10pt; }
+    QDialog, QMessageBox, QInputDialog, QColorDialog {
+        background: #ffffff; color: #0f172a;
+    }
+    QLabel { color: #0f172a; font-size: 10pt; }
+    QLineEdit {
+        background: #ffffff; color: #0f172a;
+        border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 8px;
+    }
     QPushButton {
         background: #f1f5f9; color: #374151; border: 1px solid #cbd5e1;
         border-radius: 4px; padding: 5px 15px; font-weight: bold;
     }
     QPushButton:hover { background: #e2e8f0; }
 """
+
+
+def _styled_get_text(parent, title: str, label: str, text: str = ""):
+    """Replacement for QInputDialog.getText() that guarantees white/light styling.
+
+    Static methods like QInputDialog.getText() can fail to inherit the global
+    app stylesheet when the parent widget has its own local setStyleSheet().
+    This helper instantiates the dialog explicitly and applies _POPUP_STYLE
+    directly, which always wins regardless of the parent's local styles.
+
+    Returns (text_value, ok) — identical signature to QInputDialog.getText().
+    """
+    from PyQt6.QtWidgets import QInputDialog
+    dlg = QInputDialog(parent)
+    dlg.setWindowTitle(title)
+    dlg.setLabelText(label)
+    dlg.setTextValue(text)
+    dlg.setStyleSheet(_POPUP_STYLE)
+    ok = dlg.exec()
+    return dlg.textValue(), bool(ok)
+
+
+def _styled_question(parent, title: str, text: str, buttons):
+    """Replacement for QMessageBox.question() with guaranteed white styling."""
+    from PyQt6.QtWidgets import QMessageBox
+    msg = QMessageBox(parent)
+    msg.setWindowTitle(title)
+    msg.setText(text)
+    msg.setIcon(QMessageBox.Icon.Question)
+    msg.setStandardButtons(buttons)
+    msg.setStyleSheet(_POPUP_STYLE)
+    return msg.exec()
+
+
+def _styled_warning(parent, title: str, text: str):
+    """Replacement for QMessageBox.warning() with guaranteed white styling."""
+    from PyQt6.QtWidgets import QMessageBox
+    msg = QMessageBox(parent)
+    msg.setWindowTitle(title)
+    msg.setText(text)
+    msg.setIcon(QMessageBox.Icon.Warning)
+    msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+    msg.setStyleSheet(_POPUP_STYLE)
+    msg.exec()
+
+
+def _styled_info(parent, title: str, text: str):
+    """Replacement for QMessageBox.information() with guaranteed white styling."""
+    from PyQt6.QtWidgets import QMessageBox
+    msg = QMessageBox(parent)
+    msg.setWindowTitle(title)
+    msg.setText(text)
+    msg.setIcon(QMessageBox.Icon.Information)
+    msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+    msg.setStyleSheet(_POPUP_STYLE)
+    msg.exec()
+
+def _styled_get_color(parent):
+    """Replacement for QColorDialog.getColor() with guaranteed white styling."""
+    from PyQt6.QtWidgets import QColorDialog
+    from PyQt6.QtGui import QColor
+    dlg = QColorDialog(parent)
+    dlg.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog)
+    dlg.setStyleSheet(_POPUP_STYLE)
+    if dlg.exec():
+        return dlg.currentColor()
+    return QColor()
+
 
 # Context menu style for card-level right-click menus (red-toned selection).
 _CARD_MENU_STYLE = """
@@ -800,7 +1167,7 @@ class _DbTable(QTableWidget):
             self.add_row()
             
         elif chosen == a_color:
-            color = QColorDialog.getColor(parent=self)
+            color = _styled_get_color(self)
             if color.isValid():
                 self.blockSignals(True)
                 for idx in self.selectedIndexes():
@@ -814,7 +1181,7 @@ class _DbTable(QTableWidget):
                 self._do_save()
 
         elif chosen == a_text_color:
-            color = QColorDialog.getColor(parent=self)
+            color = _styled_get_color(self)
             if color.isValid():
                 self.blockSignals(True)
                 for idx in self.selectedIndexes():

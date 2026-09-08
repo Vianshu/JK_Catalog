@@ -309,13 +309,15 @@ def main():
     style_path = get_asset_path("style.qss")
     load_stylesheet(app, style_path)
     
-    # Global fix: Cell selection should just be a thick border, leaving color visible
+    # Global fallback: ensure selection fill is suppressed at app level.
+    # The border-only teal selection indicator is drawn by UniversalCellDelegate.paint()
+    # for delegate-backed tables; the QSS border covers all remaining tables.
     existing_style = app.styleSheet()
     app.setStyleSheet(existing_style + """
     QTableWidget::item:selected {
         background-color: transparent;
-        color: #000000;
-        border: 2px solid #0055ff;
+        color: #1a2035;
+        border: 2px solid #059669;
     }
     """)
 

@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QObject, QEvent
 
 
-from .shared          import _BTN_PRIMARY
+from .shared          import _BTN_PRIMARY, _styled_get_text, _styled_question, _styled_info
 from .today_payment   import TodayPaymentTabV2
 from .bank_ac         import RecordTab
 from .anil_hisab      import AnilHisabTab
@@ -178,7 +178,7 @@ class SuppPaymentV2UI(QWidget):
         if not self._can_edit or index == -1:
             return
         old = self.tabs.tabText(index)
-        new, ok = QInputDialog.getText(self, "Rename", "New name:", text=old)
+        new, ok = _styled_get_text(self, "Rename", "New name:", text=old)
         if ok and new.strip():
             self.tabs.setTabText(index, new.strip())
 
@@ -201,7 +201,7 @@ class SuppPaymentV2UI(QWidget):
         elif act == da and not is_core:
             if self.tabs.count() > self._CORE_TAB_COUNT:
                 tab_name = self.tabs.tabText(idx)
-                if (QMessageBox.question(
+                if (_styled_question(
                         self, "Delete",
                         f"Delete '{tab_name}'? All data in this sheet will be lost.",
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
@@ -212,7 +212,7 @@ class SuppPaymentV2UI(QWidget):
                         w.delete_from_db()
                     self.tabs.removeTab(idx)
             else:
-                QMessageBox.information(self, "Info", "No user-created sheets to delete.")
+                _styled_info(self, "Info", "No user-created sheets to delete.")
 
     def apply_edit_mode(self, can_edit: bool):
         self._can_edit = can_edit

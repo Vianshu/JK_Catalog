@@ -195,22 +195,33 @@ QColorDialog QPushButton:pressed {
     font-weight: 600;
 }
 
-/* Company name button at top of sidebar */
-QPushButton#CompanyDisplayBtn {
+/* Company header row — contains company name label (left) + hamburger toggle (right) */
+#CompanyHeader {
     background-color: transparent;
+    border-bottom: 1px solid rgba(255,255,255,0.2);
+    margin-bottom: 2px;
+    min-height: 46px;
+    max-height: 46px;
+}
+#CompanyNameLabel {
     color: #ffffff;
     font-weight: 700;
     font-size: 14px;
-    text-align: left;
-    padding: 10px 8px;
+    background: transparent;
     border: none;
-    border-bottom: 1px solid rgba(255,255,255,0.2);
-    margin-bottom: 2px;
-    border-radius: 0px;
+    padding: 0px;
 }
-QPushButton#CompanyDisplayBtn:hover {
-    color: #ffffff;
-    background-color: rgba(255,255,255,0.1);
+#HamburgerBtn {
+    background-color: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 4px;
+}
+#HamburgerBtn:hover {
+    background-color: rgba(255, 255, 255, 0.15);
+}
+#HamburgerBtn:pressed {
+    background-color: rgba(255, 255, 255, 0.25);
 }
 
 /* Logged-in user badge shown below the company button */
@@ -268,7 +279,7 @@ QPushButton#CompanyDisplayBtn:hover {
 #MenuButtonWidget {
     background: transparent;
     border-radius: 6px;
-    margin: 1px 4px;
+    margin: 1px 2px;
     border-left: 3px solid transparent;
 }
 #MenuButtonWidget:hover {
@@ -375,12 +386,20 @@ QTableWidget QLineEdit {
 /* --- 6. Data Tables --- */
 QTableWidget {
     background-color: #ffffff;
-    gridline-color: #E2E4E8;
+    gridline-color: #64748b;
     border: 1px solid #E2E4E8;
-    selection-background-color: #EBF5F5;
-    selection-color: #1A2035;
+    selection-background-color: transparent;
+    selection-color: #1a2035;
     alternate-background-color: #F9FAFB;
     font-size: 13px;
+}
+
+/* Border-only selection: no fill, 2px teal border.
+   Applies to ALL QTableWidgets that have no widget-level stylesheet override. */
+QTableWidget::item:selected {
+    background-color: transparent;
+    color: #1a2035;
+    border: 2px solid #059669;
 }
 
 QHeaderView::section {
@@ -661,6 +680,12 @@ QTabBar::tab:disabled {
     border: 1px solid #E2E4E8;
     alternate-background-color: #F9FAFB;
 }
+#DetailedMappingQTableWidget::item:selected {
+    background-color: transparent;
+    color: #1a2035;
+    border: 2px solid #059669;
+}
+
 #DetailedMappingTable::item {
     padding: 2px 4px;
 }

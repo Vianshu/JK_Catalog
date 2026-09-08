@@ -2,7 +2,7 @@ import json
 import os
 import sys
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, 
+    QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QSizePolicy,
     QFrame, QStackedWidget, QMenu, QMessageBox, QProgressDialog, QApplication
 )
 from PyQt6.QtCore import Qt, QTimer, QSettings, QThread, pyqtSignal, QObject, QEvent
@@ -526,7 +526,7 @@ class MainWindow(QWidget):
             # Zero margins so the 36px icon fits inside the 40px rail without clipping
             self.sidebar.layout().setContentsMargins(0, 4, 0, 4)
             # Hide contents immediately so they don't squish during animation
-            self.company_btn.hide()
+            self.company_header.hide()
             self.nav_stack.hide()
             self.lbl_logged_user.hide()
             self.logout_btn.hide()
@@ -567,9 +567,9 @@ class MainWindow(QWidget):
             self._floating_toggle.hide()
             def on_expanded():
                 # Restore sidebar margins when expanding back to full width
-                self.sidebar.layout().setContentsMargins(10, 0, 10, 10)
+                self.sidebar.layout().setContentsMargins(5, 0, 5, 5)
                 if getattr(self, 'user_session', None):
-                    self.company_btn.show()
+                    self.company_header.show()
                     self.lbl_logged_user.show()
                     self.logout_btn.show()
                 self.nav_stack.show()
@@ -603,16 +603,52 @@ class MainWindow(QWidget):
         self.sidebar.setFixedWidth(base_width)
         
         sidebar_layout = QVBoxLayout(self.sidebar)
-        sidebar_layout.setContentsMargins(10, 0, 10, 10)
+        sidebar_layout.setContentsMargins(5, 0, 5, 5)
         sidebar_layout.setSpacing(0)
 
-        # Company Display Button (Acts as collapse toggle)
-        self.company_btn = QPushButton("Company Name")
-        self.company_btn.setObjectName("CompanyDisplayBtn")
-        self.company_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.company_btn.clicked.connect(self.toggle_sidebar)
-        self.company_btn.hide()
-        sidebar_layout.addWidget(self.company_btn)
+        # --- Company Header Row: name label (left) + hamburger toggle (right) ---
+        from src.ui.supp_payment.shared import get_icon as _get_icon
+        from PyQt6.QtCore import QSize as _QSize
+        self.company_header = QWidget()
+        self.company_header.setObjectName("CompanyHeader")
+        _hlay = QHBoxLayout(self.company_header)
+        _hlay.setContentsMargins(8, 0, 4, 0)  # no top/bottom padding — header height drives spacing
+        _hlay.setSpacing(0)
+        _hlay.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        self.company_lbl = QLabel("")
+        self.company_lbl.setObjectName("CompanyNameLabel")
+        self.company_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.company_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        # No word-wrap — prevents variable header height that shifts hamburger position.
+        # Long names are elided at the right edge instead.
+        self.company_lbl.setWordWrap(False)
+        _hlay.addWidget(self.company_lbl, 1, Qt.AlignmentFlag.AlignVCenter)
+
+        self.hamburger_btn = QPushButton()
+        self.hamburger_btn.setObjectName("HamburgerBtn")
+        try:
+            self.hamburger_btn.setIcon(_get_icon("menu.svg"))
+        except Exception:
+            self.hamburger_btn.setText("\u2630")
+        self.hamburger_btn.setIconSize(_QSize(18, 18))
+        self.hamburger_btn.setFixedSize(32, 32)
+        self.hamburger_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.hamburger_btn.setToolTip("Toggle sidebar  (Ctrl+B)")
+        self.hamburger_btn.setStyleSheet(
+            "QPushButton{background:transparent;border:none;border-radius:6px;padding:0px;}"
+            "QPushButton:hover{background:rgba(255,255,255,0.15);}"
+            "QPushButton:pressed{background:rgba(255,255,255,0.25);}"
+            "QToolTip{background-color:#1e293b;color:#ffffff;border:none;padding:5px 9px;border-radius:4px;font-size:11px;}"
+        )
+        self.hamburger_btn.clicked.connect(self.toggle_sidebar)
+        _hlay.addWidget(self.hamburger_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.company_header.hide()
+        sidebar_layout.addWidget(self.company_header)
+
+        # Keep a compat alias so any legacy code referencing company_btn still works
+        self.company_btn = self.company_header
 
         # Item 2: Logged-in user label — added to sidebar near logout button
         self.lbl_logged_user = QLabel("")
@@ -1205,8 +1241,8 @@ class MainWindow(QWidget):
 
             # Update UI with company name (no building logo or dropdown arrow)
             clean_name = re.sub(r'\s*\(\d{4}[-/].*?\)', '', comp_name)
-            self.company_btn.setText(clean_name)
-            self.company_btn.show()
+            self.company_lbl.setText(clean_name)
+            self.company_header.show()
 
             # Item 2: show logged-in username below company button
             if user_session and hasattr(user_session, 'username'):
@@ -2130,7 +2166,7 @@ class MainWindow(QWidget):
         data_key         = os.path.basename(data_path) if os.path.basename(data_path) else "DataRoot"
         # Include AM/PM so we allow 2 backups per day (12-hour schedule)
         today_str        = datetime.now().strftime("%Y-%m-%d_%p")
-        data_backup_dir  = os.path.join(backup_folder, data_key)
+        data_backup_dir  = os.path.join(backup_folder, f"{data_key}_backup")
 
         try:
             os.makedirs(data_backup_dir, exist_ok=True)
@@ -2885,7 +2921,7 @@ class MainWindow(QWidget):
         self._perm_poll_timer.stop()  # Stop permission polling
         self._security_mgr = None
         self.set_active_menu_btn(None) # Clear highlighting
-        self.company_btn.hide()
+        self.company_header.hide()
         self.lbl_logged_user.hide()   # Item 2: clear user badge on logout
         self.lbl_logged_user.setText("")
         # Re-enable all menu buttons (clear permission locks from previous session)
@@ -2928,7 +2964,7 @@ class MainWindow(QWidget):
         menu.addAction(f"Active: {self.current_company}").setEnabled(False)
         menu.addSeparator()
         menu.addAction("🔄 Switch Company", self.back_to_login_screen)
-        menu.exec(self.company_btn.mapToGlobal(self.company_btn.rect().bottomLeft()))
+        menu.exec(self.company_lbl.mapToGlobal(self.company_lbl.rect().bottomLeft()))
 
     def handle_alter_company(self):
         if self.current_company and hasattr(self, 'current_company_path'):
