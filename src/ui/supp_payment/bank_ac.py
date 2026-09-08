@@ -597,7 +597,6 @@ class RecordTab(_PrintExportMixin, QWidget):
 
         self._btn_search = QPushButton()
         self._btn_search.setIcon(get_icon("search.svg"))
-        self._btn_search.setToolTip("Search Account")
         self._btn_search.setStyleSheet(_BTN_PRIMARY)
         self._btn_search.setFixedHeight(32)
         self._btn_search.clicked.connect(self.toggle_search)
@@ -605,7 +604,6 @@ class RecordTab(_PrintExportMixin, QWidget):
 
         self._btn_add = QPushButton()
         self._btn_add.setIcon(get_icon("user_add.svg"))
-        self._btn_add.setToolTip("Add Supplier Account")
         self._btn_add.setStyleSheet(_BTN_PRIMARY)
         self._btn_add.setFixedHeight(32)
         self._btn_add.clicked.connect(lambda: self._add_supplier())
@@ -613,7 +611,6 @@ class RecordTab(_PrintExportMixin, QWidget):
 
         self._btn_add_co = QPushButton()
         self._btn_add_co.setIcon(get_icon("company_add.svg"))
-        self._btn_add_co.setToolTip("Add Company Account")
         self._btn_add_co.setStyleSheet(_BTN_PRIMARY)
         self._btn_add_co.setFixedHeight(32)
         self._btn_add_co.clicked.connect(self._add_company_acct)
@@ -621,7 +618,6 @@ class RecordTab(_PrintExportMixin, QWidget):
 
         self._btn_add_pe = QPushButton()
         self._btn_add_pe.setIcon(get_icon("personal_add.svg"))
-        self._btn_add_pe.setToolTip("Add Personal Account")
         self._btn_add_pe.setStyleSheet(_BTN_PRIMARY)
         self._btn_add_pe.setFixedHeight(32)
         self._btn_add_pe.clicked.connect(self._add_personal_acct)
@@ -632,7 +628,6 @@ class RecordTab(_PrintExportMixin, QWidget):
         shortcut.activated.connect(self._copy_selected_as_image)
         self.btn_copy_records = QPushButton()
         self.btn_copy_records.setIcon(get_icon("copy.svg"))
-        self.btn_copy_records.setToolTip("Copy selected records to clipboard")
         self.btn_copy_records.setStyleSheet(_BTN_PRIMARY)
         self.btn_copy_records.setFixedHeight(32)
         self.btn_copy_records.clicked.connect(self._copy_selected_as_image)
@@ -647,7 +642,7 @@ class RecordTab(_PrintExportMixin, QWidget):
             if expanded:
                 self._search.show()
                 self._btn_search.hide()
-                self._btn_add.setText(" Add Supplier")
+                self._btn_add.setText(" Add Bank A/C")
                 self._btn_add_co.setText(" Add Company")
                 self._btn_add_pe.setText(" Add Personal")
             else:

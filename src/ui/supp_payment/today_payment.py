@@ -1269,7 +1269,6 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
         from src.ui.supp_payment.shared import get_icon
         self._btn_add = QPushButton()
         self._btn_add.setIcon(get_icon("add.svg"))
-        self._btn_add.setToolTip("New Table")
         self._btn_add.setStyleSheet(_BTN_PRIMARY)
         self._btn_add.setFixedHeight(32)
         self._btn_add.clicked.connect(self._add_section)
@@ -1303,11 +1302,9 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
 
         self._btn_single = QPushButton()
         self._btn_single.setIcon(get_icon("single.svg"))
-        self._btn_single.setToolTip("Single Table View")
         self._btn_single.setCheckable(True)
         self._btn_stack  = QPushButton()
         self._btn_stack.setIcon(get_icon("multi.svg"))
-        self._btn_stack.setToolTip("Multi View")
         self._btn_stack.setCheckable(True)
         self._btn_stack.setChecked(True)
         for b in (self._btn_single, self._btn_stack):

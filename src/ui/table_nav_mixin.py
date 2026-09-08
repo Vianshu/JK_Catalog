@@ -489,7 +489,17 @@ class UniversalCellDelegate(QStyledItemDelegate):
         r = t.currentRow() if t else -1
         c = t.currentColumn() if t else 0
         
-        # Guard: editor may already be closed by the time singleShot fires
+        # Guard: Ensure the table is still legally in EditingState before emitting commitData
+        # to avoid the 'editor does not belong to this view' C++ warning
+        t = getattr(self._owner, '_excel_table', None)
+        if not t:
+            p = self.parent()
+            if hasattr(p, 'state'):
+                t = p
+                
+        if t and hasattr(t, 'state') and t.state() != QAbstractItemView.State.EditingState:
+            return  # Already committed natively by Qt focus loss
+            
         try:
             self.commitData.emit(editor)
             # Use SubmitModelCache so _SectionCard._on_editor_close_for_nav fires for navigation.

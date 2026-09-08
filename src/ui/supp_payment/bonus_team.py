@@ -74,7 +74,6 @@ class BonusTab(QWidget, _PrintExportMixin):
         from src.ui.supp_payment.shared import get_icon
         self._btn_add = QPushButton()
         self._btn_add.setIcon(get_icon("add.svg"))
-        self._btn_add.setToolTip("Add Row")
         self._btn_add.setStyleSheet(_BTN_PRIMARY)
         self._btn_add.setFixedHeight(32)
         self._btn_add.clicked.connect(self._add_row)
@@ -137,7 +136,7 @@ class TeamListTab(QWidget, _PrintExportMixin):
         def on_toggle_team(expanded):
             if expanded:
                 self._btn_add_yr.setText(" Add Year")
-                self._btn_add_emp.setText(" Add Employee")
+                self._btn_add_emp.setText(" Add Row")
             else:
                 self._btn_add_yr.setText("")
                 self._btn_add_emp.setText("")
@@ -149,7 +148,6 @@ class TeamListTab(QWidget, _PrintExportMixin):
         from src.ui.supp_payment.shared import get_icon
         self._btn_add_yr = QPushButton()
         self._btn_add_yr.setIcon(get_icon("add.svg"))
-        self._btn_add_yr.setToolTip("Add Year")
         self._btn_add_yr.setStyleSheet(_BTN_PRIMARY)
         self._btn_add_yr.setFixedHeight(32)
         self._btn_add_yr.clicked.connect(self._add_year)
@@ -157,7 +155,6 @@ class TeamListTab(QWidget, _PrintExportMixin):
 
         self._btn_add_emp = QPushButton()
         self._btn_add_emp.setIcon(get_icon("user_add.svg"))
-        self._btn_add_emp.setToolTip("Add Employee")
         self._btn_add_emp.setStyleSheet(_BTN_PRIMARY)
         self._btn_add_emp.setFixedHeight(32)
         self._btn_add_emp.clicked.connect(self._add_employee)
