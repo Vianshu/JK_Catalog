@@ -190,13 +190,22 @@ def _paint_tables(printer, page_range=None):
                 widths.append(max(max_w, h_pad * 3))
             return widths
             
-        active_cols = all_cols[:]
+        active_cols = [c for c in all_cols if not table.isColumnHidden(c)]
         # If caller specifies a col_range, restrict to those columns only
         col_range = table_info.get("col_range", None)
         if col_range is not None:
             active_cols = [c for c in active_cols if c in col_range]
         raw_widths = measure_widths(active_cols)
         
+        # Include S.N column if vertical header is visible
+        include_sn = not table.verticalHeader().isHidden()
+        if include_sn:
+            sn_w = fm_h.horizontalAdvance("S.N") + 2 * h_pad
+            for r_idx in range(len(data_rows)):
+                w = fm_cell.horizontalAdvance(str(r_idx + 1)) + 2 * h_pad
+                if w > sn_w: sn_w = w
+            raw_widths.insert(0, max(sn_w, h_pad * 3))
+
         # Truncate logic
         if truncate_groups:
             # groups are prioritized, we pop from the end (rightmost) if it doesn't fit
@@ -205,6 +214,8 @@ def _paint_tables(printer, page_range=None):
                 drop_group = tg.pop() # remove lowest priority (rightmost)
                 active_cols = [c for c in active_cols if c not in drop_group]
                 raw_widths = measure_widths(active_cols)
+                if include_sn:
+                    raw_widths.insert(0, max(sn_w, h_pad * 3))
                 
         total_raw = sum(raw_widths) or 1
         # Scale to fit page_w if it still exceeds or if we want to expand it
@@ -217,6 +228,15 @@ def _paint_tables(printer, page_range=None):
         active_data = [[rd[c] for c in active_cols] for rd in data_rows]
         active_data_bgs = [[row_bgs[c] for c in active_cols] for row_bgs in data_row_bgs]
         active_data_noh = [[row_noh[c] for c in active_cols] for row_noh in data_row_noh]
+
+        if include_sn:
+            active_headers.insert(0, "S.N")
+            for r_idx, row in enumerate(active_data):
+                row.insert(0, str(r_idx + 1))
+            for row in active_data_bgs:
+                row.insert(0, None)
+            for row in active_data_noh:
+                row.insert(0, False)
         
         # --- Measure the height this supplier table would occupy ---
         table_h = 0

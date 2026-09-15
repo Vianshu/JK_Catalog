@@ -30,7 +30,7 @@ from .shared import (
     _SCROLLBAR_STYLE, _TABLE_STYLE, _SECTION_HEADER_STYLE,
     _BTN_PRIMARY, _BTN_SECONDARY, _BTN_DANGER,
     _MENU_STYLE, _POPUP_STYLE, _CARD_MENU_STYLE,
-    _setup_smart_header, _DbTable,
+    _setup_smart_header, _setup_sn_header, _DbTable,
 )
 from src.ui.table_nav_mixin import UniversalCellDelegate
 
@@ -59,11 +59,20 @@ class _ReadOnlyDelegate(ModernTableDelegate):
 
 class _StartDateDelegate(ModernTableDelegate):
     """Start Date column:
-      Row 0  → plain text input (user types date manually, e.g. 2081-04-01).
-      Rows 1+ → locked (auto-filled from previous end date, cannot be overridden).
+      Respects the parent tab's _start_date_locked flag.
+      Row 0  → always editable.
+      Rows 1+→ editable only when lock is OFF.
     """
+    def __init__(self, parent_table, tab_ref):
+        super().__init__(parent_table)
+        self._tab = tab_ref  # reference to AnilHisabTab to read lock state
+
     def createEditor(self, parent, option, index):
-        return super().createEditor(parent, option, index) if index.row() == 0 else None
+        if index.row() == 0:
+            return super().createEditor(parent, option, index)
+        if getattr(self._tab, '_start_date_locked', True):
+            return None  # locked — no editor
+        return super().createEditor(parent, option, index)
 
 
 def _fmt(val):
@@ -127,23 +136,54 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
         layout.addWidget(right_bar, 0)
         self.table.setAlternatingRowColors(False)
         self.table.setStyleSheet(_TABLE_STYLE)
-        self.table.setHorizontalHeaderLabels([c[0] for c in _ANIL_COLS])
+        
+        # Load custom columns from DB schema
+        self._custom_cols = []
+        if self._db_name:
+            conn = self._db.get_connection(self._db_name)
+            if conn:
+                cur = conn.cursor()
+                try:
+                    cur.execute("SELECT * FROM anil_ledger WHERE 1=0")
+                    all_cols = [desc[0] for desc in cur.description]
+                    # The first 9 are fixed: id, sort_order, start_date, end_date, days, particular, dr, cr, remarks
+                    if len(all_cols) > 9:
+                        self._custom_cols = all_cols[9:]
+                except: pass
+                
+        total_cols = len(_ANIL_COLS) + len(self._custom_cols)
+        self.table.setColumnCount(total_cols)
+        
+        labels = [c[0] for c in _ANIL_COLS] + self._custom_cols
+        self.table.setHorizontalHeaderLabels(labels)
+        
         for i, (_, w) in enumerate(_ANIL_COLS):
             self.table.setColumnWidth(i, w)
-        # Days (col 2) and DR (col 4) are auto-calculated — make them read-only
+        for i in range(len(_ANIL_COLS), total_cols):
+            self.table.setColumnWidth(i, 120)
+        # Days (col 2) and Balance (col 6) are auto-calculated — make them read-only.
+        # DR (col 4) is editable: blank = auto 18% formula, non-blank = manual override.
         self.table.setItemDelegateForColumn(2, _ReadOnlyDelegate(self.table))
-        self.table.setItemDelegateForColumn(_ANIL_DR, _ReadOnlyDelegate(self.table))
+        self.table.setItemDelegateForColumn(_ANIL_BAL, _ReadOnlyDelegate(self.table))
         _setup_smart_header(self.table)
+        try:
+            self.table.horizontalHeader().customContextMenuRequested.disconnect(self.table._smart_hdr_menu)
+        except Exception:
+            pass
         self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.table.verticalHeader().setDefaultSectionSize(26)
+        _setup_sn_header(self.table)
+        from PyQt6.QtCore import QSettings
+        settings = QSettings("TallySync", "SuppPayment")
+        self._show_sn = settings.value("show_sn_anil_hisab", False, type=bool)
+        self.table.verticalHeader().setVisible(self._show_sn)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.table.setItemDelegate(ModernTableDelegate(self.table))
-        
-        # Date delegate on End Date (1), Start Date (0) uses the row-aware plain-text delegate
-        self.table.setItemDelegateForColumn(0, _StartDateDelegate(self.table))
+
+        # Date delegate on End Date (1), Start Date (0) uses the lock-aware delegate
+        self.table.setItemDelegateForColumn(0, _StartDateDelegate(self.table, self))
         self.table.setItemDelegateForColumn(1, ModernTableDelegate(self.table, cell_type="date"))
-        # Formula columns — read-only: Days (2), DR (4), Balance (6)
-        for _fc in (2, _ANIL_DR, _ANIL_BAL):
+        # Balance (6) and Days (2) are read-only formula columns
+        for _fc in (2, _ANIL_BAL):
             self.table.setItemDelegateForColumn(_fc, _ReadOnlyDelegate(self.table))
 
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -151,23 +191,191 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
         
         self.table.horizontalHeader().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.horizontalHeader().customContextMenuRequested.connect(self._header_ctx)
+        self.table.horizontalHeader().sectionResized.connect(self._save_header_state)
+        self.table.horizontalHeader().sectionMoved.connect(self._save_header_state)
 
         self.table.cellChanged.connect(self._on_cell_changed)
+
+
+    def _insert_custom_col(self, visual_idx):
+        from PyQt6.QtWidgets import QInputDialog, QTableWidgetItem
+        import re
+        name, ok = QInputDialog.getText(self, "New Column", "Column Name:")
+        if ok and name.strip():
+            safe_name = re.sub(r'[^a-zA-Z0-9_ ]', '', name.strip())
+            if not safe_name: return
+            
+            # 1. Alter SQL Table
+            if self._db_name:
+                conn = self._db.get_connection(self._db_name)
+                if conn:
+                    cur = conn.cursor()
+                    try:
+                        cur.execute(f"ALTER TABLE anil_ledger ADD [{safe_name}] NVARCHAR(MAX)")
+                        conn.commit()
+                    except Exception as e:
+                        conn.rollback()
+                        print("Add column failed:", e)
+                        return
+                        
+            # 2. Update UI
+            logical_idx = self.table.columnCount()
+            self.table.insertColumn(logical_idx)
+            self.table.setHorizontalHeaderItem(logical_idx, QTableWidgetItem(safe_name))
+            self.table.setColumnWidth(logical_idx, 120)
+            
+            # 3. Move visually
+            self.table.horizontalHeader().moveSection(logical_idx, visual_idx)
+            self._save_header_state()
+            self._custom_cols.append(safe_name)
+
+    def _rename_custom_col(self, col):
+        from PyQt6.QtWidgets import QInputDialog
+        h = self.table.horizontalHeaderItem(col)
+        old_name = h.text() if h else ""
+        name, ok = QInputDialog.getText(self, "Rename Column", "New Name:", text=old_name)
+        if ok and name.strip():
+            if self._db_name:
+                conn = self._db.get_connection(self._db_name)
+                if conn:
+                    cur = conn.cursor()
+                    try:
+                        cur.execute(f"EXEC sp_rename 'anil_ledger.[{old_name}]', '{name.strip()}', 'COLUMN'")
+                        conn.commit()
+                    except Exception as e:
+                        conn.rollback()
+                        print("Rename failed:", e)
+            if h:
+                h.setText(name.strip())
+
+    def _delete_custom_col(self, col):
+        if col < len(_ANIL_COLS):
+            return
+        h = self.table.horizontalHeaderItem(col)
+        col_name = h.text() if h else ""
+        from PyQt6.QtWidgets import QMessageBox
+        confirm = QMessageBox.question(
+            self, "Delete Column",
+            f"Are you sure you want to delete column '{col_name}' and all its data?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+            
+        if self._db_name:
+            conn = self._db.get_connection(self._db_name)
+            if conn:
+                cur = conn.cursor()
+                try:
+                    cur.execute(f"ALTER TABLE anil_ledger DROP COLUMN [{col_name}]")
+                    conn.commit()
+                except Exception as e:
+                    conn.rollback()
+                    print("Drop column failed:", e)
+                    
+        if col_name in self._custom_cols:
+            self._custom_cols.remove(col_name)
+        self.table.removeColumn(col)
+        self._save_header_state()
+        self._save_all()
+
+    def _save_header_state(self):
+        state = self.table.horizontalHeader().saveState().toBase64().data().decode()
+        if self._db_name:
+            conn = self._db.get_connection(self._db_name)
+            if conn:
+                cur = conn.cursor()
+                try:
+                    cur.execute(
+                        "IF EXISTS (SELECT 1 FROM anil_settings WHERE [key]='header_state') "
+                        "UPDATE anil_settings SET value=? WHERE [key]='header_state' "
+                        "ELSE INSERT INTO anil_settings ([key],value) VALUES ('header_state',?)",
+                        (state, state)
+                    )
+                    conn.commit()
+                except: pass
+
+    def _load_header_state(self):
+        if self._db_name:
+            try:
+                rows = self._db.execute_query(self._db_name, "SELECT value FROM anil_settings WHERE [key]='header_state'")
+                if rows and rows[0][0]:
+                    from PyQt6.QtCore import QByteArray
+                    state = QByteArray.fromBase64(rows[0][0].encode())
+                    self.table.horizontalHeader().restoreState(state)
+            except: pass
+
+    def _vhdr_ctx(self, pos):
+        if not self._can_edit:
+            return
+        from PyQt6.QtWidgets import QMenu
+        from PyQt6.QtGui import QCursor
+        menu = QMenu(self)
+        menu.setStyleSheet(_MENU_STYLE)
+        act_hide = menu.addAction("👁️  Hide S.N")
+        chosen = menu.exec(QCursor.pos())
+        if chosen == act_hide:
+            self._set_sn_visible(False)
+
+    def _set_sn_visible(self, visible: bool):
+        self._show_sn = visible
+        self.table.verticalHeader().setVisible(visible)
+        from PyQt6.QtCore import QSettings
+        settings = QSettings("TallySync", "SuppPayment")
+        settings.setValue("show_sn_anil_hisab", visible)
 
     def _header_ctx(self, pos):
         if not self._can_edit:
             return
         
-        # safely extract x coordinate for logicalIndexAt
-        col = self.table.horizontalHeader().logicalIndexAt(pos.x())
+        hdr = self.table.horizontalHeader()
+        col = hdr.logicalIndexAt(pos.x())
+        visual_col = hdr.visualIndex(col)
             
+        from PyQt6.QtWidgets import QMenu
         menu = QMenu(self)
         menu.setStyleSheet(_MENU_STYLE)
         
-        a_set_dr = menu.addAction("💰 Set Opening Dr (Row 1)")
-        act = menu.exec(self.table.horizontalHeader().viewport().mapToGlobal(pos))
+        # 1. Smart-header resize/stretch actions
+        a_fit = menu.addAction("↔  Fit Column to Content")
+        a_fit_all = menu.addAction("↔  Fit All Columns to Content")
+        is_stretch = hdr.stretchLastSection()
+        a_stretch = menu.addAction(
+            "📌  Stretch Last Column (On)" if is_stretch else "📌  Stretch Last Column (Off)"
+        )
+        menu.addSeparator()
+
+        # S.N toggle
+        act_sn = menu.addAction("👁️  Hide S.N" if self._show_sn else "👁️  Show S.N")
+        menu.addSeparator()
+
+        # 2. Opening Dr balance
+        a_set_dr = menu.addAction("💰  Set Opening Dr (Row 1)")
+        menu.addSeparator()
+
+        # 3. Column insertion
+        a_ins_l = menu.addAction("➕  Insert Column Left")
+        a_ins_r = menu.addAction("➕  Insert Column Right")
+        menu.addSeparator()
+
+        # 4. Custom column management
+        is_custom = (col >= len(_ANIL_COLS))
+        a_rename = menu.addAction("✏️  Rename Column")
+        a_rename.setEnabled(is_custom)
+        a_del = menu.addAction("🗑️  Delete Column")
+        a_del.setEnabled(is_custom)
         
-        if act == a_set_dr:
+        act = menu.exec(hdr.mapToGlobal(pos))
+        
+        if act == a_fit:
+            self.table.resizeColumnToContents(col)
+        elif act == a_fit_all:
+            self.table.resizeColumnsToContents()
+        elif act == a_stretch:
+            hdr.setStretchLastSection(not is_stretch)
+        elif act == act_sn:
+            self._set_sn_visible(not self._show_sn)
+        elif act == a_set_dr:
             from .shared import _styled_get_text
             val, ok = _styled_get_text(self, "Opening Dr", "Enter Opening Dr Balance for Row 1:")
             if ok:
@@ -190,6 +398,14 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
                 self.table.blockSignals(False)
                 self._recalc_all()
                 self._save_all()
+        elif act == a_ins_l:
+            self._insert_custom_col(visual_col)
+        elif act == a_ins_r:
+            self._insert_custom_col(visual_col + 1)
+        elif act == a_rename and is_custom:
+            self._rename_custom_col(col)
+        elif act == a_del and is_custom:
+            self._delete_custom_col(col)
 
     def _row_ctx(self, pos):
         if not self._can_edit:
@@ -374,17 +590,20 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
         self.table.blockSignals(False)
 
     def _load_from_db(self):
+        # Dynamically build SELECT based on custom cols
+        cols = ["start_date", "end_date", "days", "particular", "dr", "cr", "remarks"]
+        cols.extend([f"[{c}]" for c in self._custom_cols])
+        
         rows = self._db.execute_query(
             self._db_name,
-            "SELECT start_date, end_date, days, particular, dr, cr, remarks "
-            "FROM anil_ledger ORDER BY sort_order, id"
+            f"SELECT {','.join(cols)} FROM anil_ledger ORDER BY sort_order, id"
         ) or []
         self.table.blockSignals(True)
         self.table.setRowCount(0)
         for row_data in rows:
             r = self.table.rowCount()
             self.table.insertRow(r)
-            start, end, days, part, dr, cr, remarks = row_data
+            start, end, days, part, dr, cr, remarks = row_data[:7]
             import json
             from PyQt6.QtGui import QBrush, QColor
             def _unpack(val, align):
@@ -404,17 +623,30 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
                 start_it.setFlags(start_it.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(r, 0, start_it)
             self.table.setItem(r, 1, _unpack(end, _C))
-            # col 2 (Days) and col 4 (DR) are formula columns — skipped here,
-            # recalculated by _recalc_all() → _recalc_days() below.
+            # col 2 (Days) is a formula column — recalculated by _recalc_all().
+            # col 4 (DR): load stored value. Row 0 = opening balance (always stored).
+            # Rows 1+: if a manual override was saved, load it; blank = formula will run.
+            dr_it = _unpack(dr, _R)
+            dr_it.setFlags(dr_it.flags() & ~Qt.ItemFlag.ItemIsEditable if r == 0
+                           else dr_it.flags() | Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(r, _ANIL_DR, dr_it)
             self.table.setItem(r, 3, _unpack(part, _L))
             self.table.setItem(r, 5, _unpack(cr, _R))
             self.table.setItem(r, 7, _unpack(remarks, _L))
+            
+            # Populate custom cols
+            for i, val in enumerate(row_data[7:]):
+                col_idx = len(_ANIL_COLS) + i
+                self.table.setItem(r, col_idx, _unpack(val, _C))
+                
         self.table.blockSignals(False)
         self.table.resizeColumnsToContents()
-        # Recalc balances silently after load
+        # Recalc balances silently after load (skips rows with manual DR overrides)
         self._recalc_all()
         # Apply lock state to start date cells after data is loaded
         self._apply_start_date_lock()
+        self._load_header_state()
+        self._load_header_state()
 
     _INTEREST_RATE = 0.18  # 18% annual — hardcoded
 
@@ -451,7 +683,15 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
             if r == 0:
                 continue
 
-            # Interest formula: DR = prev_balance × 18% / 365 × days (always computed)
+            # Interest formula: DR = prev_balance × 18% / 365 × days
+            # SKIP if this row has a manual DR override (user typed a value directly).
+            existing_dr_it = self.table.item(r, _ANIL_DR)
+            existing_dr_txt = existing_dr_it.text().strip().replace(",", "") if existing_dr_it else ""
+            if existing_dr_txt:
+                # Manual override present — leave it untouched, ensure it stays editable
+                existing_dr_it.setFlags(existing_dr_it.flags() | Qt.ItemFlag.ItemIsEditable)
+                continue
+
             if days_val and days_val > 0 and r > 0:
                 prev_bal_it = self.table.item(r - 1, _ANIL_BAL)
                 prev_bal_txt = prev_bal_it.text().strip().replace(",", "") if prev_bal_it else ""
@@ -464,7 +704,7 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
             else:
                 interest_str = ""
             new_dr = self._a_item(interest_str, _R)
-            new_dr.setFlags(new_dr.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            new_dr.setFlags(new_dr.flags() | Qt.ItemFlag.ItemIsEditable)  # editable: clear to restore formula
             self.table.setItem(r, _ANIL_DR, new_dr)
         self.table.blockSignals(False)
         self.table.resizeColumnsToContents()
@@ -510,19 +750,29 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
         cur = conn.cursor()
         try:
             cur.execute("DELETE FROM anil_ledger")
-            rows_to_insert = [
-                (r,
-                 self._cell(r, 0), self._cell(r, 1), self._cell(r, 2),
-                 self._cell(r, 3), self._cell(r, 4), self._cell(r, 5),
-                 self._cell(r, 7))
-                for r in range(self.table.rowCount())
-            ]
+            
+            base_cols = ["sort_order", "start_date", "end_date", "days", "particular", "dr", "cr", "remarks"]
+            custom_cols = [f"[{c}]" for c in self._custom_cols]
+            all_cols = base_cols + custom_cols
+            
+            placeholders = ",".join(["?"] * len(all_cols))
+            
+            rows_to_insert = []
+            for r in range(self.table.rowCount()):
+                row_vals = [
+                    r,
+                    self._cell(r, 0), self._cell(r, 1), self._cell(r, 2),
+                    self._cell(r, 3), self._cell(r, 4), self._cell(r, 5),
+                    self._cell(r, 7)
+                ]
+                for i in range(len(self._custom_cols)):
+                    row_vals.append(self._cell(r, len(_ANIL_COLS) + i))
+                rows_to_insert.append(tuple(row_vals))
+                
             if rows_to_insert:
                 cur.executemany(
-                    "INSERT INTO anil_ledger"
-                    "(sort_order,start_date,end_date,days,particular,dr,cr,remarks)"
-                    " VALUES(?,?,?,?,?,?,?,?)",
-                    [(i, *row[1:]) for i, row in enumerate(rows_to_insert)]
+                    f"INSERT INTO anil_ledger ({','.join(all_cols)}) VALUES ({placeholders})",
+                    rows_to_insert
                 )
             conn.commit()
         except Exception as e:
@@ -569,13 +819,18 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
 
     def _on_cell_changed(self, row, col):
         """Save on any column edit; recalc balance on DR/CR change;
-        recalc Days and auto-fill next start date on date change."""
+        recalc Days and auto-fill next start date on date change.
+
+        DR manual override: if the user types a value in DR (rows 1+), it is
+        preserved as-is and the 18% formula is skipped for that row.
+        If the user clears the DR cell, the formula resumes automatically.
+        """
         # Formula 1: Days = End Date - Start Date (current row only)
         if col in (0, 1):
             self._recalc_days(row)
 
         # Formula 2: Cascade start dates from next_row all the way to the end
-        # of the ledger so the full chain stays correct after any single edit.
+        # of the ledger — only when start dates are locked (auto-chain mode).
         if col == 1:  # end_date edited
             end_it = self.table.item(row, 1)
             end_txt = end_it.text().strip() if end_it else ""
@@ -592,7 +847,11 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
                             self.table.setItem(current, 0, start_it)
                         else:
                             start_it.setText(new_start_str)
-                        start_it.setFlags(start_it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                        # Keep editability consistent with current lock state
+                        if self._start_date_locked:
+                            start_it.setFlags(start_it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                        else:
+                            start_it.setFlags(start_it.flags() | Qt.ItemFlag.ItemIsEditable)
 
                         # Advance d_end to this row's end date to keep chaining
                         next_end_it = self.table.item(current, 1)
@@ -606,10 +865,20 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
                         current += 1
                     self.table.blockSignals(False)
                     # Recompute Days, DR (interest), and Balances for all rows
-                    # since changing dates changes Days → DR → Balance for every row.
                     self._recalc_all()
 
-        if col in (_ANIL_DR, _ANIL_CR):
+        # DR manual edit: if user typed in DR (col 4), trigger full recalc
+        # so the balance chain updates immediately using the new manual value.
+        # If they cleared DR, _recalc_days will restore the 18% formula.
+        if col == _ANIL_DR:
+            dr_it = self.table.item(row, _ANIL_DR)
+            dr_txt = dr_it.text().strip() if dr_it else ""
+            if not dr_txt and row > 0:
+                # Cleared — let _recalc_days restore the formula for this row
+                self._recalc_days(row)
+            self._recalc_all()
+
+        if col == _ANIL_CR:
             self._recalc_all()
         self._save_all()
 

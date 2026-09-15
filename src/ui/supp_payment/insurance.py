@@ -113,6 +113,7 @@ class InsuranceTab(QWidget, _PrintExportMixin):
             headers = [c[0] for c in cols]
             widths  = [c[1] for c in cols]
             tbl = _DbTable(tname, headers, widths)
+            tbl._parent_tab_ref = self
 
             # Apply date delegates to start/end date columns (indices 4 and 5)
             tbl.setItemDelegateForColumn(4, ModernTableDelegate(tbl, cell_type="date"))

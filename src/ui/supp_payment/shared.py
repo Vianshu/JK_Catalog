@@ -249,7 +249,7 @@ def _find_cmp_op_at_depth0(s: str):
     return None
 
 
-def _eval_if_formula(formula_str: str, row: int, table) -> float | None:
+def _eval_if_formula(formula_str: str, row: int, table, table_provider=None) -> float | None:
     """Evaluate  =IF(condition, true_val, false_val)  formulas.
 
     Supported condition forms
@@ -282,8 +282,8 @@ def _eval_if_formula(formula_str: str, row: int, table) -> float | None:
     true_str  = parts[1].strip()
     false_str = parts[2].strip()
 
-    true_val  = _safe_eval_expr(true_str)
-    false_val = _safe_eval_expr(false_str)
+    true_val  = _safe_eval_expr(true_str, table_provider)
+    false_val = _safe_eval_expr(false_str, table_provider)
     if true_val is None or false_val is None:
         return None
 
@@ -323,8 +323,8 @@ def _eval_if_formula(formula_str: str, row: int, table) -> float | None:
     found = _find_cmp_op_at_depth0(cond_str)
     if found:
         op, start, end = found
-        left  = _safe_eval_expr(cond_str[:start].strip())
-        right = _safe_eval_expr(cond_str[end:].strip())
+        left  = _safe_eval_expr(cond_str[:start].strip(), table_provider)
+        right = _safe_eval_expr(cond_str[end:].strip(), table_provider)
         if left is not None and right is not None:
             _cmp = {'<': left < right, '>': left > right,
                     '<=': left <= right, '>=': left >= right,
@@ -335,7 +335,33 @@ def _eval_if_formula(formula_str: str, row: int, table) -> float | None:
     return None   # truly malformed — caller will show the raw formula text
 
 
-def _safe_eval_expr(expr: str):
+def _preprocess_cross_references(expr: str, table_provider) -> str:
+    if not table_provider or not expr:
+        return expr
+    import re as _re
+    pattern = r'\[([^\]]+)\]\[([^\]]+)\]\[(\d+)\]'
+    def replacer(match):
+        t_name, c_name, r_idx_str = match.groups()
+        r_idx = int(r_idx_str) - 1
+        target_table = table_provider(t_name.strip())
+        if not target_table: return "0"
+        c_idx = -1
+        for c in range(target_table.columnCount()):
+            h = target_table.horizontalHeaderItem(c)
+            if h and h.text().strip().lower() == c_name.strip().lower():
+                c_idx = c
+                break
+        if c_idx < 0 or r_idx < 0 or r_idx >= target_table.rowCount(): return "0"
+        it = target_table.item(r_idx, c_idx)
+        val = it.text().strip().replace(",", "") if it else "0"
+        try:
+            return str(float(val) if val else 0.0)
+        except Exception:
+            return "0"
+    return _re.sub(pattern, replacer, expr)
+
+
+def _safe_eval_expr(expr: str, table_provider=None):
     """Safely evaluate a pure arithmetic expression string.
 
     Supported: numeric literals (int/float), +  -  *  /  ( )  and unary -.
@@ -346,6 +372,7 @@ def _safe_eval_expr(expr: str):
         float  — result of the expression, or
         None   — if the expression is invalid / contains non-arithmetic nodes.
     """
+    expr = _preprocess_cross_references(expr, table_provider)
     try:
         tree = _ast.parse(expr.strip(), mode="eval")
     except SyntaxError:
@@ -404,8 +431,9 @@ import re as _re
 
 
 class ModernTableDelegate(UniversalCellDelegate):
-    def __init__(self, parent=None, *args, **kwargs):
+    def __init__(self, parent=None, table_provider=None, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
+        self._table_provider = table_provider
         self.status_colors = {
             "completed": ("#dcfce7", "#166534"),
             "paid": ("#dcfce7", "#166534"),
@@ -419,6 +447,20 @@ class ModernTableDelegate(UniversalCellDelegate):
             "clear": ("#f1f5f9", "#475569"),
         }
         
+
+    def _get_table_provider(self):
+        if self._table_provider:
+            return self._table_provider
+        p = getattr(self, "_owner", None)
+        while p is not None:
+            if hasattr(p, "get_table_by_name"):
+                return p.get_table_by_name
+            if hasattr(p, "_today_tab_ref") and p._today_tab_ref:
+                if hasattr(p._today_tab_ref, "get_table_by_name"):
+                    return p._today_tab_ref.get_table_by_name
+            p = p.parent()
+        return None
+
     def sizeHint(self, option, index):
         size = super().sizeHint(option, index)
         model = index.model()
@@ -556,7 +598,7 @@ class ModernTableDelegate(UniversalCellDelegate):
         # --- Priority 1: =IF() formula ---
         if text.upper().startswith('=IF('):
             owner_table = getattr(self._owner, 'table', None)
-            result = _eval_if_formula(text, index.row(), owner_table) if owner_table else None
+            result = _eval_if_formula(text, index.row(), owner_table, self._get_table_provider()) if owner_table else None
 
             # Store formula on the item so (a) editor restores it and (b) _save_data persists it
             view = owner_table
@@ -578,17 +620,39 @@ class ModernTableDelegate(UniversalCellDelegate):
             model.setData(index, formatted, _Qt.ItemDataRole.EditRole)
             return
 
-        # --- Priority 2: plain arithmetic ---
+        # --- Priority 2: plain arithmetic OR cross-references ---
         import re as _re
-        _HAS_ARITH = bool(_re.search(r'\d[+\-*/]|[+\-*/]\d|[+\-*/]\s*\(', text))
-        if _HAS_ARITH:
-            result = _safe_eval_expr(text)
+        _HAS_ARITH = bool(_re.search(r'\d[+\-*/]|[+\-*/]\d|[+\-*/]\s*\(|\[.*?\]\[.*?\]\[\d+\]', text))
+        if text.startswith('=') or _HAS_ARITH:
+            expr_to_eval = text[1:] if text.startswith('=') else text
+            result = _safe_eval_expr(expr_to_eval, self._get_table_provider())
             if result is not None:
                 if isinstance(result, float) and result.is_integer():
                     formatted = str(int(result))
                 else:
                     formatted = f"{result:.6g}"
+                
+                owner_table = getattr(self._owner, 'table', None) or (self._owner if hasattr(self._owner, 'item') else None)
+                if owner_table and (text.startswith('=') or ('[' in text and ']' in text)):
+                    it = owner_table.item(index.row(), index.column())
+                    if not it:
+                        from PyQt6.QtWidgets import QTableWidgetItem
+                        it = QTableWidgetItem()
+                        owner_table.setItem(index.row(), index.column(), it)
+                    it.setData(FORMULA_ROLE, text)
+                        
                 model.setData(index, formatted, _Qt.ItemDataRole.EditRole)
+                return
+            elif text.startswith('=') or ('[' in text and ']' in text):
+                owner_table = getattr(self._owner, 'table', None) or (self._owner if hasattr(self._owner, 'item') else None)
+                if owner_table:
+                    it = owner_table.item(index.row(), index.column())
+                    if not it:
+                        from PyQt6.QtWidgets import QTableWidgetItem
+                        it = QTableWidgetItem()
+                        owner_table.setItem(index.row(), index.column(), it)
+                    it.setData(FORMULA_ROLE, text)
+                model.setData(index, text, _Qt.ItemDataRole.EditRole)
                 return
 
         # --- Priority 3: plain text ---
@@ -657,7 +721,7 @@ QTableWidget::item:selected {
 QHeaderView::section:horizontal {
     background: #f1f5f9;
     color: #475569;
-    padding: 2px 6px;
+    padding: 2px 2px;
     min-height: 22px;
     max-height: 26px;
     border: none;
@@ -669,6 +733,23 @@ QHeaderView::section:horizontal {
 }
 QHeaderView::section:horizontal:last {
     border-right: none;
+}
+QHeaderView::section:vertical {
+    background: #f8fafc;
+    color: #475569;
+    padding: 0px 4px;
+    border: none;
+    border-bottom: 1px solid #cbd5e1;
+    border-right: 1px solid #64748b;
+    font-weight: 700;
+    font-size: 9pt;
+    text-align: center;
+}
+QTableCornerButton::section {
+    background: #f1f5f9;
+    border: none;
+    border-bottom: 1px solid #64748b;
+    border-right: 1px solid #64748b;
 }
 """
 
@@ -816,7 +897,7 @@ _CARD_MENU_STYLE = """
 def _setup_smart_header(table):
     hdr = table.horizontalHeader()
     hdr.setHighlightSections(False)
-    hdr.setMinimumSectionSize(20)
+    hdr.setMinimumSectionSize(6)
     
     # Force the header height to be strictly 24px to eliminate top/bottom whitespace
     hdr.setFixedHeight(24)
@@ -868,6 +949,39 @@ def _setup_smart_header(table):
         hdr.customContextMenuRequested.connect(table._smart_hdr_menu)
 
 
+def _setup_sn_header(table):
+    """Configure vertical header and corner button to display a non-editable 'S.N' header with 1, 2, 3... row numbers."""
+    vhdr = table.verticalHeader()
+    vhdr.setDefaultSectionSize(26)
+    vhdr.setMinimumWidth(36)
+    from PyQt6.QtWidgets import QAbstractButton, QLabel, QVBoxLayout
+    btn = table.findChild(QAbstractButton)
+    if btn:
+        if not btn.layout():
+            lay = QVBoxLayout(btn)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lbl = QLabel("S.N", btn)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setStyleSheet("font-weight: 700; font-size: 9pt; color: #475569; background: transparent;")
+            lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            lay.addWidget(lbl)
+            btn._sn_lbl = lbl
+        btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        if hasattr(table, '_vhdr_ctx'):
+            try:
+                btn.customContextMenuRequested.disconnect()
+            except Exception:
+                pass
+            btn.customContextMenuRequested.connect(table._vhdr_ctx)
+    vhdr.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+    if hasattr(table, '_vhdr_ctx'):
+        try:
+            vhdr.customContextMenuRequested.disconnect()
+        except Exception:
+            pass
+        vhdr.customContextMenuRequested.connect(table._vhdr_ctx)
+
+
 class _DbTable(QTableWidget):
     """A clean QTableWidget backed by a single SQL table.
     Schema: (row_idx INT, col_idx INT, cell_text NVARCHAR(MAX), PRIMARY KEY (row_idx, col_idx))
@@ -890,9 +1004,18 @@ class _DbTable(QTableWidget):
         self.setStyleSheet(_TABLE_STYLE)
         self.setHorizontalHeaderLabels(headers)
         _setup_smart_header(self)
+        try:
+            self.horizontalHeader().customContextMenuRequested.disconnect(self._smart_hdr_menu)
+        except Exception:
+            pass
         self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.verticalHeader().setDefaultSectionSize(26)
-        self.verticalHeader().setVisible(False)
+        _setup_sn_header(self)
+        from PyQt6.QtCore import QSettings
+        settings = QSettings("TallySync", "SuppPayment")
+        self._show_sn = settings.value(f"show_sn_{self._table_name}", False, type=bool)
+        self.verticalHeader().setVisible(self._show_sn)
+        if self._table_name == "team_list_data":
+            self.setColumnHidden(0, True)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
@@ -907,12 +1030,35 @@ class _DbTable(QTableWidget):
             self.setColumnWidth(i, w)
 
         self.setItemDelegate(ModernTableDelegate(self))
+        from PyQt6.QtCore import Qt
+        self.horizontalHeader().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.horizontalHeader().customContextMenuRequested.connect(self._header_ctx)
+        self.can_manage_col_fn = None
 
     def set_db_name(self, db_name: str, path: str = None):
         self._db_name = db_name
         if path:
             self._db.ensure_database_exists(db_name, path)
         self._ensure_table()
+        
+        # Load dynamic columns if they exist
+        cols = self._db.execute_query(
+            self._db_name, 
+            "SELECT col_index, col_name, col_width FROM shared_table_cols WHERE table_name=? ORDER BY col_index", 
+            (self._table_name,)
+        )
+        if cols:
+            self.setColumnCount(len(cols))
+            for ci, cname, cw in cols:
+                idx = int(ci)
+                from PyQt6.QtWidgets import QTableWidgetItem
+                self.setHorizontalHeaderItem(idx, QTableWidgetItem(cname or ""))
+                self.setColumnWidth(idx, int(cw) if cw else 120)
+        else:
+            self._save_cols() # Save the hardcoded ones if not in DB yet
+            
+        if self._table_name == "team_list_data":
+            self.setColumnHidden(0, True)
         self.load_from_db()
 
     def apply_edit_mode(self, can_edit: bool):
@@ -931,6 +1077,233 @@ class _DbTable(QTableWidget):
                f"(row_idx INT NOT NULL, col_idx INT NOT NULL, "
                f"cell_text NVARCHAR(MAX), PRIMARY KEY (row_idx, col_idx))")
         self._db.ensure_table(self._db_name, self._table_name, ddl)
+        ddl_cols = ("CREATE TABLE shared_table_cols "
+                    "(id INT IDENTITY PRIMARY KEY, table_name NVARCHAR(200), "
+                    "col_index INT, col_name NVARCHAR(200), col_width INT)")
+        self._db.ensure_table(self._db_name, "shared_table_cols", ddl_cols)
+
+
+    def _save_cols(self):
+        if not self._db_name: return
+        conn = self._db.get_connection(self._db_name)
+        if not conn: return
+        cur = conn.cursor()
+        try:
+            cur.execute("DELETE FROM shared_table_cols WHERE table_name=?", (self._table_name,))
+            for c in range(self.columnCount()):
+                h = self.horizontalHeaderItem(c)
+                col_name = h.text() if h else ""
+                cur.execute("INSERT INTO shared_table_cols(table_name, col_index, col_name, col_width) VALUES(?,?,?,?)",
+                            (self._table_name, c, col_name, self.columnWidth(c)))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print(f"[_DbTable] _save_cols error: {e}")
+
+    def _get_tab_tables(self):
+        parent_tab = getattr(self, '_parent_tab_ref', None)
+        raw_tables = getattr(parent_tab, '_tables', []) if parent_tab else []
+        tables_list = []
+        for item in raw_tables:
+            if isinstance(item, tuple) and len(item) >= 3 and hasattr(item[2], '_set_sn_visible'):
+                tables_list.append(item[2])
+            elif hasattr(item, '_set_sn_visible'):
+                tables_list.append(item)
+        return tables_list
+
+    def _vhdr_ctx(self, pos):
+        if getattr(self, '_can_edit', True) == False:
+            return
+        from PyQt6.QtWidgets import QMenu
+        from PyQt6.QtGui import QCursor
+        menu = QMenu(self)
+        menu.setStyleSheet(_MENU_STYLE)
+        act_hide = menu.addAction("👁️  Hide S.N")
+        tab_tables = self._get_tab_tables()
+        act_hide_all = None
+        if len(tab_tables) > 1:
+            act_hide_all = menu.addAction("👁️  Hide S.N (All Tables in Tab)")
+        chosen = menu.exec(QCursor.pos())
+        if chosen == act_hide:
+            self._set_sn_visible(False)
+        elif act_hide_all and chosen == act_hide_all:
+            for t in tab_tables:
+                t._set_sn_visible(False)
+
+    def _set_sn_visible(self, visible: bool):
+        self._show_sn = visible
+        self.verticalHeader().setVisible(visible)
+        from PyQt6.QtCore import QSettings
+        settings = QSettings("TallySync", "SuppPayment")
+        settings.setValue(f"show_sn_{self._table_name}", visible)
+
+    def _header_ctx(self, pos):
+        if getattr(self, '_can_edit', True) == False: return
+        hdr = self.horizontalHeader()
+        idx = hdr.logicalIndexAt(pos)
+        from PyQt6.QtWidgets import QMenu
+        menu = QMenu(self)
+        menu.setStyleSheet(_MENU_STYLE)
+        
+        # 1. Smart-header resize/stretch actions
+        a_fit = menu.addAction("↔  Fit Column to Content")
+        a_fit_all = menu.addAction("↔  Fit All Columns to Content")
+        is_stretch = hdr.stretchLastSection()
+        a_stretch = menu.addAction(
+            "📌  Stretch Last Column (On)" if is_stretch else "📌  Stretch Last Column (Off)"
+        )
+        menu.addSeparator()
+
+        # S.N toggle actions
+        act_sn = menu.addAction("👁️  Hide S.N" if self._show_sn else "👁️  Show S.N")
+        tab_tables = self._get_tab_tables()
+        act_sn_all = None
+        if len(tab_tables) > 1:
+            act_sn_all = menu.addAction("👁️  Hide S.N (All Tables in Tab)" if self._show_sn else "👁️  Show S.N (All Tables in Tab)")
+        menu.addSeparator()
+
+        # Check permissions via callback if defined
+        can_ins_l = True
+        can_ins_r = True
+        can_rename = True
+        can_del = (self.columnCount() > 1)
+        is_locked_section = False
+        
+        if getattr(self, 'can_manage_col_fn', None):
+            can_ins_l = bool(self.can_manage_col_fn(idx, "insert_left"))
+            can_ins_r = bool(self.can_manage_col_fn(idx, "insert_right"))
+            can_rename = bool(self.can_manage_col_fn(idx, "rename"))
+            can_del = can_del and bool(self.can_manage_col_fn(idx, "delete"))
+            is_locked_section = not (can_ins_l or can_ins_r or can_rename or can_del)
+
+        if is_locked_section:
+            a_locked = menu.addAction("🔒  Year section (managed via Add Year)")
+            a_locked.setEnabled(False)
+            chosen = menu.exec(hdr.mapToGlobal(pos))
+            if chosen == a_fit:
+                self.resizeColumnToContents(idx)
+            elif chosen == a_fit_all:
+                self.resizeColumnsToContents()
+            elif chosen == a_stretch:
+                hdr.setStretchLastSection(not is_stretch)
+            elif chosen == act_sn:
+                self._set_sn_visible(not self._show_sn)
+            elif act_sn_all and chosen == act_sn_all:
+                new_val = not self._show_sn
+                for t in tab_tables:
+                    t._set_sn_visible(new_val)
+            return
+
+        # 2. Column management
+        act_left = menu.addAction("➕  Insert Column Left")
+        act_left.setEnabled(can_ins_l)
+        act_right = menu.addAction("➕  Insert Column Right")
+        act_right.setEnabled(can_ins_r)
+        menu.addSeparator()
+        act_rename = menu.addAction("✏️  Rename Column")
+        act_rename.setEnabled(can_rename)
+        act_del = menu.addAction("🗑️  Delete Column")
+        act_del.setEnabled(can_del)
+        
+        chosen = menu.exec(hdr.mapToGlobal(pos))
+        if chosen == a_fit:
+            self.resizeColumnToContents(idx)
+        elif chosen == a_fit_all:
+            self.resizeColumnsToContents()
+        elif chosen == a_stretch:
+            hdr.setStretchLastSection(not is_stretch)
+        elif chosen == act_sn:
+            self._set_sn_visible(not self._show_sn)
+        elif act_sn_all and chosen == act_sn_all:
+            new_val = not self._show_sn
+            for t in tab_tables:
+                t._set_sn_visible(new_val)
+        elif chosen == act_left and can_ins_l:
+            self._insert_col(idx)
+        elif chosen == act_right and can_ins_r:
+            self._insert_col(idx + 1)
+        elif chosen == act_rename and can_rename:
+            self._rename_col(idx)
+        elif chosen == act_del and can_del:
+            self._delete_col(idx)
+
+    def _insert_col(self, col_idx):
+        if getattr(self, 'can_manage_col_fn', None):
+            if not self.can_manage_col_fn(col_idx, "insert_raw"):
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "Action Restricted", "Cannot insert columns inside or after the year section.\nUse 'Add Year' instead.")
+                return
+        from PyQt6.QtWidgets import QInputDialog, QTableWidgetItem
+        name, ok = QInputDialog.getText(self, "New Column", "Column Name:")
+        if ok and name.strip():
+            # Shift data in database
+            if self._db_name:
+                conn = self._db.get_connection(self._db_name)
+                if conn:
+                    cur = conn.cursor()
+                    try:
+                        cur.execute(f"UPDATE {self._table_name} SET col_idx = col_idx + 1 WHERE col_idx >= ?", (col_idx,))
+                        conn.commit()
+                    except Exception as e:
+                        conn.rollback()
+                        print("DB Shift Error:", e)
+            
+            # Update UI
+            self.insertColumn(col_idx)
+            self.setHorizontalHeaderItem(col_idx, QTableWidgetItem(name.strip()))
+            self.setColumnWidth(col_idx, 120)
+            self._save_cols()
+            self.load_from_db()
+
+    def _rename_col(self, col_idx):
+        if getattr(self, 'can_manage_col_fn', None):
+            if not self.can_manage_col_fn(col_idx, "rename"):
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "Action Restricted", "Cannot rename columns inside the year section.")
+                return
+        h = self.horizontalHeaderItem(col_idx)
+        old = h.text() if h else ""
+        from PyQt6.QtWidgets import QInputDialog, QTableWidgetItem
+        name, ok = QInputDialog.getText(self, "Rename Column", "New Name:", text=old)
+        if ok and name.strip():
+            if not h:
+                h = QTableWidgetItem()
+                self.setHorizontalHeaderItem(col_idx, h)
+            h.setText(name.strip())
+            self._save_cols()
+
+    def _delete_col(self, col_idx):
+        if getattr(self, 'can_manage_col_fn', None):
+            if not self.can_manage_col_fn(col_idx, "delete"):
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "Action Restricted", "Cannot delete columns inside the year section.")
+                return
+        if self.columnCount() <= 1:
+            return
+        h = self.horizontalHeaderItem(col_idx)
+        old = h.text() if h else f"Column {col_idx+1}"
+        from PyQt6.QtWidgets import QMessageBox
+        confirm = QMessageBox.question(
+            self, "Delete Column",
+            f"Are you sure you want to delete column '{old}' and all its data?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        if self._db_name:
+            conn = self._db.get_connection(self._db_name)
+            if conn:
+                cur = conn.cursor()
+                try:
+                    cur.execute(f"DELETE FROM {self._table_name} WHERE col_idx = ?", (col_idx,))
+                    cur.execute(f"UPDATE {self._table_name} SET col_idx = col_idx - 1 WHERE col_idx > ?", (col_idx,))
+                    conn.commit()
+                except Exception as e:
+                    conn.rollback()
+                    print("DB Delete Col Error:", e)
+        self.removeColumn(col_idx)
+        self._save_cols()
+        self.load_from_db()
 
     def _on_change(self, item):
         if self._loading:
@@ -943,6 +1316,7 @@ class _DbTable(QTableWidget):
 
     def _on_section_resized(self, logicalIndex, oldSize, newSize):
         if self._loading: return
+        if getattr(self, '_resizing_guard', False): return
         
         if not hasattr(self, '_resize_timers'):
             self._resize_timers = {}
@@ -950,23 +1324,64 @@ class _DbTable(QTableWidget):
         if logicalIndex not in self._resize_timers:
             t = QTimer(self)
             t.setSingleShot(True)
-            t.timeout.connect(lambda idx=logicalIndex: self._enforce_col_min(idx))
+            t.timeout.connect(lambda idx=logicalIndex: self._on_resize_finished(idx))
             self._resize_timers[logicalIndex] = t
             
-        self._resize_timers[logicalIndex].start(300)
+        self._resize_timers[logicalIndex].start(200)
+
+    def _on_resize_finished(self, logicalIndex):
+        if self._loading: return
+        self._enforce_col_min(logicalIndex)
+        self._save_cols()
 
     def _enforce_col_min(self, logicalIndex):
         if self._loading: return
-        min_w = self._widths[logicalIndex] if logicalIndex < len(self._widths) else 0
         hdr_item = self.horizontalHeaderItem(logicalIndex)
-        hdr_text = hdr_item.text() if hdr_item else ""
-        fm = self.fontMetrics()
-        text_w = fm.horizontalAdvance(hdr_text) + 20
-        required_w = max(min_w, text_w)
+        hdr_text = hdr_item.text().strip() if hdr_item else ""
+        
+        # Spacer column (no text): allow down to 6px without artificial floor
+        if not hdr_text:
+            required_w = 6
+        else:
+            fm = self.fontMetrics()
+            required_w = max(16, fm.horizontalAdvance(hdr_text) + 12)
+            
         if self.columnWidth(logicalIndex) < required_w:
-            self.horizontalHeader().blockSignals(True)
-            self.setColumnWidth(logicalIndex, required_w)
-            self.horizontalHeader().blockSignals(False)
+            self._resizing_guard = True
+            try:
+                self.setColumnWidth(logicalIndex, required_w)
+            finally:
+                self._resizing_guard = False
+                
+        self.updateGeometries()
+        self.viewport().update()
+
+    def _recalc_formulas(self):
+        delegate = self.itemDelegate()
+        table_provider = getattr(delegate, '_get_table_provider', lambda: None)() if delegate else None
+        self.blockSignals(True)
+        try:
+            for r in range(self.rowCount()):
+                for c in range(self.columnCount()):
+                    it = self.item(r, c)
+                    if not it: continue
+                    f = it.data(FORMULA_ROLE)
+                    if not f: continue
+                    f_str = str(f).strip()
+                    if f_str.upper().startswith('=IF('):
+                        result = _eval_if_formula(f_str, r, self, table_provider)
+                    else:
+                        expr = f_str[1:] if f_str.startswith('=') else f_str
+                        result = _safe_eval_expr(expr, table_provider)
+                    if result is not None:
+                        display = (
+                            str(int(result))
+                            if isinstance(result, float) and result.is_integer()
+                            else f"{result:.6g}"
+                        )
+                        it.setText(display)
+        finally:
+            self.blockSignals(False)
 
     def _do_save(self):
         """Save table contents using a single atomic transaction to prevent data loss."""
@@ -984,10 +1399,10 @@ class _DbTable(QTableWidget):
             cur.execute(f"DELETE FROM {self._table_name}")
             # Collect all non-empty cells first, then send in one batched round-trip.
             rows_to_insert = [
-                (r, c, self.item(r, c).text())
+                (r, c, (self.item(r, c).data(FORMULA_ROLE) if (self.item(r, c) and self.item(r, c).data(FORMULA_ROLE)) else self.item(r, c).text()))
                 for r in range(self.rowCount())
                 for c in range(self.columnCount())
-                if self.item(r, c) and self.item(r, c).text()
+                if self.item(r, c) and (self.item(r, c).text() or self.item(r, c).data(FORMULA_ROLE))
             ]
             if rows_to_insert:
                 cur.executemany(
@@ -1004,6 +1419,7 @@ class _DbTable(QTableWidget):
         self._do_save()
 
     def _enforce_min_widths(self, col=None):
+        if getattr(self, '_resizing_guard', False): return
         fm = self.fontMetrics()
         
         if col is not None:
@@ -1012,18 +1428,24 @@ class _DbTable(QTableWidget):
             cols = range(self.columnCount())
             
         for i in cols:
-            # Use sizeHintForColumn instead of resizeColumnToContents so we don't snap back
-            # if the user manually dragged the column to be wider.
-            min_w = self.sizeHintForColumn(i)
-            saved_w = self._widths[i] if i < len(self._widths) else 0
-            min_w = max(min_w, saved_w)
-            
             h_item = self.horizontalHeaderItem(i)
-            if h_item and h_item.text():
-                # Add 24px padding for sort indicator and margins
-                min_w = max(min_w, fm.horizontalAdvance(h_item.text()) + 24)
+            hdr_text = h_item.text().strip() if h_item else ""
+            
+            # Spacer / gap columns with no text: do not force minimum text width or hardcoded width
+            if not hdr_text:
+                continue
+                
+            min_w = self.sizeHintForColumn(i)
+            min_w = max(min_w, fm.horizontalAdvance(hdr_text) + 12)
             if self.columnWidth(i) < min_w:
-                self.setColumnWidth(i, min_w)
+                self._resizing_guard = True
+                try:
+                    self.setColumnWidth(i, min_w)
+                finally:
+                    self._resizing_guard = False
+                    
+        self.updateGeometries()
+        self.viewport().update()
 
     def load_from_db(self):
         if not self._db_name:
@@ -1049,6 +1471,8 @@ class _DbTable(QTableWidget):
                 for ci in range(self.columnCount()):
                     self.setItem(self.rowCount() - 1, ci, QTableWidgetItem(""))
             it = QTableWidgetItem(txt or "")
+            if txt and str(txt).startswith('='):
+                it.setData(FORMULA_ROLE, str(txt))
             self.setItem(int(r), int(c), it)
         # Bug 1b: Pad up to the minimum row count so the table is never visually empty
         while self.rowCount() < self._min_rows:
@@ -1059,6 +1483,9 @@ class _DbTable(QTableWidget):
         self.blockSignals(False)
         from PyQt6.QtCore import QTimer
         QTimer.singleShot(0, self._enforce_min_widths)
+        self._recalc_formulas()
+        if self._table_name == "team_list_data":
+            self.setColumnHidden(0, True)
         self._loading = False
 
     def add_row(self):

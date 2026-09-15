@@ -33,7 +33,7 @@ from .shared import (
     _SCROLLBAR_STYLE, _TABLE_STYLE, _SECTION_HEADER_STYLE,
     _BTN_PRIMARY, _BTN_SECONDARY, _BTN_DANGER,
     _MENU_STYLE, _POPUP_STYLE, _CARD_MENU_STYLE,
-    _setup_smart_header, _DbTable,
+    _setup_smart_header, _setup_sn_header, _DbTable,
     _styled_get_text, _styled_question, _styled_info, _styled_get_color,
 )
 from src.ui.table_nav_mixin import UniversalCellDelegate
@@ -146,10 +146,13 @@ class _SectionCardV2(QFrame):
         self.table.setStyleSheet(_TABLE_STYLE)
         self.table.setFont(_norm_font())
         self.table.setAlternatingRowColors(False)
-        self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(26)
+        _setup_sn_header(self.table)
         _setup_smart_header(self.table)
         self.table._card_ref = self   # used by header ctx menu for lock toggle
+        from PyQt6.QtCore import QSettings
+        settings = QSettings("TallySync", "SuppPayment")
+        self._show_sn = settings.value(f"show_sn_tp_{self.section_id}", False, type=bool)
+        self.table.verticalHeader().setVisible(self._show_sn)
         self.table.horizontalHeader().setStretchLastSection(False)
         self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -172,6 +175,8 @@ class _SectionCardV2(QFrame):
                 self.table.setColumnWidth(i, spec[1])
                 if len(spec) > 2 and spec[2] is not None:
                     self.table.setItemDelegateForColumn(i, spec[2])
+            if self._col_specs and self._col_specs[0][0] == "S.N":
+                self.table.setColumnHidden(0, True)
             # Load any saved custom column widths (user may have resized them)
             if db_name:
                 try:
@@ -327,6 +332,34 @@ class _SectionCardV2(QFrame):
     # Column management (add / remove via right-click on column header)
     # ------------------------------------------------------------------
 
+    def _vhdr_ctx(self, pos):
+        if not self._can_edit:
+            return
+        menu = QMenu(self)
+        menu.setStyleSheet(_MENU_STYLE)
+        act_hide = menu.addAction("👁️  Hide S.N")
+        act_hide_all = menu.addAction("👁️  Hide S.N (All Tables)")
+        chosen = menu.exec(QCursor.pos())
+        if chosen == act_hide:
+            self._set_sn_visible(False, all_tables=False)
+        elif chosen == act_hide_all:
+            self._set_sn_visible(False, all_tables=True)
+
+    def _set_sn_visible(self, visible: bool, all_tables: bool = False):
+        if all_tables:
+            tp = getattr(self, '_today_tab_ref', None)
+            if tp and hasattr(tp, '_section_cards'):
+                for card in tp._section_cards.values():
+                    card._set_sn_visible(visible, all_tables=False)
+            return
+
+        self._show_sn = visible
+        self.table.verticalHeader().setVisible(visible)
+        from PyQt6.QtCore import QSettings
+        settings = QSettings("TallySync", "SuppPayment")
+        settings.setValue(f"show_sn_tp_{self.section_id}", visible)
+        self._recalc_width()
+
     def _col_hdr_ctx(self, pos):
         """Extended column-header context menu: resize helpers + add/remove columns."""
         hdr  = self.table.horizontalHeader()
@@ -349,6 +382,10 @@ class _SectionCardV2(QFrame):
             )
         else:
             a_lock = None
+
+        menu.addSeparator()
+        act_sn = menu.addAction("👁️  Hide S.N" if self._show_sn else "👁️  Show S.N")
+        act_sn_all = menu.addAction("👁️  Hide S.N (All Tables)" if self._show_sn else "👁️  Show S.N (All Tables)")
 
         # ---- column management ----
         menu.addSeparator()
@@ -374,6 +411,10 @@ class _SectionCardV2(QFrame):
             hdr.setStretchLastSection(not is_stretch)
         elif a_lock and chosen == a_lock:
             self._set_cols_locked(not self._cols_locked)
+        elif chosen == act_sn:
+            self._set_sn_visible(not self._show_sn, all_tables=False)
+        elif chosen == act_sn_all:
+            self._set_sn_visible(not self._show_sn, all_tables=True)
         elif chosen == a_ins_l:
             self._insert_col_at(logical)
         elif chosen == a_ins_r:
@@ -433,13 +474,25 @@ class _SectionCardV2(QFrame):
     # Formula recalculation
     # ------------------------------------------------------------------
 
+    def _get_table_provider(self):
+        if hasattr(self, '_today_tab_ref') and self._today_tab_ref:
+            if hasattr(self._today_tab_ref, 'get_table_by_name'):
+                return self._today_tab_ref.get_table_by_name
+        p = self.parent()
+        while p is not None:
+            if hasattr(p, 'get_table_by_name'):
+                return p.get_table_by_name
+            p = p.parent()
+        return None
+
     def _recalc_formulas(self):
-        """Re-evaluate all =IF() formula cells in this card's table.
+        """Re-evaluate all formula cells (=IF, cross-table, arithmetic) in this card's table.
 
         MUST be called BEFORE any column-sum or 'Left money' calculation so
         that the evaluated payment values are picked up by downstream totals.
         """
-        from src.ui.supp_payment.shared import FORMULA_ROLE, _eval_if_formula
+        from src.ui.supp_payment.shared import FORMULA_ROLE, _eval_if_formula, _safe_eval_expr
+        table_provider = self._get_table_provider()
         self.table.blockSignals(True)
         try:
             for r in range(self.table.rowCount()):
@@ -450,7 +503,12 @@ class _SectionCardV2(QFrame):
                     formula = it.data(FORMULA_ROLE)
                     if not formula:
                         continue
-                    result = _eval_if_formula(formula, r, self.table)
+                    formula_str = str(formula).strip()
+                    if formula_str.upper().startswith('=IF('):
+                        result = _eval_if_formula(formula_str, r, self.table, table_provider)
+                    else:
+                        expr = formula_str[1:] if formula_str.startswith('=') else formula_str
+                        result = _safe_eval_expr(expr, table_provider)
                     if result is not None:
                         display = (
                             str(int(result))
@@ -535,6 +593,7 @@ class _SectionCardV2(QFrame):
         self.table.blockSignals(True)
         self.table.horizontalHeader().blockSignals(True)
         
+        is_sn_col = False
         try:
             has_saved_cols = False
             if not self._fixed_cols:
@@ -645,7 +704,7 @@ class _SectionCardV2(QFrame):
                             it.setForeground(QBrush(QColor(fg)))
                         # Restore formula cells: store raw formula in FORMULA_ROLE,
                         # evaluate and display the result as the cell text.
-                        if txt.startswith('=IF(') or txt.startswith('=if('):
+                        if txt.startswith('='):
                             from src.ui.supp_payment.shared import FORMULA_ROLE
                             it.setData(FORMULA_ROLE, txt)
                             it.setText(txt)   # placeholder; _recalc_formulas() will overwrite
@@ -662,6 +721,8 @@ class _SectionCardV2(QFrame):
                 
             self.table.horizontalHeader().blockSignals(False)
             self._loading = False
+            if is_sn_col or (self._col_specs and self._col_specs[0][0] == "S.N"):
+                self.table.setColumnHidden(0, True)
 
             # Re-evaluate formula cells FIRST so downstream sums (e.g. Payment
             # total → Left money) pick up the correct values.
@@ -851,6 +912,8 @@ class _SectionCardV2(QFrame):
             self._expand_column_to_contents(item.column())
             self._recalc_width()
         # Debounce: restart the 300 ms timer so rapid edits produce only one DB write.
+        if hasattr(self, '_today_tab_ref') and self._today_tab_ref:
+            self._today_tab_ref._notify_table_changed(self.section_name)
         self._save_timer.start(300)
 
     def _add_column(self):
@@ -1046,9 +1109,10 @@ class _SectionCardV2(QFrame):
     def _recalc_width(self):
         tw = 0
         for c in range(self.table.columnCount()):
-            tw += self.table.columnWidth(c)
+            if not self.table.isColumnHidden(c):
+                tw += self.table.columnWidth(c)
         if not self.table.verticalHeader().isHidden():
-            tw += self.table.verticalHeader().width()
+            tw += max(self.table.verticalHeader().width(), 36)
 
         # In single-view the card fills the full pane — do NOT lock the card width.
         # Only tightly wrap in multi-view so the grid doesn’t bloat after toggling.
@@ -1297,7 +1361,7 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
                 self._btn_single.setText("")
                 self._btn_stack.setText("")
 
-        self._init_print_export(tlay, "Today Payment", supports_print=False, table_getter=self._get_tables_for_export, right_bar=right_bar, on_toggle_cb=on_toggle_tp)
+        self._init_print_export(tlay, "Today Payment", supports_print=True, table_getter=self._get_tables_for_export, right_bar=right_bar, on_toggle_cb=on_toggle_tp)
         self._export_grid_cols = 3  # TodayPayment uses 3-column grid layout in UI
 
         self._btn_single = QPushButton()
@@ -1408,6 +1472,58 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
         self._body_stack.addWidget(multi_scroll)
 
         self._body_stack.setCurrentIndex(1)   # default: multi view
+
+    def get_table_by_name(self, name: str):
+        target = name.strip().lower()
+        for card in self._section_cards.values():
+            if card.section_name.strip().lower() == target:
+                return card.table
+        # Check Anil Dai Hisab if accessible
+        parent_ui = self.parent()
+        while parent_ui is not None and parent_ui.__class__.__name__ != "SuppPaymentV2UI":
+            parent_ui = parent_ui.parent()
+        if parent_ui:
+            if target == "anil dai hisab" and hasattr(parent_ui, "_anil_tab"):
+                return parent_ui._anil_tab.table
+            if target == "bank a/c" and hasattr(parent_ui, "_record_tab"):
+                return parent_ui._record_tab.table
+        return None
+
+    def _notify_table_changed(self, table_name: str):
+        if getattr(self, '_updating_calcs', False):
+            return
+        self._updating_calcs = True
+        try:
+            graph = {}
+            import re
+            from PyQt6.QtCore import Qt
+            FORMULA_ROLE = Qt.ItemDataRole.UserRole + 50
+            pattern = r'\[([^\]]+)\]\[([^\]]+)\]\[(\d+)\]'
+            for card in self._section_cards.values():
+                for r in range(card.table.rowCount()):
+                    for c in range(card.table.columnCount()):
+                        it = card.table.item(r, c)
+                        if it:
+                            f = it.data(FORMULA_ROLE)
+                            if f:
+                                for m in re.findall(pattern, str(f)):
+                                    target = m[0].strip().lower()
+                                    if target not in graph:
+                                        graph[target] = set()
+                                    graph[target].add(card.section_name.strip().lower())
+            
+            t_name = table_name.strip().lower()
+            if t_name in graph:
+                for dep in graph[t_name]:
+                    for card in self._section_cards.values():
+                        if card.section_name.strip().lower() == dep:
+                            card._recalc_formulas()
+                            card._update_sum()
+                            card._recalc()
+                            # recursively notify? No, just one level is fine for now
+        finally:
+            self._updating_calcs = False
+
     def _get_tables_for_export(self):
         """Collect all section card tables for the Excel export.
         Respects is_column_break so the grid layout matches the on-screen view.
@@ -1832,8 +1948,9 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
             # --- Step 0: Re-evaluate ALL formula cells first ---
             # This MUST happen before any column-sum or 'Left money' calculation
             # so that formula cell values (e.g. Payment =IF(...)) are current.
-            for card in self._section_cards.values():
-                card._recalc_formulas()
+            for _ in range(2):
+                for card in self._section_cards.values():
+                    card._recalc_formulas()
 
             dl_card = None
             account_card = None

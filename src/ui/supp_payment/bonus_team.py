@@ -124,6 +124,8 @@ class TeamListTab(QWidget, _PrintExportMixin):
             widths += [30, 90, 90]
 
         self.table = _DbTable("team_list_data", headers, widths, row_count=40)
+        self.table.setColumnHidden(0, True)
+        self.table.can_manage_col_fn = self._can_manage_col
         layout.addWidget(self.table, 1)
 
         right_bar = QWidget()
@@ -165,34 +167,47 @@ class TeamListTab(QWidget, _PrintExportMixin):
         layout.addWidget(right_bar, 0)
 
     
+    def _get_year_groups(self):
+        import re
+        groups = []
+        fixed = []
+        i = 0
+        while i < self.table.columnCount():
+            h1 = self.table.horizontalHeaderItem(i+1) if i+1 < self.table.columnCount() else None
+            is_year_group = False
+            if h1 and h1.text():
+                txt = h1.text().strip()
+                if re.match(r'^\d{4}-\d{2}$', txt) or "New Year" in txt:
+                    is_year_group = True
+            
+            if is_year_group and i+2 < self.table.columnCount():
+                groups.append([i, i+1, i+2])
+                i += 3
+            else:
+                fixed.append(i)
+                i += 1
+        return fixed, groups
+
     def _get_tables_for_export(self):
-        """For Excel export — unchanged, all columns in one sheet."""
-        truncate_groups = []
-        base_col = 4  # S.N, Location, Post, Name
-        for i in range(len(self._year_labels)):
-            truncate_groups.append((base_col + i*3, base_col + i*3 + 1, base_col + i*3 + 2))
+        fixed, groups = self._get_year_groups()
+        truncate_groups = [tuple(g) for g in groups]
         return [{"title": "", "table": self.table, "truncate_groups": truncate_groups}]
 
     def _get_tables_for_print(self):
-        """For print — split wide table into column-pages.
-        Fixed cols (0-3: SN/Location/Post/Name) repeat on every page.
-        Year groups (3 cols each) are distributed: up to YEARS_PER_PAGE per page.
-        """
-        YEARS_PER_PAGE = 3          # adjust if needed
-        fixed_cols = list(range(4)) # S.N, Location, Post, Name
-        year_groups = []
-        base = 4
-        for i in range(len(self._year_labels)):
-            year_groups.append([base + i*3, base + i*3 + 1, base + i*3 + 2])
-
+        fixed, groups = self._get_year_groups()
+        YEARS_PER_PAGE = 3
         tables = []
-        for page_idx in range(0, max(len(year_groups), 1), YEARS_PER_PAGE):
-            chunk = year_groups[page_idx : page_idx + YEARS_PER_PAGE]
-            col_range = set(fixed_cols)
+        for page_idx in range(0, max(len(groups), 1), YEARS_PER_PAGE):
+            chunk = groups[page_idx : page_idx + YEARS_PER_PAGE]
+            col_range = set(fixed)
             for grp in chunk:
                 col_range.update(grp)
-            yr_names = [self._year_labels[page_idx + i]
-                        for i in range(len(chunk))]
+            
+            yr_names = []
+            for grp in chunk:
+                h = self.table.horizontalHeaderItem(grp[1])
+                if h: yr_names.append(h.text().strip())
+                
             page_title = "Team List — " + ", ".join(yr_names) if yr_names else "Team List"
             tables.append({
                 "title": page_title,
@@ -202,9 +217,55 @@ class TeamListTab(QWidget, _PrintExportMixin):
             })
         return tables
 
+    def _find_year_start_index(self):
+        import re
+        for c in range(self.table.columnCount()):
+            h = self.table.horizontalHeaderItem(c)
+            txt = h.text().strip() if h else ""
+            if re.match(r'^\d{4}-\d{2}$', txt) or "New Year" in txt:
+                if c > 0:
+                    h_prev = self.table.horizontalHeaderItem(c - 1)
+                    txt_prev = h_prev.text().strip() if h_prev else ""
+                    if txt_prev == "":
+                        return c - 1
+                return c
+        return self.table.columnCount()
+
+    def _find_year_insert_index(self):
+        return self._find_year_start_index()
+
+    def _can_manage_col(self, col_idx: int, action: str) -> bool:
+        """Restricts manual column addition/removal inside or after the year section.
+        Only 'Add Year' can manage the year section.
+        """
+        year_start = self._find_year_start_index()
+
+        # Validation for raw insertion index in _insert_col:
+        if action == "insert_raw":
+            return col_idx <= year_start
+
+        # For context menu actions on header index col_idx:
+        # If clicked in the year section (col_idx >= year_start):
+        if col_idx >= year_start:
+            return False
+
+        # If clicked before the year section (col_idx < year_start):
+        if action in ("insert_left", "rename", "delete"):
+            return True
+        if action == "insert_right":
+            # Right of col_idx inserts at col_idx + 1.
+            # Even if col_idx == year_start - 1, col_idx + 1 == year_start,
+            # which inserts right before the year section, pushing it right.
+            return True
+
+        return False
+
     def _add_year(self):
         if not self._can_edit:
             return
+        
+        insert_idx = self._find_year_start_index()
+        
         latest = self._year_labels[0] if self._year_labels else "2082-83"
         parts = latest.split('-')
         if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
@@ -212,17 +273,33 @@ class TeamListTab(QWidget, _PrintExportMixin):
         else:
             new_yr = "New Year"
         self._year_labels.insert(0, new_yr)
-        # Insert 3 new columns at position 4
-        self.table.insertColumn(4)
-        self.table.insertColumn(4)
-        self.table.insertColumn(4)
-        self.table.setColumnWidth(4, 30)
-        self.table.setColumnWidth(5, 90)
-        self.table.setColumnWidth(6, 90)
-        self.table.setHorizontalHeaderItem(4, QTableWidgetItem(""))
-        self.table.setHorizontalHeaderItem(5, QTableWidgetItem(new_yr))
-        self.table.setHorizontalHeaderItem(6, QTableWidgetItem("Salary"))
-        self.table.save_to_db()
+        
+        # Shift database
+        db_name = self.table._db_name
+        if db_name:
+            conn = self.table._db.get_connection(db_name)
+            if conn:
+                cur = conn.cursor()
+                try:
+                    cur.execute("UPDATE team_list_data SET col_idx = col_idx + 3 WHERE col_idx >= ?", (insert_idx,))
+                    conn.commit()
+                except Exception as e:
+                    conn.rollback()
+                    print("DB Shift Error:", e)
+                    
+        self.table.insertColumn(insert_idx)
+        self.table.insertColumn(insert_idx)
+        self.table.insertColumn(insert_idx)
+        self.table.setColumnWidth(insert_idx, 30)
+        self.table.setColumnWidth(insert_idx + 1, 90)
+        self.table.setColumnWidth(insert_idx + 2, 90)
+        self.table.setHorizontalHeaderItem(insert_idx, QTableWidgetItem(""))
+        self.table.setHorizontalHeaderItem(insert_idx + 1, QTableWidgetItem(new_yr))
+        self.table.setHorizontalHeaderItem(insert_idx + 2, QTableWidgetItem("Salary"))
+        
+        if hasattr(self.table, '_save_cols'):
+            self.table._save_cols()
+        self.table.load_from_db()
 
     def _add_employee(self):
         if not self._can_edit:

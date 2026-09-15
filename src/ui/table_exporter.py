@@ -82,7 +82,8 @@ def export_tables_to_excel(export_folder: str, filename: str, tables_data: list,
             per_gc_max = {}  # grid_col -> max table col count in that column
             for t in tables_data:
                 gc = min(t.get("grid_col", 0), grid_cols - 1)
-                n = t.get("table").columnCount() + (1 if title_on_left else 0)
+                tbl = t.get("table")
+                n = len([c for c in range(tbl.columnCount()) if not tbl.isColumnHidden(c)]) + (1 if not tbl.verticalHeader().isHidden() else 0) + (1 if title_on_left else 0)
                 per_gc_max[gc] = max(per_gc_max.get(gc, 0), n)
             offset = 0
             for gc in range(grid_cols):
@@ -109,7 +110,7 @@ def export_tables_to_excel(export_folder: str, filename: str, tables_data: list,
                 grid_c = col_max_rows.index(min(col_max_rows))
                 # For auto-placement, use even spacing based on widest table
                 max_cols_per_grid = max(
-                    [t.get("table").columnCount() + (1 if title_on_left else 0) for t in tables_data],
+                    [len([c for c in range(t.get("table").columnCount()) if not t.get("table").isColumnHidden(c)]) + (1 if not t.get("table").verticalHeader().isHidden() else 0) + (1 if title_on_left else 0) for t in tables_data],
                     default=1
                 )
                 start_col = grid_c * (max_cols_per_grid + 1)
@@ -117,13 +118,15 @@ def export_tables_to_excel(export_folder: str, filename: str, tables_data: list,
 
             current_row = col_max_rows[grid_c]
 
-            col_count = table.columnCount()
+            valid_cols = [c for c in range(table.columnCount()) if not table.isColumnHidden(c)]
+            include_sn = not table.verticalHeader().isHidden()
+            total_cols = len(valid_cols) + (1 if include_sn else 0)
 
             if title:
                 if title_on_left:
                     row_count = table.rowCount()
                     end_row = current_row + max(row_count - 1, 0)
-                    if table.horizontalHeader().isVisible():
+                    if not table.horizontalHeader().isHidden():
                         end_row += 1
                     if end_row > current_row:
                         sheet.merge_range(current_row, start_col, end_row, start_col, title, title_format)
@@ -131,7 +134,7 @@ def export_tables_to_excel(export_folder: str, filename: str, tables_data: list,
                         sheet.write(current_row, start_col, title, title_format)
                     start_col += 1
                 else:
-                    end_col = start_col + max(col_count - 1, 0)
+                    end_col = start_col + max(total_cols - 1, 0)
                     if end_col > start_col:
                         sheet.merge_range(current_row, start_col, current_row, end_col, title, title_format)
                     else:
@@ -139,12 +142,17 @@ def export_tables_to_excel(export_folder: str, filename: str, tables_data: list,
                     current_row += 1
 
             # Write Headers
-            if table.horizontalHeader().isVisible():
+            if not table.horizontalHeader().isHidden():
                 hdr_fmt = _get_fmt(bold=True, bg=header_color or "#f1f5f9", border=1)
-                for c in range(col_count):
+                cur_c = start_col
+                if include_sn:
+                    sheet.write(current_row, cur_c, "S.N", hdr_fmt)
+                    cur_c += 1
+                for c in valid_cols:
                     h_item = table.horizontalHeaderItem(c)
                     h_text = h_item.text() if h_item else f"Col {c}"
-                    sheet.write(current_row, start_col + c, h_text, hdr_fmt)
+                    sheet.write(current_row, cur_c, h_text, hdr_fmt)
+                    cur_c += 1
                 current_row += 1
 
             # Write Data
@@ -153,7 +161,10 @@ def export_tables_to_excel(export_folder: str, filename: str, tables_data: list,
                 is_empty = True
                 row_data  = []
                 row_bgs   = []
-                for c in range(col_count):
+                if include_sn:
+                    row_data.append(str(r + 1))
+                    row_bgs.append(None)
+                for c in valid_cols:
                     val = get_visual_text(table, r, c)
                     # Round to int for specified columns
                     if val and c in round_int_cols:
@@ -170,50 +181,52 @@ def export_tables_to_excel(export_folder: str, filename: str, tables_data: list,
                     row_bgs.append(bg_hex)
 
                 if not is_empty or title_on_left:
-                    for c, val in enumerate(row_data):
-                        if (current_row, start_col + c) in merged_cells_to_skip:
+                    for out_idx, val in enumerate(row_data):
+                        cur_out_col = start_col + out_idx
+                        if (current_row, cur_out_col) in merged_cells_to_skip:
                             continue
                             
-                        bg_hex = row_bgs[c]
+                        bg_hex = row_bgs[out_idx]
                         is_num = bool(val and val.replace(".", "", 1).replace(",", "").replace("-", "", 1).isdigit())
                         
-                        has_border = 0 if (r, c) in no_border_cells else 1
+                        c_orig = valid_cols[out_idx - 1] if (include_sn and out_idx > 0) else (valid_cols[out_idx] if not include_sn else -1)
+                        has_border = 0 if (c_orig >= 0 and (r, c_orig) in no_border_cells) else 1
                         fmt = _get_fmt(bg=bg_hex, border=has_border, align_right=is_num)
                         
-                        r_span = table.rowSpan(r, c)
-                        c_span = table.columnSpan(r, c)
+                        r_span = table.rowSpan(r, c_orig) if c_orig >= 0 else 1
+                        c_span = table.columnSpan(r, c_orig) if c_orig >= 0 else 1
                         
                         # Apply merge
                         if r_span > 1 or c_span > 1:
                             for rr in range(r_span):
                                 for cc in range(c_span):
                                     if rr == 0 and cc == 0: continue
-                                    merged_cells_to_skip.add((current_row + rr, start_col + c + cc))
+                                    merged_cells_to_skip.add((current_row + rr, cur_out_col + cc))
                             
                             # Write merge range
                             try:
                                 if is_num:
                                     num_val = float(val.replace(",", ""))
-                                    if c in round_int_cols:
+                                    if c_orig >= 0 and c_orig in round_int_cols:
                                         num_val = int(round(num_val))
-                                    sheet.merge_range(current_row, start_col + c, current_row + r_span - 1, start_col + c + c_span - 1, num_val, fmt)
+                                    sheet.merge_range(current_row, cur_out_col, current_row + r_span - 1, cur_out_col + c_span - 1, num_val, fmt)
                                 else:
-                                    sheet.merge_range(current_row, start_col + c, current_row + r_span - 1, start_col + c + c_span - 1, val, fmt)
+                                    sheet.merge_range(current_row, cur_out_col, current_row + r_span - 1, cur_out_col + c_span - 1, val, fmt)
                             except Exception:
-                                sheet.merge_range(current_row, start_col + c, current_row + r_span - 1, start_col + c + c_span - 1, val or "", fmt)
+                                sheet.merge_range(current_row, cur_out_col, current_row + r_span - 1, cur_out_col + c_span - 1, val or "", fmt)
                             continue
 
                         try:
                             if is_num:
                                 num_val = float(val.replace(",", ""))
-                                if c in round_int_cols:
-                                    sheet.write_number(current_row, start_col + c, int(round(num_val)), fmt)
+                                if c_orig >= 0 and c_orig in round_int_cols:
+                                    sheet.write_number(current_row, cur_out_col, int(round(num_val)), fmt)
                                 else:
-                                    sheet.write_number(current_row, start_col + c, num_val, fmt)
+                                    sheet.write_number(current_row, cur_out_col, num_val, fmt)
                             else:
-                                sheet.write(current_row, start_col + c, val, fmt)
+                                sheet.write(current_row, cur_out_col, val, fmt)
                         except Exception:
-                            sheet.write(current_row, start_col + c, val or "", fmt)
+                            sheet.write(current_row, cur_out_col, val or "", fmt)
                     current_row += 1
 
             # Blank spacer row between tables

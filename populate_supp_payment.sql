@@ -10,6 +10,7 @@ IF OBJECT_ID('dbo.anil_ledger', 'U') IS NOT NULL DROP TABLE dbo.anil_ledger;
 IF OBJECT_ID('dbo.team_list_data', 'U') IS NOT NULL DROP TABLE dbo.team_list_data;
 IF OBJECT_ID('dbo.bonus_data', 'U') IS NOT NULL DROP TABLE dbo.bonus_data;
 IF OBJECT_ID('dbo.tp_section_data', 'U') IS NOT NULL DROP TABLE dbo.tp_section_data;
+IF OBJECT_ID('dbo.tp_section_cols', 'U') IS NOT NULL DROP TABLE dbo.tp_section_cols;
 IF OBJECT_ID('dbo.tp_sections', 'U') IS NOT NULL DROP TABLE dbo.tp_sections;
 
 -- Recreate empty table structures
@@ -20,6 +21,7 @@ CREATE TABLE dbo.anil_ledger (id INT IDENTITY PRIMARY KEY, sort_order INT, start
 CREATE TABLE dbo.team_list_data (row_idx INT NOT NULL, col_idx INT NOT NULL, cell_text NVARCHAR(MAX), PRIMARY KEY (row_idx, col_idx));
 CREATE TABLE dbo.bonus_data (row_idx INT NOT NULL, col_idx INT NOT NULL, cell_text NVARCHAR(MAX), PRIMARY KEY (row_idx, col_idx));
 CREATE TABLE dbo.tp_sections (id INT IDENTITY PRIMARY KEY, sort_order INT, name NVARCHAR(MAX), header_color NVARCHAR(MAX), is_core INT, cols_locked INT DEFAULT 0);
+CREATE TABLE dbo.tp_section_cols (id INT IDENTITY PRIMARY KEY, section_id INT, col_index INT, col_name NVARCHAR(200), col_width INT);
 CREATE TABLE dbo.tp_section_data (id INT IDENTITY PRIMARY KEY, section_id INT, row_idx INT, col_idx INT, cell_text NVARCHAR(MAX));
 
 
@@ -880,6 +882,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.anil_ledger TO public;
 GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.team_list_data TO public;
 GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.bonus_data TO public;
 GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.tp_sections TO public;
+GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.tp_section_cols TO public;
 GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.tp_section_data TO public;
 PRINT 'Permissions granted successfully.'
 GO
