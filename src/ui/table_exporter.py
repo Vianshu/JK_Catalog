@@ -3,6 +3,9 @@ import xlsxwriter
 from PyQt6.QtWidgets import QMessageBox
 from PyQt6.QtGui import QColor
 from src.ui.table_nav_mixin import get_visual_text
+from src.utils.app_logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def _round_int(val: str) -> str:
@@ -56,8 +59,8 @@ def export_tables_to_excel(export_folder: str, filename: str, tables_data: list,
         # Format cache: keyed by (bold, bg_color_hex_or_None, border)
         _fmt_cache = {}
 
-        def _get_fmt(bold=False, bg=None, border=1, align_right=False):
-            key = (bold, bg, border, align_right)
+        def _get_fmt(bold=False, bg=None, border=1, align_right=False, num_format=None):
+            key = (bold, bg, border, align_right, num_format)
             if key not in _fmt_cache:
                 props = {"border": border}
                 if bold:
@@ -66,6 +69,8 @@ def export_tables_to_excel(export_folder: str, filename: str, tables_data: list,
                     props["bg_color"] = bg
                 if align_right:
                     props["align"] = "right"
+                if num_format:
+                    props["num_format"] = num_format
                 _fmt_cache[key] = workbook.add_format(props)
             return _fmt_cache[key]
 
@@ -191,7 +196,8 @@ def export_tables_to_excel(export_folder: str, filename: str, tables_data: list,
                         
                         c_orig = valid_cols[out_idx - 1] if (include_sn and out_idx > 0) else (valid_cols[out_idx] if not include_sn else -1)
                         has_border = 0 if (c_orig >= 0 and (r, c_orig) in no_border_cells) else 1
-                        fmt = _get_fmt(bg=bg_hex, border=has_border, align_right=is_num)
+                        num_fmt = "#,##0" if is_num else None
+                        fmt = _get_fmt(bg=bg_hex, border=has_border, align_right=is_num, num_format=num_fmt)
                         
                         r_span = table.rowSpan(r, c_orig) if c_orig >= 0 else 1
                         c_span = table.columnSpan(r, c_orig) if c_orig >= 0 else 1
@@ -238,8 +244,7 @@ def export_tables_to_excel(export_folder: str, filename: str, tables_data: list,
         return True
 
     except Exception as e:
+        logger.error(f"[Export Error] {e}")
         if parent:
             QMessageBox.critical(parent, "Export Error", f"Failed to export Excel:\n{str(e)}")
-        else:
-            print(f"[Export Error] {e}")
         return False

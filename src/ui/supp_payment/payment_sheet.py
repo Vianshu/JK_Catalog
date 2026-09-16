@@ -1,37 +1,19 @@
-# =============================================================================
-# payment_sheet.py — _StyledTable + PaymentSheet (user-created sheets)
-# =============================================================================
 import os
-import re as _re
-import json as _json
-
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTableWidget,
-    QTableWidgetItem, QPushButton, QTabWidget, QInputDialog,
-    QMenu, QMessageBox, QHeaderView, QAbstractItemView,
-    QLabel, QScrollArea, QFrame, QSizePolicy, QLineEdit,
-    QListWidget, QListWidgetItem, QStackedWidget, QSplitter,
-    QFormLayout, QApplication, QAbstractScrollArea, QFileDialog,
-    QColorDialog, QTextEdit, QStyledItemDelegate, QStyle,
-    QAbstractItemDelegate,
+    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
+    QTableWidgetItem, QPushButton, QScrollArea, QFrame,
+    QSizePolicy, QLabel, QAbstractItemView,
 )
-from PyQt6.QtCore import (
-    Qt, QTimer, QDate, QEvent, QMimeData, QSettings, QRect,
-)
-from PyQt6.QtGui import (
-    QFont, QColor, QBrush, QPixmap, QPainter, QKeySequence,
-    QShortcut, QCursor, QImage, QPen, QFontMetrics,
-)
+from PyQt6.QtCore import Qt, QTimer
 from src.logic.db_manager import get_db_manager, build_logical_name
+from src.utils.app_logger import get_logger
+
+logger = get_logger(__name__)
+
 from .shared import (
-    _PrintExportMixin, ModernTableDelegate,
-    _bold_font, _norm_font,
-    _SCROLLBAR_STYLE, _TABLE_STYLE, _SECTION_HEADER_STYLE,
-    _BTN_PRIMARY, _BTN_SECONDARY, _BTN_DANGER,
-    _MENU_STYLE, _POPUP_STYLE, _CARD_MENU_STYLE,
-    _setup_smart_header, _DbTable,
+    _bold_font, _norm_font, _TABLE_STYLE, _SECTION_HEADER_STYLE,
+    _BTN_SECONDARY, _setup_smart_header,
 )
-from src.ui.table_nav_mixin import UniversalCellDelegate
 
 # ===========================================================================
 class _StyledTable(QWidget):
@@ -127,14 +109,22 @@ class PaymentSheet(QWidget):
         for row_key, (label, bg) in sections.items():
             t = _StyledTable(label, headers, widths, header_color=bg)
             t._section_key = str(row_key)  # DB identity within this sheet
+            t._loading = False
+            t._loaded = False
+            t._save_timer = QTimer(t)
+            t._save_timer.setSingleShot(True)
+            t._save_timer.setInterval(400)
+            t._save_timer.timeout.connect(lambda tbl=t: self._save_table(tbl))
             t.btn_add.clicked.connect(lambda _, tbl=t: self._add_row(tbl))
             self._tables.append(t)
             c_lay.addWidget(t)
             # Wire persistence
             def _on_payment_sheet_change(item, tbl=t):
+                if getattr(tbl, '_loading', False):
+                    return
                 tbl.table.resizeColumnToContents(item.column())
                 tbl._recalc_width()
-                QTimer.singleShot(300, lambda: self._save_table(tbl))
+                tbl._save_timer.start()
             t.table.itemChanged.connect(_on_payment_sheet_change)
 
         c_lay.addStretch()
@@ -157,44 +147,63 @@ class PaymentSheet(QWidget):
     def _load_table(self, tbl: "_StyledTable"):
         if not self._db_name:
             return
-        rows = self._db.execute_query(
-            self._db_name,
-            "SELECT row_idx, col_idx, cell_text FROM payment_sheet_data "
-            "WHERE sheet_key=? AND section_key=? ORDER BY row_idx, col_idx",
-            (self._sheet_key, tbl._section_key)
-        ) or []
-        tbl.table.blockSignals(True)
-        tbl.table.setRowCount(0)
-        for r, c, txt in rows:
-            while tbl.table.rowCount() <= int(r):
-                tbl.table.insertRow(tbl.table.rowCount())
-                for ci in range(tbl.table.columnCount()):
-                    tbl.table.setItem(tbl.table.rowCount() - 1, ci, QTableWidgetItem(""))
-            tbl.table.setItem(int(r), int(c), QTableWidgetItem(txt or ""))
-        tbl.table.blockSignals(False)
-        tbl.recalculate_height()
+        tbl._loading = True
+        try:
+            rows = self._db.execute_query(
+                self._db_name,
+                "SELECT row_idx, col_idx, cell_text FROM payment_sheet_data "
+                "WHERE sheet_key=? AND section_key=? ORDER BY row_idx, col_idx",
+                (self._sheet_key, tbl._section_key)
+            ) or []
+            tbl.table.blockSignals(True)
+            tbl.table.setRowCount(0)
+            for r, c, txt in rows:
+                while tbl.table.rowCount() <= int(r):
+                    tbl.table.insertRow(tbl.table.rowCount())
+                    for ci in range(tbl.table.columnCount()):
+                        tbl.table.setItem(tbl.table.rowCount() - 1, ci, QTableWidgetItem(""))
+                tbl.table.setItem(int(r), int(c), QTableWidgetItem(txt or ""))
+            tbl.table.blockSignals(False)
+            tbl.recalculate_height()
+            tbl._loaded = True
+        finally:
+            tbl._loading = False
 
     def _save_table(self, tbl: "_StyledTable"):
-        if not self._db_name:
+        if not self._db_name or getattr(tbl, '_loading', False):
             return
+        # Guard against wiping if the table has not been populated from DB
+        if not getattr(tbl, '_loaded', False):
+            return
+        conn = self._db.get_connection(self._db_name)
+        if not conn:
+            return
+        cur = conn.cursor()
         try:
-            self._db.execute_query(
-                self._db_name,
+            cur.execute(
                 "DELETE FROM payment_sheet_data WHERE sheet_key=? AND section_key=?",
-                (self._sheet_key, tbl._section_key), fetch=False)
+                (self._sheet_key, tbl._section_key)
+            )
+            rows_to_insert = []
             for r in range(tbl.table.rowCount()):
                 for c in range(tbl.table.columnCount()):
                     it = tbl.table.item(r, c)
                     val = it.text().strip() if it else ""
                     if val:
-                        self._db.execute_query(
-                            self._db_name,
-                            "INSERT INTO payment_sheet_data"
-                            "(sheet_key, section_key, row_idx, col_idx, cell_text)"
-                            " VALUES(?,?,?,?,?)",
-                            (self._sheet_key, tbl._section_key, r, c, val), fetch=False)
+                        rows_to_insert.append((self._sheet_key, tbl._section_key, r, c, val))
+            if rows_to_insert:
+                cur.executemany(
+                    "INSERT INTO payment_sheet_data"
+                    " (sheet_key, section_key, row_idx, col_idx, cell_text)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    rows_to_insert
+                )
+            conn.commit()
         except Exception as e:
-            print(f"[PaymentSheet] _save_table error: {e}")
+            conn.rollback()
+            logger.error(f"[PaymentSheet] _save_table error, rolled back: {e}")
+        finally:
+            cur.close()
 
     def _add_row(self, tbl: "_StyledTable"):
         r = tbl.table.rowCount()
@@ -235,7 +244,7 @@ class PaymentSheet(QWidget):
                 "DELETE FROM payment_sheet_data WHERE sheet_key=?",
                 (self._sheet_key,), fetch=False)
         except Exception as e:
-            print(f"[PaymentSheet] delete_from_db error: {e}")
+            logger.error(f"[PaymentSheet] delete_from_db error: {e}")
 
 
 # ===========================================================================

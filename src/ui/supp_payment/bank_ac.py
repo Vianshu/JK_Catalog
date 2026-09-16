@@ -23,6 +23,10 @@ from PyQt6.QtGui import (
     QShortcut, QCursor, QImage, QPen, QFontMetrics,
 )
 from src.logic.db_manager import get_db_manager, build_logical_name
+from src.utils.app_logger import get_logger
+
+logger = get_logger(__name__)
+
 from .shared import (
     _PrintExportMixin, ModernTableDelegate,
     _bold_font, _norm_font,
@@ -193,13 +197,16 @@ class _AccCard(QFrame):
     def _save_red_state(self):
         conn = self._db.get_connection(self._db_name)
         if not conn: return
+        cur = conn.cursor()
         try:
-            conn.cursor().execute("UPDATE supplier_accounts SET is_red=? WHERE supplier_id=? AND acc_index=?",
-                                  (1 if self.is_red else 0, self.supplier_id, self.acc_idx))
+            cur.execute("UPDATE supplier_accounts SET is_red=? WHERE supplier_id=? AND acc_index=?",
+                        (1 if self.is_red else 0, self.supplier_id, self.acc_idx))
             conn.commit()
         except Exception as e:
             conn.rollback()
-            print("Error saving red state:", e)
+            logger.error(f"[AccCard] Error saving red state: {e}")
+        finally:
+            cur.close()
         if callable(self._refresh_fn):
             self._refresh_fn()
 
@@ -215,16 +222,18 @@ class _AccCard(QFrame):
         conn = self._db.get_connection(self._db_name)
         if not conn:
             return
+        cur = conn.cursor()
         try:
-            cur = conn.cursor()
             cur.execute(
                 "DELETE FROM supplier_accounts WHERE supplier_id=? AND acc_index=?",
                 (self.supplier_id, self.acc_idx))
             conn.commit()
         except Exception as e:
             conn.rollback()
-            print("[AccCard] delete error:", e)
+            logger.error(f"[AccCard] delete error: {e}")
             return
+        finally:
+            cur.close()
         if callable(self._refresh_fn):
             self._refresh_fn()
 
@@ -258,8 +267,9 @@ class _AccCard(QFrame):
             conn.commit()
         except Exception as e:
             conn.rollback()
-            print("[AccCard] _save error:", e)
+            logger.error(f"[AccCard] _save error: {e}")
         finally:
+            cur.close()
             self._saving = False
 
 
@@ -267,9 +277,10 @@ class _SupplierSection(QFrame):
     """One supplier: compact header + two-column account area (Company | Personal)."""
 
     def __init__(self, supplier_id, name, accounts, db, db_name,
-                 can_edit=True, refresh_fn=None, parent=None):
+                 can_edit=True, refresh_fn=None, index=None, parent=None):
         super().__init__(parent)
         self.supplier_id  = supplier_id
+        self._index       = index
         self._db          = db
         self._db_name     = db_name
         self._can_edit    = can_edit
@@ -312,7 +323,8 @@ class _SupplierSection(QFrame):
         hdr_lay.setSpacing(8)
 
         # Index badge
-        badge = QLabel(f"#{supplier_id}")
+        badge_text = f"#{self._index}" if self._index is not None else f"#{supplier_id}"
+        badge = QLabel(badge_text)
         badge.setFont(_bold_font(8))
         badge.setFixedSize(32, 18)
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -495,8 +507,9 @@ class _SupplierSection(QFrame):
             conn.commit()
         except Exception as e:
             conn.rollback()
-            print("[SupplierSection] _save_name error:", e)
+            logger.error(f"[SupplierSection] _save_name error: {e}")
         finally:
+            cur.close()
             self._saving = False
 
     def _show_context_menu(self, _):
@@ -508,12 +521,56 @@ class _SupplierSection(QFrame):
             QMenu::item{padding:6px 20px;font-size:10pt;color:#111827;}
             QMenu::item:selected{background:#fee2e2;color:#b91c1c;border-radius:2px;}
         """)
+        act_up = menu.addAction("Move Supplier Up")
+        act_down = menu.addAction("Move Supplier Down")
+        menu.addSeparator()
         act_del = menu.addAction("Delete Supplier")
         act_del.setIcon(self.style().standardIcon(
             self.style().StandardPixmap.SP_TrashIcon))
         chosen = menu.exec(QCursor.pos())
-        if chosen == act_del:
+        if chosen == act_up:
+            self._move_supplier(-1)
+        elif chosen == act_down:
+            self._move_supplier(1)
+        elif chosen == act_del:
             self._delete_supplier()
+
+    def _move_supplier(self, delta: int):
+        """Move this supplier up (-1) or down (+1) in sort order."""
+        if not self._can_edit or not self._db_name:
+            return
+        conn = self._db.get_connection(self._db_name)
+        if not conn:
+            return
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT id, sort_order FROM supplier_records ORDER BY sort_order, id")
+            all_sups = cur.fetchall()
+            cur_idx = None
+            for i, (sid, so) in enumerate(all_sups):
+                if sid == self.supplier_id:
+                    cur_idx = i
+                    break
+            if cur_idx is None:
+                return
+            target_idx = cur_idx + delta
+            if target_idx < 0 or target_idx >= len(all_sups):
+                return
+            other_id = all_sups[target_idx][0]
+            # Normalize dense sequence and swap
+            for new_so, (sid, _) in enumerate(all_sups, 1):
+                cur.execute("UPDATE supplier_records SET sort_order=? WHERE id=?", (new_so, sid))
+            cur.execute("UPDATE supplier_records SET sort_order=? WHERE id=?", (target_idx + 1, self.supplier_id))
+            cur.execute("UPDATE supplier_records SET sort_order=? WHERE id=?", (cur_idx + 1, other_id))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"[SupplierSection] _move_supplier error: {e}")
+            return
+        finally:
+            cur.close()
+        if callable(self._refresh_fn):
+            self._refresh_fn()
 
     def _delete_supplier(self):
         """Delete this entire supplier record + all its accounts."""
@@ -530,8 +587,8 @@ class _SupplierSection(QFrame):
         conn = self._db.get_connection(self._db_name)
         if not conn:
             return
+        cur = conn.cursor()
         try:
-            cur = conn.cursor()
             cur.execute("DELETE FROM supplier_accounts WHERE supplier_id=?",
                         (self.supplier_id,))
             cur.execute("DELETE FROM supplier_records WHERE id=?",
@@ -539,8 +596,10 @@ class _SupplierSection(QFrame):
             conn.commit()
         except Exception as e:
             conn.rollback()
-            print("[SupplierSection] _delete_supplier error:", e)
+            logger.error(f"[SupplierSection] _delete_supplier error: {e}")
             return
+        finally:
+            cur.close()
         if callable(self._refresh_fn):
             self._refresh_fn()
 
@@ -737,40 +796,46 @@ class RecordTab(_PrintExportMixin, QWidget):
             "SELECT id, name FROM supplier_records ORDER BY sort_order, id"
         ) or []
 
-        for sup_id, sup_name in suppliers:
-            try:
-                accs = self._db.execute_query(
-                    self._db_name,
-                    "SELECT acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma, is_red "
-                    "FROM supplier_accounts WHERE supplier_id=? ORDER BY acc_index",
-                    (sup_id,)
-                )
-            except Exception:
-                accs = None
-                
-            if accs is None:
-                accs = self._db.execute_query(
-                    self._db_name,
-                    "SELECT acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma "
-                    "FROM supplier_accounts WHERE supplier_id=? ORDER BY acc_index",
-                    (sup_id,)
-                ) or []
-                
-            acc_list = []
-            for r in accs:
-                acc_list.append({
-                    "acc_idx": r[0],
-                    "type": r[1] or "Account",
-                    "naam": r[2] or "", "thegana": r[3] or "",
-                    "baik": r[4] or "", "khata": r[5] or "",
-                    "rakam": r[6] or "", "jamma": r[7] or "",
-                    "is_red": r[8] if len(r) > 8 else 0,
-                })
+        # H-03: Single batch fetch of all accounts to eliminate N+1 round-trips over the network
+        has_is_red = True
+        try:
+            acc_rows = self._db.execute_query(
+                self._db_name,
+                "SELECT supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma, is_red "
+                "FROM supplier_accounts ORDER BY supplier_id, acc_index"
+            )
+        except Exception:
+            acc_rows = None
+
+        if acc_rows is None:
+            has_is_red = False
+            acc_rows = self._db.execute_query(
+                self._db_name,
+                "SELECT supplier_id, acc_index, acc_type, naam, thegana, baik, khata, rakam, jamma "
+                "FROM supplier_accounts ORDER BY supplier_id, acc_index"
+            ) or []
+
+        from collections import defaultdict
+        accounts_by_sup = defaultdict(list)
+        for r in (acc_rows or []):
+            sid = r[0]
+            accounts_by_sup[sid].append({
+                "acc_idx": r[1],
+                "type": r[2] or "Account",
+                "naam": r[3] or "", "thegana": r[4] or "",
+                "baik": r[5] or "", "khata": r[6] or "",
+                "rakam": r[7] or "", "jamma": r[8] or "",
+                "is_red": r[9] if has_is_red and len(r) > 9 else 0,
+            })
+
+        for idx, (sup_id, sup_name) in enumerate(suppliers, 1):
+            acc_list = accounts_by_sup.get(sup_id, [])
 
             section = _SupplierSection(
                 sup_id, sup_name or "", acc_list,
                 self._db, self._db_name, self._can_edit,
                 refresh_fn=self._load_cards,
+                index=idx,
                 parent=self._container)
             
             # Restore selection state
@@ -1220,8 +1285,10 @@ class RecordTab(_PrintExportMixin, QWidget):
             conn.commit()
         except Exception as e:
             conn.rollback()
-            print("[RecordTab] _add_supplier error:", e)
+            logger.error(f"[RecordTab] _add_supplier error: {e}")
             return
+        finally:
+            cur.close()
         self._load_cards()
         self._scroll.verticalScrollBar().setValue(
             self._scroll.verticalScrollBar().maximum())
@@ -1258,8 +1325,10 @@ class RecordTab(_PrintExportMixin, QWidget):
             conn.commit()
         except Exception as e:
             conn.rollback()
-            print("[RecordTab] _add_account error:", e)
+            logger.error(f"[RecordTab] _add_account error: {e}")
             return
+        finally:
+            cur.close()
         self._load_cards()
 
     def apply_edit_mode(self, can_edit: bool):

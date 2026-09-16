@@ -16,6 +16,9 @@ from .anil_hisab      import AnilHisabTab
 from .bonus_team      import TeamListTab, BonusTab
 from .insurance       import InsuranceTab
 from .payment_sheet   import PaymentSheet
+from src.utils.app_logger import get_logger
+
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +160,7 @@ class SuppPaymentV2UI(QWidget):
             try:
                 self._today_payment_tab.refresh_ledger_maps()
             except Exception as e:
-                print(f"[SuppPaymentV2UI] refresh_ledger_maps error: {e}")
+                logger.error(f"[SuppPaymentV2UI] refresh_ledger_maps error: {e}")
 
     def add_new_sheet(self):
         if not self._can_edit:
@@ -174,29 +177,30 @@ class SuppPaymentV2UI(QWidget):
         self.tabs.addTab(sheet, blank["tab"])
         self.tabs.setCurrentIndex(self.tabs.count() - 1)
 
+    # Number of fixed core tabs that must never be deleted or renamed
+    _CORE_TAB_COUNT = 6  # Today Payment, Bank A/C, Anil Dai Hisab, Team-List, Bonus, Insurance
+
     def rename_tab(self, index: int):
-        if not self._can_edit or index == -1:
+        if not self._can_edit or index == -1 or index < self._CORE_TAB_COUNT:
             return
         old = self.tabs.tabText(index)
         new, ok = _styled_get_text(self, "Rename", "New name:", text=old)
         if ok and new.strip():
             self.tabs.setTabText(index, new.strip())
 
-    # Number of fixed core tabs that must never be deleted
-    _CORE_TAB_COUNT = 6  # Today Payment, Bank A/C, Anil Dai Hisab, Team-List, Bonus, Insurance
-
     def show_tab_menu(self, point):
         idx = self.tabs.tabBar().tabAt(point)
         if idx == -1:
             return
         menu = QMenu(self)
-        ra = menu.addAction("\u270e  Rename Sheet")
-        # Only non-core (user-added) tabs can be deleted
+        # Only non-core (user-added) tabs can be renamed or deleted
         is_core = idx < self._CORE_TAB_COUNT
+        ra = menu.addAction("\u270e  Rename Sheet")
+        ra.setEnabled(not is_core)
         da = menu.addAction("\u2715  Delete Sheet")
         da.setEnabled(not is_core)
         act = menu.exec(self.tabs.tabBar().mapToGlobal(point))
-        if act == ra:
+        if act == ra and not is_core:
             self.rename_tab(idx)
         elif act == da and not is_core:
             if self.tabs.count() > self._CORE_TAB_COUNT:

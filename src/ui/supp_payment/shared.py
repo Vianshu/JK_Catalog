@@ -23,6 +23,9 @@ from PyQt6.QtGui import (
     QFont, QColor, QBrush, QPixmap, QPainter, QKeySequence, QShortcut, QCursor, QImage, QIcon,
 )
 from src.logic.db_manager import get_db_manager, build_logical_name
+from src.utils.app_logger import get_logger
+
+logger = get_logger(__name__)
 
 from src.ui.table_exporter import export_tables_to_excel
 from src.ui.table_printer import print_tables_via_preview
@@ -34,17 +37,45 @@ def get_icon(name):
 
 class _PrintExportMixin:
     _right_bar_expanded = False
-    # Stores (weakref_to_widget, apply_state_fn) pairs.
-    # Dead refs (widget destroyed) are pruned before each dispatch.
-    _right_bar_callbacks = []
+    # Stores weakref_to_widget instances. Dead refs are pruned before dispatch.
+    _registered_instances = []
 
-    @staticmethod
-    def _prune_callbacks():
+    @classmethod
+    def _prune_callbacks(cls):
         """Remove entries whose widget has been garbage-collected."""
-        _PrintExportMixin._right_bar_callbacks = [
-            (wr, cb) for wr, cb in _PrintExportMixin._right_bar_callbacks
+        cls._registered_instances = [
+            wr for wr in cls._registered_instances
             if wr() is not None
         ]
+
+    def _apply_right_bar_state(self, expanded):
+        try:
+            rb = getattr(self, '_pe_right_bar', None)
+            btn = getattr(self, 'btn_toggle', None)
+            if not rb or not btn:
+                return
+            supports_print = getattr(self, '_pe_supports_print', False)
+            if expanded:
+                rb.setFixedWidth(140)
+                btn.setIcon(get_icon("chevron-right.svg"))
+                self.btn_export.setText(" Excel")
+                self.btn_export.setIcon(get_icon("excel.svg"))
+                if supports_print and hasattr(self, 'btn_print'):
+                    self.btn_print.setText(" Print")
+                    self.btn_print.setIcon(get_icon("print.svg"))
+            else:
+                rb.setFixedWidth(52)
+                btn.setIcon(get_icon("chevron-left.svg"))
+                self.btn_export.setText("")
+                self.btn_export.setIcon(get_icon("excel.svg"))
+                if supports_print and hasattr(self, 'btn_print'):
+                    self.btn_print.setText("")
+                    self.btn_print.setIcon(get_icon("print.svg"))
+            cb = getattr(self, '_pe_on_toggle_cb', None)
+            if cb:
+                cb(expanded)
+        except (RuntimeError, AttributeError):
+            pass
 
     def _init_print_export(self, layout, title, supports_print=True, table_getter=None, print_table_getter=None, right_bar=None, on_toggle_cb=None):
         self._export_title = title
@@ -65,6 +96,10 @@ class _PrintExportMixin:
             self.btn_print.clicked.connect(self._do_print)
 
         if right_bar:
+            self._pe_right_bar = right_bar
+            self._pe_supports_print = supports_print
+            self._pe_on_toggle_cb = on_toggle_cb
+
             self.btn_toggle = QPushButton()
             self.btn_toggle.setIcon(get_icon("chevron-left.svg"))
             from PyQt6.QtCore import QSize
@@ -90,45 +125,16 @@ class _PrintExportMixin:
             self.btn_toggle.setFixedSize(32, 32)
             self.btn_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
             layout.insertWidget(0, self.btn_toggle, 0, Qt.AlignmentFlag.AlignHCenter)
-            
-            def apply_state(expanded):
-                # Guard: widget may have been deleted between callback registration and dispatch
-                try:
-                    if not right_bar or not self.btn_toggle:
-                        return
-                except RuntimeError:
-                    return
-                if expanded:
-                    right_bar.setFixedWidth(140)
-                    self.btn_toggle.setIcon(get_icon("chevron-right.svg"))
-                    self.btn_export.setText(" Excel")
-                    self.btn_export.setIcon(get_icon("excel.svg"))
-                    if supports_print: 
-                        self.btn_print.setText(" Print")
-                        self.btn_print.setIcon(get_icon("print.svg"))
-                else:
-                    right_bar.setFixedWidth(52)
-                    self.btn_toggle.setIcon(get_icon("chevron-left.svg"))
-                    self.btn_export.setText("")
-                    self.btn_export.setIcon(get_icon("excel.svg"))
-                    if supports_print: 
-                        self.btn_print.setText("")
-                        self.btn_print.setIcon(get_icon("print.svg"))
-                if on_toggle_cb: on_toggle_cb(expanded)
 
             def on_toggle():
                 is_expanded = right_bar.width() > 60
                 new_state = not is_expanded
                 _PrintExportMixin._right_bar_expanded = new_state
-                # Prune dead widget refs before dispatching
                 _PrintExportMixin._prune_callbacks()
-                for _wr, cb in _PrintExportMixin._right_bar_callbacks:
-                    try:
-                        cb(new_state)
-                    except RuntimeError:
-                        pass  # C++ object already deleted — will be pruned next cycle
-                    except Exception:
-                        pass
+                for wr in _PrintExportMixin._registered_instances:
+                    inst = wr()
+                    if inst is not None:
+                        inst._apply_right_bar_state(new_state)
                 
             self.btn_toggle.clicked.connect(on_toggle)
 
@@ -138,11 +144,11 @@ class _PrintExportMixin:
             _shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             _shortcut.activated.connect(on_toggle)
             
-            # Register with a weak-ref to self so dead tabs are auto-pruned
-            _PrintExportMixin._right_bar_callbacks.append((weakref.ref(self), apply_state))
+            # Register weak-ref directly to instance (no closure cycle)
+            _PrintExportMixin._registered_instances.append(weakref.ref(self))
 
             from PyQt6.QtCore import QTimer
-            QTimer.singleShot(0, lambda: apply_state(_PrintExportMixin._right_bar_expanded))
+            QTimer.singleShot(0, lambda: self._apply_right_bar_state(_PrintExportMixin._right_bar_expanded))
 
         layout.addWidget(self.btn_export)
         if supports_print:
@@ -241,7 +247,7 @@ def _find_cmp_op_at_depth0(s: str):
         elif ch in ')]': depth -= 1
         elif depth == 0:
             two = s[i:i+2]
-            if two in ('<=', '>=', '<>', '!='):
+            if two in ('<=', '>=', '<>', '!=', '=='):
                 return two, i, i + 2
             if ch in '<>=':
                 return ch, i, i + 1
@@ -290,7 +296,7 @@ def _eval_if_formula(formula_str: str, row: int, table, table_provider=None) -> 
     # ── Condition branch 1: MAX(ColName-TODAY(),0) OP N ──────────────────
     _date_m = _re.match(
         r'^MAX\(\s*([\w\s]+?)\s*-\s*TODAY\(\)\s*,\s*0\s*\)'
-        r'\s*([<>]=?|<>|!=|=)\s*(-?\d+(?:\.\d+)?)\s*$',
+        r'\s*([<>]=?|<>|!=|==|=)\s*(-?\d+(?:\.\d+)?)\s*$',
         cond_str, _re.IGNORECASE
     )
     if _date_m:
@@ -313,7 +319,8 @@ def _eval_if_formula(formula_str: str, row: int, table, table_provider=None) -> 
                     days = max(QDate.currentDate().daysTo(d), 0)
                     _cmp = {'<': days < threshold, '>': days > threshold,
                             '<=': days <= threshold, '>=': days >= threshold,
-                            '=': days == threshold, '<>': days != threshold,
+                            '=': days == threshold, '==': days == threshold,
+                            '<>': days != threshold,
                             '!=': days != threshold}
                     return true_val if _cmp.get(op, False) else false_val
         # Column not found or date invalid → use false_val as safe fallback
@@ -328,20 +335,54 @@ def _eval_if_formula(formula_str: str, row: int, table, table_provider=None) -> 
         if left is not None and right is not None:
             _cmp = {'<': left < right, '>': left > right,
                     '<=': left <= right, '>=': left >= right,
-                    '=': left == right, '<>': left != right,
+                    '=': left == right, '==': left == right,
+                    '<>': left != right,
                     '!=': left != right}
             return true_val if _cmp.get(op, False) else false_val
 
     return None   # truly malformed — caller will show the raw formula text
 
 
-def _preprocess_cross_references(expr: str, table_provider) -> str:
+def _format_eval_result(result) -> str:
+    """Format numeric result as integer with thousands separator (no decimals shown)."""
+    if result is None or result == "":
+        return ""
+    if isinstance(result, (int, float)):
+        return f"{int(round(result)):,}"
+    try:
+        fv = float(str(result).replace(",", "").strip())
+        return f"{int(round(fv)):,}"
+    except Exception:
+        return str(result)
+
+
+def _preprocess_cross_references(expr: str, table_provider, visited=None) -> str:
     if not table_provider or not expr:
         return expr
     import re as _re
+
+    if visited is None:
+        visited = set()
+
+    # First expand ranges like [Table][Col][1:4] to [Table][Col][1], [Table][Col][2], ...
+    def expand_range(m):
+        t_name, c_name, s_start, s_end = m.groups()
+        start = int(s_start)
+        end = int(s_end)
+        step = 1 if end >= start else -1
+        return ', '.join(f'[{t_name}][{c_name}][{i}]' for i in range(start, end + step, step))
+
+    expr = _re.sub(r'\[([^\]]+)\]\[([^\]]+)\]\[(\d+):(\d+)\]', expand_range, expr)
+
     pattern = r'\[([^\]]+)\]\[([^\]]+)\]\[(\d+)\]'
     def replacer(match):
         t_name, c_name, r_idx_str = match.groups()
+        cell_key = (t_name.strip().lower(), c_name.strip().lower(), r_idx_str.strip())
+        if cell_key in visited:
+            # Cycle detected (M-03) — return 0 to terminate recursion safely
+            return "0"
+        visited.add(cell_key)
+
         r_idx = int(r_idx_str) - 1
         target_table = table_provider(t_name.strip())
         if not target_table: return "0"
@@ -353,6 +394,9 @@ def _preprocess_cross_references(expr: str, table_provider) -> str:
                 break
         if c_idx < 0 or r_idx < 0 or r_idx >= target_table.rowCount(): return "0"
         it = target_table.item(r_idx, c_idx)
+        raw = it.data(RAW_NUMERIC_ROLE) if it else None
+        if raw is not None and isinstance(raw, (int, float)):
+            return str(float(raw))
         val = it.text().strip().replace(",", "") if it else "0"
         try:
             return str(float(val) if val else 0.0)
@@ -365,7 +409,8 @@ def _safe_eval_expr(expr: str, table_provider=None):
     """Safely evaluate a pure arithmetic expression string.
 
     Supported: numeric literals (int/float), +  -  *  /  ( )  and unary -.
-    Anything else (function calls, names, strings, …) raises ValueError,
+    Supported functions: MAX, MIN, SUM.
+    Anything else (disallowed functions, names, strings, …) raises ValueError,
     which is caught here and causes None to be returned.
 
     Returns:
@@ -382,9 +427,14 @@ def _safe_eval_expr(expr: str, table_provider=None):
         if isinstance(node, _ast.Expression):
             return _eval(node.body)
         elif isinstance(node, _ast.Constant):
-            if not isinstance(node.value, (int, float)):
-                raise ValueError("non-numeric constant")
-            return float(node.value)
+            if isinstance(node.value, (int, float)):
+                return float(node.value)
+            elif isinstance(node.value, str):
+                try:
+                    return float(node.value.replace(',', '').strip())
+                except ValueError:
+                    pass
+            raise ValueError("non-numeric constant")
         elif isinstance(node, _ast.BinOp):
             op_fn = _ARITH_OPS.get(type(node.op))
             if op_fn is None:
@@ -400,7 +450,7 @@ def _safe_eval_expr(expr: str, table_provider=None):
                 raise ValueError(f"unsupported unary op: {type(node.op)}")
             return op_fn(_eval(node.operand))
         elif isinstance(node, _ast.Call):
-            # Allow MAX(a,b,...) and MIN(a,b,...) only
+            # Allow MAX(a,b,...), MIN(a,b,...), SUM(a,b,...)
             func_name = ""
             if isinstance(node.func, _ast.Name):
                 func_name = node.func.id.upper()
@@ -408,6 +458,8 @@ def _safe_eval_expr(expr: str, table_provider=None):
                 return max(_eval(a) for a in node.args)
             elif func_name == "MIN":
                 return min(_eval(a) for a in node.args)
+            elif func_name == "SUM":
+                return sum(_eval(a) for a in node.args)
             else:
                 raise ValueError(f"disallowed function: {func_name}")
         else:
@@ -426,6 +478,10 @@ def _safe_eval_expr(expr: str, table_provider=None):
 # Custom item-data role used to persist the raw formula text on the
 # QTableWidgetItem while the cell displays its evaluated result.
 FORMULA_ROLE = Qt.ItemDataRole.UserRole + 50
+
+# Custom item-data role used to store unrounded raw numeric values (float/int)
+# for formula/running-balance calculations while displaying integer-only formatted strings.
+RAW_NUMERIC_ROLE = Qt.ItemDataRole.UserRole + 51
 
 import re as _re
 
@@ -472,11 +528,14 @@ class ModernTableDelegate(UniversalCellDelegate):
         if "amount" in header or "balance" in header or "rs" in header or "dr" in header or "cr" in header or "value" in header or "cash" in header or "bank" in header:
             text = index.data(Qt.ItemDataRole.DisplayRole)
             if text:
+                text_str = str(text).strip()
+                if text_str.startswith('='):
+                    return size
                 from PyQt6.QtGui import QFont, QFontMetrics
                 font = QFont("Consolas", 10)
                 fm = QFontMetrics(font)
                 # + 24 for padding to match paint margins
-                w = fm.horizontalAdvance(str(text)) + 24
+                w = fm.horizontalAdvance(text_str) + 24
                 if w > size.width():
                     size.setWidth(w)
         return size
@@ -600,7 +659,8 @@ class ModernTableDelegate(UniversalCellDelegate):
             owner_table = getattr(self._owner, 'table', None)
             result = _eval_if_formula(text, index.row(), owner_table, self._get_table_provider()) if owner_table else None
 
-            # Store formula on the item so (a) editor restores it and (b) _save_data persists it
+            # Store formula and raw numeric value on the item so (a) editor restores it,
+            # (b) downstream formulas use exact decimals, and (c) _save_data persists it
             view = owner_table
             if view:
                 it = view.item(index.row(), index.column())
@@ -609,10 +669,12 @@ class ModernTableDelegate(UniversalCellDelegate):
                     it = QTableWidgetItem()
                     view.setItem(index.row(), index.column(), it)
                 it.setData(FORMULA_ROLE, text)
+                if result is not None and isinstance(result, (int, float)):
+                    it.setData(RAW_NUMERIC_ROLE, result)
 
             # Write the evaluated number as the visible cell value
             if result is not None:
-                formatted = str(int(result)) if isinstance(result, float) and result.is_integer() else f"{result:.6g}"
+                formatted = _format_eval_result(result)
             else:
                 # Formula is malformed or references a missing column — keep
                 # the raw formula text visible so the user can see and fix it.
@@ -622,24 +684,24 @@ class ModernTableDelegate(UniversalCellDelegate):
 
         # --- Priority 2: plain arithmetic OR cross-references ---
         import re as _re
-        _HAS_ARITH = bool(_re.search(r'\d[+\-*/]|[+\-*/]\d|[+\-*/]\s*\(|\[.*?\]\[.*?\]\[\d+\]', text))
+        _HAS_ARITH = bool(_re.search(r'\d[+\-*/]|[+\-*/]\d|[+\-*/]\s*\(|\[.*?\]\[.*?\]\[\d+(?::\d+)?\]', text))
         if text.startswith('=') or _HAS_ARITH:
             expr_to_eval = text[1:] if text.startswith('=') else text
             result = _safe_eval_expr(expr_to_eval, self._get_table_provider())
             if result is not None:
-                if isinstance(result, float) and result.is_integer():
-                    formatted = str(int(result))
-                else:
-                    formatted = f"{result:.6g}"
+                formatted = _format_eval_result(result)
                 
                 owner_table = getattr(self._owner, 'table', None) or (self._owner if hasattr(self._owner, 'item') else None)
-                if owner_table and (text.startswith('=') or ('[' in text and ']' in text)):
+                if owner_table:
                     it = owner_table.item(index.row(), index.column())
                     if not it:
                         from PyQt6.QtWidgets import QTableWidgetItem
                         it = QTableWidgetItem()
                         owner_table.setItem(index.row(), index.column(), it)
-                    it.setData(FORMULA_ROLE, text)
+                    if text.startswith('=') or ('[' in text and ']' in text):
+                        it.setData(FORMULA_ROLE, text)
+                    if isinstance(result, (int, float)):
+                        it.setData(RAW_NUMERIC_ROLE, result)
                         
                 model.setData(index, formatted, _Qt.ItemDataRole.EditRole)
                 return
@@ -995,6 +1057,8 @@ class _DbTable(QTableWidget):
         self._headers = headers
         self._widths = widths
         self._loading = False
+        self._load_failed = False
+        self._loaded_row_count = 0
         self._can_edit = True
         self._min_rows = max(0, row_count)  # Bug 1b: minimum visible rows after load
         self._is_edit_mode = False           # tracks F2 edit mode (cursor at end, no selection)
@@ -1098,7 +1162,9 @@ class _DbTable(QTableWidget):
             conn.commit()
         except Exception as e:
             conn.rollback()
-            print(f"[_DbTable] _save_cols error: {e}")
+            logger.error(f"[_DbTable] _save_cols error: {e}")
+        finally:
+            cur.close()
 
     def _get_tab_tables(self):
         parent_tab = getattr(self, '_parent_tab_ref', None)
@@ -1233,8 +1299,8 @@ class _DbTable(QTableWidget):
                 from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.warning(self, "Action Restricted", "Cannot insert columns inside or after the year section.\nUse 'Add Year' instead.")
                 return
-        from PyQt6.QtWidgets import QInputDialog, QTableWidgetItem
-        name, ok = QInputDialog.getText(self, "New Column", "Column Name:")
+        from PyQt6.QtWidgets import QTableWidgetItem
+        name, ok = _styled_get_text(self, "New Column", "Column Name:")
         if ok and name.strip():
             # Shift data in database
             if self._db_name:
@@ -1246,7 +1312,9 @@ class _DbTable(QTableWidget):
                         conn.commit()
                     except Exception as e:
                         conn.rollback()
-                        print("DB Shift Error:", e)
+                        logger.error(f"[_DbTable] DB Shift Error: {e}")
+                    finally:
+                        cur.close()
             
             # Update UI
             self.insertColumn(col_idx)
@@ -1263,8 +1331,8 @@ class _DbTable(QTableWidget):
                 return
         h = self.horizontalHeaderItem(col_idx)
         old = h.text() if h else ""
-        from PyQt6.QtWidgets import QInputDialog, QTableWidgetItem
-        name, ok = QInputDialog.getText(self, "Rename Column", "New Name:", text=old)
+        from PyQt6.QtWidgets import QTableWidgetItem
+        name, ok = _styled_get_text(self, "Rename Column", "New Name:", text=old)
         if ok and name.strip():
             if not h:
                 h = QTableWidgetItem()
@@ -1300,7 +1368,9 @@ class _DbTable(QTableWidget):
                     conn.commit()
                 except Exception as e:
                     conn.rollback()
-                    print("DB Delete Col Error:", e)
+                    logger.error(f"[_DbTable] DB Delete Col Error: {e}")
+                finally:
+                    cur.close()
         self.removeColumn(col_idx)
         self._save_cols()
         self.load_from_db()
@@ -1308,10 +1378,27 @@ class _DbTable(QTableWidget):
     def _on_change(self, item):
         if self._loading:
             return
+        c = item.column()
+        h_item = self.horizontalHeaderItem(c)
+        if h_item:
+            h_text = h_item.text().strip().lower()
+            if any(k in h_text for k in ("amount", "bonus", "salary", "rakam", "payment", "dr", "cr", "bal")):
+                val = item.text().strip()
+                if val and not val.startswith("="):
+                    try:
+                        f = float(val.replace(",", "").strip())
+                        item.setData(RAW_NUMERIC_ROLE, f)
+                        formatted = f"{int(round(f)):,}"
+                        if item.text().strip() != formatted:
+                            self.blockSignals(True)
+                            item.setText(formatted)
+                            self.blockSignals(False)
+                    except ValueError:
+                        pass
         # Dynamically resize the column to fit new content but respect minimum width and header text
         self._enforce_min_widths(item.column())
         
-        # Debounced 300ms save ΓÇô consistent with _SectionCardV2 strategy
+        # Debounced 300ms save – consistent with _SectionCardV2 strategy
         self._save_timer.start(300)
 
     def _on_section_resized(self, logicalIndex, oldSize, newSize):
@@ -1374,12 +1461,10 @@ class _DbTable(QTableWidget):
                         expr = f_str[1:] if f_str.startswith('=') else f_str
                         result = _safe_eval_expr(expr, table_provider)
                     if result is not None:
-                        display = (
-                            str(int(result))
-                            if isinstance(result, float) and result.is_integer()
-                            else f"{result:.6g}"
-                        )
+                        display = _format_eval_result(result)
                         it.setText(display)
+                        if isinstance(result, (int, float)):
+                            it.setData(RAW_NUMERIC_ROLE, result)
         finally:
             self.blockSignals(False)
 
@@ -1388,31 +1473,51 @@ class _DbTable(QTableWidget):
         if not self._db_name or self._loading:
             return
         if getattr(self, '_load_failed', False):
-            print(f"[_DbTable] Blocked save for {self._table_name} to prevent data loss after load failure.")
+            logger.warning(f"[_DbTable] Blocked save for {self._table_name} to prevent data loss after load failure.")
+            return
+
+        # Safeguard against accidental data wipe (C-01):
+        # If UI table has 0 rows but DB previously had records loaded, refuse to delete.
+        if getattr(self, '_loaded_row_count', 0) > 0 and self.rowCount() == 0:
+            logger.warning(
+                f"[_DbTable] Blocked save for {self._table_name} — 0 rows in UI but DB had {self._loaded_row_count} cells. Refusing to wipe table."
+            )
             return
             
         conn = self._db.get_connection(self._db_name)
         if not conn:
             return
+
+        # Collect all non-empty cells first, then send in one batched round-trip.
+        rows_to_insert = [
+            (r, c, (self.item(r, c).data(FORMULA_ROLE) if (self.item(r, c) and self.item(r, c).data(FORMULA_ROLE)) else self.item(r, c).text()))
+            for r in range(self.rowCount())
+            for c in range(self.columnCount())
+            if self.item(r, c) and (self.item(r, c).text() or self.item(r, c).data(FORMULA_ROLE))
+        ]
+
+        # If table previously had data in DB but now has zero populated cells, protect against wiping
+        if getattr(self, '_loaded_row_count', 0) > 0 and not rows_to_insert:
+            logger.warning(
+                f"[_DbTable] Blocked save for {self._table_name} — 0 non-empty cells in UI but DB had {self._loaded_row_count} cells. Refusing to wipe table."
+            )
+            return
+
         cur = conn.cursor()
         try:
             cur.execute(f"DELETE FROM {self._table_name}")
-            # Collect all non-empty cells first, then send in one batched round-trip.
-            rows_to_insert = [
-                (r, c, (self.item(r, c).data(FORMULA_ROLE) if (self.item(r, c) and self.item(r, c).data(FORMULA_ROLE)) else self.item(r, c).text()))
-                for r in range(self.rowCount())
-                for c in range(self.columnCount())
-                if self.item(r, c) and (self.item(r, c).text() or self.item(r, c).data(FORMULA_ROLE))
-            ]
             if rows_to_insert:
                 cur.executemany(
                     f"INSERT INTO {self._table_name} (row_idx, col_idx, cell_text) VALUES (?,?,?)",
                     rows_to_insert
                 )
             conn.commit()
+            self._loaded_row_count = len(rows_to_insert)
         except Exception as e:
             conn.rollback()
-            print(f"[_DbTable] _do_save error ({self._table_name}):", e)
+            logger.error(f"[_DbTable] _do_save error ({self._table_name}): {e}")
+        finally:
+            cur.close()
 
     # keep save_to_db as alias for external callers
     def save_to_db(self):
@@ -1451,42 +1556,48 @@ class _DbTable(QTableWidget):
         if not self._db_name:
             return
         self._loading = True
-        rows = self._db.execute_query(
-            self._db_name,
-            f"SELECT row_idx, col_idx, cell_text FROM {self._table_name} ORDER BY row_idx, col_idx"
-        )
-        if rows is None:
-            self._load_failed = True
-            self._loading = False
-            print(f"[_DbTable] Failed to load data from {self._table_name}.")
-            return
         self._load_failed = False
-        
-        self.blockSignals(True)
-        self.clearContents()
-        self.setRowCount(0)
-        for r, c, txt in rows:
-            while self.rowCount() <= int(r):
-                self.insertRow(self.rowCount())
-                for ci in range(self.columnCount()):
-                    self.setItem(self.rowCount() - 1, ci, QTableWidgetItem(""))
-            it = QTableWidgetItem(txt or "")
-            if txt and str(txt).startswith('='):
-                it.setData(FORMULA_ROLE, str(txt))
-            self.setItem(int(r), int(c), it)
-        # Bug 1b: Pad up to the minimum row count so the table is never visually empty
-        while self.rowCount() < self._min_rows:
-            r = self.rowCount()
-            self.insertRow(r)
-            for c in range(self.columnCount()):
-                self.setItem(r, c, QTableWidgetItem(""))
-        self.blockSignals(False)
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(0, self._enforce_min_widths)
-        self._recalc_formulas()
-        if self._table_name == "team_list_data":
-            self.setColumnHidden(0, True)
-        self._loading = False
+        try:
+            rows = self._db.execute_query(
+                self._db_name,
+                f"SELECT row_idx, col_idx, cell_text FROM {self._table_name} ORDER BY row_idx, col_idx"
+            )
+            if rows is None:
+                self._load_failed = True
+                logger.error(f"[_DbTable] Failed to load data from {self._table_name} (execute_query returned None).")
+                return
+            self._load_failed = False
+            self._loaded_row_count = len(rows)
+            
+            self.blockSignals(True)
+            self.clearContents()
+            self.setRowCount(0)
+            for r, c, txt in rows:
+                while self.rowCount() <= int(r):
+                    self.insertRow(self.rowCount())
+                    for ci in range(self.columnCount()):
+                        self.setItem(self.rowCount() - 1, ci, QTableWidgetItem(""))
+                it = QTableWidgetItem(txt or "")
+                if txt and str(txt).startswith('='):
+                    it.setData(FORMULA_ROLE, str(txt))
+                self.setItem(int(r), int(c), it)
+            # Bug 1b: Pad up to the minimum row count so the table is never visually empty
+            while self.rowCount() < self._min_rows:
+                r = self.rowCount()
+                self.insertRow(r)
+                for c in range(self.columnCount()):
+                    self.setItem(r, c, QTableWidgetItem(""))
+            self.blockSignals(False)
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, self._enforce_min_widths)
+            self._recalc_formulas()
+            if self._table_name == "team_list_data":
+                self.setColumnHidden(0, True)
+        except Exception as e:
+            self._load_failed = True
+            logger.error(f"[_DbTable] Exception during load_from_db for {self._table_name}: {e}")
+        finally:
+            self._loading = False
 
     def add_row(self):
         if not self._can_edit:

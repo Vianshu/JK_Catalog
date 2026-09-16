@@ -5,9 +5,9 @@
 import os
 import re as _re
 import json as _json
-import logging as _logging
+from src.utils.app_logger import get_logger
 
-_logger = _logging.getLogger(__name__)
+_logger = get_logger(__name__)
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTableWidget,
@@ -35,6 +35,7 @@ from .shared import (
     _MENU_STYLE, _POPUP_STYLE, _CARD_MENU_STYLE,
     _setup_smart_header, _setup_sn_header, _DbTable,
     _styled_get_text, _styled_question, _styled_info, _styled_get_color,
+    RAW_NUMERIC_ROLE,
 )
 from src.ui.table_nav_mixin import UniversalCellDelegate
 
@@ -146,6 +147,9 @@ class _SectionCardV2(QFrame):
         self.table.setStyleSheet(_TABLE_STYLE)
         self.table.setFont(_norm_font())
         self.table.setAlternatingRowColors(False)
+        self.table.setWordWrap(False)
+        self.table.verticalHeader().setDefaultSectionSize(26)
+        self.table.verticalHeader().setMinimumSectionSize(26)
         _setup_sn_header(self.table)
         _setup_smart_header(self.table)
         self.table._card_ref = self   # used by header ctx menu for lock toggle
@@ -307,8 +311,12 @@ class _SectionCardV2(QFrame):
                 lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 lbl.setStyleSheet("color: #475569; padding-right: 6px; font-style: italic;")
             elif val is not None:
-                # Value column: right-aligned bold number
-                text = f"{val:,.0f}" if isinstance(val, (int, float)) else str(val)
+                # Value column: right-aligned bold number (integer only with commas)
+                try:
+                    fv = float(str(val).replace(",", "").strip())
+                    text = f"{int(round(fv)):,}"
+                except Exception:
+                    text = str(val)
                 lbl.setText(text)
                 lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 lbl.setStyleSheet("color: #1e293b; padding-right: 8px; font-weight: 700;")
@@ -491,7 +499,7 @@ class _SectionCardV2(QFrame):
         MUST be called BEFORE any column-sum or 'Left money' calculation so
         that the evaluated payment values are picked up by downstream totals.
         """
-        from src.ui.supp_payment.shared import FORMULA_ROLE, _eval_if_formula, _safe_eval_expr
+        from src.ui.supp_payment.shared import FORMULA_ROLE, _eval_if_formula, _safe_eval_expr, _format_eval_result
         table_provider = self._get_table_provider()
         self.table.blockSignals(True)
         try:
@@ -510,12 +518,10 @@ class _SectionCardV2(QFrame):
                         expr = formula_str[1:] if formula_str.startswith('=') else formula_str
                         result = _safe_eval_expr(expr, table_provider)
                     if result is not None:
-                        display = (
-                            str(int(result))
-                            if isinstance(result, float) and result.is_integer()
-                            else f"{result:.6g}"
-                        )
+                        display = _format_eval_result(result)
                         it.setText(display)
+                        if isinstance(result, (int, float)):
+                            it.setData(RAW_NUMERIC_ROLE, result)
         finally:
             self.table.blockSignals(False)
 
@@ -611,21 +617,24 @@ class _SectionCardV2(QFrame):
                         else:
                             self.table.setColumnWidth(idx, 120)
             else:
-                # Fixed-cols table: check DB for user-added extra columns beyond the spec
+                # Fixed-cols table: restore saved column widths and check for extra columns
                 if self._db_name:
                     try:
-                        extra_cols = self._db.execute_query(
+                        saved_widths = self._db.execute_query(
                             self._db_name,
                             "SELECT col_index, col_name, col_width FROM tp_section_cols "
                             "WHERE section_id=? ORDER BY col_index", (self.section_id,)) or []
                         n_fixed = len(self._col_specs) if self._col_specs else self.table.columnCount()
-                        for ci, cname, cw in extra_cols:
-                            if int(ci) >= n_fixed:
+                        for ci, cname, cw in saved_widths:
+                            col_i = int(ci)
+                            if col_i >= n_fixed:
                                 extra_c = self.table.columnCount()
                                 self.table.insertColumn(extra_c)
                                 self.table.setHorizontalHeaderItem(
                                     extra_c, QTableWidgetItem(cname or ""))
                                 self.table.setColumnWidth(extra_c, int(cw) if cw else 120)
+                            elif cw and col_i < self.table.columnCount():
+                                self.table.setColumnWidth(col_i, int(cw))
                     except Exception:
                         pass
 
@@ -707,26 +716,25 @@ class _SectionCardV2(QFrame):
                         if txt.startswith('='):
                             from src.ui.supp_payment.shared import FORMULA_ROLE
                             it.setData(FORMULA_ROLE, txt)
-                            it.setText(txt)   # placeholder; _recalc_formulas() will overwrite
+                            it.setText("")   # placeholder; _recalc_formulas() will populate evaluated result
                         else:
                             it.setText(txt)
                         self.table.setItem(new_ri, int(ci), it)
                         
         finally:
             self.table.blockSignals(False)
-            
-            # Always ensure columns are wide enough for their initial content,
-            # but never shrink them below user-saved widths.
-            self._expand_all_columns_to_contents()
-                
             self.table.horizontalHeader().blockSignals(False)
             self._loading = False
             if is_sn_col or (self._col_specs and self._col_specs[0][0] == "S.N"):
                 self.table.setColumnHidden(0, True)
 
-            # Re-evaluate formula cells FIRST so downstream sums (e.g. Payment
-            # total → Left money) pick up the correct values.
+            # Re-evaluate formula cells FIRST so downstream calculations and size hints
+            # use evaluated numbers rather than raw formula text.
             self._recalc_formulas()
+
+            # Ensure columns are wide enough for evaluated content (capped safely)
+            self._expand_all_columns_to_contents()
+
             self._update_sum()
             self._recalc()
 
@@ -748,12 +756,16 @@ class _SectionCardV2(QFrame):
             for c in sum_cols:
                 it = self.table.item(r, c)
                 if it and it.text():
-                    try:
-                        val = it.text().strip().replace(",", "")
-                        totals[c] += float(val)
-                    except ValueError: pass
+                    raw = it.data(RAW_NUMERIC_ROLE)
+                    if raw is not None and isinstance(raw, (int, float)):
+                        totals[c] += float(raw)
+                    else:
+                        try:
+                            val = it.text().strip().replace(",", "")
+                            totals[c] += float(val)
+                        except ValueError: pass
         if any(t > 0 for t in totals.values()):
-            parts = [f"{self.table.horizontalHeaderItem(c).text()} {totals[c]:,.0f}" for c in sum_cols]
+            parts = [f"{self.table.horizontalHeaderItem(c).text()} {int(round(totals[c])):,}" for c in sum_cols]
             self._footer_lbl.setText("Total  " + " | ".join(parts))
             self._footer_lbl.show()
         else:
@@ -836,6 +848,7 @@ class _SectionCardV2(QFrame):
             conn.rollback()
             _logger.error(f"[TodayPayment] _save_data section={self.section_id}: {e}")
         finally:
+            cur.close()
             self._saving = False
 
     def _save_cols(self):
@@ -858,6 +871,8 @@ class _SectionCardV2(QFrame):
         except Exception as e:
             conn.rollback()
             _logger.error(f"[TodayPayment] _save_cols section={self.section_id}: {e}")
+        finally:
+            cur.close()
 
     def _update_db(self, field, value):
         if not self._db_name:
@@ -873,6 +888,8 @@ class _SectionCardV2(QFrame):
         except Exception as e:
             conn.rollback()
             _logger.error(f"[TodayPayment] _update_db field='{field}' section={self.section_id}: {e}")
+        finally:
+            cur.close()
 
     def _delete_from_db(self):
         if not self._db_name:
@@ -888,24 +905,29 @@ class _SectionCardV2(QFrame):
             conn.commit()
         except Exception as e:
             conn.rollback()
+        finally:
+            cur.close()
 
     # ------------------------------------------------------------ Actions --
     def _on_change(self, item):
         if not getattr(self, '_saving', False) and not getattr(self, '_loading', False):
-            # Auto-round numeric values to int for money columns in the UI
+            # Auto-format numeric values to int with commas for money columns,
+            # while storing full decimal precision in UserRole + 1 for calculations.
             c = item.column()
             h_item = self.table.horizontalHeaderItem(c)
             if h_item:
                 h_text = h_item.text().strip().lower()
                 if any(k in h_text for k in ("amount", "remain", "bank", "cash", "payment", "salary", "bonus", "rakam")):
-                    val = item.text()
-                    if val and "." in val:
+                    val = item.text().strip()
+                    if val and not val.startswith("="):
                         try:
                             f = float(val.replace(",", "").strip())
-                            rounded = str(int(round(f)))
-                            self.table.blockSignals(True)
-                            item.setText(rounded)
-                            self.table.blockSignals(False)
+                            item.setData(RAW_NUMERIC_ROLE, f)
+                            formatted = f"{int(round(f)):,}"
+                            if item.text().strip() != formatted:
+                                self.table.blockSignals(True)
+                                item.setText(formatted)
+                                self.table.blockSignals(False)
                         except Exception:
                             pass
 
@@ -1076,6 +1098,8 @@ class _SectionCardV2(QFrame):
                 conn.commit()
             except Exception as e:
                 _logger.error(f"[TodayPayment] save header_color section={self.section_id}: {e}")
+            finally:
+                cur.close()
 
     def _show_gear(self):
         if self._fixed_cols:
@@ -1154,11 +1178,11 @@ class _SectionCardV2(QFrame):
         
     def _enforce_col_min(self, logicalIndex):
         self._enforcing = True
-        min_w = self.table.sizeHintForColumn(logicalIndex)
         fm = self.table.fontMetrics()
         h_item = self.table.horizontalHeaderItem(logicalIndex)
+        min_w = 40
         if h_item and h_item.text():
-            min_w = max(min_w, fm.horizontalAdvance(h_item.text()) + 24)
+            min_w = max(min_w, fm.horizontalAdvance(h_item.text()) + 20)
             
         if self.table.columnWidth(logicalIndex) < min_w:
             self.table.setColumnWidth(logicalIndex, min_w)
@@ -1176,6 +1200,7 @@ class _SectionCardV2(QFrame):
             return
         current = self.table.columnWidth(col)
         hint    = self.table.sizeHintForColumn(col)
+        hint    = min(hint, 350)
         if hint > current:
             self._expanding = True
             self.table.setColumnWidth(col, hint)
@@ -1195,6 +1220,9 @@ class _SectionCardV2(QFrame):
         """
         cols = self.table.columnCount()
         hh = max(self.table.horizontalHeader().sizeHint().height(), 24) if cols else 0
+        for r in range(self.table.rowCount()):
+            if self.table.rowHeight(r) != 26:
+                self.table.setRowHeight(r, 26)
         rh = sum(self.table.rowHeight(r) for r in range(self.table.rowCount()))
         # 10px buffer: covers grid-line, layout margins and any sub-pixel rounding
         # that can cause the last row to be partially clipped.
@@ -1209,7 +1237,8 @@ class _SectionCardV2(QFrame):
         # Constrain the card's own height to match the table + header bar.
         hdr_h = self._hdr.sizeHint().height() if self._hdr else 36
         footer_h = self._footer_lbl.sizeHint().height() if self._footer_lbl.isVisible() else 0
-        card_h = max(hdr_h + h + footer_h + 2, 80)
+        col_footer_h = self._col_footer_bar.sizeHint().height() if hasattr(self, '_col_footer_bar') and self._col_footer_bar.isVisible() else 0
+        card_h = max(hdr_h + h + footer_h + col_footer_h + 2, 80)
         self.setFixedHeight(card_h)
 
     def _set_cols_locked(self, locked: bool, save_to_db: bool = True):
@@ -1226,11 +1255,15 @@ class _SectionCardV2(QFrame):
             try:
                 conn = self._db.get_connection(self._db_name)
                 if conn:
-                    conn.cursor().execute(
-                        "UPDATE tp_sections SET cols_locked=? WHERE id=?",
-                        (1 if locked else 0, self.section_id)
-                    )
-                    conn.commit()
+                    cur = conn.cursor()
+                    try:
+                        cur.execute(
+                            "UPDATE tp_sections SET cols_locked=? WHERE id=?",
+                            (1 if locked else 0, self.section_id)
+                        )
+                        conn.commit()
+                    finally:
+                        cur.close()
             except Exception:
                 pass
 
@@ -1498,7 +1531,7 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
             import re
             from PyQt6.QtCore import Qt
             FORMULA_ROLE = Qt.ItemDataRole.UserRole + 50
-            pattern = r'\[([^\]]+)\]\[([^\]]+)\]\[(\d+)\]'
+            pattern = r'\[([^\]]+)\]\[([^\]]+)\]\[(\d+)(?::\d+)?\]'
             for card in self._section_cards.values():
                 for r in range(card.table.rowCount()):
                     for c in range(card.table.columnCount()):
@@ -1726,29 +1759,32 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
                     continue
                 try:
                     cur = conn.cursor()
-                    cur.execute("SELECT GUID, Alias, Name FROM row_ledger_data")
-                    for guid, alias, name in cur.fetchall():
-                        guid_str = str(guid).strip() if guid else ""
-                        if not guid_str: continue
-                        
-                        alias_str = str(alias).strip() if alias and str(alias).strip().lower() != "none" else ""
-                        name_str  = str(name).strip()  if name  and str(name).strip().lower()  != "none" else ""
-                        
-                        if name_str:
-                            self._guid_to_name[guid_str] = name_str
-                            self._name_to_guid[name_str.lower()] = guid_str
-                        
-                        if alias_str:
-                            self._alias_to_guid[alias_str.lower()] = guid_str
+                    try:
+                        cur.execute("SELECT GUID, Alias, Name FROM row_ledger_data")
+                        for guid, alias, name in cur.fetchall():
+                            guid_str = str(guid).strip() if guid else ""
+                            if not guid_str: continue
                             
-                    # Autocomplete list shows names and aliases
-                    keys = set(self._guid_to_name.values()) | set(self._alias_to_guid.keys())
-                    self._party_list = sorted(list(keys))
-                    break
+                            alias_str = str(alias).strip() if alias and str(alias).strip().lower() != "none" else ""
+                            name_str  = str(name).strip()  if name  and str(name).strip().lower()  != "none" else ""
+                            
+                            if name_str:
+                                self._guid_to_name[guid_str] = name_str
+                                self._name_to_guid[name_str.lower()] = guid_str
+                            
+                            if alias_str:
+                                self._alias_to_guid[alias_str.lower()] = guid_str
+                                
+                        # Autocomplete list shows names and aliases
+                        keys = set(self._guid_to_name.values()) | set(self._alias_to_guid.keys())
+                        self._party_list = sorted(list(keys))
+                        break
+                    finally:
+                        cur.close()
                 except Exception as ex:
                     pass
         except Exception as e:
-            print("[TodayPayment] Could not load party list:", e)
+            _logger.error(f"[TodayPayment] Could not load party list: {e}")
 
         # --- Fallback / merge: also include supplier_records names ---
         # This ensures the dropdown always contains the Record tab parties
@@ -1757,17 +1793,20 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
             conn = self._db.get_connection(self._db_name)
             if conn:
                 cur = conn.cursor()
-                cur.execute("SELECT name FROM supplier_records WHERE name IS NOT NULL AND LTRIM(RTRIM(name)) != '' ORDER BY sort_order")
-                supp_names = [row[0].strip() for row in cur.fetchall() if row[0] and row[0].strip()]
-                # Merge: add any names not already in the list
-                existing_lower = {n.lower() for n in self._party_list}
-                for sn in supp_names:
-                    if sn.lower() not in existing_lower:
-                        self._party_list.append(sn)
-                        existing_lower.add(sn.lower())
-                self._party_list.sort()
+                try:
+                    cur.execute("SELECT name FROM supplier_records WHERE name IS NOT NULL AND LTRIM(RTRIM(name)) != '' ORDER BY sort_order, id")
+                    supp_names = [row[0].strip() for row in cur.fetchall() if row[0] and row[0].strip()]
+                    # Merge: add any names not already in the list
+                    existing_lower = {n.lower() for n in self._party_list}
+                    for sn in supp_names:
+                        if sn.lower() not in existing_lower:
+                            self._party_list.append(sn)
+                            existing_lower.add(sn.lower())
+                    self._party_list.sort()
+                finally:
+                    cur.close()
         except Exception as e:
-            print("[TodayPayment] Could not merge supplier_records into party list:", e)
+            _logger.error(f"[TodayPayment] Could not merge supplier_records into party list: {e}")
 
 
     def refresh_ledger_maps(self):
@@ -1784,9 +1823,9 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
                 except Exception:
                     pass
             entry_count = len(self._guid_to_name)
-            print(f"[TodayPayment] Ledger maps refreshed: {entry_count} entries")
+            _logger.info(f"[TodayPayment] Ledger maps refreshed: {entry_count} entries")
         except Exception as e:
-            print(f"[TodayPayment] refresh_ledger_maps error: {e}")
+            _logger.error(f"[TodayPayment] refresh_ledger_maps error: {e}")
 
     def _ensure_tables(self):
         for tname, ddl in [
@@ -1803,41 +1842,33 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
         ]:
             self._db.ensure_table(self._db_name, tname, ddl)
 
-        # Migrations
+        # Migrations — check INFORMATION_SCHEMA.COLUMNS to avoid DDL exceptions & locks on startup
         try:
             conn = self._db.get_connection(self._db_name)
             if conn:
                 cur = conn.cursor()
                 try:
-                    cur.execute("ALTER TABLE supplier_accounts ADD is_red INT DEFAULT 0")
+                    cols_to_add = [
+                        ("supplier_accounts", "is_red", "INT DEFAULT 0"),
+                        ("tp_sections", "is_core", "BIT DEFAULT 0"),
+                        ("tp_sections", "card_width", "INT NULL"),
+                        ("tp_section_data", "bg_color", "NVARCHAR(20) NULL"),
+                        ("tp_section_data", "fg_color", "NVARCHAR(20) NULL"),
+                        ("tp_sections", "is_column_break", "BIT DEFAULT 0"),
+                        ("tp_sections", "cols_locked", "BIT DEFAULT 0"),
+                    ]
+                    for tbl, col, col_def in cols_to_add:
+                        cur.execute(
+                            "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME=? AND COLUMN_NAME=?",
+                            (tbl, col)
+                        )
+                        if not cur.fetchone():
+                            cur.execute(f"ALTER TABLE [{tbl}] ADD [{col}] {col_def}")
                     conn.commit()
-                except: pass
-                try:
-                    cur.execute("ALTER TABLE tp_sections ADD is_core BIT DEFAULT 0")
-                    conn.commit()
-                except Exception: pass
-                try:
-                    cur.execute("ALTER TABLE tp_sections ADD card_width INT NULL")
-                    conn.commit()
-                except Exception: pass
-                try:
-                    cur.execute("ALTER TABLE tp_section_data ADD bg_color NVARCHAR(20) NULL")
-                    conn.commit()
-                except Exception: pass
-                try:
-                    cur.execute("ALTER TABLE tp_section_data ADD fg_color NVARCHAR(20) NULL")
-                    conn.commit()
-                except Exception: pass
-                try:
-                    cur.execute("ALTER TABLE tp_sections ADD is_column_break BIT DEFAULT 0")
-                    conn.commit()
-                except Exception: pass
-                try:
-                    cur.execute("ALTER TABLE tp_sections ADD cols_locked BIT DEFAULT 0")
-                    conn.commit()
-                except Exception: pass
-        except Exception:
-            pass
+                finally:
+                    cur.close()
+        except Exception as e:
+            _logger.warning(f"[TodayPayment] schema migration check warning: {e}")
 
     def _seed_core_sections(self):
         """Insert the fixed core sections if they don't exist yet."""
@@ -1866,7 +1897,9 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
             conn.commit()
         except Exception as e:
             conn.rollback()
-            print("[TodayPayment] Seed core sections error:", e)
+            _logger.error(f"[TodayPayment] Seed core sections error: {e}")
+        finally:
+            cur.close()
 
     def _rebuild_section_views(self):
         """Re-fetch tables from DB and rebuild both views."""
@@ -1989,8 +2022,12 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
                     if col_amt >= 0:
                         it = dl_card.table.item(r, col_amt)
                         if it and it.text():
-                            try: sum_dl += float(it.text().replace(",", ""))
-                            except: pass
+                            raw = it.data(RAW_NUMERIC_ROLE)
+                            if raw is not None and isinstance(raw, (int, float)):
+                                sum_dl += float(raw)
+                            else:
+                                try: sum_dl += float(it.text().replace(",", ""))
+                                except (ValueError, TypeError): pass
                     
                     # Calc Days Left & Gap
                     days_left = None
@@ -2045,8 +2082,12 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
                     for r in range(account_card.table.rowCount()):
                         it = account_card.table.item(r, col_remain)
                         if it and it.text():
-                            try: sum_remain_cash += float(it.text().replace(",", ""))
-                            except: pass
+                            raw = it.data(RAW_NUMERIC_ROLE)
+                            if raw is not None and isinstance(raw, (int, float)):
+                                sum_remain_cash += float(raw)
+                            else:
+                                try: sum_remain_cash += float(it.text().replace(",", ""))
+                                except (ValueError, TypeError): pass
                 
                 account_card.set_col_footer(
                     {"Remain Cash": sum_remain_cash},
@@ -2065,8 +2106,12 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
                     for r in range(today_card.table.rowCount()):
                         it = today_card.table.item(r, col_pay)
                         if it and it.text():
-                            try: sum_today_payment += float(it.text().replace(",", ""))
-                            except: pass
+                            raw = it.data(RAW_NUMERIC_ROLE)
+                            if raw is not None and isinstance(raw, (int, float)):
+                                sum_today_payment += float(raw)
+                            else:
+                                try: sum_today_payment += float(it.text().replace(",", ""))
+                                except (ValueError, TypeError): pass
                 
                 left_money = sum_remain_cash - sum_today_payment
                 today_card.set_col_footer(
@@ -2099,16 +2144,18 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
                     if it_type and it_type.text():
                         t = it_type.text().strip().lower()
                         it_val = limits_card.table.item(r, 1)
-                        raw_val = it_val.text().replace(",", "").strip() if it_val else ""
+                        raw_data = it_val.data(RAW_NUMERIC_ROLE) if it_val else None
+                        if raw_data is not None and isinstance(raw_data, (int, float)):
+                            fv = float(raw_data)
+                        else:
+                            try: fv = float(it_val.text().replace(",", "").strip()) if it_val else 0.0
+                            except (ValueError, TypeError): fv = 0.0
                         if "used lc" in t:
-                            try: used_lc = float(raw_val)
-                            except: pass
+                            used_lc = fv
                         elif t in ("dl limit", "demand loan limit"):
-                            try: dl_limit_cap = float(raw_val)
-                            except: pass
+                            dl_limit_cap = fv
                         elif t in ("lc limit", "lc base limit"):
-                            try: lc_limit_base = float(raw_val)
-                            except: pass
+                            lc_limit_base = fv
                         elif "remain demand loan limit" in t:
                             remain_dl_row = r
                         elif "remain lc limit" in t:
@@ -2128,7 +2175,8 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
                 if not it:
                     it = QTableWidgetItem()
                     limits_card.table.setItem(remain_dl_row, 1, it)
-                it.setText(f"{remain_dl_limit:,.0f}")
+                it.setText(f"{int(round(remain_dl_limit)):,}")
+                it.setData(RAW_NUMERIC_ROLE, remain_dl_limit)
                 
                 if remain_lc_row == -1:
                     r = limits_card.table.rowCount()
@@ -2140,7 +2188,8 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
                 if not it:
                     it = QTableWidgetItem()
                     limits_card.table.setItem(remain_lc_row, 1, it)
-                it.setText(f"{remain_lc_limit:,.0f}")
+                it.setText(f"{int(round(remain_lc_limit)):,}")
+                it.setData(RAW_NUMERIC_ROLE, remain_lc_limit)
                 
                 # Auto-seed Used LC row if missing
                 used_lc_row = -1
@@ -2270,7 +2319,7 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
             try:
                 self._db.execute_query(self._db_name, "UPDATE tp_sections SET is_column_break=? WHERE id=?", (1 if new_val else 0, sid), fetch=False)
             except Exception as e:
-                print("Error saving column break", e)
+                _logger.error(f"[TodayPayment] Error saving column break: {e}")
                 
             txt = item.text()
             if new_val and not txt.endswith(" →"):
@@ -2299,6 +2348,8 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
                     conn.commit()
                 except Exception as e:
                     conn.rollback()
+                finally:
+                    cur.close()
             card = self._section_cards.get(sid)
             if card:
                 card.title_lbl.setText(new.strip())
@@ -2319,6 +2370,8 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
             conn.commit()
         except Exception as e:
             conn.rollback()
+        finally:
+            cur.close()
         # Only refresh the grid layout — don't rebuild (that destroys and recreates cards)
         if self._current_view == 1:
             self._rebuild_multi_grid()
@@ -2347,6 +2400,8 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
         except Exception as e:
             conn.rollback()
             return
+        finally:
+            cur.close()
         self._rebuild_section_views()
         # Auto-add a first column so the new card is immediately usable
         for card in self._section_cards.values():
@@ -2476,6 +2531,8 @@ class TodayPaymentTabV2(QWidget, _PrintExportMixin):
                 conn.commit()
             except Exception as e:
                 conn.rollback()
+            finally:
+                cur.close()
 
         # Redraw the grid with new order (no full rebuild needed)
         self._rebuild_multi_grid()

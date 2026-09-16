@@ -1,37 +1,13 @@
-# =============================================================================
-# insurance_tab.py — InsuranceTab
-# =============================================================================
 import os
-import re as _re
-import json as _json
-
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTableWidget,
-    QTableWidgetItem, QPushButton, QTabWidget, QInputDialog,
-    QMenu, QMessageBox, QHeaderView, QAbstractItemView,
-    QLabel, QScrollArea, QFrame, QSizePolicy, QLineEdit,
-    QListWidget, QListWidgetItem, QStackedWidget, QSplitter,
-    QFormLayout, QApplication, QAbstractScrollArea, QFileDialog,
-    QColorDialog, QTextEdit, QStyledItemDelegate, QStyle,
-    QAbstractItemDelegate,
-)
-from PyQt6.QtCore import (
-    Qt, QTimer, QDate, QEvent, QMimeData, QSettings, QRect,
-)
-from PyQt6.QtGui import (
-    QFont, QColor, QBrush, QPixmap, QPainter, QKeySequence,
-    QShortcut, QCursor, QImage, QPen, QFontMetrics,
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+    QLabel, QScrollArea, QFrame,
 )
 from src.logic.db_manager import get_db_manager, build_logical_name
 from .shared import (
     _PrintExportMixin, ModernTableDelegate,
-    _bold_font, _norm_font,
-    _SCROLLBAR_STYLE, _TABLE_STYLE, _SECTION_HEADER_STYLE,
-    _BTN_PRIMARY, _BTN_SECONDARY, _BTN_DANGER,
-    _MENU_STYLE, _POPUP_STYLE, _CARD_MENU_STYLE,
-    _setup_smart_header, _DbTable,
+    _bold_font, _DbTable,
 )
-from src.ui.table_nav_mixin import UniversalCellDelegate
 
 # ===========================================================================
 # INSURANCE TAB
