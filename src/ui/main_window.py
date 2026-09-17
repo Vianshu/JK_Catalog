@@ -1993,11 +1993,24 @@ class MainWindow(QWidget):
         _12H = 12 * 60 * 60  # seconds
 
         # Key is based on the DATA PATH folder (parent of company), not the company.
-        # This ensures all companies in the same data path share one backup per 24h.
+        # This ensures all companies in the same data path share one backup per 12h.
         data_path = os.path.dirname(os.path.normpath(company_path))
         data_key  = os.path.basename(data_path) if os.path.basename(data_path) else "DataRoot"
-        ts_key    = f"last_backup/{data_key}"
-        last_ts   = self._backup_settings.value(ts_key, 0, type=float)
+        
+        # Read the shared data-path last-backup timestamp from SQL
+        last_ts = 0.0
+        try:
+            from src.logic.security_manager import SecurityManager
+            _sm = SecurityManager(data_path)
+            last_ts = _sm.get_last_backup_timestamp()
+        except Exception:
+            pass
+
+        # Fallback to local QSettings if SQL returned 0
+        if last_ts <= 0:
+            ts_key  = f"last_backup/{data_key}"
+            last_ts = self._backup_settings.value(ts_key, 0, type=float)
+
         now_ts    = datetime.now(timezone.utc).timestamp()
 
         elapsed = now_ts - last_ts
@@ -2079,8 +2092,20 @@ class MainWindow(QWidget):
             logger.info(f"[AutoBackup] Backup complete for data path '{data_key}'.")
             self._show_backup_toast("✅  Auto-backup complete", running=False)
             # Record timestamp so next login (any company in this data path) sees it as done
+            now_epoch = datetime.now(timezone.utc).timestamp()
             ts_key = f"last_backup/{data_key}"
-            self._backup_settings.setValue(ts_key, datetime.now(timezone.utc).timestamp())
+            self._backup_settings.setValue(ts_key, now_epoch)
+
+            # Record shared timestamp in SQL so all users on all network machines see it too
+            company_path = getattr(self, 'current_company_path', '')
+            if company_path:
+                try:
+                    data_path = os.path.dirname(os.path.normpath(company_path))
+                    from src.logic.security_manager import SecurityManager
+                    _sm = SecurityManager(data_path)
+                    _sm.set_last_backup_timestamp(now_epoch)
+                except Exception as e:
+                    logger.warning(f"[AutoBackup] Could not record backup timestamp to DB: {e}")
             # Audit log
             if self._security_mgr and self.user_session:
                 self._security_mgr.log_action(
@@ -2132,28 +2157,15 @@ class MainWindow(QWidget):
             logger.warning("[AutoBackup] Skipped — no company loaded.")
             return
 
-        # Load backup folder — SQL first (company-specific, shared across users),
-        # fallback to local config.json for old installs.
+        # Load shared data-path backup folder
         backup_folder = ""
         try:
             data_path = os.path.dirname(os.path.normpath(company_path))
             from src.logic.security_manager import SecurityManager
             _sm = SecurityManager(data_path)
-            backup_folder = _sm.get_backup_path(company_path)
-        except Exception:
-            pass
-
-        if not backup_folder:
-            # Fallback: local config.json (backwards compat for installs before SQL backup_path)
-            from src.utils.path_utils import get_app_dir
-            config_file = os.path.join(get_app_dir(), "config.json")
-            if os.path.exists(config_file):
-                try:
-                    import json as _json
-                    with open(config_file, 'r', encoding='utf-8') as f:
-                        backup_folder = _json.load(f).get("backup_path", "").strip()
-                except Exception:
-                    pass
+            backup_folder = _sm.get_data_backup_path()
+        except Exception as e:
+            logger.warning(f"[AutoBackup] Error getting data backup path: {e}")
 
         if not backup_folder or not os.path.isdir(backup_folder):
             logger.warning("[AutoBackup] Skipped — backup folder not set or missing.")
@@ -2166,7 +2178,12 @@ class MainWindow(QWidget):
         data_key         = os.path.basename(data_path) if os.path.basename(data_path) else "DataRoot"
         # Include AM/PM so we allow 2 backups per day (12-hour schedule)
         today_str        = datetime.now().strftime("%Y-%m-%d_%p")
-        data_backup_dir  = os.path.join(backup_folder, f"{data_key}_backup")
+
+        # Avoid redundant nesting if the chosen backup folder is already named after data_key
+        if os.path.basename(backup_folder).lower() in (f"{data_key}_backup".lower(), data_key.lower()):
+            data_backup_dir = backup_folder
+        else:
+            data_backup_dir = os.path.join(backup_folder, f"{data_key}_backup")
 
         try:
             os.makedirs(data_backup_dir, exist_ok=True)
@@ -2178,6 +2195,9 @@ class MainWindow(QWidget):
         prefix = f"JK_AutoBackup_{data_key}_{today_str}"
         existing = [f for f in os.listdir(data_backup_dir)
                     if f.startswith(prefix) and f.endswith(".jkbackup")]
+        if not existing and data_backup_dir != backup_folder and os.path.isdir(backup_folder):
+            existing = [f for f in os.listdir(backup_folder)
+                        if f.startswith(prefix) and f.endswith(".jkbackup")]
         if existing:
             logger.info(f"[AutoBackup] This half-day's backup already exists for '{data_key}': {existing[0]} — skipping.")
             return

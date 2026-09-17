@@ -253,18 +253,13 @@ class CompanyCreateForm(QWidget):
         # Show parent path to user
         self.fields[4].setText(parent_path) 
         
-        # Load backup path — try SQL first (company-specific, shared across users),
-        # fallback to local config.json for first-time / backwards compat.
-        backup_loaded = False
-        # For add mode, no company path yet — skip SQL and use local config
-        from src.utils.path_utils import get_app_dir
-        config_file = os.path.join(get_app_dir(), "config.json")
-        if os.path.exists(config_file):
-            try:
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    self.fields[6].setText(json.load(f).get("backup_path", ""))
-                    backup_loaded = True
-            except Exception: pass
+        # Load shared data path backup destination
+        try:
+            from src.logic.security_manager import SecurityManager
+            sm = self.security or SecurityManager(parent_path)
+            self.fields[6].setText(sm.get_data_backup_path())
+        except Exception:
+            self.fields[6].setText("")
         
     def load_for_alter(self, company_path):
         """Called when Editing existing company at company_path"""
@@ -307,25 +302,13 @@ class CompanyCreateForm(QWidget):
                         self.fields[5].setText(d.get("image_path", ""))
             except Exception: pass
             
-        # Load backup path — SQL first (company-specific), fallback to local config.json
-        backup_path_sql = ""
+        # Load shared data path backup destination
         try:
             from src.logic.security_manager import SecurityManager
-            sm_bp = SecurityManager(self.base_folder_path)
-            backup_path_sql = sm_bp.get_backup_path(company_path)
+            sm_bp = self.security or SecurityManager(self.base_folder_path)
+            self.fields[6].setText(sm_bp.get_data_backup_path())
         except Exception:
-            pass
-        if backup_path_sql:
-            self.fields[6].setText(backup_path_sql)
-        else:
-            # Fallback: local config.json (old installs that haven't saved to SQL yet)
-            from src.utils.path_utils import get_app_dir
-            config_file = os.path.join(get_app_dir(), "config.json")
-            if os.path.exists(config_file):
-                try:
-                    with open(config_file, 'r', encoding='utf-8') as f:
-                        self.fields[6].setText(json.load(f).get("backup_path", ""))
-                except Exception: pass
+            self.fields[6].setText("")
 
     def back_to_list(self):
         self.back_callback()
@@ -380,20 +363,16 @@ class CompanyCreateForm(QWidget):
             with open(info_file, 'w', encoding='utf-8') as f:
                 json.dump(info, f, indent=4)
                 
-            # Save global backup path
-            from src.utils.path_utils import get_app_dir
-            config_file = os.path.join(get_app_dir(), "config.json")
-            c_data = {}
-            if os.path.exists(config_file):
+            # Save data-path specific backup destination
+            if self.security:
+                self.security.set_data_backup_path(backup_path)
+            else:
                 try:
-                    with open(config_file, 'r', encoding='utf-8') as f:
-                        c_data = json.load(f)
-                except Exception: pass
-            c_data["backup_path"] = backup_path
-            try:
-                with open(config_file, 'w', encoding='utf-8') as f:
-                    json.dump(c_data, f, indent=4)
-            except Exception: pass
+                    from src.logic.security_manager import SecurityManager
+                    sm = SecurityManager(self.base_folder_path)
+                    sm.set_data_backup_path(backup_path)
+                except Exception as e:
+                    logger.warning(f"Could not save data backup path: {e}")
                 
             # Initialize empty report data in SQL (ensures table exists)
             # IMPORTANT: Only for NEW companies — calling this in edit mode would

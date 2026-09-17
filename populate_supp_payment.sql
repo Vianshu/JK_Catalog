@@ -124,10 +124,12 @@ CREATE TABLE dbo.bonus_data (
 );
 
 CREATE TABLE dbo.payment_sheet_data (
+    sheet_key NVARCHAR(200) NOT NULL,
+    section_key NVARCHAR(100) NOT NULL,
     row_idx INT NOT NULL,
     col_idx INT NOT NULL,
     cell_text NVARCHAR(MAX),
-    PRIMARY KEY (row_idx, col_idx)
+    PRIMARY KEY (sheet_key, section_key, row_idx, col_idx)
 );
 
 CREATE TABLE dbo.tp_sections (
@@ -397,7 +399,6 @@ INSERT INTO dbo.tp_section_cols (section_id, col_index, col_name, col_width) VAL
 INSERT INTO dbo.tp_section_cols (section_id, col_index, col_name, col_width) VALUES (14, 4, N'Day''s left', 77);
 INSERT INTO dbo.tp_section_cols (section_id, col_index, col_name, col_width) VALUES (14, 5, N'Gap', 50);
 INSERT INTO dbo.tp_section_cols (section_id, col_index, col_name, col_width) VALUES (14, 6, N'Notes', 71);
-INSERT INTO dbo.tp_section_cols (section_id, col_index, col_name, col_width) VALUES (14, 7, N'hat bsdk', 120);
 INSERT INTO dbo.tp_section_cols (section_id, col_index, col_name, col_width) VALUES (16, 0, N'Account', 114);
 INSERT INTO dbo.tp_section_cols (section_id, col_index, col_name, col_width) VALUES (16, 1, N'Remain Cash', 130);
 INSERT INTO dbo.tp_section_cols (section_id, col_index, col_name, col_width) VALUES (16, 2, N'Bank / Cash', 214);

@@ -154,6 +154,14 @@ class SecurityManager:
             self.db.add_column(self._db_security, "companies", "backup_path", "NVARCHAR(500)")
             logger.info("Schema migration: added backup_path column to companies")
 
+        self.db.ensure_table(self._db_security, "data_settings", """
+            CREATE TABLE data_settings (
+                setting_key NVARCHAR(100) PRIMARY KEY,
+                setting_value NVARCHAR(MAX),
+                updated_at DATETIME DEFAULT GETDATE()
+            )
+        """)
+
         self.db.ensure_table(self._db_security, "roles", """
             CREATE TABLE roles (
                 id INT IDENTITY(1,1) PRIMARY KEY,
@@ -334,6 +342,9 @@ class SecurityManager:
 
                 # Create default roles for new company
                 self._create_default_roles(cursor, company_id)
+
+            if backup_path and backup_path.strip():
+                self.set_data_backup_path(backup_path)
 
             # For NEW companies: always create admin (even with empty credentials)
             # For EXISTING companies: only update admin if credentials are provided
@@ -869,39 +880,143 @@ class SecurityManager:
             return set()
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # BACKUP PATH HELPERS
+    # BACKUP PATH HELPERS (DATA-PATH SPECIFIC)
     # ═══════════════════════════════════════════════════════════════════════════
 
-    def get_backup_path(self, folder_path):
-        """Return the shared backup_path for this company (empty string if not set)."""
+    def get_data_backup_path(self):
+        """Return the shared backup destination for this entire data path.
+        
+        Resolution order:
+          1. Shared SQL table 'data_settings' in JK_Security_<hash> (key: 'backup_destination')
+          2. Shared file 'data_config.json' inside self.data_path
+          3. Legacy fallback: check companies table if any company had backup_path set
+        Returns empty string if not set (no backup will be taken).
+        """
         conn = self.db.get_connection(self._db_security)
-        if not conn:
-            return ""
-        try:
-            cursor = conn.cursor()
-            fp = os.path.normpath(os.path.abspath(folder_path))
-            cursor.execute("SELECT backup_path FROM companies WHERE folder_path = ?", (fp,))
-            row = cursor.fetchone()
-            return (row[0] or "").strip() if row else ""
-        except Exception as e:
-            logger.warning(f"get_backup_path error: {e}")
-            return ""
+        if conn:
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT setting_value FROM data_settings WHERE setting_key = 'backup_destination'"
+                )
+                row = cursor.fetchone()
+                if row and row[0] and row[0].strip():
+                    return row[0].strip()
+            except Exception as e:
+                logger.warning(f"get_data_backup_path DB error: {e}")
+
+        # Fallback 2: data_config.json in data_path
+        if self.data_path and os.path.isdir(self.data_path):
+            cfg_path = os.path.join(self.data_path, "data_config.json")
+            if os.path.exists(cfg_path):
+                try:
+                    with open(cfg_path, 'r', encoding='utf-8') as f:
+                        bp = json.load(f).get("backup_destination", "").strip()
+                        if bp:
+                            return bp
+                except Exception:
+                    pass
+
+        # Fallback 3: Legacy companies table migration
+        if conn:
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT TOP 1 backup_path FROM companies "
+                    "WHERE backup_path IS NOT NULL AND backup_path != ''"
+                )
+                row = cursor.fetchone()
+                if row and row[0] and row[0].strip():
+                    legacy_bp = row[0].strip()
+                    self.set_data_backup_path(legacy_bp)
+                    return legacy_bp
+            except Exception:
+                pass
+
+        return ""
+
+    def set_data_backup_path(self, backup_path):
+        """Persist the shared backup destination for this entire data path.
+        
+        Saves to:
+          1. Shared SQL table 'data_settings' in JK_Security_<hash>
+          2. Shared 'data_config.json' in self.data_path
+          3. Synchronizes companies.backup_path for backwards compatibility
+        """
+        bp = (backup_path or "").strip()
+        conn = self.db.get_connection(self._db_security)
+        if conn:
+            try:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    IF EXISTS (SELECT 1 FROM data_settings WHERE setting_key = 'backup_destination')
+                        UPDATE data_settings SET setting_value = ?, updated_at = GETDATE() WHERE setting_key = 'backup_destination'
+                    ELSE
+                        INSERT INTO data_settings (setting_key, setting_value) VALUES ('backup_destination', ?)
+                """, (bp, bp))
+                # Keep companies.backup_path in sync for backwards compatibility
+                cursor.execute("UPDATE companies SET backup_path = ?", (bp,))
+                conn.commit()
+            except Exception as e:
+                logger.warning(f"set_data_backup_path DB error: {e}")
+
+        # Also write to shared data_config.json in data_path so file system users/shares see it
+        if self.data_path and os.path.isdir(self.data_path):
+            cfg_path = os.path.join(self.data_path, "data_config.json")
+            try:
+                data = {}
+                if os.path.exists(cfg_path):
+                    try:
+                        with open(cfg_path, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                    except Exception:
+                        pass
+                data["backup_destination"] = bp
+                with open(cfg_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2)
+            except Exception as e:
+                logger.warning(f"set_data_backup_path file error: {e}")
+
+    def get_last_backup_timestamp(self):
+        """Return float epoch timestamp of last backup for this data path (0.0 if none)."""
+        conn = self.db.get_connection(self._db_security)
+        if conn:
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT setting_value FROM data_settings WHERE setting_key = 'last_backup_timestamp'"
+                )
+                row = cursor.fetchone()
+                if row and row[0]:
+                    return float(row[0].strip())
+            except Exception as e:
+                logger.warning(f"get_last_backup_timestamp DB error: {e}")
+        return 0.0
+
+    def set_last_backup_timestamp(self, ts):
+        """Record float epoch timestamp when this data path was backed up."""
+        conn = self.db.get_connection(self._db_security)
+        if conn:
+            try:
+                cursor = conn.cursor()
+                ts_str = str(float(ts))
+                cursor.execute("""
+                    IF EXISTS (SELECT 1 FROM data_settings WHERE setting_key = 'last_backup_timestamp')
+                        UPDATE data_settings SET setting_value = ?, updated_at = GETDATE() WHERE setting_key = 'last_backup_timestamp'
+                    ELSE
+                        INSERT INTO data_settings (setting_key, setting_value) VALUES ('last_backup_timestamp', ?)
+                """, (ts_str, ts_str))
+                conn.commit()
+            except Exception as e:
+                logger.warning(f"set_last_backup_timestamp DB error: {e}")
+
+    def get_backup_path(self, folder_path=None):
+        """Return the shared backup_path for this data path (empty string if not set)."""
+        return self.get_data_backup_path()
 
     def set_backup_path(self, folder_path, backup_path):
-        """Persist a shared backup_path for this company in SQL."""
-        conn = self.db.get_connection(self._db_security)
-        if not conn:
-            return
-        try:
-            cursor = conn.cursor()
-            fp = os.path.normpath(os.path.abspath(folder_path))
-            cursor.execute(
-                "UPDATE companies SET backup_path = ? WHERE folder_path = ?",
-                (backup_path.strip(), fp)
-            )
-            conn.commit()
-        except Exception as e:
-            logger.warning(f"set_backup_path error: {e}")
+        """Persist the shared backup_path for this data path."""
+        self.set_data_backup_path(backup_path)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # AUDIT LOGGING
@@ -1107,11 +1222,12 @@ class SecurityManager:
                 "FROM companies ORDER BY display_name"
             )
             rows = cursor.fetchall()
+            shared_backup = self.get_data_backup_path()
             return [
                 {
                     "id": r[0], "display_name": r[1],
                     "folder_path": r[2], "image_path": r[3],
-                    "backup_path": (r[4] or "").strip()
+                    "backup_path": shared_backup or (r[4] or "").strip()
                 }
                 for r in rows
             ]
