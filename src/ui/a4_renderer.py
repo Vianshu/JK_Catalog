@@ -22,6 +22,8 @@ import json
 import time
 
 
+from collections import OrderedDict
+
 # ── Image Cache with mtime-based invalidation ─────────────────────
 # Caches scaled QPixmaps by (path, target_w, target_h).
 # Automatically re-reads from disk if the source file's mtime changes.
@@ -33,10 +35,12 @@ class PixmapCache:
     On subsequent loads, the cached thumbnail is read directly instead of
     re-scaling the original high-res image — dramatically faster startup.
     Thumbnails auto-invalidate when the source file's mtime changes.
+    Bounded with LRU eviction to prevent unbounded memory growth.
     """
-    _cache = {}      # (path, w, h) → QPixmap
-    _mtimes = {}     # path → last known mtime
-    _cache_dir = None  # Set per-company
+    _MAX_CACHE_ITEMS = 120  # Limit active QPixmaps in memory (~30-50MB max)
+    _cache = OrderedDict()  # (path, w, h) → QPixmap
+    _mtimes = {}            # path → last known mtime
+    _cache_dir = None       # Set per-company
 
     @classmethod
     def set_cache_dir(cls, company_path):
@@ -54,6 +58,14 @@ class PixmapCache:
         # Hash the full source path to avoid filename collisions
         path_hash = hashlib.md5(path.encode('utf-8', errors='replace')).hexdigest()[:12]
         return os.path.join(cls._cache_dir, f"{path_hash}_{w}x{h}.png")
+
+    @classmethod
+    def _put(cls, key, pixmap):
+        """Insert into cache with LRU eviction."""
+        cls._cache[key] = pixmap
+        cls._cache.move_to_end(key)
+        if len(cls._cache) > cls._MAX_CACHE_ITEMS:
+            cls._cache.popitem(last=False)
 
     @classmethod
     def get(cls, path: str, w: int, h: int):
@@ -85,6 +97,7 @@ class PixmapCache:
 
         key = (path, w, h)
         if key in cls._cache:
+            cls._cache.move_to_end(key)
             return cls._cache[key]
 
         # Try loading from disk thumbnail cache
@@ -97,7 +110,7 @@ class PixmapCache:
                     from PyQt6.QtGui import QPixmap
                     pm = QPixmap(thumb)
                     if not pm.isNull():
-                        cls._cache[key] = pm
+                        cls._put(key, pm)
                         return pm
             except OSError:
                 pass
@@ -125,7 +138,7 @@ class PixmapCache:
             Qt.AspectRatioMode.IgnoreAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
-        cls._cache[key] = scaled
+        cls._put(key, scaled)
 
         # Save thumbnail to disk for next startup
         if thumb:
@@ -148,7 +161,7 @@ class PixmapCache:
                     os.remove(thumb)
                 except OSError:
                     pass
-            del cls._cache[k]
+            cls._cache.pop(k, None)
 
     @classmethod
     def clear(cls):

@@ -654,6 +654,14 @@ class DBManager:
             # Grant the current Windows login full access to the new database
             self._grant_db_owner(cursor, logical_name)
             
+            # Enable Read Committed Snapshot Isolation (RCSI) so readers never block writers
+            try:
+                cursor.execute(f"ALTER DATABASE [{safe_b}] SET READ_COMMITTED_SNAPSHOT ON WITH ROLLBACK IMMEDIATE;")
+                cursor.execute(f"ALTER DATABASE [{safe_b}] SET ALLOW_SNAPSHOT_ISOLATION ON;")
+                logger.info(f"Enabled RCSI on '{logical_name}'")
+            except Exception as e:
+                logger.warning(f"Could not enable RCSI on '{logical_name}': {e}")
+            
             return True
         except pyodbc.Error as e:
             logger.error(f"Failed to create database '{logical_name}': {e}")
@@ -791,6 +799,14 @@ class DBManager:
 
             # Now grant db_owner to current user and BUILTIN\Users
             self._grant_db_owner(cursor, logical_name)
+
+            # Enable Read Committed Snapshot Isolation (RCSI) so readers never block writers
+            try:
+                cursor.execute(f"ALTER DATABASE [{safe_b}] SET READ_COMMITTED_SNAPSHOT ON WITH ROLLBACK IMMEDIATE;")
+                cursor.execute(f"ALTER DATABASE [{safe_b}] SET ALLOW_SNAPSHOT_ISOLATION ON;")
+                logger.info(f"Enabled RCSI on attached '{logical_name}'")
+            except Exception as e:
+                logger.warning(f"Could not enable RCSI on '{logical_name}': {e}")
 
             return True
         except pyodbc.Error as e:

@@ -1001,6 +1001,16 @@ class MainWindow(QWidget):
             if not is_running:
                 self.reports_page.refresh_report_data()
 
+        # Row Data (4) and Ledger Row Data (17) lazy load on first visit
+        if idx == PageIndex.ROW_DATA and hasattr(self, 'row_data_page'):
+            if not getattr(self.row_data_page, '_data_loaded', False) and getattr(self, 'current_company_path', ''):
+                self.row_data_page.load_data(self.current_company_path)
+                self.row_data_page._data_loaded = True
+        elif idx == PageIndex.LEDGER_ROW_DATA and hasattr(self, 'ledger_row_data_page'):
+            if not getattr(self.ledger_row_data_page, '_data_loaded', False) and getattr(self, 'current_company_path', ''):
+                self.ledger_row_data_page.load_data(self.current_company_path)
+                self.ledger_row_data_page._data_loaded = True
+
     def on_catalog_built(self):
         """Called when Full Catalog finishes building in the background"""
         if hasattr(self, 'reports_page'):
@@ -1287,34 +1297,36 @@ class MainWindow(QWidget):
         
             if hasattr(self, 'reports_page'):
                 session.register("Reports", self.reports_page,
-                    lambda page, path: (setattr(page, 'current_company_path', path), page.refresh_report_data()))
+                    lambda page, path: setattr(page, 'current_company_path', path))
 
             if hasattr(self, 'full_catalog_page'):
                 session.register("Full Catalog", self.full_catalog_page,
                     lambda page, path: page.set_company_path(path))
 
-
-            session.register("Row Data", self.row_data_page,
-                lambda page, path: page.load_data(path))
-
-            session.register("Ledger Row Data", self.ledger_row_data_page,
-                lambda page, path: page.load_data(path))
+            # Row Data and Ledger Row Data are loaded on-demand when user visits those tabs
+            if hasattr(self, 'row_data_page'):
+                self.row_data_page._data_loaded = False
+            if hasattr(self, 'ledger_row_data_page'):
+                self.ledger_row_data_page._data_loaded = False
             
-            # Create progress dialog for synchronous load
+            # Create progress dialog for load
             progress = QProgressDialog("Loading company data...", None, 0, len(session._registrations), self)
             progress.setWindowTitle("Please Wait")
             progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setAutoClose(True)
             progress.show()
+            QApplication.processEvents()
 
             def update_progress(current, total, text):
                 progress.setValue(current)
                 progress.setLabelText(text)
+                QApplication.processEvents()
 
-            # Activate session — all pages get initialized
+            # Activate session — core pages get initialized
             result = session.activate(comp_name, company_path, progress_cb=update_progress)
             
             progress.setValue(len(session._registrations))
+            QApplication.processEvents()
             
             if result["errors"]:
                 error_names = [e[0] for e in result["errors"]]

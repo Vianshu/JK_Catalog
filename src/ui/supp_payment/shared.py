@@ -1153,12 +1153,17 @@ class _DbTable(QTableWidget):
         if not conn: return
         cur = conn.cursor()
         try:
-            cur.execute("DELETE FROM shared_table_cols WHERE table_name=?", (self._table_name,))
+            cols = []
             for c in range(self.columnCount()):
                 h = self.horizontalHeaderItem(c)
                 col_name = h.text() if h else ""
-                cur.execute("INSERT INTO shared_table_cols(table_name, col_index, col_name, col_width) VALUES(?,?,?,?)",
-                            (self._table_name, c, col_name, self.columnWidth(c)))
+                cols.append((self._table_name, c, col_name, self.columnWidth(c)))
+            cur.execute("DELETE FROM shared_table_cols WHERE table_name=?", (self._table_name,))
+            if cols:
+                cur.executemany(
+                    "INSERT INTO shared_table_cols(table_name, col_index, col_name, col_width) VALUES(?,?,?,?)",
+                    cols
+                )
             conn.commit()
         except Exception as e:
             conn.rollback()

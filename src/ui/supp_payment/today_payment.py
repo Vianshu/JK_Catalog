@@ -804,6 +804,7 @@ class _SectionCardV2(QFrame):
                             last_content = r
                             break
 
+            rows_to_insert = []
             for r in range(last_content + 1):
                 for c in range(self.table.columnCount()):
                     it = self.table.item(r, c)
@@ -831,14 +832,22 @@ class _SectionCardV2(QFrame):
                         else: fg_color = QBrush(fg_data).color().name()
                     
                     if val or bg_color or fg_color:
-                        if bg_color and fg_color:
-                            cur.execute("INSERT INTO tp_section_data(section_id,row_idx,col_idx,cell_text,bg_color,fg_color) VALUES(?,?,?,?,?,?)", (self.section_id, r, c, val, bg_color, fg_color))
-                        elif bg_color:
-                            cur.execute("INSERT INTO tp_section_data(section_id,row_idx,col_idx,cell_text,bg_color) VALUES(?,?,?,?,?)", (self.section_id, r, c, val, bg_color))
-                        elif fg_color:
-                            cur.execute("INSERT INTO tp_section_data(section_id,row_idx,col_idx,cell_text,fg_color) VALUES(?,?,?,?,?)", (self.section_id, r, c, val, fg_color))
-                        else:
-                            cur.execute("INSERT INTO tp_section_data(section_id,row_idx,col_idx,cell_text) VALUES(?,?,?,?)", (self.section_id, r, c, val))
+                        rows_to_insert.append((self.section_id, r, c, val, bg_color or None, fg_color or None))
+
+            # Atomic delete + bulk insert in a single transaction
+            cur.execute("DELETE FROM tp_section_data WHERE section_id=?", (self.section_id,))
+            if rows_to_insert:
+                insert_sql = (
+                    "INSERT INTO tp_section_data(section_id, row_idx, col_idx, cell_text, bg_color, fg_color) "
+                    "VALUES(?, ?, ?, ?, ?, ?)"
+                )
+                try:
+                    cur.fast_executemany = True
+                    cur.executemany(insert_sql, rows_to_insert)
+                except Exception:
+                    cur.fast_executemany = False
+                    cur.executemany(insert_sql, rows_to_insert)
+
             conn.commit()
             self._update_sum()
             if self._today_tab_ref:
@@ -859,14 +868,22 @@ class _SectionCardV2(QFrame):
             return
         cur = conn.cursor()
         try:
-            cur.execute("DELETE FROM tp_section_cols WHERE section_id=?", (self.section_id,))
+            cols_to_insert = []
             for c in range(self.table.columnCount()):
                 h = self.table.horizontalHeaderItem(c)
                 col_name = h.text() if h else ""
-                cur.execute(
-                    "INSERT INTO tp_section_cols(section_id,col_index,col_name,col_width)"
-                    " VALUES(?,?,?,?)",
-                    (self.section_id, c, col_name, self.table.columnWidth(c)))
+                cols_to_insert.append((self.section_id, c, col_name, self.table.columnWidth(c)))
+
+            cur.execute("DELETE FROM tp_section_cols WHERE section_id=?", (self.section_id,))
+            if cols_to_insert:
+                col_sql = "INSERT INTO tp_section_cols(section_id, col_index, col_name, col_width) VALUES(?, ?, ?, ?)"
+                try:
+                    cur.fast_executemany = True
+                    cur.executemany(col_sql, cols_to_insert)
+                except Exception:
+                    cur.fast_executemany = False
+                    cur.executemany(col_sql, cols_to_insert)
+
             conn.commit()
         except Exception as e:
             conn.rollback()
