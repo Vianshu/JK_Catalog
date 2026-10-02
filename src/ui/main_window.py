@@ -36,7 +36,7 @@ from src.ui.calendar_mapping import CalendarMappingUI
 from src.ui.ledger_row_data import LedgerRowDataUI
 from src.utils.app_logger import get_logger, set_company_context
 logger = get_logger(__name__)
-from src.ui.supp_payment.shared import get_icon
+from src.utils.path_utils import get_base_path, get_exe_dir, get_icon
 # Settings & Services
 from src.ui.settings import (
     CRMDialog, UserManagerDialog, SecurityUI,
@@ -343,7 +343,9 @@ class MainWindow(QWidget):
         self.setMinimumSize(0, 0)
         
         # Set Application Icon
-        icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "JK_Icon.ico")
+        icon_path = os.path.join(get_base_path(), "JK_Icon.ico")
+        if not os.path.exists(icon_path):
+            icon_path = os.path.join(get_exe_dir(), "JK_Icon.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
             
@@ -646,7 +648,7 @@ class MainWindow(QWidget):
         self.hamburger_btn = QPushButton()
         self.hamburger_btn.setObjectName("HamburgerBtn")
         try:
-            self.hamburger_btn.setIcon(_get_icon("menu.svg"))
+            self.hamburger_btn.setIcon(get_icon("menu.svg"))
         except Exception:
             self.hamburger_btn.setText("\u2630")
         self.hamburger_btn.setIconSize(_QSize(18, 18))

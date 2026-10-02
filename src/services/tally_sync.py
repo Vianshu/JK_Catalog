@@ -82,84 +82,73 @@ class TallyService:
         """
         try:
             user_port = get_tally_port()
-            logger.info(f"[TALLY CONNECT] Starting connection sequence. User port: {user_port}")
+            logger.info(f"[TALLY CONNECT] Connecting strictly to user-configured port: {user_port}")
 
-
-            # Build candidate DSN names: prioritise the user-configured port
+            # Strictly use the user-configured port — never attempt or fall back to other ports
             candidate_dsns = [
                 f"DSN=TallyODBC64_{user_port}",
                 f"DSN=TallyODBC_{user_port}",
-                "DSN=TallyODBC64_9000",
-                "DSN=TallyODBC_9000",
-                "DSN=TallyODBC64_9001",
-                "DSN=TallyODBC_9001",
             ]
 
-            # Also scan the Windows registry for any user-DSN whose name starts
-            # with "TallyODBC" — covers any port Tally may have auto-registered.
-            try:
-                import winreg
-                with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                                    r"Software\ODBC\ODBC.INI\ODBC Data Sources") as key:
-                    i = 0
-                    while True:
-                        try:
-                            name, _, _ = winreg.EnumValue(key, i)
-                            if name.lower().startswith("tallyodbc"):
-                                dsn_entry = f"DSN={name}"
-                                if dsn_entry not in candidate_dsns:
-                                    candidate_dsns.insert(0, dsn_entry)  # highest priority
-                            i += 1
-                        except OSError:
-                            break
-            except Exception as e:
-                logger.debug(f"[TALLY CONNECT] Registry scan failed: {e}")
+            logger.info(f"[TALLY CONNECT] Trying candidate DSNs for port {user_port}: {candidate_dsns}")
 
-            # Deduplicate while preserving order
-            seen = set()
-            unique_dsns = []
-            for d in candidate_dsns:
-                if d not in seen:
-                    seen.add(d)
-                    unique_dsns.append(d)
-            
-            logger.info(f"[TALLY CONNECT] Candidate DSNs to try: {unique_dsns}")
-
-            # 1+2+3. Try all candidate DSNs
-            for dsn in unique_dsns:
+            # 1. Try DSNs for user_port
+            for dsn in candidate_dsns:
+                conn = None
                 try:
                     logger.debug(f"[TALLY CONNECT] Trying DSN: {dsn}")
-                    self.connection = pyodbc.connect(dsn, timeout=2)
+                    conn = pyodbc.connect(dsn, timeout=2)
+                    # Verify connection is actually responsive to Tally
+                    cur = conn.cursor()
+                    cur.execute("SELECT $Name from Company")
+                    cur.close()
+                    self.connection = conn
                     logger.info(f"Connected to Tally via DSN: {dsn}")
                     return True
-                except pyodbc.Error as e:
+                except Exception as e:
                     logger.warning(f"[TALLY CONNECT] DSN {dsn} failed: {e}")
+                    if conn:
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
 
-            # 4. Driver-based fallback
+            # 2. Driver-based fallback strictly on user_port
             all_drivers = pyodbc.drivers()
-            logger.info(f"[TALLY CONNECT] System ODBC Drivers found: {len(all_drivers)} total")
             drivers = [d for d in all_drivers if "Tally" in d]
             
             if not drivers:
-                self.last_error = "No 'Tally' ODBC drivers found in system."
+                self.last_error = f"No 'Tally' ODBC drivers found in system to connect on port {user_port}."
                 logger.error(f"[TALLY CONNECT] {self.last_error}")
                 return False
 
             driver = drivers[0]
-            logger.info(f"[TALLY CONNECT] Found Tally driver: {driver}")
+            logger.info(f"[TALLY CONNECT] Trying driver '{driver}' on user port {user_port}")
             
-            for port in sorted({user_port, 9000, 9001}):
-                try:
-                    conn_str = f"DRIVER={{{driver}}};SERVER=(local);PORT={port}"
-                    logger.debug(f"[TALLY CONNECT] Trying Driver string: {conn_str}")
-                    self.connection = pyodbc.connect(conn_str, timeout=2)
-                    logger.info(f"Connected to Tally via driver '{driver}' on port {port}")
-                    return True
-                except pyodbc.Error as e:
-                    logger.warning(f"[TALLY CONNECT] Driver string {conn_str} failed: {e}")
+            conn = None
+            try:
+                conn_str = f"DRIVER={{{driver}}};SERVER=(local);PORT={user_port}"
+                logger.debug(f"[TALLY CONNECT] Trying Driver string: {conn_str}")
+                conn = pyodbc.connect(conn_str, timeout=2)
+                cur = conn.cursor()
+                cur.execute("SELECT $Name from Company")
+                cur.close()
+                self.connection = conn
+                logger.info(f"Connected to Tally via driver '{driver}' on port {user_port}")
+                return True
+            except Exception as e:
+                logger.warning(f"[TALLY CONNECT] Driver string {conn_str} failed: {e}")
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
 
-            self.last_error = "Could not connect to Tally. Please ensure Tally is running with ODBC enabled."
-            logger.error(f"[TALLY CONNECT] Exhausted all DSN and Driver attempts. {self.last_error}")
+            self.last_error = (
+                f"Could not connect to Tally on port {user_port}.\n"
+                f"Please ensure Tally is running with ODBC enabled on port {user_port}."
+            )
+            logger.error(f"[TALLY CONNECT] Failed to connect on user port {user_port}. {self.last_error}")
             return False
 
         except Exception as e:
@@ -538,9 +527,6 @@ def fetch_tally_voucher_breakdown(service=None, company_name=None):
 
         user_port = get_tally_port() or 9000
         candidate_ports = [user_port]
-        for p in [9000, 9001]:
-            if p not in candidate_ports:
-                candidate_ports.append(p)
 
         target_company = (company_name or "").strip()
         comp_tag = f"<SVCURRENTCOMPANY>{target_company}</SVCURRENTCOMPANY>" if target_company else ""
@@ -1004,7 +990,7 @@ def fetch_tally_vat_ledger_data(vat_company_name: str, company_name=None, compan
         ledger_df = pd.read_sql(vat_sql, service.connection)
 
         if ledger_df.empty:
-            return 0, f"No Sundry Debtor or Creditor ledgers received from Tally for '{vat_company}'."
+            return 0, f"No ledger data received from Tally for '{vat_company}'."
 
         service._check_cancelled("after VAT ledger fetch")
 
@@ -1040,6 +1026,20 @@ def fetch_tally_vat_ledger_data(vat_company_name: str, company_name=None, compan
             if actual_col:
                 resolved_mapping[actual_col] = new_name
         ledger_df.rename(columns=resolved_mapping, inplace=True)
+
+        # Filter for Sundry Debtors and Sundry Creditors in pandas
+        # Avoids Tally ODBC's fragile SQL WHERE parser ('HY000: The driver did not supply an error!')
+        target_groups = {"sundry debtors", "sundry creditors"}
+        is_debtor_or_creditor = pd.Series(False, index=ledger_df.index)
+        if "Group" in ledger_df.columns:
+            is_debtor_or_creditor |= ledger_df["Group"].astype(str).str.strip().str.lower().isin(target_groups)
+        if "Sub_Group" in ledger_df.columns:
+            is_debtor_or_creditor |= ledger_df["Sub_Group"].astype(str).str.strip().str.lower().isin(target_groups)
+
+        ledger_df = ledger_df[is_debtor_or_creditor].copy()
+
+        if ledger_df.empty:
+            return 0, f"No Sundry Debtor or Creditor ledgers found in Tally for '{vat_company}'."
 
         numeric_cols = [
             "Credit_Limit", "Opening_Balance", "Closing_Balance",

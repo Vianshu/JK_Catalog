@@ -98,15 +98,18 @@ Source: "LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "config\cleaning_rules.json"; DestDir: "{app}\config"; Flags: ignoreversion onlyifdoesntexist
 Source: "config\catalog_config.json"; DestDir: "{app}\config"; Flags: ignoreversion onlyifdoesntexist
 
+; --- UI Icons (SVG assets) ---
+Source: "src\ui\icons\*"; DestDir: "{app}\src\ui\icons"; Flags: ignoreversion recursesubdirs createallsubdirs
+
 [Icons]
 ; Start Menu
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\JK_Icon.ico"; Comment: "Launch {#MyAppName}"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\JK_Icon.ico"; Comment: "Launch {#MyAppName}"
 
 ; Public Desktop (visible to ALL RDP users on this machine)
-Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; IconFilename: "{app}\JK_Icon.ico"
+Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon; IconFilename: "{app}\JK_Icon.ico"
 
 ; Start Menu — Uninstall shortcut
-Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"; IconFilename: "{app}\JK_Icon.ico"; Comment: "Uninstall {#MyAppName}"
+Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"; WorkingDir: "{app}"; IconFilename: "{app}\JK_Icon.ico"; Comment: "Uninstall {#MyAppName}"
 
 [Run]
 ; Launch after install (optional checkbox)
@@ -115,6 +118,9 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}
 [UninstallDelete]
 ; Clean up build artifacts left in app directory (logs, caches)
 Type: files; Name: "{app}\error.log"
+Type: filesandordirs; Name: "{app}\src\ui\icons"
+Type: dirifempty; Name: "{app}\src\ui"
+Type: dirifempty; Name: "{app}\src"
 Type: dirifempty; Name: "{app}\config"
 Type: dirifempty; Name: "{app}"
 

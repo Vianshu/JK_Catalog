@@ -30,6 +30,7 @@ from src.ui.vat_company_dialog import VatCompanyDialog
 from src.ui.table_nav_mixin import UniversalCellDelegate, UNIVERSAL_TABLE_STYLE, _TallyCompleter
 from src.ui.settings import load_crm_list
 from src.utils.app_logger import get_logger
+from src.utils.path_utils import get_icon
 
 logger = get_logger(__name__)
 
@@ -748,7 +749,7 @@ class BalanceUI(QWidget):
         # Sync button logo to the right of Int. Ledger tab
         self.btn_tab_sync_int = QPushButton()
         self.btn_tab_sync_int.setObjectName("TabSyncIntBtn")
-        self.btn_tab_sync_int.setIcon(QIcon("src/ui/icons/sync.svg"))
+        self.btn_tab_sync_int.setIcon(get_icon("sync.svg"))
         self.btn_tab_sync_int.setIconSize(QSize(15, 15))
         self.btn_tab_sync_int.setFixedSize(22, 22)
         self.btn_tab_sync_int.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -775,7 +776,7 @@ class BalanceUI(QWidget):
         # Sync button logo to the right of Vat Ledger tab
         self.btn_tab_sync_vat = QPushButton()
         self.btn_tab_sync_vat.setObjectName("TabSyncVatBtn")
-        self.btn_tab_sync_vat.setIcon(QIcon("src/ui/icons/sync.svg"))
+        self.btn_tab_sync_vat.setIcon(get_icon("sync.svg"))
         self.btn_tab_sync_vat.setIconSize(QSize(15, 15))
         self.btn_tab_sync_vat.setFixedSize(22, 22)
         self.btn_tab_sync_vat.setCursor(Qt.CursorShape.PointingHandCursor)

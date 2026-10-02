@@ -31,9 +31,7 @@ from src.ui.table_exporter import export_tables_to_excel
 from src.ui.table_printer import print_tables_via_preview
 
 
-def get_icon(name):
-    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return QIcon(os.path.join(base, "icons", name))
+from src.utils.path_utils import get_icon
 
 class _PrintExportMixin:
     _right_bar_expanded = False

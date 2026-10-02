@@ -63,6 +63,37 @@ def get_asset_path(filename):
     return os.path.join(base, "src", "assets", filename)
 
 
+def get_icon_path(name: str) -> str:
+    """
+    Get absolute path to an icon file in src/ui/icons/.
+    Works seamlessly in development, PyInstaller frozen mode, and installed setups.
+    """
+    # 1. Bundled assets via get_base_path() (sys._MEIPASS in frozen mode, project root in dev)
+    p1 = os.path.join(get_base_path(), "src", "ui", "icons", name)
+    if os.path.exists(p1):
+        return p1
+
+    # 2. Installed directly alongside the EXE in {app}/src/ui/icons/
+    p2 = os.path.join(get_exe_dir(), "src", "ui", "icons", name)
+    if os.path.exists(p2):
+        return p2
+
+    # 3. Relative to CWD
+    p3 = os.path.join(os.getcwd(), "src", "ui", "icons", name)
+    if os.path.exists(p3):
+        return p3
+
+    return p1
+
+
+def get_icon(name: str):
+    """
+    Safely load a QIcon for an icon in src/ui/icons/.
+    """
+    from PyQt6.QtGui import QIcon
+    return QIcon(get_icon_path(name))
+
+
 def get_data_file_path(filename):
     """
     Get path to a core data file (super_master.db, calendar_data.db, etc.)
