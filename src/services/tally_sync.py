@@ -504,11 +504,153 @@ def _clean_xml_text(text: str) -> str:
     return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
 
 
-def fetch_tally_voucher_breakdown(service=None, company_name=None):
+def _to_tally_date_str(val) -> str:
+    """Format a date value from Tally ODBC/pandas into Tally XML YYYYMMDD string."""
+    if val is None or pd.isna(val):
+        return ""
+    import datetime
+    if isinstance(val, (datetime.date, datetime.datetime, pd.Timestamp)):
+        return val.strftime("%Y%m%d")
+    s = str(val).strip()
+    if not s:
+        return ""
+    if re.match(r'^\d{8}$', s):
+        return s
+    m = re.match(r'^(\d{4})-(\d{2})-(\d{2})', s)
+    if m:
+        return f"{m.group(1)}{m.group(2)}{m.group(3)}"
+    try:
+        dt = pd.to_datetime(s)
+        return dt.strftime("%Y%m%d")
+    except Exception:
+        return ""
+
+
+def _parse_fiscal_year_from_name(company_name: str) -> tuple[str, str]:
+    """Derive fiscal year YYYYMMDD start and end dates from company name tokens.
+    
+    Handles:
+    - Nepali Bikram Sambat (BS) fiscal years: e.g. 'Jkhw and Company (2083/84)', 'H/W Divison (083/084)'
+      BS 2083 -> Gregorian 2026 (Starts ~16 July 2026, Ends ~15 July 2027)
+    - Indian / Gregorian fiscal years: e.g. 'Company (2024-25)' -> Starts 01 April 2024, Ends 31 March 2025
+    """
+    name = (company_name or "").strip()
+    if not name:
+        return "", ""
+
+    # 1. Nepali BS Fiscal Year pattern: (2083/84), (083/084), (2082/83), 2082-83, etc.
+    np_match = re.search(r'(?:20)?(7\d|8\d|9\d)\s*[/_-]\s*(?:20)?(\d{2,3})', name)
+    if np_match:
+        bs_start_yy = int(np_match.group(1))
+        bs_start_year = 2000 + bs_start_yy
+        ad_start_year = bs_start_year - 57
+        # Nepali FY: Shrawan 1 (~July 16) to Ashad end (~July 15 of next year).
+        # Bounds July 15 to July 17 safely cover calendar/leap day shifts.
+        start_date = f"{ad_start_year}0715"
+        end_date = f"{ad_start_year + 1}0717"
+        return start_date, end_date
+
+    # 2. Indian / Gregorian Fiscal Year pattern: (2024-25), (2025/26), 2024-2025
+    ad_match = re.search(r'(20\d{2})\s*[/_-]\s*(20\d{2}|\d{2})', name)
+    if ad_match:
+        ad_start_year = int(ad_match.group(1))
+        start_date = f"{ad_start_year}0401"
+        end_date = f"{ad_start_year + 1}0331"
+        return start_date, end_date
+
+    return "", ""
+
+
+def resolve_company_fiscal_dates(service=None, company_name=None, from_date=None, to_date=None) -> tuple[str, str]:
+    """Resolve (start_date, end_date) in YYYYMMDD format for the company's fiscal year.
+    
+    Checks in order:
+    1. Explicit arguments (if valid YYYYMMDD).
+    2. Cached fiscal dates on service.
+    3. Querying Tally ODBC Company table ($StartingFrom, $EndingAt) if connection is active.
+    4. Parsing Nepali / Indian fiscal year tokens from company name.
+    5. Fallback to current calendar year.
+    """
+    if from_date and to_date and len(str(from_date)) == 8 and len(str(to_date)) == 8:
+        return str(from_date), str(to_date)
+
+    target_name = (company_name or "").strip()
+
+    # 2. Check service cache
+    if service:
+        cached = getattr(service, '_company_fiscal_dates', {}).get(target_name.lower())
+        if cached and len(cached[0]) == 8 and len(cached[1]) == 8:
+            return cached
+
+    # 3. Query Tally ODBC Company table if connection is active
+    if service and getattr(service, 'connection', None):
+        try:
+            comp_df = None
+            for q in [
+                "SELECT $Name, $StartingFrom, $EndingAt, $BooksFrom FROM Company",
+                "SELECT $Name, $StartingFrom, $EndingAt FROM Company",
+                "SELECT $Name FROM Company"
+            ]:
+                try:
+                    comp_df = pd.read_sql(q, service.connection)
+                    break
+                except Exception:
+                    continue
+
+            if comp_df is not None and not comp_df.empty:
+                matched_row = None
+                # Pass 1: exact match
+                for _, row in comp_df.iterrows():
+                    c_name = str(row.iloc[0]).strip().lower()
+                    if c_name == target_name.lower():
+                        matched_row = row
+                        break
+                # Pass 2: substring match
+                if matched_row is None and target_name:
+                    for _, row in comp_df.iterrows():
+                        c_name = str(row.iloc[0]).strip().lower()
+                        if target_name.lower() in c_name or c_name in target_name.lower():
+                            matched_row = row
+                            break
+                # Pass 3: default to first company if target_name is empty
+                if matched_row is None and not target_name:
+                    matched_row = comp_df.iloc[0]
+
+                if matched_row is not None:
+                    sf = _to_tally_date_str(matched_row.get("$StartingFrom"))
+                    ea = _to_tally_date_str(matched_row.get("$EndingAt"))
+                    if sf and ea:
+                        if not hasattr(service, '_company_fiscal_dates'):
+                            service._company_fiscal_dates = {}
+                        service._company_fiscal_dates[target_name.lower()] = (sf, ea)
+                        return sf, ea
+        except Exception as e:
+            logger.debug(f"[resolve_company_fiscal_dates] ODBC date lookup notice: {e}")
+
+    # 4. Parse from company name
+    f_date, t_date = _parse_fiscal_year_from_name(target_name)
+    if f_date and t_date:
+        return f_date, t_date
+
+    # 5. Fallback to current calendar year
+    import datetime
+    today = datetime.date.today()
+    return f"{today.year}0101", f"{today.year}1231"
+
+
+def fetch_tally_voucher_breakdown(service=None, company_name=None, known_parties=None, from_date=None, to_date=None):
     """Fetch Sales, Purchase, Receipts, and Payments voucher totals per party via Tally HTTP XML API.
     
     Uses per-user configured Tally port with automatic fallback candidates.
-    Verifies company presence and parses voucher entries with robust error handling and logging.
+    Strictly constrains voucher retrieval to the current fiscal year of the target company.
+    
+    Args:
+        service: Optional TallyService instance for cancellation check and ODBC context.
+        company_name: Target company name in Tally.
+        known_parties: Optional set/list of debtor/creditor ledger names to accurately identify
+                       party ledgers in payment and receipt vouchers.
+        from_date: Optional explicit YYYYMMDD fiscal year start date.
+        to_date: Optional explicit YYYYMMDD fiscal year end date.
     
     Returns: (sales_map: dict, purchase_map: dict, receipts_map: dict, payments_map: dict)
     """
@@ -524,12 +666,36 @@ def fetch_tally_voucher_breakdown(service=None, company_name=None):
         import urllib.request
         import urllib.error
         import xml.etree.ElementTree as ET
+        import xml.sax.saxutils
+        import socket
+        import time
+
+        party_case_map = {}
+        if known_parties:
+            for p in known_parties:
+                p_str = str(p).strip()
+                if p_str:
+                    party_case_map[p_str.lower()] = p_str
 
         user_port = get_tally_port() or 9000
         candidate_ports = [user_port]
 
         target_company = (company_name or "").strip()
-        comp_tag = f"<SVCURRENTCOMPANY>{target_company}</SVCURRENTCOMPANY>" if target_company else ""
+        escaped_company = xml.sax.saxutils.escape(target_company)
+        comp_tag = f"<SVCURRENTCOMPANY>{escaped_company}</SVCURRENTCOMPANY>" if target_company else ""
+
+        # Strictly constrain vouchers to the company's current fiscal year
+        start_date, end_date = resolve_company_fiscal_dates(
+            service=service, company_name=target_company, from_date=from_date, to_date=to_date
+        )
+        logger.info(
+            f"[tally_sync] Fiscal year voucher date scope for '{target_company or 'Active'}': {start_date} to {end_date}"
+        )
+
+        date_tags = ""
+        if start_date and end_date:
+            date_tags = f"""<SVFROMDATE TYPE="Date">{start_date}</SVFROMDATE>
+          <SVTODATE TYPE="Date">{end_date}</SVTODATE>"""
 
         xml_req = f"""<ENVELOPE>
   <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
@@ -539,6 +705,7 @@ def fetch_tally_voucher_breakdown(service=None, company_name=None):
         <REPORTNAME>Voucher Register</REPORTNAME>
         <STATICVARIABLES>
           <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          {date_tags}
           {comp_tag}
         </STATICVARIABLES>
       </REQUESTDESC>
@@ -550,21 +717,33 @@ def fetch_tally_voucher_breakdown(service=None, company_name=None):
 
         # Try candidate ports
         last_error = None
+        http_timeout = 120  # Allow up to 120s for Tally to compile and serialize large voucher registers
+
         for port in candidate_ports:
             if service and getattr(service, 'cancelled', False):
                 break
 
-            url = f"http://localhost:{port}"
-            logger.info(f"[tally_sync] Attempting Voucher XML fetch on port {port} for company '{target_company or 'Active'}'...")
+            url = f"http://127.0.0.1:{port}"
+            logger.info(f"[tally_sync] Attempting Voucher XML fetch on port {port} for company '{target_company or 'Active'}' (timeout: {http_timeout}s)...")
             req = urllib.request.Request(
                 url,
                 data=req_bytes,
-                headers={"Content-Type": "text/xml; charset=utf-8"}
+                headers={
+                    "Content-Type": "text/xml; charset=utf-8",
+                    "Content-Length": str(len(req_bytes)),
+                }
             )
             try:
-                with urllib.request.urlopen(req, timeout=6) as resp:
+                start_t = time.time()
+                with urllib.request.urlopen(req, timeout=http_timeout) as resp:
                     raw_xml = resp.read().decode("utf-8", errors="ignore")
+                    elapsed = time.time() - start_t
                     cleaned = _clean_xml_text(raw_xml)
+                
+                logger.info(
+                    f"[tally_sync] Received Voucher XML ({len(raw_xml):,} bytes) from port {port} for '{target_company or 'Active'}' in {elapsed:.1f}s."
+                )
+
                 root = ET.fromstring(cleaned)
 
                 # Check if Tally returned an explicit error (e.g. company not open)
@@ -575,38 +754,52 @@ def fetch_tally_voucher_breakdown(service=None, company_name=None):
                     )
                     return sales_map, purchase_map, receipts_map, payments_map
 
-                vouchers = root.findall(".//VOUCHER")
+                vouchers = [el for el in root.iter() if el.tag.upper() == "VOUCHER"]
                 logger.info(
-                    f"[tally_sync] Voucher XML received from port {port} for '{target_company or 'Active'}': "
-                    f"{len(raw_xml):,} bytes, {len(vouchers)} vouchers found."
+                    f"[tally_sync] Voucher XML parsed: {len(vouchers)} vouchers found."
                 )
 
-                for vch in vouchers:
-                    vtype = (vch.findtext("VOUCHERTYPENAME") or "").strip().lower()
-                    header_party = (vch.findtext("PARTYLEDGERNAME") or "").strip()
+                def _find_text(el, tag_name, default=""):
+                    tag_upper = tag_name.upper()
+                    for child in el:
+                        if child.tag.upper() == tag_upper:
+                            return (child.text or default).strip()
+                    return default
 
-                    # Exclude non-financial / order / inventory voucher types
-                    if any(ex in vtype for ex in ("order", "note", "payroll", "rejection", "attendance")):
+                for vch in vouchers:
+                    # Enforce strict fiscal year date constraint on client side
+                    vch_date = (_find_text(vch, "DATE") or vch.get("DATE") or "").strip()
+                    if vch_date and start_date and end_date:
+                        if not (start_date <= vch_date <= end_date):
+                            continue
+
+                    vtype = (_find_text(vch, "VOUCHERTYPENAME") or "").lower()
+                    parent_vtype = (vch.get("VCHTYPE") or vch.get("vchtype") or "").strip().lower()
+                    full_vtype = f"{vtype} {parent_vtype}"
+                    header_party = _find_text(vch, "PARTYLEDGERNAME")
+
+                    # Exclude non-financial / order / inventory / memo voucher types
+                    if any(ex in full_vtype for ex in ("order", "note", "payroll", "rejection", "attendance", "memo", "physical stock")):
                         continue
 
-                    # Avoid duplicate entry iteration if XML renders both lists
-                    entries = vch.findall(".//ALLLEDGERENTRIES.LIST")
+                    # Direct children check first, then fallback to deeper iteration
+                    entries = [child for child in vch if child.tag.upper() in ("ALLLEDGERENTRIES.LIST", "LEDGERENTRIES.LIST")]
                     if not entries:
-                        entries = vch.findall(".//LEDGERENTRIES.LIST")
+                        entries = [el for el in vch.iter() if el.tag.upper().endswith("LEDGERENTRIES.LIST")]
 
-                    is_sale = "sale" in vtype
-                    is_purchase = "purch" in vtype
-                    is_receipt = "receipt" in vtype
-                    is_payment = "pay" in vtype
+                    is_sale = ("sale" in full_vtype or "invoice" in full_vtype) and "purch" not in full_vtype
+                    is_purchase = "purch" in full_vtype
+                    is_receipt = "receipt" in full_vtype or "rcpt" in full_vtype
+                    is_payment = "pay" in full_vtype or "pymt" in full_vtype
 
                     if not (is_sale or is_purchase or is_receipt or is_payment):
                         continue
 
                     party_found = False
                     for le in entries:
-                        lname = (le.findtext("LEDGERNAME") or "").strip()
-                        amt_str = le.findtext("AMOUNT", "0")
-                        is_party = (le.findtext("ISPARTYLEDGER") or "").strip().lower() == "yes"
+                        lname = _find_text(le, "LEDGERNAME")
+                        amt_str = _find_text(le, "AMOUNT", "0")
+                        is_party_tag = _find_text(le, "ISPARTYLEDGER").lower() == "yes"
 
                         try:
                             amt = abs(float(amt_str))
@@ -616,35 +809,53 @@ def fetch_tally_voucher_breakdown(service=None, company_name=None):
                         if not lname or amt == 0.0:
                             continue
 
-                        # Check if this entry is the party ledger
-                        if is_party or (header_party and lname.lower() == header_party.lower()):
+                        # Check if this entry represents a debtor/creditor party
+                        is_known_party = False
+                        matched_party = lname
+                        if party_case_map:
+                            canon = party_case_map.get(lname.lower())
+                            if canon:
+                                is_known_party = True
+                                matched_party = canon
+
+                        is_party = is_known_party or is_party_tag or (header_party and lname.lower() == header_party.lower())
+
+                        if not is_party and not party_case_map:
+                            # Fallback if known_parties was not provided: ignore obvious non-party accounts
+                            lower_l = lname.lower()
+                            non_parties = ("cash", "bank", "vat", "tax", "discount", "round off", "sales", "purchase", "cgst", "sgst", "igst")
+                            if not any(np in lower_l for np in non_parties):
+                                is_party = True
+
+                        if is_party:
                             party_found = True
                             if is_sale:
-                                sales_map[lname] = round(sales_map.get(lname, 0.0) + amt, 2)
+                                sales_map[matched_party] = round(sales_map.get(matched_party, 0.0) + amt, 2)
                             elif is_purchase:
-                                purchase_map[lname] = round(purchase_map.get(lname, 0.0) + amt, 2)
+                                purchase_map[matched_party] = round(purchase_map.get(matched_party, 0.0) + amt, 2)
                             elif is_receipt:
-                                receipts_map[lname] = round(receipts_map.get(lname, 0.0) + amt, 2)
+                                receipts_map[matched_party] = round(receipts_map.get(matched_party, 0.0) + amt, 2)
                             elif is_payment:
-                                payments_map[lname] = round(payments_map.get(lname, 0.0) + amt, 2)
+                                payments_map[matched_party] = round(payments_map.get(matched_party, 0.0) + amt, 2)
 
-                    # Fallback for vouchers where header party is set but entries lack ISPARTYLEDGER flag
+                    # Fallback for vouchers where header party is set but individual entries weren't matched
                     if not party_found and header_party:
+                        canon_header = party_case_map.get(header_party.lower(), header_party) if party_case_map else header_party
                         max_amt = 0.0
                         for le in entries:
                             try:
-                                max_amt = max(max_amt, abs(float(le.findtext("AMOUNT", "0"))))
+                                max_amt = max(max_amt, abs(float(_find_text(le, "AMOUNT", "0"))))
                             except ValueError:
                                 pass
                         if max_amt > 0:
                             if is_sale:
-                                sales_map[header_party] = round(sales_map.get(header_party, 0.0) + max_amt, 2)
+                                sales_map[canon_header] = round(sales_map.get(canon_header, 0.0) + max_amt, 2)
                             elif is_purchase:
-                                purchase_map[header_party] = round(purchase_map.get(header_party, 0.0) + max_amt, 2)
+                                purchase_map[canon_header] = round(purchase_map.get(canon_header, 0.0) + max_amt, 2)
                             elif is_receipt:
-                                receipts_map[header_party] = round(receipts_map.get(header_party, 0.0) + max_amt, 2)
+                                receipts_map[canon_header] = round(receipts_map.get(canon_header, 0.0) + max_amt, 2)
                             elif is_payment:
-                                payments_map[header_party] = round(payments_map.get(header_party, 0.0) + max_amt, 2)
+                                payments_map[canon_header] = round(payments_map.get(canon_header, 0.0) + max_amt, 2)
 
                 logger.info(
                     f"[tally_sync] Voucher breakdown summary for '{target_company or 'Active'}': "
@@ -654,11 +865,15 @@ def fetch_tally_voucher_breakdown(service=None, company_name=None):
                 return sales_map, purchase_map, receipts_map, payments_map
 
             except urllib.error.URLError as ue:
-                last_error = f"URLError on port {port}: {ue.reason if hasattr(ue, 'reason') else ue}"
-                logger.debug(f"[tally_sync] {last_error}")
+                reason = getattr(ue, 'reason', ue)
+                if isinstance(reason, socket.timeout) or "timed out" in str(reason).lower():
+                    last_error = f"Timeout ({http_timeout}s) connecting to Tally on port {port}"
+                else:
+                    last_error = f"URLError on port {port}: {reason}"
+                logger.warning(f"[tally_sync] {last_error}")
             except TimeoutError:
-                last_error = f"Timeout (6s) connecting to Tally on port {port}"
-                logger.debug(f"[tally_sync] {last_error}")
+                last_error = f"Timeout ({http_timeout}s) connecting to Tally on port {port}"
+                logger.warning(f"[tally_sync] {last_error}")
             except ET.ParseError as pe:
                 last_error = f"XML parse error on port {port}: {pe}"
                 logger.warning(f"[tally_sync] {last_error}")
@@ -693,16 +908,37 @@ def fetch_tally_ledger_data(company_name=None, company_path=None, service=None):
             err = getattr(service, 'last_error', '') or "Could not connect to Tally. Please ensure Tally is running."
             return 0, err
 
-        # ── Company mismatch check (same as stock sync) ──────────────────────
+        # ── Company mismatch check & fiscal date capture ─────────────────────
         if company_name:
             try:
-                comp_df = pd.read_sql("SELECT $Name from Company", service.connection)
-                active_company = comp_df.iloc[0, 0].strip()
-                if active_company.lower() != company_name.strip().lower():
-                    return 0, (
-                        f"Wrong company open in Tally: '{active_company}'\n"
-                        f"Please open '{company_name}' in Tally and try again."
-                    )
+                comp_df = None
+                for q in [
+                    "SELECT $Name, $StartingFrom, $EndingAt, $BooksFrom FROM Company",
+                    "SELECT $Name, $StartingFrom, $EndingAt FROM Company",
+                    "SELECT $Name FROM Company"
+                ]:
+                    try:
+                        comp_df = pd.read_sql(q, service.connection)
+                        break
+                    except Exception:
+                        continue
+
+                if comp_df is not None and not comp_df.empty:
+                    active_company = comp_df.iloc[0, 0].strip()
+                    if active_company.lower() != company_name.strip().lower():
+                        return 0, (
+                            f"Wrong company open in Tally: '{active_company}'\n"
+                            f"Please open '{company_name}' in Tally and try again."
+                        )
+                    # Cache fiscal dates for voucher fetching
+                    for _, row in comp_df.iterrows():
+                        c_name = str(row.iloc[0]).strip().lower()
+                        sf = _to_tally_date_str(row.get("$StartingFrom"))
+                        ea = _to_tally_date_str(row.get("$EndingAt"))
+                        if sf and ea:
+                            if not hasattr(service, '_company_fiscal_dates'):
+                                service._company_fiscal_dates = {}
+                            service._company_fiscal_dates[c_name] = (sf, ea)
             except Exception as ce:
                 logger.warning(f"Company check failed (proceeding anyway): {ce}")
         # ─────────────────────────────────────────────────────────────────────
@@ -883,7 +1119,26 @@ def fetch_tally_vat_internal_data(company_name=None, company_path=None, service=
         db_name = build_logical_name(resolved_comp_name, company_path=company_path) if company_path else build_logical_name(resolved_comp_name)
 
         vch_company = company_name or (os.path.basename(company_path) if company_path else "")
-        sales_map, purchase_map, receipts_map, payments_map = fetch_tally_voucher_breakdown(service, company_name=vch_company)
+        
+        # Pre-load known debtors and creditors from row_ledger_data to ensure accurate receipt/payment party matching
+        internal_parties = set()
+        try:
+            with service.db.get_connection(db_name) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT [Name] FROM dbo.row_ledger_data
+                    WHERE LOWER(LTRIM(RTRIM([Group]))) IN ('sundry debtors', 'sundry creditors')
+                       OR LOWER(LTRIM(RTRIM(Sub_Group))) IN ('sundry debtors', 'sundry creditors')
+                """)
+                for row in cursor.fetchall():
+                    if row[0]:
+                        internal_parties.add(str(row[0]).strip())
+        except Exception as pe:
+            logger.debug(f"[fetch_tally_vat_internal_data] Could not pre-load party names: {pe}")
+
+        sales_map, purchase_map, receipts_map, payments_map = fetch_tally_voucher_breakdown(
+            service, company_name=vch_company, known_parties=internal_parties
+        )
 
         # Build list of distinct parties across maps
         all_parties = set(sales_map.keys()) | set(purchase_map.keys()) | set(receipts_map.keys()) | set(payments_map.keys())
@@ -940,10 +1195,21 @@ def fetch_tally_vat_ledger_data(vat_company_name: str, company_name=None, compan
             err = getattr(service, 'last_error', '') or "Could not connect to Tally. Please ensure Tally is running."
             return 0, err
 
-        # Verify VAT company is open in Tally
+        # Verify VAT company is open in Tally and capture fiscal dates
         try:
-            comp_df = pd.read_sql("SELECT $Name from Company", service.connection)
-            if comp_df.empty:
+            comp_df = None
+            for q in [
+                "SELECT $Name, $StartingFrom, $EndingAt, $BooksFrom FROM Company",
+                "SELECT $Name, $StartingFrom, $EndingAt FROM Company",
+                "SELECT $Name FROM Company"
+            ]:
+                try:
+                    comp_df = pd.read_sql(q, service.connection)
+                    break
+                except Exception:
+                    continue
+
+            if comp_df is None or comp_df.empty:
                 return 0, "No companies found running in Tally."
             open_comps = [str(c).strip() for c in comp_df.iloc[:, 0].tolist()]
             # Case-insensitive match
@@ -954,6 +1220,15 @@ def fetch_tally_vat_ledger_data(vat_company_name: str, company_name=None, compan
                     f"Open companies in Tally: {', '.join(open_comps)}\n"
                     f"Please open '{vat_company}' in Tally and try again."
                 )
+            # Cache fiscal dates for voucher fetching
+            for _, row in comp_df.iterrows():
+                c_name = str(row.iloc[0]).strip().lower()
+                sf = _to_tally_date_str(row.get("$StartingFrom"))
+                ea = _to_tally_date_str(row.get("$EndingAt"))
+                if sf and ea:
+                    if not hasattr(service, '_company_fiscal_dates'):
+                        service._company_fiscal_dates = {}
+                    service._company_fiscal_dates[c_name] = (sf, ea)
         except Exception as ce:
             logger.warning(f"VAT Company check warning: {ce}")
 
@@ -1050,8 +1325,13 @@ def fetch_tally_vat_ledger_data(vat_company_name: str, company_name=None, compan
             if col in ledger_df.columns:
                 ledger_df[col] = ledger_df[col].fillna(0).astype(float) * -1
 
+        # Collect known debtor/creditor names from VAT ledger dataframe
+        vat_parties = set(ledger_df["Name"].dropna().astype(str).str.strip())
+
         # Fetch and map Sales, Purchase, Receipts, Payments from Vouchers
-        sales_map, purchase_map, receipts_map, payments_map = fetch_tally_voucher_breakdown(service, company_name=vat_company)
+        sales_map, purchase_map, receipts_map, payments_map = fetch_tally_voucher_breakdown(
+            service, company_name=vat_company, known_parties=vat_parties
+        )
         # Map voucher amounts: exact match first, case-insensitive fallback to prevent dropping party totals
         def _map_amounts(name_series, amount_map):
             clean_map = {str(k).strip(): v for k, v in amount_map.items()}

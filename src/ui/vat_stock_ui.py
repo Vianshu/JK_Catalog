@@ -388,6 +388,8 @@ class StockUI(QWidget):
             )
         )
         self.mapping_table.itemChanged.connect(self._on_stock_mapping_item_changed)
+        self.mapping_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.mapping_table.customContextMenuRequested.connect(self._show_stock_mapping_context_menu)
 
         vbox.addWidget(self.mapping_table)
         return widget
@@ -700,8 +702,33 @@ class StockUI(QWidget):
                 c1.setData(Qt.ItemDataRole.UserRole, new_id)
                 c2.setData(Qt.ItemDataRole.UserRole, new_id)
                 self.mapping_table.blockSignals(False)
+                if v_name and i_name:
+                    QTimer.singleShot(250, self.refresh_stock_mapping_table)
         except Exception as e:
             logger.error(f"[_on_stock_mapping_item_changed] error: {e}")
+
+    def _show_stock_mapping_context_menu(self, pos):
+        """Right-click context menu on Stock Mapping table to unmap a mapped row."""
+        if not self._can_edit:
+            return
+        row = self.mapping_table.rowAt(pos.y())
+        if row < 0:
+            return
+        c0 = self.mapping_table.item(row, 0)
+        c1 = self.mapping_table.item(row, 1)
+        if not c0 or not c1:
+            return
+        v_name = c0.text().strip()
+        i_name = c1.text().strip()
+
+        if v_name and i_name:
+            menu = QMenu(self)
+            act_unmap = menu.addAction("Remove Mapping (Unmap)")
+            selected_act = menu.exec(self.mapping_table.viewport().mapToGlobal(pos))
+            if selected_act == act_unmap:
+                rec_id = c0.data(Qt.ItemDataRole.UserRole) or c1.data(Qt.ItemDataRole.UserRole) or 0
+                save_stock_mapping(self.db_name, self.current_company_name, rec_id, "", "")
+                self.refresh_stock_mapping_table()
 
     def _filter_int_stock_table(self, text: str):
         q = text.strip().lower()

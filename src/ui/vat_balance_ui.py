@@ -1112,6 +1112,8 @@ class BalanceUI(QWidget):
             )
         )
         self.mapping_table.itemChanged.connect(self._on_mapping_item_changed)
+        self.mapping_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.mapping_table.customContextMenuRequested.connect(self._show_mapping_context_menu)
 
         vbox.addWidget(self.mapping_table)
         return widget
@@ -1823,9 +1825,36 @@ class BalanceUI(QWidget):
                 int_item.setData(Qt.ItemDataRole.UserRole, new_id)
                 man_item.setData(Qt.ItemDataRole.UserRole, new_id)
                 self.mapping_table.blockSignals(False)
+                # When both sides are mapped, refresh table to prune obsolete unmapped rows
+                if vat_name and int_name:
+                    QTimer.singleShot(250, self.refresh_mapping_table)
         except Exception as e:
             logger.error(f"[_on_mapping_item_changed] Failed: {e}", exc_info=True)
             QMessageBox.critical(self, "Save Error", f"Failed to save mapping: {e}")
+
+    def _show_mapping_context_menu(self, pos):
+        """Right-click context menu on Mapping table to unmap a mapped row."""
+        if not self._can_edit:
+            return
+        row = self.mapping_table.rowAt(pos.y())
+        if row < 0:
+            return
+        vat_it = self.mapping_table.item(row, 0)
+        int_it = self.mapping_table.item(row, 1)
+        if not vat_it or not int_it:
+            return
+        vat_name = vat_it.text().strip()
+        int_name = int_it.text().strip()
+
+        # Only offer unmap if both are present (i.e. it is a mapped row)
+        if vat_name and int_name:
+            menu = QMenu(self)
+            act_unmap = menu.addAction("Remove Mapping (Unmap)")
+            selected_act = menu.exec(self.mapping_table.viewport().mapToGlobal(pos))
+            if selected_act == act_unmap:
+                rec_id = vat_it.data(Qt.ItemDataRole.UserRole) or int_it.data(Qt.ItemDataRole.UserRole) or 0
+                save_manual_mapping(self.db_name, self.active_vat_company, rec_id, "", "")
+                self.refresh_mapping_table()
 
     def _on_vat_conf_item_changed(self, item: QTableWidgetItem, group_type: str, tbl: QTableWidget):
         """User modified an editable cell in Vat Conf (Debtor/Creditor)."""

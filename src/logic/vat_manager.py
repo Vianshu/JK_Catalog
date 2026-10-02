@@ -354,7 +354,8 @@ def load_internal_debtors(db_name: str) -> list[dict]:
                     ISNULL(v.Payment_Amount, 0.0) AS Payment_Amount
                 FROM dbo.row_ledger_data r
                 LEFT JOIN dbo.vat_int_voucher_totals v ON v.Name = r.Name
-                WHERE r.[Group] = 'Sundry Debtors'
+                WHERE LOWER(LTRIM(RTRIM(r.[Group]))) = 'sundry debtors'
+                   OR LOWER(LTRIM(RTRIM(r.Sub_Group))) = 'sundry debtors'
                 ORDER BY r.Name
             """)
         else:
@@ -367,7 +368,8 @@ def load_internal_debtors(db_name: str) -> list[dict]:
                     0.0 AS Receipt_Amount,
                     0.0 AS Payment_Amount
                 FROM dbo.row_ledger_data r
-                WHERE r.[Group] = 'Sundry Debtors'
+                WHERE LOWER(LTRIM(RTRIM(r.[Group]))) = 'sundry debtors'
+                   OR LOWER(LTRIM(RTRIM(r.Sub_Group))) = 'sundry debtors'
                 ORDER BY r.Name
             """)
 
@@ -400,7 +402,10 @@ def load_vat_debtors(db_name: str, vat_company: str) -> list[dict]:
         cur.execute("""
             SELECT *
             FROM dbo.vat_row_ledger_data
-            WHERE vat_company = ? AND [Group] = 'Sundry Debtors'
+            WHERE vat_company = ? AND (
+                LOWER(LTRIM(RTRIM([Group]))) = 'sundry debtors'
+                OR LOWER(LTRIM(RTRIM(Sub_Group))) = 'sundry debtors'
+            )
             ORDER BY Name
         """, (vat_company,))
         cols = [desc[0] for desc in cur.description]
@@ -422,12 +427,17 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
     """Load all mapping rows for the given VAT company.
     
     Persists indefinitely across company switches and syncs.
-    Includes ledgers from both VAT company and Internal company:
-    - Saved mappings from dbo.vat_ledger_mapping (including any manual many-to-many associations).
-    - Any unmapped VAT debtors are added.
-    - Any unmapped Internal debtors are added.
-    Unmatched rows (where vat_ledger or internal_ledger is empty) are sorted at the TOP,
-    followed by matched rows.
+    Logic:
+    1. Clean up any invalid/empty dummy rows in dbo.vat_ledger_mapping where
+       vat_ledger_name is empty OR internal_ledger_name is empty.
+    2. Load existing valid mappings from dbo.vat_ledger_mapping for this vat_company.
+    3. Load all Sundry Debtors from VAT company (V) and Internal company (I).
+    4. Auto-match: Any ledger in V and I with the same name (case-insensitive, trimmed)
+       that is not already mapped is automatically paired (i = j = v).
+       These auto-matches are saved to dbo.vat_ledger_mapping with is_manual=0.
+    5. Remaining unmapped V (needs internal ledger) and unmapped I (needs vat ledger)
+       are generated dynamically as unmapped rows (marked red).
+    6. Sort: Unmapped rows at TOP (red), followed by matched rows.
     """
     if not vat_company:
         return []
@@ -438,23 +448,49 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
         return []
     try:
         cur = conn.cursor()
-        
-        # 1. Load existing saved mappings from DB
+
+        # 1. Clean up any incomplete dummy rows where either ledger name is empty/null
+        cur.execute("""
+            DELETE FROM dbo.vat_ledger_mapping
+            WHERE vat_company = ?
+              AND (
+                  vat_ledger_name IS NULL OR LTRIM(RTRIM(vat_ledger_name)) = ''
+                  OR internal_ledger_name IS NULL OR LTRIM(RTRIM(internal_ledger_name)) = ''
+              )
+        """, (vat_company,))
+        conn.commit()
+
+        # 2. Load existing valid saved mappings from DB
         cur.execute("""
             SELECT m.id, m.vat_ledger_name, m.internal_ledger_name, ISNULL(m.manual_name, ''), m.is_manual
             FROM dbo.vat_ledger_mapping m
             WHERE m.vat_company = ?
+            ORDER BY m.id
         """, (vat_company,))
         db_rows = cur.fetchall()
 
-        # 2. Get distinct VAT and Internal debtor lists
+        # 3. Load active Sundry Debtors from both companies
         vat_debtor_names = get_vat_debtor_names(db_name, vat_company)
         internal_debtor_names = get_internal_debtor_names(db_name)
 
-        # Build records list from existing DB mappings
-        records = []
-        covered_vat = set()
-        covered_int = set()
+        # Build normalized lookup maps: lowercase -> actual name
+        vat_name_map = {}
+        for v in vat_debtor_names:
+            v_clean = (v or "").strip()
+            if v_clean and v_clean.lower() not in vat_name_map:
+                vat_name_map[v_clean.lower()] = v_clean
+
+        int_name_map = {}
+        for i in internal_debtor_names:
+            i_clean = (i or "").strip()
+            if i_clean and i_clean.lower() not in int_name_map:
+                int_name_map[i_clean.lower()] = i_clean
+
+        # Track mappings from DB
+        saved_mappings = []
+        seen_pairs = set()
+        mapped_vat = set()
+        mapped_int = set()
 
         for r in db_rows:
             rec_id = r[0]
@@ -463,43 +499,55 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
             m_name = (r[3] or "").strip()
             is_man = bool(r[4])
 
-            if v_name:
-                covered_vat.add(v_name)
-            if i_name:
-                covered_int.add(i_name)
+            if not v_name or not i_name:
+                continue
 
-            records.append({
+            pair_key = (v_name.lower(), i_name.lower())
+            if pair_key in seen_pairs:
+                # Duplicate row in DB -> clean it up
+                cur.execute("DELETE FROM dbo.vat_ledger_mapping WHERE id = ?", (rec_id,))
+                continue
+            seen_pairs.add(pair_key)
+
+            # If ledger lists are available, verify mapped ledgers still exist in Tally
+            v_missing = bool(vat_name_map and v_name.lower() not in vat_name_map)
+            i_missing = bool(int_name_map and i_name.lower() not in int_name_map)
+
+            if v_missing or i_missing:
+                # Ledger was deleted or renamed in Tally -> prune stale mapping
+                cur.execute("DELETE FROM dbo.vat_ledger_mapping WHERE id = ?", (rec_id,))
+                continue
+
+            mapped_vat.add(v_name.lower())
+            mapped_int.add(i_name.lower())
+
+            saved_mappings.append({
                 "id": rec_id,
                 "vat_ledger": v_name,
                 "internal_ledger": i_name,
                 "manual_name": m_name,
                 "is_manual": is_man,
-                "is_unmapped": not (v_name and i_name)
+                "is_unmapped": False
             })
 
-        # 3. For any unmapped VAT debtor: check exact match or add as unmapped row
-        unmapped_vat = [v for v in vat_debtor_names if v not in covered_vat]
-        unmapped_int = [i for i in internal_debtor_names if i not in covered_int]
-        unmapped_int_set = set(unmapped_int)
+        # 4. Auto-match: Any ledger in both Int Ledger and VAT Ledger (i = j = v)
+        # "first get all j which are in int ledger and vat ledger, that means i=j=v, no need to map it now all done"
+        common_keys = sorted(set(vat_name_map.keys()) & set(int_name_map.keys()))
+        new_auto_inserts = []
 
-        new_inserts = []
-        for v in unmapped_vat:
-            if v in unmapped_int_set:
-                # Exact name match found!
-                new_inserts.append((vat_company, v, v, "", 0))
-                covered_vat.add(v)
-                covered_int.add(v)
-                unmapped_int_set.remove(v)
-            else:
-                new_inserts.append((vat_company, v, "", "", 0))
-                covered_vat.add(v)
+        for k in common_keys:
+            # Skip if already mapped (e.g. via manual mapping)
+            if k in mapped_vat or k in mapped_int:
+                continue
 
-        for i in unmapped_int_set:
-            new_inserts.append((vat_company, "", i, "", 0))
-            covered_int.add(i)
+            v_actual = vat_name_map[k]
+            i_actual = int_name_map[k]
+            new_auto_inserts.append((vat_company, v_actual, i_actual, "", 0))
+            mapped_vat.add(k)
+            mapped_int.add(k)
 
-        if new_inserts:
-            for ins in new_inserts:
+        if new_auto_inserts:
+            for ins in new_auto_inserts:
                 cur.execute("""
                     INSERT INTO dbo.vat_ledger_mapping (vat_company, vat_ledger_name, internal_ledger_name, manual_name, is_manual)
                     OUTPUT INSERTED.id
@@ -507,34 +555,63 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
                 """, ins)
                 row = cur.fetchone()
                 new_id = int(row[0]) if row and row[0] is not None else 0
-                records.append({
+                saved_mappings.append({
                     "id": new_id,
                     "vat_ledger": ins[1],
                     "internal_ledger": ins[2],
                     "manual_name": ins[3],
-                    "is_manual": bool(ins[4]),
-                    "is_unmapped": not (ins[1] and ins[2])
+                    "is_manual": False,
+                    "is_unmapped": False
                 })
             conn.commit()
 
-        # Sort: unmapped at TOP (0), mapped below (1); then by name
-        def _sort_key(item):
-            unmapped_flag = 0 if item["is_unmapped"] else 1
-            primary_name = (item["vat_ledger"] or item["internal_ledger"] or "").lower()
-            return (unmapped_flag, primary_name)
+        # 5. What is left? "now only those i are left which needs mapping and v left which needs mapping, this is done manually"
+        unmapped_records = []
 
-        records.sort(key=_sort_key)
+        # Remaining VAT debtors that need manual mapping
+        for k in sorted(vat_name_map.keys()):
+            if k not in mapped_vat:
+                unmapped_records.append({
+                    "id": 0,
+                    "vat_ledger": vat_name_map[k],
+                    "internal_ledger": "",
+                    "manual_name": "",
+                    "is_manual": False,
+                    "is_unmapped": True
+                })
+
+        # Remaining Internal debtors that need manual mapping
+        for k in sorted(int_name_map.keys()):
+            if k not in mapped_int:
+                unmapped_records.append({
+                    "id": 0,
+                    "vat_ledger": "",
+                    "internal_ledger": int_name_map[k],
+                    "manual_name": "",
+                    "is_manual": False,
+                    "is_unmapped": True
+                })
+
+        # 6. Sort: Unmapped records (red) at TOP, mapped records below
+        unmapped_records.sort(key=lambda r: (r["vat_ledger"] or r["internal_ledger"]).lower())
+        saved_mappings.sort(key=lambda r: (r["vat_ledger"] or r["internal_ledger"]).lower())
+
+        records = unmapped_records + saved_mappings
         return records
+
     except Exception as e:
         logger.error(f"[load_vat_mappings] error: {e}", exc_info=True)
         return []
 
 
 def save_manual_mapping(db_name: str, vat_company: str, record_id: int, vat_ledger: str, internal_ledger: str, manual_name: str = "") -> int:
-    """Save or update a mapping row by its record ID.
+    """Save or update a mapping row.
     
-    If record_id exists, updates the row.
-    If record_id is 0 or None, inserts a new row and returns the new ID.
+    - If both vat_ledger and internal_ledger are provided:
+      Saves as an explicit manual mapping (is_manual = 1).
+      Cleans up any existing conflicting unmapped or auto-mapped records for these ledgers.
+    - If one or both ledgers are cleared:
+      Deletes the mapping row if record_id > 0 (unmapping the ledgers).
     """
     if not vat_company:
         return 0
@@ -548,9 +625,29 @@ def save_manual_mapping(db_name: str, vat_company: str, record_id: int, vat_ledg
         vat_ledger = (vat_ledger or "").strip()
         internal_ledger = (internal_ledger or "").strip()
         manual_name = (manual_name or "").strip()
-        is_manual = 1 if (vat_ledger and internal_ledger) else 0
 
+        # If either ledger was cleared on an existing record, unmap it (delete from DB)
+        if not vat_ledger or not internal_ledger:
+            if record_id and record_id > 0:
+                cur.execute("DELETE FROM dbo.vat_ledger_mapping WHERE id = ?", (record_id,))
+                conn.commit()
+            return 0
+
+        # Both are present: save as manual mapping
+        is_manual = 1
+
+        # Delete any conflicting auto-mapping or duplicate row for the same pair
         if record_id and record_id > 0:
+            cur.execute("""
+                DELETE FROM dbo.vat_ledger_mapping
+                WHERE vat_company = ? AND id != ?
+                  AND (
+                      (vat_ledger_name = ? AND internal_ledger_name = ?)
+                      OR (vat_ledger_name = ? AND is_manual = 0)
+                      OR (internal_ledger_name = ? AND is_manual = 0)
+                  )
+            """, (vat_company, record_id, vat_ledger, internal_ledger, vat_ledger, internal_ledger))
+
             cur.execute("""
                 UPDATE dbo.vat_ledger_mapping
                 SET vat_ledger_name = ?, internal_ledger_name = ?, manual_name = ?, is_manual = ?, updated_at = GETDATE()
@@ -559,6 +656,31 @@ def save_manual_mapping(db_name: str, vat_company: str, record_id: int, vat_ledg
             conn.commit()
             return record_id
         else:
+            # Check if this exact pair already exists
+            cur.execute("""
+                SELECT id FROM dbo.vat_ledger_mapping
+                WHERE vat_company = ? AND vat_ledger_name = ? AND internal_ledger_name = ?
+            """, (vat_company, vat_ledger, internal_ledger))
+            existing = cur.fetchone()
+            if existing:
+                cur.execute("""
+                    UPDATE dbo.vat_ledger_mapping
+                    SET manual_name = ?, is_manual = ?, updated_at = GETDATE()
+                    WHERE id = ?
+                """, (manual_name, is_manual, existing[0]))
+                conn.commit()
+                return int(existing[0])
+
+            # Delete any conflicting auto-mappings
+            cur.execute("""
+                DELETE FROM dbo.vat_ledger_mapping
+                WHERE vat_company = ?
+                  AND (
+                      (vat_ledger_name = ? AND is_manual = 0)
+                      OR (internal_ledger_name = ? AND is_manual = 0)
+                  )
+            """, (vat_company, vat_ledger, internal_ledger))
+
             cur.execute("""
                 INSERT INTO dbo.vat_ledger_mapping (vat_company, vat_ledger_name, internal_ledger_name, manual_name, is_manual)
                 OUTPUT INSERTED.id
@@ -577,9 +699,7 @@ def save_manual_mapping(db_name: str, vat_company: str, record_id: int, vat_ledg
 def run_auto_mapping_on_sync(db_name: str, vat_company: str):
     """Run auto-mapping after a VAT Ledger sync.
     
-    Ensures all VAT debtors and Internal debtors are represented in dbo.vat_ledger_mapping.
-    Exact name matches are automatically paired; others remain unmapped (blank) at the top.
-    Never overwrites existing mappings or deletes historical data.
+    Pairs identical debtor ledger names automatically (i = j = v).
     """
     if not vat_company:
         return
@@ -590,7 +710,8 @@ def load_stock_mappings(db_name: str, company_name: str, imported_vat_items: lis
     """Load stock mappings for the company.
     
     Includes stock items from both VAT Excel import and Internal stock (dbo.stock_items).
-    Unmatched rows (where vat_stock_item or internal_stock_item is empty) are sorted at the TOP.
+    Exact name matches are automatically paired (i = j = v).
+    Unmatched items are generated dynamically at the TOP in RED.
     """
     db = get_db_manager()
     ensure_vat_tables(db, db_name)
@@ -599,10 +720,24 @@ def load_stock_mappings(db_name: str, company_name: str, imported_vat_items: lis
         return []
     try:
         cur = conn.cursor()
+
+        # 1. Clean up any incomplete dummy rows where either stock item name is empty/null
+        cur.execute("""
+            DELETE FROM dbo.vat_stock_mapping
+            WHERE company_name = ?
+              AND (
+                  vat_stock_item IS NULL OR LTRIM(RTRIM(vat_stock_item)) = ''
+                  OR internal_stock_item IS NULL OR LTRIM(RTRIM(internal_stock_item)) = ''
+              )
+        """, (company_name or "",))
+        conn.commit()
+
+        # 2. Load existing valid mappings from DB
         cur.execute("""
             SELECT id, vat_stock_item, internal_stock_item, ISNULL(manual_name, ''), is_manual
             FROM dbo.vat_stock_mapping
             WHERE company_name = ?
+            ORDER BY id
         """, (company_name or "",))
         db_rows = cur.fetchall()
 
@@ -615,9 +750,23 @@ def load_stock_mappings(db_name: str, company_name: str, imported_vat_items: lis
 
         imported_vat = [v.strip() for v in (imported_vat_items or []) if v and v.strip()]
 
-        records = []
-        covered_vat = set()
-        covered_int = set()
+        # Build normalized lookup maps: lowercase -> actual name
+        vat_item_map = {}
+        for v in imported_vat:
+            v_clean = (v or "").strip()
+            if v_clean and v_clean.lower() not in vat_item_map:
+                vat_item_map[v_clean.lower()] = v_clean
+
+        int_item_map = {}
+        for i in internal_items:
+            i_clean = (i or "").strip()
+            if i_clean and i_clean.lower() not in int_item_map:
+                int_item_map[i_clean.lower()] = i_clean
+
+        saved_mappings = []
+        seen_pairs = set()
+        mapped_vat = set()
+        mapped_int = set()
 
         for r in db_rows:
             rec_id = r[0]
@@ -626,41 +775,47 @@ def load_stock_mappings(db_name: str, company_name: str, imported_vat_items: lis
             m_name = (r[3] or "").strip()
             is_man = bool(r[4])
 
-            if v_item:
-                covered_vat.add(v_item)
-            if i_item:
-                covered_int.add(i_item)
+            if not v_item or not i_item:
+                continue
 
-            records.append({
+            pair_key = (v_item.lower(), i_item.lower())
+            if pair_key in seen_pairs:
+                cur.execute("DELETE FROM dbo.vat_stock_mapping WHERE id = ?", (rec_id,))
+                continue
+            seen_pairs.add(pair_key)
+
+            v_missing = bool(vat_item_map and v_item.lower() not in vat_item_map)
+            i_missing = bool(int_item_map and i_item.lower() not in int_item_map)
+            if v_missing or i_missing:
+                cur.execute("DELETE FROM dbo.vat_stock_mapping WHERE id = ?", (rec_id,))
+                continue
+
+            mapped_vat.add(v_item.lower())
+            mapped_int.add(i_item.lower())
+
+            saved_mappings.append({
                 "id": rec_id,
                 "vat_stock_item": v_item,
                 "internal_stock_item": i_item,
                 "manual_name": m_name,
                 "is_manual": is_man,
-                "is_unmapped": not (v_item and i_item)
+                "is_unmapped": False
             })
 
-        unmapped_vat = [v for v in imported_vat if v not in covered_vat]
-        unmapped_int = [i for i in internal_items if i not in covered_int]
-        unmapped_int_set = set(unmapped_int)
+        # Auto-match common items (i = j = v)
+        common_keys = sorted(set(vat_item_map.keys()) & set(int_item_map.keys()))
+        new_auto_inserts = []
+        for k in common_keys:
+            if k in mapped_vat or k in mapped_int:
+                continue
+            v_actual = vat_item_map[k]
+            i_actual = int_item_map[k]
+            new_auto_inserts.append((company_name or "", v_actual, i_actual, "", 0))
+            mapped_vat.add(k)
+            mapped_int.add(k)
 
-        new_inserts = []
-        for v in unmapped_vat:
-            if v in unmapped_int_set:
-                new_inserts.append((company_name, v, v, "", 0))
-                covered_vat.add(v)
-                covered_int.add(v)
-                unmapped_int_set.remove(v)
-            else:
-                new_inserts.append((company_name, v, "", "", 0))
-                covered_vat.add(v)
-
-        for i in unmapped_int_set:
-            new_inserts.append((company_name, "", i, "", 0))
-            covered_int.add(i)
-
-        if new_inserts:
-            for ins in new_inserts:
+        if new_auto_inserts:
+            for ins in new_auto_inserts:
                 cur.execute("""
                     INSERT INTO dbo.vat_stock_mapping (company_name, vat_stock_item, internal_stock_item, manual_name, is_manual)
                     OUTPUT INSERTED.id
@@ -668,23 +823,46 @@ def load_stock_mappings(db_name: str, company_name: str, imported_vat_items: lis
                 """, ins)
                 row = cur.fetchone()
                 new_id = int(row[0]) if row and row[0] is not None else 0
-                records.append({
+                saved_mappings.append({
                     "id": new_id,
                     "vat_stock_item": ins[1],
                     "internal_stock_item": ins[2],
                     "manual_name": ins[3],
-                    "is_manual": bool(ins[4]),
-                    "is_unmapped": not (ins[1] and ins[2])
+                    "is_manual": False,
+                    "is_unmapped": False
                 })
             conn.commit()
 
-        def _sort_key(item):
-            unmapped_flag = 0 if item["is_unmapped"] else 1
-            primary_name = (item["vat_stock_item"] or item["internal_stock_item"] or "").lower()
-            return (unmapped_flag, primary_name)
+        # Dynamic unmapped items
+        unmapped_records = []
+        for k in sorted(vat_item_map.keys()):
+            if k not in mapped_vat:
+                unmapped_records.append({
+                    "id": 0,
+                    "vat_stock_item": vat_item_map[k],
+                    "internal_stock_item": "",
+                    "manual_name": "",
+                    "is_manual": False,
+                    "is_unmapped": True
+                })
 
-        records.sort(key=_sort_key)
+        for k in sorted(int_item_map.keys()):
+            if k not in mapped_int:
+                unmapped_records.append({
+                    "id": 0,
+                    "vat_stock_item": "",
+                    "internal_stock_item": int_item_map[k],
+                    "manual_name": "",
+                    "is_manual": False,
+                    "is_unmapped": True
+                })
+
+        unmapped_records.sort(key=lambda r: (r["vat_stock_item"] or r["internal_stock_item"]).lower())
+        saved_mappings.sort(key=lambda r: (r["vat_stock_item"] or r["internal_stock_item"]).lower())
+
+        records = unmapped_records + saved_mappings
         return records
+
     except Exception as e:
         logger.error(f"[load_stock_mappings] error: {e}", exc_info=True)
         return []
@@ -702,9 +880,26 @@ def save_stock_mapping(db_name: str, company_name: str, record_id: int, vat_item
         vat_item = (vat_item or "").strip()
         internal_item = (internal_item or "").strip()
         manual_name = (manual_name or "").strip()
-        is_manual = 1 if (vat_item and internal_item) else 0
+
+        if not vat_item or not internal_item:
+            if record_id and record_id > 0:
+                cur.execute("DELETE FROM dbo.vat_stock_mapping WHERE id = ?", (record_id,))
+                conn.commit()
+            return 0
+
+        is_manual = 1
 
         if record_id and record_id > 0:
+            cur.execute("""
+                DELETE FROM dbo.vat_stock_mapping
+                WHERE company_name = ? AND id != ?
+                  AND (
+                      (vat_stock_item = ? AND internal_stock_item = ?)
+                      OR (vat_stock_item = ? AND is_manual = 0)
+                      OR (internal_stock_item = ? AND is_manual = 0)
+                  )
+            """, (company_name or "", record_id, vat_item, internal_item, vat_item, internal_item))
+
             cur.execute("""
                 UPDATE dbo.vat_stock_mapping
                 SET vat_stock_item = ?, internal_stock_item = ?, manual_name = ?, is_manual = ?, updated_at = GETDATE()
@@ -713,6 +908,29 @@ def save_stock_mapping(db_name: str, company_name: str, record_id: int, vat_item
             conn.commit()
             return record_id
         else:
+            cur.execute("""
+                SELECT id FROM dbo.vat_stock_mapping
+                WHERE company_name = ? AND vat_stock_item = ? AND internal_stock_item = ?
+            """, (company_name or "", vat_item, internal_item))
+            existing = cur.fetchone()
+            if existing:
+                cur.execute("""
+                    UPDATE dbo.vat_stock_mapping
+                    SET manual_name = ?, is_manual = ?, updated_at = GETDATE()
+                    WHERE id = ?
+                """, (manual_name, is_manual, existing[0]))
+                conn.commit()
+                return int(existing[0])
+
+            cur.execute("""
+                DELETE FROM dbo.vat_stock_mapping
+                WHERE company_name = ?
+                  AND (
+                      (vat_stock_item = ? AND is_manual = 0)
+                      OR (internal_stock_item = ? AND is_manual = 0)
+                  )
+            """, (company_name or "", vat_item, internal_item))
+
             cur.execute("""
                 INSERT INTO dbo.vat_stock_mapping (company_name, vat_stock_item, internal_stock_item, manual_name, is_manual)
                 OUTPUT INSERTED.id
