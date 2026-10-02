@@ -16,14 +16,14 @@ class PurImportUI(QDialog):
         layout.setSpacing(15)
 
         # Title Section
-        title = QLabel("📥 Purchase Data Import (Tally)")
+        title = QLabel("Purchase Data Import")
         title.setObjectName("PurImportTitle") # QSS: #PurImportTitle
         layout.addWidget(title)
 
         # Top Control Bar (File Selection)
         top_bar = QHBoxLayout()
         
-        self.btn_select = QPushButton("📂 Select Excel/XML File")
+        self.btn_select = QPushButton("Select Excel/XML File")
         self.btn_select.setObjectName("SelectFileBtn") # QSS: #SelectFileBtn
         self.btn_select.setFixedWidth(250)
         self.btn_select.clicked.connect(self.open_file_dialog)
@@ -51,7 +51,7 @@ class PurImportUI(QDialog):
         btn_box = QHBoxLayout()
         btn_box.setSpacing(10)
         
-        self.btn_import = QPushButton("🚀 Import to Tally")
+        self.btn_import = QPushButton("Import to Tally")
         self.btn_import.setObjectName("ExecuteImportBtn") # QSS: #ExecuteImportBtn
         
         close_btn = QPushButton("Close")
@@ -86,6 +86,6 @@ class PurImportUI(QDialog):
 
         # Disable action buttons
         self.btn_select.setEnabled(can_edit)
-        self.btn_select.setToolTip("" if can_edit else "🔒 Import disabled — display only")
+        self.btn_select.setToolTip("" if can_edit else "Import disabled — display only")
         self.btn_import.setEnabled(can_edit)
-        self.btn_import.setToolTip("" if can_edit else "🔒 Import disabled — display only")
+        self.btn_import.setToolTip("" if can_edit else "Import disabled — display only")

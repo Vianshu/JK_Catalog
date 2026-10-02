@@ -173,7 +173,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         self.cmb_filter.setMinimumWidth(150)
         
         self.search_bar = QLineEdit()
-        self.search_bar.setPlaceholderText("🔍 Search...")
+        self.search_bar.setPlaceholderText("Search...")
         self.search_bar.setMinimumWidth(200)
         self.search_bar.textChanged.connect(self.apply_filter)
         
@@ -200,15 +200,15 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         top_bar.addStretch()
 
         # 3. Right Side: Utility Buttons
-        self.btn_set_location = QPushButton("📂 Set Location")
+        self.btn_set_location = QPushButton("Set Location")
         self.btn_set_location.setObjectName("BtnOrange")
         self.btn_set_location.clicked.connect(self.set_export_location)
 
-        self.btn_print = QPushButton("🖨️ Print")
+        self.btn_print = QPushButton("Print")
         self.btn_print.setObjectName("BtnBlue")
         self.btn_print.clicked.connect(self.print_table)
 
-        self.btn_bank_list = QPushButton("🏦 Bank List")
+        self.btn_bank_list = QPushButton("Bank List")
         self.btn_bank_list.setCheckable(True)
         self.btn_bank_list.setObjectName("BtnBlue")
         self.btn_bank_list.clicked.connect(self.toggle_bank_list)
@@ -335,7 +335,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
     def toggle_bank_list(self):
         show = self.btn_bank_list.isChecked()
         self.right_container.setVisible(show)
-        self.btn_bank_list.setText("❌ Hide Bank List" if show else "🏦 Bank List")
+        self.btn_bank_list.setText("Hide Bank List" if show else "Bank List")
 
     def normalize_bank_name(self, name: str) -> str:
         name = name.lower().strip()

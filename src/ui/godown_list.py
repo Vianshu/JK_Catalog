@@ -293,10 +293,10 @@ class GodownListUI(ExcelTableMixin, QWidget):
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
 
-        btn_set_location = QPushButton("📂 Set Location")
-        self.btn_excel = QPushButton("📥 Excel डाउनलोड")
-        btn_print = QPushButton("🖨️ प्रिंट प्रिव्यू")
-        self.btn_save = QPushButton("💾 Save & Sort")
+        btn_set_location = QPushButton("Set Location")
+        self.btn_excel = QPushButton("Excel डाउनलोड")
+        btn_print = QPushButton("प्रिंट प्रिव्यू")
+        self.btn_save = QPushButton("Save & Sort")
 
         btn_set_location.clicked.connect(self.set_export_location)
         self.btn_excel.clicked.connect(self.export_to_excel)
@@ -382,9 +382,9 @@ class GodownListUI(ExcelTableMixin, QWidget):
 
         # Action buttons
         self.btn_save.setEnabled(can_edit)
-        self.btn_save.setToolTip("" if can_edit else "🔒 Editing disabled — display only")
+        self.btn_save.setToolTip("" if can_edit else "Editing disabled — display only")
         self.btn_excel.setEnabled(can_edit)
-        self.btn_excel.setToolTip("" if can_edit else "🔒 Export disabled — display only")
+        self.btn_excel.setToolTip("" if can_edit else "Export disabled — display only")
 
 
 

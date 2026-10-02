@@ -489,7 +489,7 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
         from PyQt6.QtGui import QCursor
         menu = QMenu(self)
         menu.setStyleSheet(_MENU_STYLE)
-        act_hide = menu.addAction("👁️  Hide S.N")
+        act_hide = menu.addAction("Hide S.N")
         chosen = menu.exec(QCursor.pos())
         if chosen == act_hide:
             self._set_sn_visible(False)
@@ -517,23 +517,23 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
         menu.setStyleSheet(_MENU_STYLE)
         
         # 1. Smart-header resize/stretch actions
-        a_fit = menu.addAction("↔  Fit Column to Content") if col >= 0 else None
-        a_fit_all = menu.addAction("↔  Fit All Columns to Content")
+        a_fit = menu.addAction("Fit Column to Content") if col >= 0 else None
+        a_fit_all = menu.addAction("Fit All Columns to Content")
         is_stretch = hdr.stretchLastSection()
         a_stretch = menu.addAction(
-            "📌  Stretch Last Column (On)" if is_stretch else "📌  Stretch Last Column (Off)"
+            "Stretch Last Column (On)" if is_stretch else "Stretch Last Column (Off)"
         )
         menu.addSeparator()
 
         # S.N toggle
-        act_sn = menu.addAction("👁️  Hide S.N" if self._show_sn else "👁️  Show S.N")
+        act_sn = menu.addAction("Hide S.N" if self._show_sn else "Show S.N")
         menu.addSeparator()
 
         # 2. Opening Dr balance, Interest Rate, and Recalculate
-        a_set_dr = menu.addAction("💰  Set Opening Dr (Row 1)") if col in (0, _ANIL_DR) else None
+        a_set_dr = menu.addAction("Set Opening Dr (Row 1)") if col in (0, _ANIL_DR) else None
         rate_pct = round(getattr(self, '_interest_rate', 0.18) * 100.0, 2)
-        a_set_rate = menu.addAction(f"📈  Set Interest Rate (Current: {rate_pct}%)") if col in (0, _ANIL_DR) else None
-        a_recalc_hdr = menu.addAction("🔄  Recalculate All Balances")
+        a_set_rate = menu.addAction(f"Set Interest Rate (Current: {rate_pct}%)") if col in (0, _ANIL_DR) else None
+        a_recalc_hdr = menu.addAction("Recalculate All Balances")
         menu.addSeparator()
 
         # 3. Column insertion
@@ -541,22 +541,22 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
         a_ins_r = None
         if col == _ANIL_BAL:
             # On Balance column: allow inserting column to the right
-            a_ins_r = menu.addAction("➕  Insert Column Right")
+            a_ins_r = menu.addAction("Insert Column Right")
         elif col >= len(_ANIL_COLS):
             # On custom column: allow inserting left or right
-            a_ins_l = menu.addAction("➕  Insert Column Left")
-            a_ins_r = menu.addAction("➕  Insert Column Right")
+            a_ins_l = menu.addAction("Insert Column Left")
+            a_ins_r = menu.addAction("Insert Column Right")
         else:
             # On other columns or empty space: allow Add Column
-            a_ins_r = menu.addAction("➕  Add Column")
+            a_ins_r = menu.addAction("Add Column")
 
         menu.addSeparator()
 
         # 4. Custom column management
         is_custom = (col >= len(_ANIL_COLS))
-        a_rename = menu.addAction("✏️  Rename Column")
+        a_rename = menu.addAction("Rename Column")
         a_rename.setEnabled(is_custom)
-        a_del = menu.addAction("🗑️  Delete Column")
+        a_del = menu.addAction("Delete Column")
         a_del.setEnabled(is_custom)
         
         act = menu.exec(hdr.mapToGlobal(pos))
@@ -636,9 +636,9 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
         if col == 0:
             menu.addSeparator()
             if self._start_date_locked:
-                a_lock = menu.addAction("\U0001f513  Unlock Start Dates (allow editing)")
+                a_lock = menu.addAction("Unlock Start Dates (allow editing)")
             else:
-                a_lock = menu.addAction("\U0001f512  Lock Start Dates (auto-only)")
+                a_lock = menu.addAction("Lock Start Dates (auto-only)")
             menu.addSeparator()
 
         a_restore_formula = None
@@ -647,24 +647,24 @@ class AnilHisabTab(QWidget, _PrintExportMixin):
         if (col == _ANIL_DR or is_dr_manual) and r > 0:
             menu.addSeparator()
             rate_pct = round(getattr(self, '_interest_rate', 0.18) * 100.0, 1)
-            a_restore_formula = menu.addAction(f"🔄  Calculate / Restore Auto Formula ({rate_pct}%/365 × Days)")
+            a_restore_formula = menu.addAction(f"Calculate / Restore Auto Formula ({rate_pct}%/365 x Days)")
             menu.addSeparator()
 
-        a_recalc_row = menu.addAction("🔄  Recalculate All Balances")
+        a_recalc_row = menu.addAction("Recalculate All Balances")
         menu.addSeparator()
 
-        a_add_above = menu.addAction("\u2191  Add Row Above")
-        a_add_below = menu.addAction("\u2193  Add Row Below")
+        a_add_above = menu.addAction("Add Row Above")
+        a_add_below = menu.addAction("Add Row Below")
         menu.addSeparator()
 
-        a_add_col = menu.addAction("➕  Add Column")
+        a_add_col = menu.addAction("Add Column")
         menu.addSeparator()
 
-        a_del = menu.addAction("\u2715  Delete Row")
+        a_del = menu.addAction("Delete Row")
         menu.addSeparator()
-        a_color = menu.addAction("\u25cf  Set Cell Color")
-        a_text_color = menu.addAction("\u25d0  Set Text Color")
-        a_clear = menu.addAction("\u25cb  Clear Colors")
+        a_color = menu.addAction("Set Cell Color")
+        a_text_color = menu.addAction("Set Text Color")
+        a_clear = menu.addAction("Clear Colors")
         
         act = menu.exec(self.table.viewport().mapToGlobal(pos))
 

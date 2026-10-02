@@ -43,7 +43,7 @@ class WelcomeUI(QWidget):
         tc_layout.setContentsMargins(24, 20, 24, 20)
         tc_layout.setSpacing(10)
 
-        tips_title = QLabel("💡 Quick Tips")
+        tips_title = QLabel("Quick Tips")
         tips_title.setObjectName("TipsTitle")
         tc_layout.addWidget(tips_title)
 

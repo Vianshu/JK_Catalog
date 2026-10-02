@@ -16,7 +16,7 @@ class CatalogPriceListUI(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
 
         # टाइटल लेबल - स्टाइल अब QSS से आएगा (ID: PageTitle)
-        title = QLabel("🏷️ Catalog Price List Management")
+        title = QLabel("Catalog Price List Management")
         title.setObjectName("PageTitle") 
         layout.addWidget(title)
 
@@ -31,7 +31,7 @@ class CatalogPriceListUI(QDialog):
         btn_box = QHBoxLayout()
         
         # सेव बटन - स्टाइल QSS से (ID: SaveButton)
-        self.save_btn = QPushButton("💾 Save Price List")
+        self.save_btn = QPushButton("Save Price List")
         self.save_btn.setObjectName("SaveButton")
         
         # क्लोज बटन - स्टाइल QSS के सामान्य QPushButton से
@@ -55,4 +55,4 @@ class CatalogPriceListUI(QDialog):
         else:
             self.table.setEditTriggers(self.table.EditTrigger.NoEditTriggers)
         self.save_btn.setEnabled(can_edit)
-        self.save_btn.setToolTip("" if can_edit else "🔒 Editing disabled — display only")
+        self.save_btn.setToolTip("" if can_edit else "Editing disabled — display only")

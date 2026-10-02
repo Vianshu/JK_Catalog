@@ -110,28 +110,28 @@ class ReportsUI(QWidget):
 
         # --- Top Header Section ---
         header_layout = QHBoxLayout()
-        title = QLabel("📈 CRM Performance Reports")
+        title = QLabel("CRM Performance Reports")
         title.setObjectName("SectionTitle")
         
         self.lbl_last_sync = QLabel("Last Sync: N/A")
         self.lbl_last_sync.setStyleSheet("color: #64748b; font-weight: bold; font-size: 11pt; margin-left: 20px;")
         
-        self.lbl_refresh = QLabel("\u23f3 Refreshing Catalog... Please Wait")
+        self.lbl_refresh = QLabel("Refreshing Catalog... Please Wait")
         self.lbl_refresh.setObjectName("RefreshLabel")
         self.lbl_refresh.hide()
         
         button_box = QHBoxLayout()
         button_box.setSpacing(10)
         
-        self.btn_loc = QPushButton("📍 Set Location")
+        self.btn_loc = QPushButton("Set Location")
         self.btn_loc.setObjectName("LocationBtn")
         self.btn_loc.clicked.connect(self.set_location)
         
-        self.btn_print = QPushButton("🖨️ Print")
+        self.btn_print = QPushButton("Print")
         self.btn_print.setObjectName("PrintBtn")
         self.btn_print.clicked.connect(lambda: self.open_dialog("Print"))
         
-        self.btn_download = QPushButton("📄 PDF Download")
+        self.btn_download = QPushButton("PDF Download")
         self.btn_download.setObjectName("DownloadBtn")
         self.btn_download.clicked.connect(lambda: self.open_dialog("Download"))
         
@@ -274,7 +274,7 @@ class ReportsUI(QWidget):
         Returns True if the user wants to Continue Anyway, False to cancel."""
         from PyQt6.QtWidgets import QScrollArea
         dlg = QDialog(self)
-        dlg.setWindowTitle("⚠️ Missing Images Detected")
+        dlg.setWindowTitle("Missing Images Detected")
         dlg.setMinimumWidth(520)
         dlg.setMinimumHeight(360)
         layout = QVBoxLayout(dlg)
@@ -305,9 +305,9 @@ class ReportsUI(QWidget):
         layout.addWidget(scroll)
 
         btn_row = QHBoxLayout()
-        btn_go = QPushButton("🔍 Go to Final Data")
+        btn_go = QPushButton("Go to Final Data")
         btn_go.setObjectName("BtnBlue")
-        btn_continue = QPushButton("🖨️ Continue Anyway")
+        btn_continue = QPushButton("Continue Anyway")
         btn_cancel = QPushButton("Cancel")
         btn_cancel.setObjectName("BtnCancel")
         btn_row.addWidget(btn_go)

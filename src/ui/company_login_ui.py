@@ -78,11 +78,11 @@ class LoginDialog(QDialog):
         header.setFixedHeight(50)
         header.setObjectName("LoginHeader") 
         h_layout = QHBoxLayout(header)
-        title = QLabel(f"🏢 Company Login: {company_name}")
+        title = QLabel(f"Company Login: {company_name}")
         title.setObjectName("LoginTitle")
         h_layout.addWidget(title)
         
-        close_btn = QPushButton("✕")
+        close_btn = QPushButton("X")
         close_btn.setFixedSize(30, 30)
         close_btn.setObjectName("LoginCloseBtn")
         close_btn.clicked.connect(self.reject)
@@ -146,7 +146,7 @@ class LoginDialog(QDialog):
             return
 
         logger.warning(f"Login failed: company='{self.company_name}', user='{username}'")
-        self.error_lbl.setText("❌ Invalid Credentials!")
+        self.error_lbl.setText("Invalid Credentials!")
         self.user_edit.setFocus()
 
     def keyPressEvent(self, event):
@@ -326,11 +326,11 @@ class CompanyCreateForm(QWidget):
         backup_path = self.fields[6].text().strip()
 
         if not display_name:
-            self.error_lbl.setText("❌ Display Name is required!")
+            self.error_lbl.setText("Display Name is required!")
             return
             
         if password != conf_pass:
-            self.error_lbl.setText("❌ Passwords do not match!")
+            self.error_lbl.setText("Passwords do not match!")
             return
             
         try:
@@ -528,8 +528,8 @@ class CompanyLoginUI(QWidget):
         self.list.clear()
         
         # User Requested Layout: Create and Path as Items
-        self.add_item("➕ Create New Company", align_right=True, role="create")
-        self.add_item("📂 Change Data Path", align_right=True, role="set_path")
+        self.add_item("Create New Company", align_right=True, role="create")
+        self.add_item("Change Data Path", align_right=True, role="set_path")
         
         line = QListWidgetItem()
         line.setFlags(Qt.ItemFlag.NoItemFlags)
@@ -567,10 +567,10 @@ class CompanyLoginUI(QWidget):
                     with open(info_file, 'r', encoding='utf-8') as f:
                         data = json.load(f)
                         disp_name = data.get("display_name", folder_name)
-                        itm = self.add_item(f"🏢 {disp_name}", role="login")
+                        itm = self.add_item(f"{disp_name}", role="login")
                         itm.setData(Qt.ItemDataRole.UserRole + 1, path)
                 except Exception:
-                    self.add_item(f"⚠️ {folder_name} (Error)", role="error")
+                    self.add_item(f"{folder_name} (Error)", role="error")
             # Unconfigured folders are intentionally ignored
 
     def add_item(self, text, role=None, align_right=False, is_bold=False):

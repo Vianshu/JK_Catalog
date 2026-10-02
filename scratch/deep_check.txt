@@ -1,7 +1,0 @@
-# File: src/ui/cheque_list.py
-- Heavy query in UI thread method _reload_dropdown_data at src/ui/cheque_list.py:1131: l_cursor.execute("SELECT GUID, Alias, Name FROM row_ledger_data WHERE [Group] LIKE '%Sundry Debtors%'")
-# File: src/ui/godown_list.py
-# File: src/logic/catalog_logic.py
-# File: src/ui/supp_payment.py
-- Potential N+1 Query (SELECT inside loop) at src/ui/supp_payment.py:1136: cur.execute("SELECT GUID, Alias, Name FROM row_ledger_data WHERE [Group] LIKE '%Sundry Creditors%'")
-- Heavy query in UI thread method _reload_party_list at src/ui/supp_payment.py:1136: cur.execute("SELECT GUID, Alias, Name FROM row_ledger_data WHERE [Group] LIKE '%Sundry Creditors%'")

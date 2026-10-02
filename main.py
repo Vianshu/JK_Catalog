@@ -107,7 +107,7 @@ def check_first_launch_setup(app):
     layout.addWidget(line)
 
     # Data Path
-    layout.addWidget(QLabel("📁 Data Folder Path:"))
+    layout.addWidget(QLabel("Data Folder Path:"))
     path_row = QHBoxLayout()
     path_input = QLineEdit()
     path_input.setPlaceholderText("Select where company data will be stored...")
@@ -127,7 +127,7 @@ def check_first_launch_setup(app):
     browse_btn.clicked.connect(browse_folder)
 
     # SQL Server
-    layout.addWidget(QLabel("🗄️ SQL Server Instance Name:"))
+    layout.addWidget(QLabel("SQL Server Instance Name:"))
     sql_input = QLineEdit(r".\SQLEXPRESS")
     sql_input.setMinimumHeight(32)
     sql_input.setPlaceholderText(r"e.g. .\SQLEXPRESS or SERVERNAME\SQLEXPRESS")
@@ -142,7 +142,7 @@ def check_first_launch_setup(app):
     # Buttons
     btn_row = QHBoxLayout()
     btn_row.addStretch()
-    save_btn = QPushButton("✅ Save && Continue")
+    save_btn = QPushButton("Save && Continue")
     save_btn.setMinimumHeight(36)
     save_btn.setMinimumWidth(160)
     save_btn.setStyleSheet(

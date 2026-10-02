@@ -139,7 +139,7 @@ class UserManagerDialog(QDialog):
         self.setFixedSize(850, 500)
 
         layout = QVBoxLayout(self)
-        title = QLabel(f"<h3>👤 Users — {company_name}</h3>")
+        title = QLabel(f"<h3>Users — {company_name}</h3>")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
@@ -172,7 +172,7 @@ class UserManagerDialog(QDialog):
         self.new_role_combo = QComboBox()
         self.new_role_combo.setFixedWidth(140)
         add_layout.addWidget(self.new_role_combo)
-        add_btn = QPushButton("➕ Add")
+        add_btn = QPushButton("Add")
         add_btn.clicked.connect(self._add_user)
         add_layout.addWidget(add_btn)
         add_layout.addStretch()
@@ -206,7 +206,7 @@ class UserManagerDialog(QDialog):
         self.table.setRowCount(len(users))
         
         for i, u in enumerate(users):
-            name_item = QTableWidgetItem(f"{'👑 ' if u['is_admin'] else ''}{u['username'] or '(empty)'}")
+            name_item = QTableWidgetItem(f"{'(Admin) ' if u['is_admin'] else ''}{u['username'] or '(empty)'}")
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(i, 0, name_item)
             
@@ -225,7 +225,7 @@ class UserManagerDialog(QDialog):
                     lambda _, uid=uid, cb=role_combo: self._update_user_role(uid, cb.currentData()))
             self.table.setCellWidget(i, 1, role_combo)
             
-            active_item = QTableWidgetItem("✅" if u["is_active"] else "❌")
+            active_item = QTableWidgetItem("Yes" if u["is_active"] else "No")
             active_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             active_item.setFlags(active_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(i, 2, active_item)
@@ -242,14 +242,14 @@ class UserManagerDialog(QDialog):
                 al.setSpacing(4)
                 uid, uname, is_active = u["id"], u["username"], u["is_active"]
                 
-                rb = QPushButton("🔑 Reset")
+                rb = QPushButton("Reset")
                 rb.setToolTip("Reset Password")
                 rb.setFixedHeight(28)
                 rb.setObjectName("BtnResetPw")
                 rb.clicked.connect(lambda _, uid=uid, un=uname: self._reset_pw(uid, un))
                 al.addWidget(rb)
                 
-                tb = QPushButton("🚫 Disable" if is_active else "✅ Enable")
+                tb = QPushButton("Disable" if is_active else "Enable")
                 tb.setToolTip("Deactivate" if is_active else "Activate")
                 tb.setFixedHeight(28)
                 if is_active:
@@ -259,7 +259,7 @@ class UserManagerDialog(QDialog):
                 tb.clicked.connect(lambda _, uid=uid, a=is_active: self._toggle(uid, a))
                 al.addWidget(tb)
                 
-                db = QPushButton("🗑 Delete")
+                db = QPushButton("Delete")
                 db.setToolTip("Delete User")
                 db.setFixedHeight(28)
                 db.setObjectName("BtnDeleteUser")
@@ -512,11 +512,13 @@ class SecurityUI(QWidget):
                 (" \u21b3 Page Manage",      [],                     ["catalog.page_management"]),
                 ("Reports",             ["tab.reports"],        ["reports.print", "reports.mark_done"]),
                 ("Catalog Price List",  ["tab.cat_price_list"], ["cat_price_list.edit"]),
+                ("On Account",          ["tab.catalog_on_account"], []),
                 ("Create / Alter CRM",  [],                     ["settings.manage_crm"]),
             ]),
             ("Vat Working", [
-                ("Vat Balance",         ["tab.vat_balance"],    ["vat_balance.edit"]),
+                ("Vat Balance",         ["tab.vat_balance"],    ["vat_balance.edit", "vat_balance.sync"]),
                 ("Vat Stock",           ["tab.vat_stock"],      ["vat_stock.edit"]),
+                ("Export / Print",      [],                     ["vat.export_print"]),
             ]),
             ("Tally Internal", [
                 ("Sync Ledger",         ["tab.ledger"],         ["ledger.sync"]),
@@ -1149,7 +1151,7 @@ class AuditLogDialog(QDialog):
         self.setFixedSize(850, 500)
         
         layout = QVBoxLayout(self)
-        title = QLabel(f"<h3>📋 Audit Log — {company_name}</h3>")
+        title = QLabel(f"<h3>Audit Log — {company_name}</h3>")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
         
@@ -1167,7 +1169,7 @@ class AuditLogDialog(QDialog):
         self.filter_user.textChanged.connect(self._load_log)
         filter_bar.addWidget(self.filter_user)
         
-        refresh_btn = QPushButton("🔄 Refresh")
+        refresh_btn = QPushButton("Refresh")
         refresh_btn.clicked.connect(self._load_log)
         filter_bar.addWidget(refresh_btn)
         filter_bar.addStretch()
@@ -1262,13 +1264,13 @@ class ChangePasswordDialog(QDialog):
         self.setFixedSize(400, 280)
         
         layout = QVBoxLayout(self)
-        title = QLabel(f"<h3>🔑 Change Password</h3>")
+        title = QLabel(f"<h3>Change Password</h3>")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
         
         # Admin-only gate: block non-admin users immediately
         if user_session and not user_session.is_admin:
-            denied_lbl = QLabel("🔒 Only administrators can change passwords.")
+            denied_lbl = QLabel("Only administrators can change passwords.")
             denied_lbl.setObjectName("DeniedLabel")
             denied_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             denied_lbl.setWordWrap(True)
@@ -1304,7 +1306,7 @@ class ChangePasswordDialog(QDialog):
         layout.addWidget(self.error_lbl)
         
         btn_bar = QHBoxLayout()
-        save_btn = QPushButton("💾 Change Password")
+        save_btn = QPushButton("Change Password")
         save_btn.clicked.connect(self._save)
         btn_bar.addWidget(save_btn)
         cancel_btn = QPushButton("Cancel")
@@ -1322,7 +1324,7 @@ class ChangePasswordDialog(QDialog):
         confirm = self.confirm_pw.text()
         
         if new != confirm:
-            self.error_lbl.setText("❌ New passwords don't match.")
+            self.error_lbl.setText("New passwords don't match.")
             return
         
         # Verify current password
@@ -1333,7 +1335,7 @@ class ChangePasswordDialog(QDialog):
             company_name=self.user_session.company_name
         )
         if not session:
-            self.error_lbl.setText("❌ Current password is wrong.")
+            self.error_lbl.setText("Current password is wrong.")
             return
         
         # Update password
@@ -1341,7 +1343,7 @@ class ChangePasswordDialog(QDialog):
             QMessageBox.information(self, "Success", "Password changed successfully!")
             self.accept()
         else:
-            self.error_lbl.setText("❌ Failed to update password.")
+            self.error_lbl.setText("Failed to update password.")
 
 
 

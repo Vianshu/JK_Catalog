@@ -357,21 +357,21 @@ class FullCatalogUI(QWidget):
         zoom_lbl.setStyleSheet("font-size: 11px; font-weight: bold; color: #6B7280;")
         zoom_layout.addWidget(zoom_lbl)
 
-        self.btn_zoom_in = QPushButton("🔍 Zoom In")
+        self.btn_zoom_in = QPushButton("Zoom In")
         self.btn_zoom_in.setObjectName("CatalogZoomInBtn")
         self.btn_zoom_in.setToolTip("Zoom In (Ctrl+Scroll Up)")
         self.btn_zoom_in.setFixedHeight(30)
         self.btn_zoom_in.clicked.connect(self.zoom_in)
         zoom_layout.addWidget(self.btn_zoom_in)
 
-        self.btn_zoom_out = QPushButton("🔎 Zoom Out")
+        self.btn_zoom_out = QPushButton("Zoom Out")
         self.btn_zoom_out.setObjectName("CatalogZoomOutBtn")
         self.btn_zoom_out.setToolTip("Zoom Out (Ctrl+Scroll Down)")
         self.btn_zoom_out.setFixedHeight(30)
         self.btn_zoom_out.clicked.connect(self.zoom_out)
         zoom_layout.addWidget(self.btn_zoom_out)
 
-        self.btn_fit_page = QPushButton("↔ Fit Page")
+        self.btn_fit_page = QPushButton("Fit Page")
         self.btn_fit_page.setObjectName("CatalogFitPageBtn")
         self.btn_fit_page.setToolTip("Fit entire page in view")
         self.btn_fit_page.setFixedHeight(30)
@@ -431,26 +431,26 @@ class FullCatalogUI(QWidget):
 
     def _setup_action_buttons(self, parent_layout):
         """Create build, export, print, and reshuffle buttons."""
-        self.btn_build = QPushButton("🔨 Build")
+        self.btn_build = QPushButton("Build")
         self.btn_build.setObjectName("CatalogBuildBtn")
         self.btn_build.setFixedHeight(40)
 
-        self.btn_history = QPushButton("📜 History")
+        self.btn_history = QPushButton("History")
         self.btn_history.setObjectName("CatalogHistoryBtn")
         self.btn_history.setToolTip("View build history / Undo last build")
         self.btn_history.setFixedHeight(40)
 
-        self.btn_export = QPushButton("📄 PDF")
+        self.btn_export = QPushButton("PDF")
         self.btn_export.setObjectName("CatalogExportBtn")
         self.btn_export.setToolTip("Export to PDF")
         self.btn_export.setFixedHeight(40)
 
-        self.btn_print = QPushButton("🖨️ Print")
+        self.btn_print = QPushButton("Print")
         self.btn_print.setObjectName("CatalogPrintBtn")
         self.btn_print.setToolTip("Direct Print (Full Page)")
         self.btn_print.setFixedHeight(40)
 
-        self.btn_reshuffle = QPushButton("🔀 Reshuffle")
+        self.btn_reshuffle = QPushButton("Reshuffle")
         self.btn_reshuffle.setObjectName("CatalogReshuffleBtn")
         self.btn_reshuffle.setToolTip("Re-sort all products into proper groups\n(Use after adding new items)")
         self.btn_reshuffle.setFixedHeight(40)
@@ -469,13 +469,13 @@ class FullCatalogUI(QWidget):
         mgmt_layout.setSpacing(10)
         mgmt_layout.setContentsMargins(5, 10, 5, 5)
 
-        self.btn_add_page = QPushButton("➕ Page")
+        self.btn_add_page = QPushButton("Add Page")
         self.btn_add_page.setObjectName("BtnAddPage")
 
-        self.btn_remove_page = QPushButton("➖ Page")
+        self.btn_remove_page = QPushButton("Remove Page")
         self.btn_remove_page.setObjectName("BtnRemovePage")
 
-        self.btn_check_empty = QPushButton("🧹 Clean")
+        self.btn_check_empty = QPushButton("Clean")
         self.btn_check_empty.setObjectName("BtnCleanPage")
 
         mgmt_layout.addWidget(self.btn_add_page)
@@ -1028,7 +1028,7 @@ class FullCatalogUI(QWidget):
         lay.setSpacing(14)
         lay.setContentsMargins(20, 20, 20, 16)
 
-        icon_lbl = QLabel(f"⚠️  <b>{count} item{'s' if count != 1 else ''} missing image{'s' if count != 1 else ''}</b>")
+        icon_lbl = QLabel(f"<b>{count} item{'s' if count != 1 else ''} missing image{'s' if count != 1 else ''}</b>")
         icon_lbl.setTextFormat(Qt.TextFormat.RichText)
         icon_lbl.setWordWrap(True)
         lay.addWidget(icon_lbl)
@@ -1039,7 +1039,7 @@ class FullCatalogUI(QWidget):
         lay.addWidget(hint)
 
         btn_row = QHBoxLayout()
-        btn_check  = QPushButton("🔍 Let's Check")
+        btn_check  = QPushButton("Let's Check")
         btn_ignore = QPushButton("Ignore")
         btn_check.setDefault(True)
         btn_row.addWidget(btn_check)
@@ -1089,7 +1089,7 @@ class FullCatalogUI(QWidget):
         reply = QMessageBox.question(
             self, "Reshuffle Subgroup",
             f"This will re-sort all products in:\n\n"
-            f"   📂 {group_name} > {sg_sn}\n\n"
+            f"   {group_name} > {sg_sn}\n\n"
             f"Products will be grouped by name similarity\n"
             f"and sorted by price within each group.\n\n"
             f"Continue?",
@@ -1270,7 +1270,7 @@ class BuildHistoryDialog(QDialog):
     Layout:
         Top:    Table listing builds (time, pages affected, CRMs, by)
         Bottom: Detail panel showing the delta for the selected build
-        Footer: [📄 Export Affected Pages]  [Close]
+        Footer: [Export Affected Pages]  [Close]
     """
 
     def __init__(self, conn, logic, catalog_ui=None, parent=None):
@@ -1281,7 +1281,7 @@ class BuildHistoryDialog(QDialog):
         self._checkpoints = []   # list of row tuples from list_checkpoints
         self._selected_id = None
 
-        self.setWindowTitle("📜 Build History")
+        self.setWindowTitle("Build History")
         self.setMinimumSize(720, 440)
         self.setModal(True)
         self._setup_ui()
@@ -1335,7 +1335,7 @@ class BuildHistoryDialog(QDialog):
         # ── Buttons ────────────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
 
-        self.btn_export_pdf = QPushButton("📄 Export Affected Pages as PDF")
+        self.btn_export_pdf = QPushButton("Export Affected Pages as PDF")
         self.btn_export_pdf.setEnabled(False)
         self.btn_export_pdf.setFixedHeight(36)
         self.btn_export_pdf.setStyleSheet(

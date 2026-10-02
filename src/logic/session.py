@@ -37,10 +37,17 @@ PERMISSION_REGISTRY = {
     "tab.cat_price_list":   "Catalog Price List tab",
     "tab.vat_balance":      "Vat Balance tab",
     "tab.vat_stock":        "Vat Stock tab",
+    "tab.catalog_on_account": "Catalog On Account tab",
     "tab.supp_payment":     "Supplier Payment tab",
     "tab.pur_import":       "Purchase Import tab",
     "tab.int_cost_sheet":   "Internal Cost Sheet tab",
     "tab.for_branch":       "Branch Submenu",
+
+    # ── Vat Working ──
+    "vat_balance.edit":     "Edit Vat Balance and Conf data",
+    "vat_balance.sync":     "Sync Vat Ledger from Tally",
+    "vat_stock.edit":       "Edit Vat Stock data",
+    "vat.export_print":     "Export or Print Vat Working tables",
 
     # ── Final Data ──
     "final_data.edit":      "Edit True/False toggles and cell values",

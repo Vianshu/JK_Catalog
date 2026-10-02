@@ -629,7 +629,7 @@ class RecordTab(_PrintExportMixin, QWidget):
 
         # ── Search Input (Inline in right bar) ──
         self._search = QLineEdit()
-        self._search.setPlaceholderText("🔍 Search supplier...")
+        self._search.setPlaceholderText("Search supplier...")
         self._search.setStyleSheet("""
             QLineEdit {
                 background: #ecfdf5; 
@@ -1168,13 +1168,13 @@ class RecordTab(_PrintExportMixin, QWidget):
             if is_expanded:
                 label = (f"{n_sup} supplier{'s' if n_sup>1 else ''}"
                          if n_sup else f"{n_acc} account card{'s' if n_acc>1 else ''}")
-                self._sel_status.setText(f"✓ {label}")
+                self._sel_status.setText(f"{label}")
                 self._sel_status.setStyleSheet(
                     "color:#d1fae5;padding:4px;"
                     "border-radius:2px;font-weight:bold;font-size:8pt;"
                     "border:1px solid #1e7a4b;background:#0d3526;")
             else:
-                self._sel_status.setText(f"✓\n{total}")
+                self._sel_status.setText(f"{total}")
                 self._sel_status.setStyleSheet(
                     "color:#d1fae5;padding:4px;"
                     "border-radius:2px;font-weight:bold;font-size:8pt;"

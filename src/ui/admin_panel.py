@@ -1,7 +1,7 @@
 """
 Admin Panel — Super Admin management dialog.
 
-Accessed from the login page via 🔒 Admin button.
+Accessed from the login page via Admin button.
 Requires super admin authentication to open.
 Provides:
   - View/delete companies for the current data path
@@ -25,7 +25,7 @@ class SuperAdminLoginDialog(QDialog):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("🔒 Admin Login")
+        self.setWindowTitle("Admin Login")
         self.setFixedSize(350, 200)
         self.setObjectName("SuperAdminLoginDialog")
         self.authenticated = False
@@ -76,7 +76,7 @@ class SuperAdminLoginDialog(QDialog):
             self.authenticated = True
             self.accept()
         else:
-            self.error_lbl.setText("❌ Invalid credentials")
+            self.error_lbl.setText("Invalid credentials")
             self.user_edit.setFocus()
     
     def keyPressEvent(self, event):
@@ -94,7 +94,7 @@ class SuperAdminSetupDialog(QDialog):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("🔒 Super Admin Setup")
+        self.setWindowTitle("Super Admin Setup")
         self.setFixedSize(400, 300)
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
         self.setModal(True)
@@ -154,13 +154,13 @@ class SuperAdminSetupDialog(QDialog):
         confirm = self.conf_edit.text()
         
         if not username:
-            self.error_lbl.setText("❌ Username is required")
+            self.error_lbl.setText("Username is required")
             return
         if not password:
-            self.error_lbl.setText("❌ Password is required")
+            self.error_lbl.setText("Password is required")
             return
         if password != confirm:
-            self.error_lbl.setText("❌ Passwords do not match")
+            self.error_lbl.setText("Passwords do not match")
             return
         
         try:
@@ -170,7 +170,7 @@ class SuperAdminSetupDialog(QDialog):
                                     f"Super admin '{username}' created successfully!")
             self.accept()
         except Exception as e:
-            self.error_lbl.setText(f"❌ Error: {e}")
+            self.error_lbl.setText(f"Error: {e}")
     
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
@@ -188,7 +188,7 @@ class AdminPanelDialog(QDialog):
         self.data_path = data_path
         self.data_changed = False  # Set to True if anything was deleted
         
-        self.setWindowTitle(f"🔒 Admin Panel — {data_path}")
+        self.setWindowTitle(f"Admin Panel — {data_path}")
         self.setMinimumSize(600, 400)
         self.setObjectName("AdminPanelDialog")
         
@@ -197,7 +197,7 @@ class AdminPanelDialog(QDialog):
         layout.setSpacing(10)
         
         # Header
-        header = QLabel(f"📂 Data Path: {data_path}")
+        header = QLabel(f"Data Path: {data_path}")
         header.setStyleSheet("font-weight: bold; font-size: 13px; padding: 5px;")
         layout.addWidget(header)
         
@@ -223,7 +223,7 @@ class AdminPanelDialog(QDialog):
         # Buttons
         btn_row = QHBoxLayout()
         
-        self.btn_delete_company = QPushButton("🗑  Delete Selected Company")
+        self.btn_delete_company = QPushButton("Delete Selected Company")
         self.btn_delete_company.setFixedHeight(35)
         self.btn_delete_company.setStyleSheet(
             "background-color: #e74c3c; color: white; font-weight: bold; padding: 0 15px;")
@@ -232,7 +232,7 @@ class AdminPanelDialog(QDialog):
         
         btn_row.addStretch()
         
-        self.btn_delete_path = QPushButton("⚠  Delete Entire Data Path")
+        self.btn_delete_path = QPushButton("Delete Entire Data Path")
         self.btn_delete_path.setFixedHeight(35)
         self.btn_delete_path.setStyleSheet(
             "background-color: #c0392b; color: white; font-weight: bold; padding: 0 15px;")
@@ -279,7 +279,7 @@ class AdminPanelDialog(QDialog):
         # Confirmation
         reply = QMessageBox.warning(
             self, "Delete Company",
-            f"⚠️ This will PERMANENTLY delete:\n\n"
+            f"This will PERMANENTLY delete:\n\n"
             f"  Company: {company_name}\n"
             f"  Database: (SQL Server)\n"
             f"  Folder: {folder_path}\n\n"
@@ -304,7 +304,7 @@ class AdminPanelDialog(QDialog):
         # First confirmation
         reply1 = QMessageBox.warning(
             self, "Delete Data Path",
-            f"⚠️ This will PERMANENTLY delete:\n\n"
+            f"This will PERMANENTLY delete:\n\n"
             f"  ALL companies under: {self.data_path}\n"
             f"  ALL SQL Server databases for this path\n"
             f"  ALL files and folders\n\n"

@@ -122,10 +122,10 @@ class SessionManager:
         }
     
     def get_clean_company_name(self) -> str:
-        """Get company name without year suffix like (2081/82)."""
+        """Get company name (full name)."""
         if not self._current_company:
             return ""
-        return re.sub(r'\s*\(\d{4}[-/].*?\)', '', self._current_company)
+        return self._current_company
     
     def deactivate(self):
         """Clear the current session."""

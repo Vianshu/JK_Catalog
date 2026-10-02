@@ -313,7 +313,7 @@ class FinalDataUI(ExcelTableMixin, QWidget):
         self._filter_banner_lbl = QLabel("")
         self._filter_banner_lbl.setStyleSheet(
             "color:#fff;background:#c0392b;border-radius:4px;padding:2px 6px;font-size:11px;")
-        _btn_clear_filter = QPushButton("✕ Clear")
+        _btn_clear_filter = QPushButton("Clear")
         _btn_clear_filter.setFixedHeight(22)
         _btn_clear_filter.setStyleSheet(
             "background:#e74c3c;color:white;border-radius:3px;padding:0 6px;font-size:11px;")
@@ -331,7 +331,7 @@ class FinalDataUI(ExcelTableMixin, QWidget):
         img_container_layout.setContentsMargins(4, 4, 4, 4)
         img_container_layout.setSpacing(3)
 
-        img_title = QLabel("🖼️ Image Preview")
+        img_title = QLabel("Image Preview")
         img_title.setObjectName("ImgTitle")
         img_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         img_title.setFixedHeight(18)
@@ -371,7 +371,7 @@ class FinalDataUI(ExcelTableMixin, QWidget):
         summary_grid.setContentsMargins(6, 6, 6, 6)
 
         # Summary Title
-        summary_title = QLabel("📊 Summary")
+        summary_title = QLabel("Summary")
         summary_title.setObjectName("SummaryTitle")
         summary_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         summary_title.setFixedHeight(20)
@@ -515,12 +515,12 @@ class FinalDataUI(ExcelTableMixin, QWidget):
             return
         
         # ── Display-label guard ──────────────────────────────────────────
-        # The Image_Path column shows visual labels ("✅ FOUND", "❌ NOT FOUND",
-        # "NO NEED", "⚠️ DUPLICATE") instead of the real file path.  These are
+        # The Image_Path column shows visual labels ("FOUND", "NOT FOUND",
+        # "NO NEED", "DUPLICATE") instead of the real file path.  These are
         # set during refresh_table and must NEVER be persisted to the DB.
         # If Qt fires itemChanged for one of these labels (e.g. user clicks,
         # drags, or pastes over the cell), silently discard the event.
-        DISPLAY_ONLY_LABELS = {"✅ FOUND", "❌ NOT FOUND", "NO NEED", "⚠️ DUPLICATE"}
+        DISPLAY_ONLY_LABELS = {"FOUND", "NOT FOUND", "NO NEED", "DUPLICATE"}
         raw_text = item.text().strip()
         if raw_text in DISPLAY_ONLY_LABELS:
             return
@@ -1362,12 +1362,12 @@ class FinalDataUI(ExcelTableMixin, QWidget):
                              # This is strictly visual. Underlying UserRole keeps original path.
                             item.setText("NO NEED"); item.setForeground(QColor("green"))
                         elif is_row_missing:
-                            item.setText("❌ NOT FOUND"); item.setForeground(QColor("red"))
+                            item.setText("NOT FOUND"); item.setForeground(QColor("red"))
                         elif has_duplicate:
-                            item.setText("⚠️ DUPLICATE"); item.setForeground(QColor("#e67e00"))
+                            item.setText("DUPLICATE"); item.setForeground(QColor("#e67e00"))
                             item.setBackground(QColor("#fff3cd"))
                         else:
-                            item.setText("✅ FOUND"); item.setForeground(QColor("green"))
+                            item.setText("FOUND"); item.setForeground(QColor("green"))
 
                     if is_row_missing:
                         item.setBackground(QColor(255, 0, 0))
@@ -1621,7 +1621,7 @@ class FinalDataUI(ExcelTableMixin, QWidget):
     def _on_auto_img_sync_done(self, dup_map):
         """Called on the main thread when AutoImageSyncWorker finishes.
 
-        1. Refreshes the Final Data table (✅/❌ status column).
+        1. Refreshes the Final Data table (status column).
         2. Emits image_sync_done so main_window can rebuild the catalog if
            Catalog or Reports tab is currently visible.
         """
@@ -1694,7 +1694,7 @@ class FinalDataUI(ExcelTableMixin, QWidget):
                 if img_name_key and img_name_key in dup_map:
                     paths = dup_map[img_name_key]
                     short_paths = [os.path.relpath(pp, self.image_folder) if self.image_folder else pp for pp in paths]
-                    warn_text = f"⚠️ DUPLICATE ({len(paths)} files):\n" + "\n".join(short_paths)
+                    warn_text = f"DUPLICATE ({len(paths)} files):\n" + "\n".join(short_paths)
                     self._dup_warning_lbl.setText(warn_text)
                     self._dup_warning_lbl.setVisible(True)
                 else:

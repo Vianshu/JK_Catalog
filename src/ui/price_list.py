@@ -85,7 +85,7 @@ class PriceListUI(QWidget):
 
         # + New Sheet button
         self.add_button.setEnabled(can_edit)
-        self.add_button.setToolTip("" if can_edit else "🔒 Adding sheets disabled — display only")
+        self.add_button.setToolTip("" if can_edit else "Adding sheets disabled — display only")
 
         # Tab movability & context menu
         self.tabs.setMovable(can_edit)
@@ -111,8 +111,8 @@ class PriceListUI(QWidget):
 
         menu = QMenu(self)
         menu.setObjectName("TabContextMenu")
-        rename_action = menu.addAction("✏️ Rename Sheet")
-        delete_action = menu.addAction("❌ Delete Sheet")
+        rename_action = menu.addAction("Rename Sheet")
+        delete_action = menu.addAction("Delete Sheet")
 
         action = menu.exec(self.tabs.tabBar().mapToGlobal(point))
 

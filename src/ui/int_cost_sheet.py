@@ -19,7 +19,7 @@ class IntCostSheetUI(ExcelTableMixin, QDialog):
         layout.setSpacing(15)
 
         # Title
-        title = QLabel("📊 Internal Costing Sheet")
+        title = QLabel("Internal Costing Sheet")
         title.setObjectName("CostSheetTitle") # QSS: #CostSheetTitle
         layout.addWidget(title)
 
@@ -44,10 +44,10 @@ class IntCostSheetUI(ExcelTableMixin, QDialog):
         btn_box = QHBoxLayout()
         btn_box.setSpacing(10)
         
-        self.calc_btn = QPushButton("🔄 Calculate All")
+        self.calc_btn = QPushButton("Calculate All")
         self.calc_btn.setObjectName("CalculateButton") # QSS: #CalculateButton
         
-        self.save_btn = QPushButton("💾 Save Sheet")
+        self.save_btn = QPushButton("Save Sheet")
         self.save_btn.setObjectName("SaveSheetButton") # QSS: #SaveSheetButton
         
         self.close_btn = QPushButton("Close")

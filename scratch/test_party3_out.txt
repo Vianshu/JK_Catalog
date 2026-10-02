@@ -1,5 +1,0 @@
-GUID: 6c4d7196-fc87-4924-b4a5-ac40b1f640ab-00008c17 | Alias: A.K Interprises ,Biratnagar | Name: AK ईन्टरप्राईजेज ,विराटनगर
-GUID: 6c4d7196-fc87-4924-b4a5-ac40b1f640ab-0000886e | Alias: H.S Hardware, Brt | Name: A One Consaran, Brt
-GUID: 6c4d7196-fc87-4924-b4a5-ac40b1f640ab-0000d4f7 | Alias: A.S Iron Stores, Siraha | Name: A.S आईरन स्टोर्स, सिरहा
-GUID: 6c4d7196-fc87-4924-b4a5-ac40b1f640ab-0000c286 | Alias: A to Z Light, Lahan | Name: A to Z लाईट, लाहान
-GUID: 6c4d7196-fc87-4924-b4a5-ac40b1f640ab-00009e17 | Alias: Win Win | Name: Bikash Ji,Brj

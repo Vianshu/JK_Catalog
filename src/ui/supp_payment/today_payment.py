@@ -119,7 +119,7 @@ class _SectionCardV2(QFrame):
         hlay.addWidget(self._btn_row)
 
         if not self._fixed_cols:
-            self._btn_gear = QPushButton("⚙")
+            self._btn_gear = QPushButton("...")
             self._btn_gear.setFixedSize(28, 24)
             self._btn_gear.clicked.connect(self._show_gear)
             hlay.addWidget(self._btn_gear)
@@ -345,8 +345,8 @@ class _SectionCardV2(QFrame):
             return
         menu = QMenu(self)
         menu.setStyleSheet(_MENU_STYLE)
-        act_hide = menu.addAction("👁️  Hide S.N")
-        act_hide_all = menu.addAction("👁️  Hide S.N (All Tables)")
+        act_hide = menu.addAction("Hide S.N")
+        act_hide_all = menu.addAction("Hide S.N (All Tables)")
         chosen = menu.exec(QCursor.pos())
         if chosen == act_hide:
             self._set_sn_visible(False, all_tables=False)
@@ -377,34 +377,34 @@ class _SectionCardV2(QFrame):
         menu.setStyleSheet(_MENU_STYLE)
 
         # ---- existing smart-header actions ----
-        a_fit     = menu.addAction("↔  Fit Column to Content")
-        a_fit_all = menu.addAction("↔  Fit All Columns to Content")
+        a_fit     = menu.addAction("Fit Column to Content")
+        a_fit_all = menu.addAction("Fit All Columns to Content")
         is_stretch = hdr.stretchLastSection()
         a_stretch = menu.addAction(
-            "📌  Stretch Last Column (On)" if is_stretch else "📌  Stretch Last Column (Off)"
+            "Stretch Last Column (On)" if is_stretch else "Stretch Last Column (Off)"
         )
         if self._cols_locked is not None:
             menu.addSeparator()
             a_lock = menu.addAction(
-                "🔓  Unlock Column Widths" if self._cols_locked else "🔒  Lock Column Widths"
+                "Unlock Column Widths" if self._cols_locked else "Lock Column Widths"
             )
         else:
             a_lock = None
 
         menu.addSeparator()
-        act_sn = menu.addAction("👁️  Hide S.N" if self._show_sn else "👁️  Show S.N")
-        act_sn_all = menu.addAction("👁️  Hide S.N (All Tables)" if self._show_sn else "👁️  Show S.N (All Tables)")
+        act_sn = menu.addAction("Hide S.N" if self._show_sn else "Show S.N")
+        act_sn_all = menu.addAction("Hide S.N (All Tables)" if self._show_sn else "Show S.N (All Tables)")
 
         # ---- column management ----
         menu.addSeparator()
-        a_ins_l = menu.addAction("➕  Insert Column Left")
-        a_ins_r = menu.addAction("➕  Insert Column Right")
+        a_ins_l = menu.addAction("Insert Column Left")
+        a_ins_r = menu.addAction("Insert Column Right")
         menu.addSeparator()
-        a_rename = menu.addAction("✏️  Rename Column")
+        a_rename = menu.addAction("Rename Column")
 
         # Only allow removing columns that are NOT part of the fixed spec
         n_fixed = len(self._col_specs) if (self._fixed_cols and self._col_specs) else 0
-        a_remove = menu.addAction("🗑️  Remove Column")
+        a_remove = menu.addAction("Remove Column")
         a_remove.setEnabled(
             logical >= n_fixed and self.table.columnCount() > 1
         )
@@ -1004,15 +1004,15 @@ class _SectionCardV2(QFrame):
         from PyQt6.QtGui import QBrush, QColor
         menu.setStyleSheet(_MENU_STYLE)
 
-        a_add_above = menu.addAction("\u2191  Add Row Above")
-        a_add_below = menu.addAction("\u2193  Add Row Below")
+        a_add_above = menu.addAction("Add Row Above")
+        a_add_below = menu.addAction("Add Row Below")
         menu.addSeparator()
 
-        a_del = menu.addAction("\u2715  Delete Row")
+        a_del = menu.addAction("Delete Row")
         menu.addSeparator()
-        a_color = menu.addAction("\u25cf  Set Cell Color")
-        a_text_color = menu.addAction("\u25d0  Set Text Color")
-        a_clear = menu.addAction("\u25cb  Clear Colors")
+        a_color = menu.addAction("Set Cell Color")
+        a_text_color = menu.addAction("Set Text Color")
+        a_clear = menu.addAction("Clear Colors")
         
         act = menu.exec(self.table.viewport().mapToGlobal(pos))
         
@@ -1071,8 +1071,8 @@ class _SectionCardV2(QFrame):
     def _header_ctx(self, pos):
         menu = QMenu(self)
         menu.setStyleSheet(_MENU_STYLE)
-        a_color = menu.addAction("\u25cf  Change Header Color")
-        a_clear = menu.addAction("\u25cb  Default Color")
+        a_color = menu.addAction("Change Header Color")
+        a_clear = menu.addAction("Default Color")
         act = menu.exec(self._hdr.mapToGlobal(pos))
         if act == a_color:
             color = _styled_get_color(self)
@@ -1123,10 +1123,10 @@ class _SectionCardV2(QFrame):
             return
         menu = QMenu(self)
         menu.setStyleSheet(_MENU_STYLE)
-        a_ren = menu.addAction("\u270e  Rename Table")
-        a_col = menu.addAction("\u25cf  Change Header Color")
+        a_ren = menu.addAction("Rename Table")
+        a_col = menu.addAction("Change Header Color")
         menu.addSeparator()
-        a_del = menu.addAction("\u2715  Delete Table")
+        a_del = menu.addAction("Delete Table")
         act = menu.exec(self._btn_gear.mapToGlobal(self._btn_gear.rect().bottomLeft()))
         if act == a_ren:
             new, ok = _styled_get_text(self, "Rename Table", "Name:", text=self.title_lbl.text())

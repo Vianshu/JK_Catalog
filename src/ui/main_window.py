@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import json
 import os
 import sys
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QSizePolicy,
-    QFrame, QStackedWidget, QMenu, QMessageBox, QProgressDialog, QApplication
+    QFrame, QStackedWidget, QMenu, QMessageBox, QProgressDialog, QApplication,
+    QTableWidget
 )
 from PyQt6.QtCore import Qt, QTimer, QSettings, QThread, pyqtSignal, QObject, QEvent
 from PyQt6.QtGui import QShortcut, QKeySequence, QIcon
@@ -23,6 +26,7 @@ from src.ui.godown_list import GodownListUI
 from src.ui.sales_chat import SalesChatUI
 from src.ui.supp_payment import SuppPaymentV2UI
 from src.ui.vat_pages import BalanceUI, StockUI
+from src.ui.on_account_ui import OnAccountUI
 from src.ui.super_master import SuperMasterUI
 from src.ui.pur_import import PurImportUI
 from src.ui.int_cost_sheet import IntCostSheetUI
@@ -241,7 +245,7 @@ class MenuButtonWidget(QFrame):
         self.html_text = self.plain_text
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 12, 10, 12)
+        layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(0)
 
         if "&" in text:
@@ -326,6 +330,7 @@ class PageIndex:
     CALENDAR = 16
     LEDGER_ROW_DATA = 17
     SECURITY = 18
+    CATALOG_ON_ACCOUNT = 19
 
 class MainWindow(QWidget):
 
@@ -444,15 +449,28 @@ class MainWindow(QWidget):
                 btn.set_hotkey_visibility(visible)
 
     def keyPressEvent(self, event):
-        """Handle Alt+Key shortcuts contextually and Toggle Highlights."""
+        """Handle Alt+Key shortcuts contextually, Toggle Highlights, and Esc for Back."""
         self._reset_timeout()  # Reset session timeout on keyboard activity
         if event.key() == Qt.Key.Key_Alt:
             self.toggle_hotkey_hints(True)
 
+        if event.key() == Qt.Key.Key_Escape:
+            current_page = self.nav_stack.currentWidget()
+            if current_page:
+                buttons = current_page.findChildren(MenuButtonWidget)
+                for btn in buttons:
+                    if btn.property("is_back"):
+                        btn.animateClick()
+                        return
+
         if event.modifiers() & Qt.KeyboardModifier.AltModifier:
-            txt = event.text()
-            if txt:
-                key = txt.upper()
+            key = ""
+            if 0x20 <= event.key() <= 0x7e:
+                key = chr(event.key()).upper()
+            elif event.text():
+                key = event.text().upper()
+
+            if key:
                 current_page = self.nav_stack.currentWidget()
                 if current_page:
                     buttons = current_page.findChildren(MenuButtonWidget)
@@ -673,7 +691,7 @@ class MainWindow(QWidget):
         sidebar_layout.addWidget(self.lbl_logged_user)
 
         # Logout Button (Full width)
-        self.logout_btn = QPushButton("🚪 LOGOUT")
+        self.logout_btn = QPushButton("LOGOUT")
         self.logout_btn.setObjectName("LogoutBtn")
         self.logout_btn.clicked.connect(self.back_to_login_screen)
         sidebar_layout.addWidget(self.logout_btn)
@@ -759,78 +777,81 @@ class MainWindow(QWidget):
         # own permissions. Layer 1b in _apply_permissions() hides the parent button
         # only when ALL its children are denied.
         m_main = self.create_menu_widget([
-            ("📁 &Catalog", self.show_catalog_submenu, False),
-            ("📊 &Vat Working", self.show_vat_submenu, False),
-            ("⚙️ &Tally Internal", self.show_tally_internal_submenu, False),
-            ("⚙️ &Settings", self.show_settings_submenu)
+            ("&Catalog", self.show_catalog_submenu, False),
+            ("&Vat Working", self.show_vat_submenu, False),
+            ("&Tally Internal", self.show_tally_internal_submenu, False),
+            ("&Settings", self.show_settings_submenu)
         ])
         m_main.setObjectName("MainMenuScroll")  # Slightly more breathing room for main nav
         self.nav_stack.addWidget(m_main)
 
         # Index 2: Catalog Menu (permission keys for access control)
         m_catalog = self.create_menu_widget([
-            ("⬅️ &Back", self.go_back_to_main, True),
-            ("🔄 S&ync Tally", self.on_sync_tally_clicked, False, None, "final_data.sync"),
-            ("📑 Super &Master", self.handle_super_master, False, None, "tab.super_master"),
-            ("✅ &Final Data", self.final_data, False, None, "tab.final_data"),
-            ("📖 Full Catalo&g", self.show_full_catalog_page, False, None, "tab.catalog"),
-            ("📈 Rep&orts", self.show_reports_page, False, None, "tab.reports"),
-            ("🏷 Cat / &Price List", self.handle_catalog_price_list, False, None, "tab.cat_price_list"),
-            ("➕ &Create CRM", self.handle_create_crm, False, None, "settings.manage_crm"),
-            ("✏️ &Alter CRM", self.handle_alter_crm, False, None, "settings.manage_crm")
+            ("&Back", self.go_back_to_main, True),
+            ("S&ync Tally", self.on_sync_tally_clicked, False, None, "final_data.sync"),
+            ("Super &Master", self.handle_super_master, False, None, "tab.super_master"),
+            ("&Final Data", self.final_data, False, None, "tab.final_data"),
+            ("Full Catalo&g", self.show_full_catalog_page, False, None, "tab.catalog"),
+            ("Rep&orts", self.show_reports_page, False, None, "tab.reports"),
+            ("Cat / &Price List", self.handle_catalog_price_list, False, None, "tab.cat_price_list"),
+            ("On Accoun&t", self.handle_catalog_on_account, False, None, "tab.catalog_on_account"),
+            ("&Create CRM", self.handle_create_crm, False, None, "settings.manage_crm"),
+            ("&Alter CRM", self.handle_alter_crm, False, None, "settings.manage_crm")
         ])
         self.nav_stack.addWidget(m_catalog)
 
         # Index 3: Settings Menu
         m_settings = self.create_menu_widget([
-            ("⬅️ &Back", self.go_back_to_main, True),
-            ("🏢 &Alter Company", self.handle_alter_company, False, None, "settings.company_config"),
-            ("🔄 S&witch Co.", self.back_to_login_screen),
-            ("👥 &Users", self.handle_manage_users, False, None, "settings.manage_users"),
-            ("🛡️ User &Roles", self.handle_security, False, None, "settings.manage_roles"),
-            ("📋 Audit &Log", self.handle_audit_log, False, None, "settings.manage_roles"),
-            ("⚙️ Tally &Port", self.handle_tally_port),
-            ("🔑 Change &Password", self.handle_change_password, False, None, "settings.manage_users"),
-            ("🔒 &Admin Panel", self.handle_admin_panel, False, None, "settings.manage_users"),
-            ("📅 Ca&lendar", self.handle_calendar_mapping, False, None, "tab.calendar"),
-            ("💾 &Backup Data", self.handle_export_data, False, None, "data.export"),
-            ("📥 &Import Data", self.handle_import_data, False, None, "data.import"),
-            ("🗓️ &Year End",    self.handle_year_end,   False, None, "settings.year_end"),
+            ("&Back", self.go_back_to_main, True),
+            ("&Alter Company", self.handle_alter_company, False, None, "settings.company_config"),
+            ("S&witch Co.", self.back_to_login_screen),
+            ("&Users", self.handle_manage_users, False, None, "settings.manage_users"),
+            ("User &Roles", self.handle_security, False, None, "settings.manage_roles"),
+            ("Audit &Log", self.handle_audit_log, False, None, "settings.manage_roles"),
+            ("&Tally Port", self.handle_tally_port),
+            ("&Change Password", self.handle_change_password, False, None, "settings.manage_users"),
+            ("Admin &Panel", self.handle_admin_panel, False, None, "settings.manage_users"),
+            ("Cal&endar", self.handle_calendar_mapping, False, None, "tab.calendar"),
+            ("Bac&kup Data", self.handle_export_data, False, None, "data.export"),
+            ("&Import Data", self.handle_import_data, False, None, "data.import"),
+            ("&Year End",    self.handle_year_end,   False, None, "settings.year_end"),
         ])
         self.nav_stack.addWidget(m_settings)
 
         # Index 4: Tally Internal
         m_tally = self.create_menu_widget([
-            ("⬅️ &Back", self.go_back_to_main, True),
-            ("🔄 Sync &Ledger", self.on_sync_ledger_clicked, False, None, "ledger.sync"),
-            ("🧪 Ledger &Rows", self.on_ledger_row_data_clicked, False, None, "tab.ledger"),
-            ("💰 &On Account", lambda: self.main_stack.setCurrentIndex(PageIndex.ON_ACCOUNT), False, None, "tab.payment_list"),
-            ("🧾 C&hq. List", self.handle_cheque_list, False, None, "tab.cheque_list"),
-            ("🏠 &Godown List", lambda: self.main_stack.setCurrentIndex(PageIndex.GODOWN), False, None, "tab.godown"),
-            ("📈 &Sales Chat", lambda: self.main_stack.setCurrentIndex(PageIndex.SALES_CHAT), False, None, "tab.sales_chat"),
-            ("💸 Supp. Pa&yment", lambda: self.main_stack.setCurrentIndex(PageIndex.SUPP_PAYMENT), False, None, "tab.supp_payment"),
-            ("🏷 Pri&ce List", lambda: self.main_stack.setCurrentIndex(PageIndex.PRICE_LIST), False, None, "tab.price_list"),
-            ("📥 Pur &Import", self.handle_pur_import, False, None, "tab.pur_import"),
-            ("📊 Cos&t Sheet", self.handle_int_cost_sheet, False, None, "tab.int_cost_sheet"),
-            ("🏢 For &Branch", self.show_branch_submenu, False, None, "tab.for_branch")
+            ("&Back", self.go_back_to_main, True),
+            ("Sync &Ledger", self.on_sync_ledger_clicked, False, None, "ledger.sync"),
+            ("Ledger &Rows", self.on_ledger_row_data_clicked, False, None, "tab.ledger"),
+            ("&On Account", lambda: self.main_stack.setCurrentIndex(PageIndex.ON_ACCOUNT), False, None, "tab.payment_list"),
+            ("C&hq. List", self.handle_cheque_list, False, None, "tab.cheque_list"),
+            ("&Godown List", lambda: self.main_stack.setCurrentIndex(PageIndex.GODOWN), False, None, "tab.godown"),
+            ("&Sales Chat", lambda: self.main_stack.setCurrentIndex(PageIndex.SALES_CHAT), False, None, "tab.sales_chat"),
+            ("Supp. Pa&yment", lambda: self.main_stack.setCurrentIndex(PageIndex.SUPP_PAYMENT), False, None, "tab.supp_payment"),
+            ("Pri&ce List", lambda: self.main_stack.setCurrentIndex(PageIndex.PRICE_LIST), False, None, "tab.price_list"),
+            ("Pur &Import", self.handle_pur_import, False, None, "tab.pur_import"),
+            ("Cos&t Sheet", self.handle_int_cost_sheet, False, None, "tab.int_cost_sheet"),
+            ("For Bra&nch", self.show_branch_submenu, False, None, "tab.for_branch")
         ])
         self.nav_stack.addWidget(m_tally)
 
         # Index 5: Vat Working
         m_vat = self.create_menu_widget([
-            ("⬅️ &Back", self.go_back_to_main, True),
-            ("💰 Ba&lance", lambda: self.main_stack.setCurrentIndex(PageIndex.VAT_BALANCE), False, None, "tab.vat_balance"),
-            ("📦 Stoc&k", lambda: self.main_stack.setCurrentIndex(PageIndex.VAT_STOCK), False, None, "tab.vat_stock")
+            ("&Back", self.go_back_to_main, True),
+            ("B&alance", self.handle_vat_balance, False, None, "tab.vat_balance"),
+            ("&Stock", self.handle_vat_stock, False, None, "tab.vat_stock"),
+            ("&Export", self.handle_vat_export, False, None, "vat.export_print"),
+            ("&Print", self.handle_vat_print, False, None, "vat.export_print")
         ])
         self.nav_stack.addWidget(m_vat)
 
         # Index 6: Branch Menu
         m_branch = self.create_menu_widget([
-            ("⬅️ &Back", self.show_tally_internal_submenu, True),
-            ("📦 &BTM Order", None),
-            ("📦 &NGT Order", None),
-            ("📥 BTM &Receive", None),
-            ("📥 N&GT Receive", None)
+            ("&Back", self.show_tally_internal_submenu, True),
+            ("B&TM Order", None),
+            ("&NGT Order", None),
+            ("BTM &Receive", None),
+            ("NGT R&eceive", None)
         ])
         self.nav_stack.addWidget(m_branch)
 
@@ -916,7 +937,7 @@ class MainWindow(QWidget):
         else:
             QMessageBox.information(
                 self, "Full Sync Complete",
-                f"✅ Stock + Ledger Sync Complete\n"
+                f"Stock + Ledger Sync Complete\n"
                 f"Ledger entries loaded: {row_count}"
             )
 
@@ -980,7 +1001,7 @@ class MainWindow(QWidget):
         _fd = getattr(self, 'final_data_page', None)
         if idx in (2, 5, 7) and _fd and hasattr(_fd, 'check_and_sync_images'):
             _fd.check_and_sync_images()
-            # On Final Data tab: also trigger a table refresh so ✅/❌ image status
+            # On Final Data tab: also trigger a table refresh so image status
             # reflects any DB changes made by a prior auto-sync (even if the user
             # navigated away while the sync was running).
             if idx == 5:
@@ -1010,6 +1031,15 @@ class MainWindow(QWidget):
             if not getattr(self.ledger_row_data_page, '_data_loaded', False) and getattr(self, 'current_company_path', ''):
                 self.ledger_row_data_page.load_data(self.current_company_path)
                 self.ledger_row_data_page._data_loaded = True
+        elif idx == PageIndex.VAT_BALANCE and hasattr(self, 'vat_balance_page'):
+            if getattr(self, 'current_company_path', ''):
+                self.vat_balance_page.load_data(self.current_company_path)
+        elif idx == PageIndex.VAT_STOCK and hasattr(self, 'vat_stock_page'):
+            if getattr(self, 'current_company_path', ''):
+                self.vat_stock_page.load_data(self.current_company_path)
+        elif idx == PageIndex.CATALOG_ON_ACCOUNT and hasattr(self, 'on_account_page'):
+            if getattr(self, 'current_company_path', ''):
+                self.on_account_page.load_data(self.current_company_path)
 
     def on_catalog_built(self):
         """Called when Full Catalog finishes building in the background"""
@@ -1085,20 +1115,24 @@ class MainWindow(QWidget):
         self.main_stack.addWidget(SalesChatUI())           # 11
         self.supp_payment_page = SuppPaymentV2UI()
         self.main_stack.addWidget(self.supp_payment_page)  # 12
-        self.main_stack.addWidget(BalanceUI())             # 13
-        self.main_stack.addWidget(StockUI())               # 14
+        self.vat_balance_page = BalanceUI()
+        self.main_stack.addWidget(self.vat_balance_page)   # 13
+        self.vat_stock_page = StockUI()
+        self.main_stack.addWidget(self.vat_stock_page)     # 14
         self.cheque_list_page = ChequeListUI()
         self.main_stack.addWidget(self.cheque_list_page) # Maan lijiye index 15 hai
         
         self.calendar_page = CalendarMappingUI()
         self.main_stack.addWidget(self.calendar_page) # Maan lijiye index 16 hai
 
-
         self.ledger_row_data_page = LedgerRowDataUI()
         self.main_stack.addWidget(self.ledger_row_data_page) # Index 17
 
         self.security_page = SecurityUI(self)
         self.main_stack.addWidget(self.security_page) # Index 18
+
+        self.on_account_page = OnAccountUI()
+        self.main_stack.addWidget(self.on_account_page)    # Index 19
 
 
     # --- Helper UI Functions ---
@@ -1238,7 +1272,11 @@ class MainWindow(QWidget):
     def show_catalog_submenu(self): self.nav_stack.setCurrentIndex(NavIndex.CATALOG)
     def show_settings_submenu(self): self.nav_stack.setCurrentIndex(NavIndex.SETTINGS)
     def show_tally_internal_submenu(self): self.nav_stack.setCurrentIndex(NavIndex.TALLY)
-    def show_vat_submenu(self): self.nav_stack.setCurrentIndex(NavIndex.VAT)
+    def show_vat_submenu(self):
+        self.nav_stack.setCurrentIndex(NavIndex.VAT)
+        if self.main_stack.currentIndex() not in (PageIndex.VAT_BALANCE, PageIndex.VAT_STOCK):
+            self.handle_vat_balance()
+
     def show_branch_submenu(self): self.nav_stack.setCurrentIndex(NavIndex.BRANCH)
 
     # --- Business Logic Methods (Login, Sync, CRM etc.) ---
@@ -1249,15 +1287,15 @@ class MainWindow(QWidget):
             self.user_session = user_session
             set_company_context(comp_name)
 
-            # Update UI with company name (no building logo or dropdown arrow)
-            clean_name = re.sub(r'\s*\(\d{4}[-/].*?\)', '', comp_name)
-            self.company_lbl.setText(clean_name)
+            # Update UI with company name (shows full name)
+            self.company_lbl.setText(comp_name)
+            self.company_header.setToolTip(comp_name)
             self.company_header.show()
 
             # Item 2: show logged-in username below company button
             if user_session and hasattr(user_session, 'username'):
                 role = getattr(user_session, 'role_name', '')
-                display = f"👤 {user_session.username}"
+                display = f"{user_session.username}"
                 if role:
                     display += f"\n({role})"
                 self.lbl_logged_user.setText(display)
@@ -1423,7 +1461,7 @@ class MainWindow(QWidget):
                     allowed = (not parent_denied) and s.can(perm_key)
                     btn.setEnabled(allowed)
                     if not allowed:
-                        btn.setToolTip(f"🔒 Access denied — requires '{perm_key}' permission")
+                        btn.setToolTip(f"Access denied — requires '{perm_key}' permission")
                     else:
                         btn.setToolTip("")
         
@@ -1450,7 +1488,7 @@ class MainWindow(QWidget):
                             all_disabled = child_btns and all(not b.isEnabled() for b in child_btns)
                             if all_disabled:
                                 btn.setEnabled(False)
-                                btn.setToolTip(f"🔒 No accessible items in {parent_name}")
+                                btn.setToolTip(f"No accessible items in {parent_name}")
                         break
         
         # ── Layer 2: Inside-Tab Controls ──
@@ -1532,15 +1570,21 @@ class MainWindow(QWidget):
             can_edit = s.can("godown.edit")
             page.apply_edit_mode(can_edit)
 
-        # Vat Balance — editable Excel sheet
-        vat_balance = self.main_stack.widget(13)
-        if vat_balance and hasattr(vat_balance, 'apply_edit_mode'):
-            vat_balance.apply_edit_mode(s.can("vat_balance.edit"))
+        # Vat Balance
+        if hasattr(self, 'vat_balance_page') and self.vat_balance_page:
+            self.vat_balance_page.apply_edit_mode(s.can("vat_balance.edit"))
+            if hasattr(self.vat_balance_page, 'btn_sync_vat'):
+                self.vat_balance_page.btn_sync_vat.setEnabled(s.can("vat_balance.sync"))
+            if hasattr(self.vat_balance_page, 'btn_sync_int'):
+                self.vat_balance_page.btn_sync_int.setEnabled(s.can("ledger.sync"))
+            if hasattr(self.vat_balance_page, 'btn_tab_sync_vat'):
+                self.vat_balance_page.btn_tab_sync_vat.setEnabled(s.can("vat_balance.sync"))
+            if hasattr(self.vat_balance_page, 'btn_tab_sync_int'):
+                self.vat_balance_page.btn_tab_sync_int.setEnabled(s.can("ledger.sync"))
 
-        # Vat Stock — editable Excel sheet
-        vat_stock = self.main_stack.widget(14)
-        if vat_stock and hasattr(vat_stock, 'apply_edit_mode'):
-            vat_stock.apply_edit_mode(s.can("vat_stock.edit"))
+        # Vat Stock
+        if hasattr(self, 'vat_stock_page') and self.vat_stock_page:
+            self.vat_stock_page.apply_edit_mode(s.can("vat_stock.edit"))
 
         # Sales Chat — editable Excel sheet
         sales_chat = self.main_stack.widget(11)
@@ -1619,7 +1663,7 @@ class MainWindow(QWidget):
             return True
         
         QMessageBox.warning(self, "Access Denied",
-            f"🔒 You do not have permission to perform {action_name}.\n\n"
+            f"You do not have permission to perform {action_name}.\n\n"
             f"Required: '{permission_key}'\n"
             f"Your role: '{self.user_session.role_name}'\n\n"
             "Contact your administrator to request access.")
@@ -1906,6 +1950,69 @@ class MainWindow(QWidget):
             self.ledger_row_data_page.load_data(self.current_company_path)
             self.main_stack.setCurrentIndex(PageIndex.LEDGER_ROW_DATA)
 
+    def handle_catalog_on_account(self):
+        if not self._check_permission("tab.catalog_on_account", "On Account"):
+            return
+        if hasattr(self, 'on_account_page') and getattr(self, 'current_company_path', ''):
+            self.on_account_page.load_data(self.current_company_path)
+        self.main_stack.setCurrentIndex(PageIndex.CATALOG_ON_ACCOUNT)
+
+    def handle_vat_balance(self):
+        if not self._check_permission("tab.vat_balance", "Vat Balance"):
+            return
+        if hasattr(self, 'vat_balance_page'):
+            self.vat_balance_page.set_current_view(0)
+            if self.main_stack.currentIndex() == PageIndex.VAT_BALANCE and getattr(self, 'current_company_path', ''):
+                self.vat_balance_page.load_data(self.current_company_path)
+        self.main_stack.setCurrentIndex(PageIndex.VAT_BALANCE)
+
+    def handle_vat_stock(self):
+        if not self._check_permission("tab.vat_stock", "Vat Stock"):
+            return
+        if hasattr(self, 'vat_stock_page'):
+            self.vat_stock_page.set_current_view(0)
+            if self.main_stack.currentIndex() == PageIndex.VAT_STOCK and getattr(self, 'current_company_path', ''):
+                self.vat_stock_page.load_data(self.current_company_path)
+        self.main_stack.setCurrentIndex(PageIndex.VAT_STOCK)
+
+    def get_current_vat_table(self) -> tuple[str, QTableWidget | None]:
+        """Return (title, table_widget) for the currently focused screen/tab/subtab in VAT Working."""
+        current_idx = self.main_stack.currentIndex()
+        if current_idx == PageIndex.VAT_STOCK and hasattr(self, 'vat_stock_page'):
+            return self.vat_stock_page.get_current_table()
+        elif hasattr(self, 'vat_balance_page'):
+            return self.vat_balance_page.get_current_table()
+        return "VAT Table", None
+
+    def handle_vat_export(self):
+        """Export currently active VAT screen/tab/subtab to Excel with path configuration."""
+        if not self._check_permission("vat.export_print", "Export"):
+            return
+        title, table = self.get_current_vat_table()
+        if not table or table.rowCount() == 0:
+            QMessageBox.information(self, "No Data", f"'{title}' contains no data to export.")
+            return
+
+        from src.ui.vat_export_dialog import VatExportDialog
+        dlg = VatExportDialog(title, table, self)
+        dlg.exec()
+
+    def handle_vat_print(self):
+        """Directly print preview the currently open VAT screen/tab/subtab without prompting."""
+        if not self._check_permission("vat.export_print", "Print"):
+            return
+        title, table = self.get_current_vat_table()
+        if not table or table.rowCount() == 0:
+            QMessageBox.information(self, "No Data", f"'{title}' contains no data to print.")
+            return
+
+        from src.ui.table_printer import print_tables_via_preview
+        try:
+            print_tables_via_preview([{"title": title, "table": table}], parent=self, title=title, landscape=True)
+        except Exception as e:
+            logger.error(f"[handle_vat_print] error: {e}")
+            QMessageBox.critical(self, "Print Error", f"Failed to open print preview:\n{e}")
+
     def final_data(self):
         if self.current_company and hasattr(self, 'current_company_path'):
             self.main_stack.setCurrentIndex(PageIndex.FINAL_DATA)
@@ -1932,9 +2039,9 @@ class MainWindow(QWidget):
         if not can_edit:
             dlg.table.setEditTriggers(dlg.table.EditTrigger.NoEditTriggers)
             dlg.save_btn.setEnabled(False)
-            dlg.save_btn.setToolTip("🔒 Editing disabled — display only")
+            dlg.save_btn.setToolTip("Editing disabled — display only")
             dlg.calc_btn.setEnabled(False)
-            dlg.calc_btn.setToolTip("🔒 Editing disabled — display only")
+            dlg.calc_btn.setToolTip("Editing disabled — display only")
         dlg.exec()
 
     def handle_pur_import(self):
@@ -2099,10 +2206,10 @@ class MainWindow(QWidget):
 
         if msg == "skipped:locked":
             logger.info(f"[AutoBackup] Skipped — another user is already backing up.")
-            self._show_backup_toast("⏭ Auto-backup skipped (another user is running it)", running=False)
+            self._show_backup_toast("Auto-backup skipped (another user is running it)", running=False)
         elif success:
             logger.info(f"[AutoBackup] Backup complete for data path '{data_key}'.")
-            self._show_backup_toast("✅  Auto-backup complete", running=False)
+            self._show_backup_toast("Auto-backup complete", running=False)
             # Record timestamp so next login (any company in this data path) sees it as done
             now_epoch = datetime.now(timezone.utc).timestamp()
             ts_key = f"last_backup/{data_key}"
@@ -2142,7 +2249,7 @@ class MainWindow(QWidget):
                 logger.warning(f"[AutoBackup] Pruning failed: {e}")
         else:
             logger.error(f"[AutoBackup] Backup FAILED: {msg}")
-            self._show_backup_toast(f"❌  Auto-backup failed: {msg[:60]}", running=False)
+            self._show_backup_toast(f"Auto-backup failed: {msg[:60]}", running=False)
 
         self._hide_backup_toast_after(5000)
         self._backup_worker = None
@@ -2225,7 +2332,7 @@ class MainWindow(QWidget):
         self._pending_backup_dir  = data_backup_dir
 
         logger.info(f"[AutoBackup] Launching background backup: {output_file}")
-        self._show_backup_toast(f"🔄  Auto-backup running for {data_key}…")
+        self._show_backup_toast(f"Auto-backup running for {data_key}…")
 
         self._backup_worker = self._BackupWorker(
             data_path, output_file, data_key, lock_name, parent=self
@@ -2263,7 +2370,7 @@ class MainWindow(QWidget):
         mode_lay.setContentsMargins(20, 20, 20, 16)
         mode_lay.setSpacing(12)
 
-        hdr = QLabel("💾  What would you like to back up?")
+        hdr = QLabel("What would you like to back up?")
         hdr.setStyleSheet("font-size: 15px; font-weight: 700; color: #0f172a;")
         mode_lay.addWidget(hdr)
 
@@ -2309,13 +2416,13 @@ class MainWindow(QWidget):
             return card
 
         mode_lay.addWidget(_make_card(
-            "🏢", "This Company Only",
+            "", "This Company Only",
             f"Back up only '{company_folder}'. Faster — ideal as a daily safety "
             "snapshot before making catalog or payment changes.",
             "#059669", "company"
         ))
         mode_lay.addWidget(_make_card(
-            "💾", "Full Data Path",
+            "", "Full Data Path",
             "Back up ALL companies in this data path. Use this for machine migration "
             "or full disaster recovery.",
             "#1d4ed8", "full"
@@ -2420,7 +2527,7 @@ class MainWindow(QWidget):
         root.setContentsMargins(20, 20, 20, 16)
 
         # ── Header ────────────────────────────────────────────────────────────
-        title_lbl = QLabel("🎯  Selective Restore")
+        title_lbl = QLabel("Selective Restore")
         title_lbl.setStyleSheet(
             "font-size: 16px; font-weight: 700; color: #0f172a;"
         )
@@ -2467,13 +2574,13 @@ class MainWindow(QWidget):
         mod_lay = QVBoxLayout(mod_box)
         mod_lay.setSpacing(6)
 
-        chk_catalog = QCheckBox("📁  Catalog, Final Data, CRM & Godown List")
+        chk_catalog = QCheckBox("Catalog, Final Data, CRM & Godown List")
         chk_catalog.setStyleSheet("font-size: 12px; color: #0f172a; padding: 4px;")
         chk_catalog.setChecked(True)
         mod_lay.addWidget(chk_catalog)
 
         # Supplier Payment + Cheque List + Ledger + sheet sub-selection
-        chk_supp = QCheckBox("💳  Supplier Payments, Cheque List & Ledgers")
+        chk_supp = QCheckBox("Supplier Payments, Cheque List & Ledgers")
         chk_supp.setStyleSheet("font-size: 12px; color: #0f172a; padding: 4px;")
         mod_lay.addWidget(chk_supp)
 
@@ -2511,7 +2618,7 @@ class MainWindow(QWidget):
         def _update_warning():
             msgs = []
             if not any(cb.isChecked() for cb in (chk_catalog, chk_supp)):
-                msgs.append("⚠  Select at least one module group.")
+                msgs.append("Select at least one module group.")
             
             self._warn_lbl.setText("\n".join(msgs))
             self._warn_lbl.setVisible(bool(msgs))
@@ -2544,7 +2651,7 @@ class MainWindow(QWidget):
 
             # Fallback for older backups: we cannot read the sheets from the .bak file
             # without restoring it first. So we just tell the user we will restore everything.
-            sheet_list.addItem("✓ All Payment Sheets will be restored")
+            sheet_list.addItem("All Payment Sheets will be restored")
             sheet_list.item(0).setFlags(Qt.ItemFlag.NoItemFlags)
             all_sheets_lbl.setText("(Older backup: All sheets will be restored)")
 
@@ -2588,7 +2695,7 @@ class MainWindow(QWidget):
         )
         btn_cancel.clicked.connect(dlg.reject)
 
-        btn_restore = QPushButton("🎯  Restore Selected")
+        btn_restore = QPushButton("Restore Selected")
         btn_restore.setFixedHeight(34)
         btn_restore.setDefault(True)
         btn_restore.setStyleSheet(
@@ -2650,7 +2757,7 @@ class MainWindow(QWidget):
             self, "Confirm Selective Restore",
             f"Company:  {company_folder}\n\n"
             f"Modules:  {', '.join(mod_labels)}\n\n"
-            f"⚠  The selected tables in the live database will be "
+            f"The selected tables in the live database will be "
             f"replaced with data from the backup.\n\n"
             f"Proceed?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
@@ -2722,7 +2829,7 @@ class MainWindow(QWidget):
                     QMessageBox.information(self, "Cancelled", msg)
                 else:
                     QMessageBox.critical(self, "Selective Restore Failed",
-                        f"{msg}\n\n✅ Your live data was NOT modified.")
+                        f"{msg}\n\nYour live data was NOT modified.")
 
 
         self._sel_import_worker.progress.connect(_update_sel_progress)
@@ -2767,7 +2874,7 @@ class MainWindow(QWidget):
         mode_lay.setContentsMargins(20, 20, 20, 16)
         mode_lay.setSpacing(12)
 
-        hdr = QLabel("📥  How would you like to import?")
+        hdr = QLabel("How would you like to import?")
         hdr.setStyleSheet("font-size: 15px; font-weight: 700; color: #0f172a;")
         mode_lay.addWidget(hdr)
 
@@ -2820,14 +2927,14 @@ class MainWindow(QWidget):
             return card
 
         mode_lay.addWidget(_make_mode_card(
-            "💾", "Full System Restore",
+            "", "Full System Restore",
             "Restore EVERYTHING into a new folder. Use this when moving to a new PC "
             "or recovering from a total data loss. Existing data in the target folder "
             "will be completely replaced.",
             "#1d4ed8", "full"
         ))
         mode_lay.addWidget(_make_mode_card(
-            "🎯", "Selective Restore",
+            "", "Selective Restore",
             "Choose which modules to restore (Catalog Bundle or Supplier Payment) "
             "into the current company. Only the selected tables are overwritten — "
             "all other live data remains untouched.",
@@ -2860,7 +2967,7 @@ class MainWindow(QWidget):
                 self, "Confirm Full Restore",
                 f"Import data from:\n  {os.path.basename(backup_file)}\n\n"
                 f"Into folder:\n  {target_path}\n\n"
-                f"⚠  All existing data in that folder will be replaced.\n\n"
+                f"All existing data in that folder will be replaced.\n\n"
                 f"Continue?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
@@ -2995,7 +3102,7 @@ class MainWindow(QWidget):
         menu.setObjectName("CompanyDropDown")
         menu.addAction(f"Active: {self.current_company}").setEnabled(False)
         menu.addSeparator()
-        menu.addAction("🔄 Switch Company", self.back_to_login_screen)
+        menu.addAction("Switch Company", self.back_to_login_screen)
         menu.exec(self.company_lbl.mapToGlobal(self.company_lbl.rect().bottomLeft()))
 
     def handle_alter_company(self):
@@ -3074,7 +3181,7 @@ class MainWindow(QWidget):
         if worker is not None and worker.isRunning():
             # Ignore the close request — tell user we're waiting
             event.ignore()
-            self._show_backup_toast("🔄  Waiting for backup to finish before closing…", running=True)
+            self._show_backup_toast("Waiting for backup to finish before closing…", running=True)
 
             # Connect a one-shot slot that will close the app once backup is done
             def _close_when_done(success: bool, msg: str):

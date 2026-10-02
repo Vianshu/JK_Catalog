@@ -994,7 +994,7 @@ def _setup_smart_header(table):
             if has_lock_support:
                 menu.addSeparator()
                 is_locked = getattr(card, '_cols_locked')
-                act_lock = menu.addAction("🔓  Unlock Column Widths" if is_locked else "🔒  Lock Column Widths")
+                act_lock = menu.addAction("Unlock Column Widths" if is_locked else "Lock Column Widths")
 
             chosen = menu.exec(hdr.mapToGlobal(pos))
             if chosen == act_fit:
@@ -1189,11 +1189,11 @@ class _DbTable(QTableWidget):
         from PyQt6.QtGui import QCursor
         menu = QMenu(self)
         menu.setStyleSheet(_MENU_STYLE)
-        act_hide = menu.addAction("👁️  Hide S.N")
+        act_hide = menu.addAction("Hide S.N")
         tab_tables = self._get_tab_tables()
         act_hide_all = None
         if len(tab_tables) > 1:
-            act_hide_all = menu.addAction("👁️  Hide S.N (All Tables in Tab)")
+            act_hide_all = menu.addAction("Hide S.N (All Tables in Tab)")
         chosen = menu.exec(QCursor.pos())
         if chosen == act_hide:
             self._set_sn_visible(False)
@@ -1217,20 +1217,20 @@ class _DbTable(QTableWidget):
         menu.setStyleSheet(_MENU_STYLE)
         
         # 1. Smart-header resize/stretch actions
-        a_fit = menu.addAction("↔  Fit Column to Content")
-        a_fit_all = menu.addAction("↔  Fit All Columns to Content")
+        a_fit = menu.addAction("Fit Column to Content")
+        a_fit_all = menu.addAction("Fit All Columns to Content")
         is_stretch = hdr.stretchLastSection()
         a_stretch = menu.addAction(
-            "📌  Stretch Last Column (On)" if is_stretch else "📌  Stretch Last Column (Off)"
+            "Stretch Last Column (On)" if is_stretch else "Stretch Last Column (Off)"
         )
         menu.addSeparator()
 
         # S.N toggle actions
-        act_sn = menu.addAction("👁️  Hide S.N" if self._show_sn else "👁️  Show S.N")
+        act_sn = menu.addAction("Hide S.N" if self._show_sn else "Show S.N")
         tab_tables = self._get_tab_tables()
         act_sn_all = None
         if len(tab_tables) > 1:
-            act_sn_all = menu.addAction("👁️  Hide S.N (All Tables in Tab)" if self._show_sn else "👁️  Show S.N (All Tables in Tab)")
+            act_sn_all = menu.addAction("Hide S.N (All Tables in Tab)" if self._show_sn else "Show S.N (All Tables in Tab)")
         menu.addSeparator()
 
         # Check permissions via callback if defined
@@ -1248,7 +1248,7 @@ class _DbTable(QTableWidget):
             is_locked_section = not (can_ins_l or can_ins_r or can_rename or can_del)
 
         if is_locked_section:
-            a_locked = menu.addAction("🔒  Year section (managed via Add Year)")
+            a_locked = menu.addAction("Year section (managed via Add Year)")
             a_locked.setEnabled(False)
             chosen = menu.exec(hdr.mapToGlobal(pos))
             if chosen == a_fit:
@@ -1266,14 +1266,14 @@ class _DbTable(QTableWidget):
             return
 
         # 2. Column management
-        act_left = menu.addAction("➕  Insert Column Left")
+        act_left = menu.addAction("Insert Column Left")
         act_left.setEnabled(can_ins_l)
-        act_right = menu.addAction("➕  Insert Column Right")
+        act_right = menu.addAction("Insert Column Right")
         act_right.setEnabled(can_ins_r)
         menu.addSeparator()
-        act_rename = menu.addAction("✏️  Rename Column")
+        act_rename = menu.addAction("Rename Column")
         act_rename.setEnabled(can_rename)
-        act_del = menu.addAction("🗑️  Delete Column")
+        act_del = menu.addAction("Delete Column")
         act_del.setEnabled(can_del)
         
         chosen = menu.exec(hdr.mapToGlobal(pos))

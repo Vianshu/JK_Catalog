@@ -69,7 +69,7 @@ class SalesChatUI(QWidget):
                 )
 
         self.add_button.setEnabled(can_edit)
-        self.add_button.setToolTip("" if can_edit else "🔒 Adding sheets disabled — display only")
+        self.add_button.setToolTip("" if can_edit else "Adding sheets disabled — display only")
         self.tabs.setMovable(can_edit)
         if can_edit:
             self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -111,8 +111,8 @@ class SalesChatUI(QWidget):
 
         menu = QMenu(self)
         menu.setObjectName("SalesTabMenu")
-        rename_action = menu.addAction("✏️ Rename")
-        delete_action = menu.addAction("❌ Delete")
+        rename_action = menu.addAction("Rename")
+        delete_action = menu.addAction("Delete")
         
         action = menu.exec(self.tabs.tabBar().mapToGlobal(point))
 

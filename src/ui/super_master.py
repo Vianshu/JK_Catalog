@@ -68,7 +68,7 @@ class SuperMasterUI(ExcelTableMixin, QWidget):
         for i in range(len(self.headers)):
             search_box = QLineEdit()
             search_box.setObjectName(f"FilterInput_{i}")
-            search_box.setPlaceholderText("🔍")
+            search_box.setPlaceholderText("Filter...")
             search_box.setFixedWidth(widths[i])
             search_box.setFixedHeight(35)
             search_box.textChanged.connect(self.apply_filters)

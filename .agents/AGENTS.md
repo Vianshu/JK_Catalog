@@ -74,3 +74,6 @@ Work through this checklist, then keep going beyond it:
 ## 5. Theme Rules
 - **Green theme for payment sheets**: in `supp_payment.py`, primary buttons and the bottom tab navigation use green (`#059669` and `#047857`) instead of blue.
 - *Suggestion (not a mandate — flag only):* if these colors are scattered as literals across the file, consider centralizing them as named constants so future palette changes are a one-line edit. Only do this if the user asks.
+
+## 6. UI & Interaction Guidelines
+- **No hover tooltips / hint boxes**: Do not add `setToolTip` or hover tooltip boxes explaining what buttons or UI controls do, unless explicitly requested by the user. Keep the interface clean, fast, and free of unsolicited popup hints.

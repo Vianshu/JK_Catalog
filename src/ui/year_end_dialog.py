@@ -1,4 +1,4 @@
-﻿"""
+"""
 Year End Dialog - 3-step wizard for the Year End feature.
 
 Pages:
@@ -111,7 +111,7 @@ class YearEndDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_cancel = QPushButton("Cancel")
         btn_cancel.clicked.connect(self.reject)
-        self.btn_start = QPushButton("▶  Start Year End")
+        self.btn_start = QPushButton("Start Year End")
         self.btn_start.setDefault(True)
         self.btn_start.setObjectName("BtnPrimary")
         self.btn_start.clicked.connect(self._start)
@@ -162,7 +162,7 @@ class YearEndDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_close = QPushButton("Close")
         btn_close.clicked.connect(self.accept)
-        self.btn_switch = QPushButton("🔄  Switch to New Company")
+        self.btn_switch = QPushButton("Switch to New Company")
         self.btn_switch.setObjectName("BtnPrimary")
         self.btn_switch.clicked.connect(self._on_switch)
         btn_row.addWidget(btn_close)
@@ -203,9 +203,9 @@ class YearEndDialog(QDialog):
     def _on_finished(self, success, message, new_path):
         self.new_company_path = new_path
         if success:
-            self.lbl_done_title.setText("<b>Year End Complete ✓</b>")
+            self.lbl_done_title.setText("<b>Year End Complete</b>")
         else:
-            self.lbl_done_title.setText("<b>Year End Failed ✗</b>")
+            self.lbl_done_title.setText("<b>Year End Failed</b>")
         self.lbl_done_msg.setText(message)
         self.btn_switch.setVisible(success and bool(new_path))
         self.stack.setCurrentIndex(2)

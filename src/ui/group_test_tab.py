@@ -166,14 +166,14 @@ class GroupTestTab(QWidget):
         # Top Controls
         top_bar = QHBoxLayout()
         
-        self.btn_load = QPushButton("🔄 Load Preview")
+        self.btn_load = QPushButton("Load Preview")
         self.btn_load.clicked.connect(self.load_data)
         self.btn_load.setFixedHeight(30)
         top_bar.addWidget(self.btn_load)
         
         # Search Bar
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("🔍 Search products...")
+        self.search_input.setPlaceholderText("Search products...")
         self.search_input.setFixedHeight(30)
         self.search_input.setFixedWidth(200)
         self.search_input.textChanged.connect(self.filter_items)

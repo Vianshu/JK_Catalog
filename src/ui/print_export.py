@@ -94,7 +94,7 @@ class PDFPreviewDialog(QDialog):
         self.sidebar.setSpacing(10)
         
         # Primary Action Buttons
-        self.btn_print = QPushButton("🖨️ Print")
+        self.btn_print = QPushButton("Print")
         self.btn_print.setObjectName("PdfPrintBtn")
         self.btn_print.clicked.connect(self.print_document)
         self.sidebar.addWidget(self.btn_print)
@@ -114,17 +114,17 @@ class PDFPreviewDialog(QDialog):
         
         # Zoom Buttons
         
-        self.btn_zoom_in = QPushButton("🔍 Zoom In")
+        self.btn_zoom_in = QPushButton("Zoom In")
         self.btn_zoom_in.setObjectName("PdfZoomBtn")
         self.btn_zoom_in.clicked.connect(self.zoom_in)
         self.sidebar.addWidget(self.btn_zoom_in)
         
-        self.btn_zoom_out = QPushButton("🔎 Zoom Out")
+        self.btn_zoom_out = QPushButton("Zoom Out")
         self.btn_zoom_out.setObjectName("PdfZoomBtn")
         self.btn_zoom_out.clicked.connect(self.zoom_out)
         self.sidebar.addWidget(self.btn_zoom_out)
         
-        self.btn_fit_width = QPushButton("↔️ Fit Width")
+        self.btn_fit_width = QPushButton("Fit Width")
         self.btn_fit_width.setObjectName("PdfZoomBtn")
         self.btn_fit_width.clicked.connect(self.fit_width)
         self.sidebar.addWidget(self.btn_fit_width)
@@ -397,12 +397,12 @@ class PrintExportDialog(QDialog):
         # Buttons
         btn_layout = QHBoxLayout()
         
-        self.btn_preview = QPushButton("🖨️ Print Preview")
+        self.btn_preview = QPushButton("Print Preview")
         self.btn_preview.setFixedHeight(40)
         self.btn_preview.clicked.connect(self.show_print_preview)
         btn_layout.addWidget(self.btn_preview)
         
-        self.btn_pdf = QPushButton("📄 Export PDF")
+        self.btn_pdf = QPushButton("Export PDF")
         self.btn_pdf.setFixedHeight(40)
         self.btn_pdf.clicked.connect(self.export_to_pdf)
         btn_layout.addWidget(self.btn_pdf)
