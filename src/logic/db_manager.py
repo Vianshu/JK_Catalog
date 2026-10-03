@@ -72,7 +72,8 @@ def build_logical_name(company_name=None, db_type=None, company_path=None):
     
     Args:
         company_name: Company display name (e.g., 'HW Divison 082083').
-                      If not provided, extracted from company_path.
+                      If company_path is provided, the folder name is used
+                      as the single canonical source of truth for the DB name.
         db_type: Ignored (kept for backward compatibility).
         company_path: Full path to the company folder. When provided,
                       a short hash is appended to make the DB name unique
@@ -83,20 +84,18 @@ def build_logical_name(company_name=None, db_type=None, company_path=None):
     """
     import hashlib
     
-    # Extract company name from path if not provided
-    if not company_name and company_path:
-        company_name = os.path.basename(os.path.normpath(company_path))
-    
-    base = f"JK_{sanitize_db_name(company_name)}"
-    
+    # When company_path is provided, the folder basename is ALWAYS the single canonical
+    # source of truth for the database identity. This prevents mismatched DB names
+    # when UI passes display names containing slashes, brackets, or alternate casing.
     if company_path:
-        # Normalize path for consistent hashing across runs
+        folder_comp_name = os.path.basename(os.path.normpath(company_path))
+        base = f"JK_{sanitize_db_name(folder_comp_name)}"
         norm_path = os.path.normpath(company_path).lower()
         path_hash = hashlib.md5(norm_path.encode()).hexdigest()[:8]
         return f"{base}_{path_hash}"
     
     # Fallback: no path provided → old-style name (shared DBs like JK_Security)
-    return base
+    return f"JK_{sanitize_db_name(company_name or 'Default')}"
 
 
 # ─── ORIGIN TRACKING ─────────────────────────────────────────────────────────

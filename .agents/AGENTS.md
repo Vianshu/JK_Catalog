@@ -77,3 +77,6 @@ Work through this checklist, then keep going beyond it:
 
 ## 6. UI & Interaction Guidelines
 - **No hover tooltips / hint boxes**: Do not add `setToolTip` or hover tooltip boxes explaining what buttons or UI controls do, unless explicitly requested by the user. Keep the interface clean, fast, and free of unsolicited popup hints.
+
+## 7. Engineering Discipline & Guardrails
+- **Always think before making any assumption or doing anything**: Never jump to conclusions or make unverified assumptions about business rules, existing architecture, or user intent. Always carefully review code comments, explicit requirements, and stated user context before proposing or implementing changes. Never alter intentional design constraints (such as query filters or architectural rules marked as strictly required) without explicit confirmation from the user.

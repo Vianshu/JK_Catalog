@@ -168,6 +168,8 @@ class _VatStockLoadWorker(QThread):
         except Exception as e:
             logger.error(f"[_VatStockLoadWorker] error: {e}", exc_info=True)
             self.error.emit(str(e))
+        finally:
+            get_db_manager().close_thread_connections()
 
 
 class StockUI(QWidget):
@@ -396,7 +398,7 @@ class StockUI(QWidget):
 
     # ── DATA LOADING ─────────────────────────────────────────────────
 
-    def load_data(self, company_path: str, force: bool = False):
+    def load_data(self, company_path: str, company_name: str = None, force: bool = False):
         """Called when company changes or tab opens. Deduped & non-blocking."""
         company_path = company_path or ""
         if not force and company_path and (
@@ -406,7 +408,7 @@ class StockUI(QWidget):
             return
 
         self.current_company_path = company_path
-        self.current_company_name = os.path.basename(company_path) if company_path else ""
+        self.current_company_name = company_name or (os.path.basename(os.path.normpath(company_path)) if company_path else "")
         self.db_name = build_logical_name(self.current_company_name, company_path=self.current_company_path) if company_path else ""
 
         if not self.db_name or not self.db.database_exists(self.db_name):
@@ -599,7 +601,6 @@ class StockUI(QWidget):
                 for it in (c0, c1, c2):
                     it.setBackground(red_bg)
                     it.setForeground(red_fg)
-                c1.setToolTip("Unmapped - click to search and select matching stock item")
             else:
                 normal_fg = QColor("#0f172a")
                 normal_bg = QColor("#ffffff") if row % 2 == 0 else QColor("#f8fafc")

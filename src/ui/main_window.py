@@ -1035,10 +1035,12 @@ class MainWindow(QWidget):
                 self.ledger_row_data_page._data_loaded = True
         elif idx == PageIndex.VAT_BALANCE and hasattr(self, 'vat_balance_page'):
             if getattr(self, 'current_company_path', ''):
-                self.vat_balance_page.load_data(self.current_company_path)
+                comp_name = getattr(self, 'current_company', '') or (os.path.basename(self.current_company_path) if self.current_company_path else '')
+                self.vat_balance_page.load_data(self.current_company_path, company_name=comp_name)
         elif idx == PageIndex.VAT_STOCK and hasattr(self, 'vat_stock_page'):
             if getattr(self, 'current_company_path', ''):
-                self.vat_stock_page.load_data(self.current_company_path)
+                comp_name = getattr(self, 'current_company', '') or (os.path.basename(self.current_company_path) if self.current_company_path else '')
+                self.vat_stock_page.load_data(self.current_company_path, company_name=comp_name)
         elif idx == PageIndex.CATALOG_ON_ACCOUNT and hasattr(self, 'on_account_page'):
             if getattr(self, 'current_company_path', ''):
                 self.on_account_page.load_data(self.current_company_path)
@@ -1343,11 +1345,15 @@ class MainWindow(QWidget):
                 session.register("Full Catalog", self.full_catalog_page,
                     lambda page, path: page.set_company_path(path))
 
-            # Row Data and Ledger Row Data are loaded on-demand when user visits those tabs
+            # Row Data, Ledger Row Data, and VAT pages are loaded on-demand when user visits those tabs
             if hasattr(self, 'row_data_page'):
                 self.row_data_page._data_loaded = False
             if hasattr(self, 'ledger_row_data_page'):
                 self.ledger_row_data_page._data_loaded = False
+            if hasattr(self, 'vat_balance_page'):
+                self.vat_balance_page._last_loaded_path = None
+            if hasattr(self, 'vat_stock_page'):
+                self.vat_stock_page._last_loaded_path = None
             
             # Create progress dialog for load
             progress = QProgressDialog("Loading company data...", None, 0, len(session._registrations), self)
@@ -1965,7 +1971,8 @@ class MainWindow(QWidget):
         if hasattr(self, 'vat_balance_page'):
             self.vat_balance_page.set_current_view(0)
             if self.main_stack.currentIndex() == PageIndex.VAT_BALANCE and getattr(self, 'current_company_path', ''):
-                self.vat_balance_page.load_data(self.current_company_path)
+                comp_name = getattr(self, 'current_company', '') or (os.path.basename(self.current_company_path) if self.current_company_path else '')
+                self.vat_balance_page.load_data(self.current_company_path, company_name=comp_name)
         self.main_stack.setCurrentIndex(PageIndex.VAT_BALANCE)
 
     def handle_vat_stock(self):
@@ -1974,7 +1981,8 @@ class MainWindow(QWidget):
         if hasattr(self, 'vat_stock_page'):
             self.vat_stock_page.set_current_view(0)
             if self.main_stack.currentIndex() == PageIndex.VAT_STOCK and getattr(self, 'current_company_path', ''):
-                self.vat_stock_page.load_data(self.current_company_path)
+                comp_name = getattr(self, 'current_company', '') or (os.path.basename(self.current_company_path) if self.current_company_path else '')
+                self.vat_stock_page.load_data(self.current_company_path, company_name=comp_name)
         self.main_stack.setCurrentIndex(PageIndex.VAT_STOCK)
 
     def get_current_vat_table(self) -> tuple[str, QTableWidget | None]:
