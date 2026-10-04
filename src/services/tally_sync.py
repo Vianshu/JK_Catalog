@@ -873,6 +873,14 @@ def _parse_xml_vouchers(
     cleaned_xml = re.sub(r'&#(\d+);', _clean_entities, raw_xml)
     cleaned_xml = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', cleaned_xml)
 
+    # Fix unescaped ampersands in party names or text fields (e.g. M/S A & B -> M/S A &amp; B)
+    cleaned_xml = re.sub(r'&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)', '&amp;', cleaned_xml)
+
+    # Strip unbound namespace prefixes from tags (e.g. <UDF:VATDEALERTYPE> -> <VATDEALERTYPE>)
+    # and attributes to prevent Expat "unbound prefix" fatal parse error
+    cleaned_xml = re.sub(r'(</?)[a-zA-Z0-9_.-]+:([a-zA-Z0-9_.-]+)', r'\1\2', cleaned_xml)
+    cleaned_xml = re.sub(r'(\s+)[a-zA-Z0-9_.-]+:([a-zA-Z0-9_.-]+)=', r'\1\2=', cleaned_xml)
+
     try:
         root = ET.fromstring(cleaned_xml)
     except Exception as e:

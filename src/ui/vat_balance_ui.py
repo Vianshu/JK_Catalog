@@ -3038,7 +3038,12 @@ class BalanceUI(QWidget):
         elif error:
             QMessageBox.warning(self, "Sync Issue", f"Failed to sync Internal Ledger:\n{error}")
         else:
-            QMessageBox.information(self, "Sync Complete", f"Synced {count} internal ledger entries.")
+            debtors = load_internal_debtors(self.db_name) if self.db_name else []
+            d_count = len(debtors)
+            QMessageBox.information(
+                self, "Sync Complete",
+                f"Synced {count} total internal ledgers from Tally ({d_count} Sundry Debtors)."
+            )
             self.load_data(self.current_company_path, company_name=self.current_company_name, force=True)
 
     def sync_vat_ledger(self):
@@ -3086,9 +3091,13 @@ class BalanceUI(QWidget):
         elif error:
             QMessageBox.warning(self, "Sync Issue", f"Failed to sync VAT Ledgers:\n{error}")
         else:
+            debtors = load_vat_debtors(self.db_name, self.active_vat_company) if self.db_name and self.active_vat_company else []
+            d_count = len(debtors)
+            c_count = count - d_count
+            c_info = f", {c_count} Creditors" if c_count > 0 else ""
             QMessageBox.information(
                 self, "Sync Complete",
-                f"Successfully synced {count} VAT ledger entries for '{self.active_vat_company}'."
+                f"Successfully synced {count} total VAT ledgers ({d_count} Debtors{c_info}) for '{self.active_vat_company}'."
             )
             self.load_data(self.current_company_path, company_name=self.current_company_name, force=True)
 
