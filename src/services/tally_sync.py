@@ -440,6 +440,7 @@ class TallyService:
                 if not self.connect():
                     raise Exception("Could not connect to Tally")
 
+            open_comps = []
             if company_name:
                 # Guard: cancel() may have fired between connect() and here
                 self._check_cancelled("before company check")
@@ -450,7 +451,7 @@ class TallyService:
                 matched_comp = next((c for c in open_comps if _are_company_names_matching(c, company_name)), None)
                 if not matched_comp:
                     raise Exception(
-                        f"Company '{company_name}' is not open in Tally.\n"
+                        f"Company '{company_name}' is not open in Tally.\n\n"
                         f"Open companies in Tally: {', '.join(open_comps)}\n"
                         f"Please open '{company_name}' in Tally and try again."
                     )
@@ -489,7 +490,17 @@ class TallyService:
             df = pd.read_sql(sql, self.connection)
 
             if df.empty:
-                return pd.DataFrame()
+                open_str = f"Open companies in Tally: {', '.join(open_comps)}.\n\n" if len(open_comps) > 1 else ""
+                hint_str = (
+                    f"'{company_name}' is open in Tally, but is not the active (top) company.\n"
+                    f"Please switch to '{company_name}' in Tally (press F3 to select it), then try syncing again."
+                    if len(open_comps) > 1
+                    else f"Check that '{company_name or 'the company'}' contains stock items in Tally."
+                )
+                raise Exception(
+                    f"No stock items received from Tally for '{company_name or 'Active'}'.\n\n"
+                    f"{open_str}{hint_str}"
+                )
 
             self._check_cancelled("after Tally fetch")
 
@@ -507,7 +518,7 @@ class TallyService:
             # the whole chain correctly surfaces as 'cancelled', not as an error.
             if self.cancelled:
                 raise InterruptedError("Tally sync cancelled during ODBC fetch")
-            raise Exception(f"Tally data fetch failed: {e}")
+            raise e
 
         finally:
             if self.connection:
@@ -1226,7 +1237,14 @@ def fetch_tally_ledger_data(company_name=None, company_path=None, service=None):
         ledger_df = pd.read_sql(ledger_sql, service.connection)
 
         if ledger_df.empty:
-            return 0, "No ledger data received from Tally."
+            open_str = f"Open companies in Tally: {', '.join(open_comps)}.\n\n" if ('open_comps' in locals() and len(open_comps) > 1) else ""
+            hint_str = (
+                f"'{company_name}' is open in Tally, but is not the active (top) company.\n"
+                f"Please switch to '{company_name}' in Tally (press F3 to select it), then try syncing again."
+                if ('open_comps' in locals() and len(open_comps) > 1)
+                else f"Check that '{company_name or 'the company'}' contains ledgers in Tally."
+            )
+            return 0, f"No ledger data received from Tally for '{company_name or 'Active'}'.\n\n{open_str}{hint_str}"
 
         service._check_cancelled("after ledger fetch")
 
@@ -1535,7 +1553,14 @@ def fetch_tally_vat_ledger_data(vat_company_name: str, company_name=None, compan
         ledger_df = pd.read_sql(vat_sql, service.connection)
 
         if ledger_df.empty:
-            return 0, f"No ledger data received from Tally for '{vat_company}'."
+            open_str = f"Open companies in Tally: {', '.join(open_comps)}.\n\n" if ('open_comps' in locals() and len(open_comps) > 1) else ""
+            hint_str = (
+                f"'{vat_company}' is open in Tally, but is not the active (top) company.\n"
+                f"Please switch to '{vat_company}' in Tally (press F3 to select it), then try syncing again."
+                if ('open_comps' in locals() and len(open_comps) > 1)
+                else f"Check that '{vat_company}' contains ledgers in Tally."
+            )
+            return 0, f"No ledger data received from Tally for '{vat_company}'.\n\n{open_str}{hint_str}"
 
         service._check_cancelled("after VAT ledger fetch")
 
