@@ -133,16 +133,25 @@ def check_data_origin(data_path):
         return {"is_copy": False, "original_path": "", "current_path": current}
 
 
+_saved_data_origins = set()
+
+
 def save_data_origin(data_path):
     """Save the current path as the origin in .jk_origin.json.
     
     Called after first-time setup or after the user acknowledges a copy.
     """
+    if not data_path:
+        return
+    norm_path = os.path.normpath(data_path)
+    if norm_path in _saved_data_origins:
+        return
     origin_file = os.path.join(data_path, ORIGIN_FILE)
     try:
-        data = {"data_path": os.path.normpath(data_path)}
+        data = {"data_path": norm_path}
         with open(origin_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
+        _saved_data_origins.add(norm_path)
         logger.info(f"Saved data origin: {data_path}")
     except Exception as e:
         logger.warning(f"Could not save origin file: {e}")
@@ -190,6 +199,7 @@ class DBManager:
         self._lock = threading.Lock()  # Protects shared dict mutations
         self._db_locks = {}  # {db_name: Lock} — per-database locks reduce contention
         self._all_connections = {}  # {cache_key: conn} — global registry for close_all()
+        self._lock_conns = {}  # {lock_name: conn} — persistent connections for application locks
         self._load_server_config()
         self._ensure_login()
 
@@ -853,6 +863,7 @@ class DBManager:
         conn = self.get_connection(logical_name)
         if not conn:
             return False
+        assert "'" not in table_name and "]" not in table_name, f"Invalid table_name: {table_name}"
         try:
             cursor = conn.cursor()
             # Use native SQL Server IF NOT EXISTS to avoid race conditions (fixes 42S01)
@@ -961,15 +972,15 @@ class DBManager:
             False — lock is held by another session (or error).
         """
         try:
-            # Open a dedicated, persistent connection for this lock.
-            # Keep it alive on self so release_app_lock can use the same session.
+            # Open a dedicated, persistent connection for this specific lock.
+            # Stored in self._lock_conns[lock_name] so release_app_lock can use the same session.
             conn_str = self._build_connection_string("master")
-            self._lock_conn = pyodbc.connect(conn_str, autocommit=True)
+            conn = pyodbc.connect(conn_str, autocommit=True)
         except Exception as e:
             logger.warning(f"[AppLock] acquire_app_lock('{lock_name}') connect error: {e}")
             return False
         try:
-            cursor = self._lock_conn.cursor()
+            cursor = conn.cursor()
             # sp_getapplock returns:
             #   0 = granted synchronously
             #   1 = granted after waiting
@@ -989,26 +1000,33 @@ class DBManager:
             if rc not in (0, 1):
                 # Could not acquire — close the connection immediately so we don't leak it.
                 try:
-                    self._lock_conn.close()
+                    conn.close()
                 except Exception:
                     pass
-                self._lock_conn = None
                 return False
+
+            with self._lock:
+                old_conn = self._lock_conns.pop(lock_name, None)
+                if old_conn:
+                    try:
+                        old_conn.close()
+                    except Exception:
+                        pass
+                self._lock_conns[lock_name] = conn
             return True
         except Exception as e:
             logger.warning(f"[AppLock] acquire_app_lock('{lock_name}') error: {e}")
             try:
-                self._lock_conn.close()
+                conn.close()
             except Exception:
                 pass
-            self._lock_conn = None
             return False
 
     def release_app_lock(self, lock_name: str) -> bool:
         """Release a previously acquired SQL Server application lock.
 
         Must be called on the same instance (and same thread) as acquire_app_lock.
-        Uses the persistent _lock_conn kept open by acquire_app_lock, then closes it.
+        Uses the persistent connection kept open in self._lock_conns, then closes it.
 
         Args:
             lock_name: Must match the name passed to acquire_app_lock.
@@ -1016,7 +1034,8 @@ class DBManager:
         Returns:
             True if released successfully, False on error.
         """
-        conn = getattr(self, '_lock_conn', None)
+        with self._lock:
+            conn = self._lock_conns.pop(lock_name, None)
         if not conn:
             # Nothing to release — acquire was never called or already cleaned up.
             return False
@@ -1036,7 +1055,6 @@ class DBManager:
                 conn.close()
             except Exception:
                 pass
-            self._lock_conn = None
 
     # ─── UTILITY ──────────────────────────────────────────────────────────────
 

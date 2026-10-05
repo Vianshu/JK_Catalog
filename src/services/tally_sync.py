@@ -63,10 +63,6 @@ def _are_company_names_matching(tally_name: str, target_name: str) -> bool:
     n2 = _normalize_comp_name_for_match(tgt_clean)
     if n1 == n2:
         return True
-    b1 = re.sub(r'\d+', '', n1)
-    b2 = re.sub(r'\d+', '', n2)
-    if b1 and b1 == b2:
-        return True
     return False
 
 
@@ -342,10 +338,10 @@ class TallyService:
 
             cursor = conn.cursor()
             
-            # Drop staging table if leftover from a previous failed sync
-            staging_table = "stock_items_staging"
+            # Use a unique staging table per sync to eliminate multi-user collision
+            staging_table = f"stock_items_staging_{uuid.uuid4().hex[:8]}"
             try:
-                cursor.execute(f"IF OBJECT_ID('dbo.{staging_table}', 'U') IS NOT NULL DROP TABLE dbo.[{staging_table}]")
+                cursor.execute(f"IF OBJECT_ID('dbo.[{staging_table}]', 'U') IS NOT NULL DROP TABLE dbo.[{staging_table}]")
                 conn.commit()
             except Exception:
                 pass
@@ -426,20 +422,30 @@ class TallyService:
             return True
 
         except InterruptedError:
-            # Cancellation — clean up staging if it exists
-            logger.info("Tally sync cancelled — cleaning up")
-            try:
-                conn = self.db.get_connection(db_name)
-                if conn:
-                    cursor = conn.cursor()
-                    cursor.execute("IF OBJECT_ID('dbo.stock_items_staging', 'U') IS NOT NULL DROP TABLE dbo.stock_items_staging")
-                    conn.commit()
-            except Exception:
-                pass
+            # Cancellation -- clean up staging if it exists
+            logger.info("Tally sync cancelled -- cleaning up")
+            if staging_table:
+                try:
+                    conn = self.db.get_connection(db_name)
+                    if conn:
+                        cursor = conn.cursor()
+                        cursor.execute(f"IF OBJECT_ID('dbo.[{staging_table}]', 'U') IS NOT NULL DROP TABLE dbo.[{staging_table}]")
+                        conn.commit()
+                except Exception:
+                    pass
             raise
 
         except Exception as e:
             logger.error(f"SQL Server save error: {e}", exc_info=True)
+            if staging_table:
+                try:
+                    conn = self.db.get_connection(db_name)
+                    if conn:
+                        cursor = conn.cursor()
+                        cursor.execute(f"IF OBJECT_ID('dbo.[{staging_table}]', 'U') IS NOT NULL DROP TABLE dbo.[{staging_table}]")
+                        conn.commit()
+                except Exception:
+                    pass
             raise e
 
     def fetch_stock_items(self, company_name=None, company_path=None):

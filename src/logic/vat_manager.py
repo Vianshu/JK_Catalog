@@ -64,6 +64,7 @@ def ensure_vat_tables(db, db_name: str):
             Overdue_Bills FLOAT DEFAULT 0,
             On_Account_Value FLOAT DEFAULT 0,
             CashInFlow FLOAT DEFAULT 0,
+            CashOutFlow FLOAT DEFAULT 0,
             Debit_Totals FLOAT DEFAULT 0,
             Credit_Totals FLOAT DEFAULT 0,
             Performance FLOAT DEFAULT 0,
@@ -244,6 +245,8 @@ def ensure_vat_tables(db, db_name: str):
                 ("Credit_Limit", "FLOAT DEFAULT 0"),
                 ("Overdue_Bills", "FLOAT DEFAULT 0"),
                 ("On_Account_Value", "FLOAT DEFAULT 0"),
+                ("CashInFlow", "FLOAT DEFAULT 0"),
+                ("CashOutFlow", "FLOAT DEFAULT 0"),
                 ("Performance", "FLOAT DEFAULT 0"),
                 ("This_Qtr_Balance", "FLOAT DEFAULT 0"),
                 ("Prev_Qtr_Balance", "FLOAT DEFAULT 0"),
@@ -251,6 +254,7 @@ def ensure_vat_tables(db, db_name: str):
                 ("Debit_Totals", "FLOAT DEFAULT 0"),
                 ("Credit_Totals", "FLOAT DEFAULT 0"),
             ]
+            # Safe: col_name and col_def are sourced from hardcoded vat_cols_to_add list above
             for col_name, col_def in vat_cols_to_add:
                 cur.execute(f"""
                     IF NOT EXISTS (
@@ -423,7 +427,6 @@ def load_internal_debtors(db_name: str) -> list[dict]:
         cols = [desc[0] for desc in cur.description]
         rows = [dict(zip(cols, row)) for row in cur.fetchall()]
         cur.close()
-        conn.commit()
         return rows
     except Exception as e:
         try:
@@ -470,7 +473,6 @@ def load_vat_debtors(db_name: str, vat_company: str) -> list[dict]:
         cols = [desc[0] for desc in cur.description]
         rows = [dict(zip(cols, row)) for row in cur.fetchall()]
         cur.close()
-        conn.commit()
         return rows
     except Exception as e:
         try:
@@ -526,27 +528,17 @@ def _load_debtor_names_and_aliases(cur, table_name: str, vat_company: str = None
 
 # ─── MAPPING LOGIC (LEDGER & STOCK) ──────────────────────────────────────────
 
-def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
-    """Load all mapping groups for the given VAT company.
-    
-    Persists indefinitely across company switches and syncs.
-    Fast, read-only: does NOT rematch data on every read.
-    Returns groups with constituent VAT ledgers, internal ledgers, serial numbers,
-    closing balances (without decimals), classifications, and unmapped status.
-    Unmatched (1 x 0) groups appear at the TOP, followed by matched groups,
-    and default None VAT (Serial 0) at the end.
-    """
+def cleanup_invalid_mappings(db_name: str, vat_company: str) -> None:
+    """Clean up invalid rows and ensure group_id is populated for stored mappings."""
     if not vat_company:
-        return []
+        return
     db = get_db_manager()
     ensure_vat_tables(db, db_name)
     conn = db.get_connection(db_name)
     if not conn:
-        return []
+        return
     try:
         cur = conn.cursor()
-
-        # 1. Clean up invalid rows where vat_ledger_name is empty/null or belongs to excluded 'Other/Othere Account' subgroup
         cur.execute("""
             DELETE FROM dbo.vat_ledger_mapping
             WHERE vat_company = ?
@@ -572,15 +564,42 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
               )
         """, (vat_company, vat_company))
 
-        # 2. Ensure group_id is populated for all existing rows
         cur.execute("""
             UPDATE dbo.vat_ledger_mapping
             SET group_id = id
             WHERE vat_company = ? AND group_id IS NULL
         """, (vat_company,))
         conn.commit()
+        cur.close()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.error(f"[cleanup_invalid_mappings] error: {e}", exc_info=True)
 
-        # 3. Load closing balances and aliases for VAT debtors (fast lookup)
+
+def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
+    """Load all mapping groups for the given VAT company.
+    
+    Persists indefinitely across company switches and syncs.
+    Fast, read-only: does NOT rematch or mutate data on every read.
+    Returns groups with constituent VAT ledgers, internal ledgers, serial numbers,
+    closing balances (without decimals), classifications, and unmapped status.
+    Unmatched (1 x 0) groups appear at the TOP, followed by matched groups,
+    and default None VAT (Serial 0) at the end.
+    """
+    if not vat_company:
+        return []
+    db = get_db_manager()
+    ensure_vat_tables(db, db_name)
+    conn = db.get_connection(db_name)
+    if not conn:
+        return []
+    try:
+        cur = conn.cursor()
+
+        # 1. Load closing balances and aliases for VAT debtors (fast lookup)
         cur.execute("""
             SELECT LTRIM(RTRIM(Name)) AS Name, 
                    LTRIM(RTRIM(ISNULL(Alias, ''))) AS Alias,
@@ -640,7 +659,8 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
                    is_manual, group_id, serial_no, ISNULL(classification, '')
             FROM dbo.vat_ledger_mapping
             WHERE vat_company = ?
-            ORDER BY group_id, id
+              AND vat_ledger_name IS NOT NULL AND LTRIM(RTRIM(vat_ledger_name)) <> ''
+            ORDER BY ISNULL(group_id, id), id
         """, (vat_company,))
         rows = cur.fetchall()
 
@@ -756,7 +776,6 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
         matched_groups.sort(key=lambda r: (r["serial_no"] or 999999, r["vat_ledger"].lower()))
         none_vat_groups.sort(key=lambda r: (r["serial_no"] or 0, r["vat_ledger"].lower()))
 
-        conn.commit()
         cur.close()
         return unmapped_groups + matched_groups + none_vat_groups
 
@@ -2214,8 +2233,8 @@ def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str) ->
             (
                 LOWER(LTRIM(RTRIM(r.[Group]))) = 'sundry creditors'
                 OR LOWER(LTRIM(RTRIM(r.Sub_Group))) = 'sundry creditors'
-                OR LOWER(r.[Group]) LIKE '%credit%'
-                OR LOWER(r.Sub_Group) LIKE '%credit%'
+                OR LOWER(r.[Group]) LIKE '%creditor%'
+                OR LOWER(r.Sub_Group) LIKE '%creditor%'
             )
         """
 
@@ -2305,7 +2324,6 @@ def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str) ->
                 "expected_opening": exp_op,
                 "expected_closing": exp_cl,
             })
-        conn.commit()
         cur.close()
         return results
 
@@ -2332,6 +2350,7 @@ def save_vat_conf_field(db_name: str, vat_company: str, group_type: str, ledger_
         "expected_opening": "expected_opening",
         "expected_closing": "expected_closing",
     }
+    # Safe: col is strictly checked against allowed_fields whitelist dictionary and escaped with [{col}]
     col = allowed_fields.get(field_name)
     if not col or not vat_company or not ledger_name:
         return

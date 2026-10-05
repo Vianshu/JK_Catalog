@@ -2146,7 +2146,7 @@ class MainWindow(QWidget):
         if elapsed >= _12H:
             logger.info(
                 f"[AutoBackup] Last backup for data path '{data_key}' was "
-                f"{elapsed/3600:.1f}h ago — running startup backup."
+                f"{elapsed/3600:.1f}h ago -- running startup backup."
             )
             # Delay 3 s so the UI is fully ready before the backup thread blocks disk I/O
             from PyQt6.QtCore import QTimer as _QT
@@ -2154,7 +2154,7 @@ class MainWindow(QWidget):
         else:
             logger.info(
                 f"[AutoBackup] Data path '{data_key}' backed up "
-                f"{elapsed/3600:.1f}h ago — no startup backup needed."
+                f"{elapsed/3600:.1f}h ago -- no startup backup needed."
             )
 
     # ─── BACKUP WORKER ────────────────────────────────────────────────────────
@@ -2215,7 +2215,7 @@ class MainWindow(QWidget):
         data_key = getattr(self, '_pending_backup_key', '')
 
         if msg == "skipped:locked":
-            logger.info(f"[AutoBackup] Skipped — another user is already backing up.")
+            logger.info(f"[AutoBackup] Skipped -- another user is already backing up.")
             self._show_backup_toast("Auto-backup skipped (another user is running it)", running=False)
         elif success:
             logger.info(f"[AutoBackup] Backup complete for data path '{data_key}'.")
@@ -2278,12 +2278,12 @@ class MainWindow(QWidget):
           4. Toast bar            — non-intrusive progress indicator at the bottom.
         """
         if getattr(self, '_backup_worker', None) is not None:
-            logger.info("[AutoBackup] Backup already in progress — skipping.")
+            logger.info("[AutoBackup] Backup already in progress -- skipping.")
             return
 
         company_path = getattr(self, 'current_company_path', '')
         if not company_path or not os.path.isdir(company_path):
-            logger.warning("[AutoBackup] Skipped — no company loaded.")
+            logger.warning("[AutoBackup] Skipped -- no company loaded.")
             return
 
         # Load shared data-path backup folder
@@ -2297,7 +2297,14 @@ class MainWindow(QWidget):
             logger.warning(f"[AutoBackup] Error getting data backup path: {e}")
 
         if not backup_folder or not os.path.isdir(backup_folder):
-            logger.warning("[AutoBackup] Skipped — backup folder not set or missing.")
+            logger.warning("[AutoBackup] Skipped -- backup folder not set or missing.")
+            if not getattr(self, "_backup_path_warned", False):
+                self._backup_path_warned = True
+                try:
+                    self._show_backup_toast("Notice: Backup path not configured. Set it in Settings > Backup.", running=False)
+                    self._hide_backup_toast_after(8000)
+                except Exception:
+                    pass
             return
 
         from datetime import datetime
@@ -2328,7 +2335,7 @@ class MainWindow(QWidget):
             existing = [f for f in os.listdir(backup_folder)
                         if f.startswith(prefix) and f.endswith(".jkbackup")]
         if existing:
-            logger.info(f"[AutoBackup] This half-day's backup already exists for '{data_key}': {existing[0]} — skipping.")
+            logger.info(f"[AutoBackup] This half-day's backup already exists for '{data_key}': {existing[0]} -- skipping.")
             return
 
         timestamp   = datetime.now().strftime("%Y-%m-%d_%H-%M")
@@ -3200,7 +3207,7 @@ class MainWindow(QWidget):
                     worker.finished.disconnect(_close_when_done)
                 except (TypeError, RuntimeError):
                     pass
-                logger.info(f"[AutoBackup] Backup finished (success={success}) — closing app now.")
+                logger.info(f"[AutoBackup] Backup finished (success={success}) -- closing app now.")
                 # Use QApplication.quit() so the event loop exits cleanly
                 from PyQt6.QtWidgets import QApplication
                 QApplication.quit()

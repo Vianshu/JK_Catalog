@@ -227,7 +227,6 @@ def main():
 
     # --- Loading strip widgets (image is 140x182; loading area starts at y=146) ---
     from PyQt6.QtWidgets import QProgressBar, QLabel
-    from PyQt6.QtGui import QFont, QColor
 
     # Status text — centred, 8px below logo
     status_label = QLabel("Initializing Core Modules...", splash)
@@ -273,8 +272,7 @@ def main():
 
     # --- Enforce Fusion Style (Cross-platform consistency) ---
     from PyQt6.QtWidgets import QStyleFactory
-    from PyQt6.QtGui import QPalette, QColor
-    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QPalette
 
     app.setStyle(QStyleFactory.create("Fusion"))
 

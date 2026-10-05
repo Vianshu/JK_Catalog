@@ -1,7 +1,7 @@
 ; ============================================================
 ; JK Catalog Multi — Inno Setup Installer Script
 ; ============================================================
-; Version:  1.0.0 (First Release)
+; Version:  1.0.1
 ; Built:    May 2026
 ; Publisher: JK Hardware
 ;

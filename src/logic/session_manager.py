@@ -128,6 +128,11 @@ class SessionManager:
         return self._current_company
     
     def deactivate(self):
-        """Clear the current session."""
+        """Clear the current session and clean up thread-cached DB connections."""
         self._current_company = None
         self._current_path = None
+        try:
+            from src.logic.db_manager import get_db_manager
+            get_db_manager().close_thread_connections()
+        except Exception as e:
+            logger.warning(f"Error closing thread connections on deactivate: {e}")
