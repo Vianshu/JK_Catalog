@@ -1,9 +1,11 @@
 import json
 import os
 import re
+import uuid
 import warnings
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pyodbc
 import urllib.parse
@@ -71,6 +73,7 @@ def _are_company_names_matching(tally_name: str, target_name: str) -> bool:
 class TallyService:
     def __init__(self):
         self.connection = None
+        self.port = 9000
         self.cancelled = False  # Cancellation flag for background threads
         self.last_error = ""
 
@@ -108,6 +111,7 @@ class TallyService:
         """
         try:
             user_port = get_tally_port()
+            self.port = user_port
             logger.info(f"[TALLY CONNECT] Connecting strictly to user-configured port: {user_port}")
 
             # Strictly use the user-configured port — never attempt or fall back to other ports
@@ -700,449 +704,9 @@ def resolve_company_fiscal_dates(service=None, company_name=None, from_date=None
     return f"{today.year}0101", f"{today.year}1231"
 
 
-def _parse_json_vouchers(data, start_date=None, end_date=None, party_case_map=None, sales_map=None, purchase_map=None, receipts_map=None, payments_map=None):
-    """Extract Sales, Purchase, Receipts, Payments voucher totals from Tally JsonEx/JSON output.
-    
-    Operates directly on native Python dict/list structures produced by json.loads()
-    with zero XML overhead, minimal memory allocation, and maximum throughput.
-    """
-    if sales_map is None: sales_map = {}
-    if purchase_map is None: purchase_map = {}
-    if receipts_map is None: receipts_map = {}
-    if payments_map is None: payments_map = {}
-    party_case_map = party_case_map or {}
-
-    vouchers = []
-
-    def _find_vouchers(obj):
-        if isinstance(obj, list):
-            for item in obj:
-                _find_vouchers(item)
-        elif isinstance(obj, dict):
-            cleaned_keys = {re.sub(r'[^A-Z0-9]', '', k.upper()): k for k in obj.keys()}
-            has_type = any(k in cleaned_keys for k in ("VOUCHERTYPENAME", "VCHTYPE", "PARTYLEDGERNAME", "VOUCHERNUMBER", "VCHNUM"))
-            has_entries = any("LEDGERENTRIES" in k for k in cleaned_keys)
-            if has_type and has_entries:
-                vouchers.append(obj)
-                return
-            for k, v in obj.items():
-                if "VOUCHER" in k.upper() and isinstance(v, (list, dict)):
-                    _find_vouchers(v)
-                elif isinstance(v, (list, dict)):
-                    _find_vouchers(v)
-
-    _find_vouchers(data)
-
-    def _get_val(d, *possible_keys, default=""):
-        d_clean = {re.sub(r'[^a-z0-9]', '', k.lower()): v for k, v in d.items()}
-        for pk in possible_keys:
-            clean_k = re.sub(r'[^a-z0-9]', '', pk.lower())
-            if clean_k in d_clean:
-                val = d_clean[clean_k]
-                return str(val).strip() if val is not None else default
-        return default
-
-    def _get_num_val(d, *possible_keys, default=0.0):
-        d_clean = {re.sub(r'[^a-z0-9]', '', k.lower()): v for k, v in d.items()}
-        for pk in possible_keys:
-            clean_k = re.sub(r'[^a-z0-9]', '', pk.lower())
-            if clean_k in d_clean:
-                val = d_clean[clean_k]
-                if isinstance(val, (int, float)):
-                    return abs(float(val))
-                try:
-                    return abs(float(str(val).replace(",", "").strip()))
-                except (ValueError, TypeError):
-                    return default
-        return default
-
-    def _get_entries(vch):
-        all_entries = None
-        ledger_entries = None
-        for k, v in vch.items():
-            k_clean = re.sub(r'[^a-z0-9]', '', k.lower())
-            if "allledgerentries" in k_clean:
-                all_entries = v if isinstance(v, list) else [v]
-            elif "ledgerentries" in k_clean:
-                ledger_entries = v if isinstance(v, list) else [v]
-        if all_entries is not None:
-            return all_entries
-        if ledger_entries is not None:
-            return ledger_entries
-        return []
-
-    for vch in vouchers:
-        vch_date = _get_val(vch, "DATE")
-        if vch_date and start_date and end_date:
-            clean_date = "".join(c for c in vch_date if c.isdigit())
-            if len(clean_date) == 8:
-                if not (start_date <= clean_date <= end_date):
-                    continue
-
-        is_canc = _get_val(vch, "ISCANCELLED").lower() == "yes"
-        is_opt = _get_val(vch, "ISOPTIONAL").lower() == "yes"
-        is_del = _get_val(vch, "ISDELETED").lower() == "yes"
-        if is_canc or is_opt or is_del:
-            continue
-
-        vtype = _get_val(vch, "VOUCHERTYPENAME", "VCHTYPE").lower()
-        header_party = _get_val(vch, "PARTYLEDGERNAME")
-
-        if any(ex in vtype for ex in ("order", "note", "payroll", "rejection", "attendance", "memo", "physical stock")):
-            continue
-
-        is_sale = ("sale" in vtype or "invoice" in vtype) and "purch" not in vtype
-        is_purchase = "purch" in vtype
-        is_receipt = "receipt" in vtype or "rcpt" in vtype
-        is_payment = "pay" in vtype or "pymt" in vtype
-
-        if not (is_sale or is_purchase or is_receipt or is_payment):
-            continue
-
-        entries = _get_entries(vch)
-        party_found = False
-
-        for le in entries:
-            if not isinstance(le, dict):
-                continue
-            lname = _get_val(le, "LEDGERNAME", "NAME")
-            amt = _get_num_val(le, "AMOUNT", "BILLEDAMOUNT", default=0.0)
-            is_party_tag = _get_val(le, "ISPARTYLEDGER").lower() == "yes"
-
-            if not lname or amt == 0.0:
-                continue
-
-            matched_party = lname
-            is_known = False
-            if party_case_map:
-                canon = party_case_map.get(lname.lower())
-                if canon:
-                    is_known = True
-                    matched_party = canon
-
-            is_party = is_known or is_party_tag or (header_party and lname.lower() == header_party.lower())
-            if not is_party and not party_case_map:
-                lower_l = lname.lower()
-                non_parties = ("cash", "bank", "vat", "tax", "discount", "round off", "sales", "purchase", "cgst", "sgst", "igst")
-                if not any(np in lower_l for np in non_parties):
-                    is_party = True
-
-            if is_party:
-                party_found = True
-                if is_sale:
-                    sales_map[matched_party] = round(sales_map.get(matched_party, 0.0) + amt, 2)
-                elif is_purchase:
-                    purchase_map[matched_party] = round(purchase_map.get(matched_party, 0.0) + amt, 2)
-                elif is_receipt:
-                    receipts_map[matched_party] = round(receipts_map.get(matched_party, 0.0) + amt, 2)
-                elif is_payment:
-                    payments_map[matched_party] = round(payments_map.get(matched_party, 0.0) + amt, 2)
-
-        if not party_found and header_party:
-            canon_header = party_case_map.get(header_party.lower(), header_party) if party_case_map else header_party
-            max_amt = 0.0
-            for le in entries:
-                if isinstance(le, dict):
-                    max_amt = max(max_amt, _get_num_val(le, "AMOUNT", default=0.0))
-            if max_amt > 0:
-                if is_sale:
-                    sales_map[canon_header] = round(sales_map.get(canon_header, 0.0) + max_amt, 2)
-                elif is_purchase:
-                    purchase_map[canon_header] = round(purchase_map.get(canon_header, 0.0) + max_amt, 2)
-                elif is_receipt:
-                    receipts_map[canon_header] = round(receipts_map.get(canon_header, 0.0) + max_amt, 2)
-                elif is_payment:
-                    payments_map[canon_header] = round(payments_map.get(canon_header, 0.0) + max_amt, 2)
-
-    return sales_map, purchase_map, receipts_map, payments_map
 
 
-def _parse_xml_vouchers(
-    raw_xml: str,
-    start_date: str = None,
-    end_date: str = None,
-    party_case_map: dict = None,
-    sales_map: dict = None,
-    purchase_map: dict = None,
-    receipts_map: dict = None,
-    payments_map: dict = None,
-):
-    """Parse Tally TDL Collection XML export into sales, purchase, receipts, and payments maps."""
-    if sales_map is None: sales_map = {}
-    if purchase_map is None: purchase_map = {}
-    if receipts_map is None: receipts_map = {}
-    if payments_map is None: payments_map = {}
 
-    import xml.etree.ElementTree as ET
-
-    def _clean_entities(match):
-        code = int(match.group(1))
-        if code in (9, 10, 13) or (32 <= code <= 0xD7FF) or (0xE000 <= code <= 0xFFFD):
-            return chr(code)
-        return ""
-
-    cleaned_xml = re.sub(r'&#(\d+);', _clean_entities, raw_xml)
-    cleaned_xml = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', cleaned_xml)
-
-    # Fix unescaped ampersands in party names or text fields (e.g. M/S A & B -> M/S A &amp; B)
-    cleaned_xml = re.sub(r'&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)', '&amp;', cleaned_xml)
-
-    # Strip unbound namespace prefixes from tags (e.g. <UDF:VATDEALERTYPE> -> <VATDEALERTYPE>)
-    # and attributes to prevent Expat "unbound prefix" fatal parse error
-    cleaned_xml = re.sub(r'(</?)[a-zA-Z0-9_.-]+:([a-zA-Z0-9_.-]+)', r'\1\2', cleaned_xml)
-    cleaned_xml = re.sub(r'(\s+)[a-zA-Z0-9_.-]+:([a-zA-Z0-9_.-]+)=', r'\1\2=', cleaned_xml)
-
-    try:
-        root = ET.fromstring(cleaned_xml)
-    except Exception as e:
-        logger.warning(f"[tally_sync] Voucher XML parse error: {e}")
-        return sales_map, purchase_map, receipts_map, payments_map
-
-    vch_elements = root.findall(".//VOUCHER")
-
-    for vch in vch_elements:
-        v_date = vch.findtext("DATE", "").strip()
-        if v_date and start_date and end_date:
-            clean_date = "".join(c for c in v_date if c.isdigit())
-            if len(clean_date) == 8 and not (start_date <= clean_date <= end_date):
-                continue
-
-        is_canc = vch.findtext("ISCANCELLED", "").strip().lower() == "yes"
-        is_opt = vch.findtext("ISOPTIONAL", "").strip().lower() == "yes"
-        is_del = vch.findtext("ISDELETED", "").strip().lower() == "yes"
-        if is_canc or is_opt or is_del:
-            continue
-
-        vtype = vch.findtext("VOUCHERTYPENAME", "").strip().lower()
-        if any(ex in vtype for ex in ("order", "note", "payroll", "rejection", "attendance", "memo", "physical stock")):
-            continue
-
-        is_sale = ("sale" in vtype or "invoice" in vtype) and "purch" not in vtype
-        is_purchase = "purch" in vtype
-        is_receipt = "receipt" in vtype or "rcpt" in vtype
-        is_payment = "pay" in vtype or "pymt" in vtype
-
-        if not (is_sale or is_purchase or is_receipt or is_payment):
-            continue
-
-        header_party = vch.findtext("PARTYLEDGERNAME", "").strip()
-        party_found = False
-
-        entries = []
-        for child in vch:
-            if child.tag in ("ALLLEDGERENTRIES.LIST", "LEDGERENTRIES.LIST"):
-                lname = child.findtext("LEDGERNAME", "").strip()
-                amt_str = child.findtext("AMOUNT", "0").strip()
-                is_party_tag = child.findtext("ISPARTYLEDGER", "No").strip().lower() == "yes"
-                try:
-                    amt_num = abs(float(amt_str))
-                except (ValueError, TypeError):
-                    amt_num = 0.0
-
-                if not lname or amt_num == 0.0:
-                    continue
-
-                entries.append((lname, amt_num, is_party_tag))
-
-                matched_party = None
-                if party_case_map:
-                    matched_party = party_case_map.get(lname.lower())
-
-                if not matched_party and is_party_tag:
-                    matched_party = lname
-
-                if not matched_party and not party_case_map:
-                    lower_l = lname.lower()
-                    non_parties = ("cash", "bank", "vat", "tax", "discount", "round off", "sales", "purchase", "cgst", "sgst", "igst")
-                    if not any(np in lower_l for np in non_parties):
-                        matched_party = lname
-
-                if matched_party:
-                    party_found = True
-                    if is_sale:
-                        sales_map[matched_party] = round(sales_map.get(matched_party, 0.0) + amt_num, 2)
-                    elif is_purchase:
-                        purchase_map[matched_party] = round(purchase_map.get(matched_party, 0.0) + amt_num, 2)
-                    elif is_receipt:
-                        receipts_map[matched_party] = round(receipts_map.get(matched_party, 0.0) + amt_num, 2)
-                    elif is_payment:
-                        payments_map[matched_party] = round(payments_map.get(matched_party, 0.0) + amt_num, 2)
-
-        # Fallback to header party if no entry matched
-        if not party_found and header_party:
-            canon_header = party_case_map.get(header_party.lower(), header_party) if party_case_map else header_party
-            max_amt = max((e[1] for e in entries), default=0.0)
-            if max_amt > 0:
-                if is_sale:
-                    sales_map[canon_header] = round(sales_map.get(canon_header, 0.0) + max_amt, 2)
-                elif is_purchase:
-                    purchase_map[canon_header] = round(purchase_map.get(canon_header, 0.0) + max_amt, 2)
-                elif is_receipt:
-                    receipts_map[canon_header] = round(receipts_map.get(canon_header, 0.0) + max_amt, 2)
-                elif is_payment:
-                    payments_map[canon_header] = round(payments_map.get(canon_header, 0.0) + max_amt, 2)
-
-    return sales_map, purchase_map, receipts_map, payments_map
-
-
-def fetch_tally_voucher_breakdown(service=None, company_name=None, known_parties=None, from_date=None, to_date=None):
-    """Fetch Sales, Purchase, Receipts, and Payments voucher totals per party.
-    
-    Uses official TDL Collection Export XML (CustomVoucherColl) fetching DATE,
-    VOUCHERTYPENAME, VOUCHERNUMBER, PARTYLEDGERNAME, ALLLEDGERENTRIES.LIST.
-    Bypasses GUI visual reports to prevent modal TDL error popups.
-    Strictly constrains voucher retrieval to the current fiscal year of the target company.
-    
-    Returns: (sales_map: dict, purchase_map: dict, receipts_map: dict, payments_map: dict)
-    """
-    sales_map = {}
-    purchase_map = {}
-    receipts_map = {}
-    payments_map = {}
-
-    if service and getattr(service, 'cancelled', False):
-        return sales_map, purchase_map, receipts_map, payments_map
-
-    try:
-        import urllib.request
-        import urllib.error
-        import socket
-        import time
-
-        party_case_map = {}
-        if known_parties:
-            if isinstance(known_parties, dict):
-                for k, v in known_parties.items():
-                    if k and v:
-                        party_case_map[str(k).strip().lower()] = str(v).strip()
-            else:
-                for p in known_parties:
-                    p_str = str(p).strip()
-                    if p_str:
-                        party_case_map[p_str.lower()] = p_str
-
-        user_port = get_tally_port() or 9000
-        candidate_ports = [user_port]
-        if user_port != 9000:
-            candidate_ports.append(9000)
-
-        # Strictly constrain vouchers to the company's current fiscal year
-        start_date, end_date = resolve_company_fiscal_dates(
-            service=service, company_name=company_name, from_date=from_date, to_date=to_date
-        )
-
-        exact_comp = getattr(service, '_exact_company_name', None) if service else None
-        target_company = exact_comp or (company_name or "").strip()
-        escaped_company = (
-            target_company
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;")
-        )
-        comp_tag = f"<SVCURRENTCOMPANY>{escaped_company}</SVCURRENTCOMPANY>" if target_company else ""
-        logger.info(
-            f"[tally_sync] Fiscal year voucher date scope for '{target_company or 'Active'}': {start_date} to {end_date}"
-        )
-
-        date_tags = ""
-        if start_date and end_date:
-            date_tags = f"""<SVFROMDATE TYPE="Date">{start_date}</SVFROMDATE>
-          <SVTODATE TYPE="Date">{end_date}</SVTODATE>"""
-
-        xml_request = f"""<ENVELOPE>
-  <HEADER>
-    <VERSION>1</VERSION>
-    <TALLYREQUEST>EXPORT</TALLYREQUEST>
-    <TYPE>COLLECTION</TYPE>
-    <ID>CustomVoucherColl</ID>
-  </HEADER>
-  <BODY>
-    <DESC>
-      <STATICVARIABLES>
-        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-        {date_tags}
-        {comp_tag}
-      </STATICVARIABLES>
-      <TDL>
-        <TDLMESSAGE>
-          <COLLECTION NAME="CustomVoucherColl" ISINITIALIZE="Yes">
-            <TYPE>Voucher</TYPE>
-            <FETCH>DATE,VOUCHERTYPENAME,VOUCHERNUMBER,PARTYLEDGERNAME,ALLLEDGERENTRIES.LIST</FETCH>
-          </COLLECTION>
-        </TDLMESSAGE>
-      </TDL>
-    </DESC>
-  </BODY>
-</ENVELOPE>"""
-
-        req_bytes = xml_request.encode("utf-8")
-        last_error = None
-        http_timeout = 15  # Fast 15s timeout to protect UI responsiveness
-
-        for port in candidate_ports:
-            if service and getattr(service, 'cancelled', False):
-                break
-
-            url = f"http://127.0.0.1:{port}"
-            logger.info(f"[tally_sync] Requesting Vouchers XML on port {port} for '{target_company or 'Active'}'...")
-            req = urllib.request.Request(
-                url,
-                data=req_bytes,
-                headers={
-                    "Content-Type": "text/xml; charset=utf-8",
-                    "Content-Length": str(len(req_bytes)),
-                }
-            )
-            try:
-                start_t = time.time()
-                with urllib.request.urlopen(req, timeout=http_timeout) as resp:
-                    raw_data = resp.read().decode("utf-8", errors="ignore")
-                    elapsed = time.time() - start_t
-
-                cleaned = raw_data.strip()
-                if cleaned:
-                    logger.info(
-                        f"[tally_sync] Received Voucher XML payload ({len(cleaned):,} bytes) from port {port} in {elapsed:.2f}s."
-                    )
-                    _parse_xml_vouchers(
-                        cleaned, start_date=start_date, end_date=end_date,
-                        party_case_map=party_case_map, sales_map=sales_map,
-                        purchase_map=purchase_map, receipts_map=receipts_map,
-                        payments_map=payments_map
-                    )
-                    logger.info(
-                        f"[tally_sync] Voucher breakdown for '{target_company or 'Active'}': "
-                        f"{len(sales_map)} sales, {len(purchase_map)} purchases, "
-                        f"{len(receipts_map)} receipts, {len(payments_map)} payments."
-                    )
-                    return sales_map, purchase_map, receipts_map, payments_map
-
-            except urllib.error.URLError as ue:
-                reason = getattr(ue, 'reason', ue)
-                if isinstance(reason, socket.timeout) or "timed out" in str(reason).lower():
-                    last_error = f"Timeout ({http_timeout}s) connecting to Tally on port {port}"
-                else:
-                    last_error = f"URLError on port {port}: {reason}"
-                logger.warning(f"[tally_sync] {last_error}")
-                continue
-            except TimeoutError:
-                last_error = f"Timeout ({http_timeout}s) connecting to Tally on port {port}"
-                logger.warning(f"[tally_sync] {last_error}")
-                continue
-            except Exception as e:
-                last_error = f"Error fetching vouchers on port {port}: {e}"
-                logger.warning(f"[tally_sync] {last_error}")
-                continue
-
-        if last_error:
-            logger.warning(
-                f"[tally_sync] Could not retrieve vouchers across candidate ports {candidate_ports}. Last note: {last_error}"
-            )
-    except Exception as ge:
-        logger.warning(f"[tally_sync] Unexpected voucher sync error: {ge}")
-
-    return sales_map, purchase_map, receipts_map, payments_map
 
 
 def fetch_tally_ledger_data(company_name=None, company_path=None, service=None):
@@ -1222,6 +786,8 @@ def fetch_tally_ledger_data(company_name=None, company_path=None, service=None):
                 $CreditLimit,
                 $OpeningBalance,
                 $_ClosingBalance,
+                $DebitTotals,
+                $CreditTotals,
                 $_OverdueBills,
                 $_OnAccountValue,
                 $_CashInFlow,
@@ -1262,6 +828,8 @@ def fetch_tally_ledger_data(company_name=None, company_path=None, service=None):
             "$CreditLimit": "Credit_Limit",
             "$OpeningBalance": "Opening_Balance",
             "$_ClosingBalance": "Closing_Balance",
+            "$DebitTotals": "Debit_Totals",
+            "$CreditTotals": "Credit_Totals",
             "$_OverdueBills": "Overdue_Bills",
             "$_OnAccountValue": "On_Account_Value",
             "$_CashInFlow": "CashInFlow",
@@ -1289,6 +857,12 @@ def fetch_tally_ledger_data(company_name=None, company_path=None, service=None):
         for col in numeric_cols:
             if col in ledger_df.columns:
                 ledger_df[col] = pd.to_numeric(ledger_df[col], errors='coerce').fillna(0.0) * -1
+
+        for col in ["Debit_Totals", "Credit_Totals"]:
+            if col in ledger_df.columns:
+                ledger_df[col] = pd.to_numeric(ledger_df[col], errors='coerce').fillna(0.0).abs().round(2)
+            else:
+                ledger_df[col] = 0.0
 
         service._check_cancelled("before ledger SQL write")
 
@@ -1378,83 +952,29 @@ def fetch_tally_ledger_data(company_name=None, company_path=None, service=None):
 
 
 def fetch_tally_vat_internal_data(company_name=None, company_path=None, service=None):
-    """Fetch Internal Ledger data AND voucher breakdown for VAT Working.
+    """Fetch Internal Ledger data for VAT Working.
     
-    1. Syncs standard ledger data to dbo.row_ledger_data (clean master columns only).
-    2. Fetches voucher breakdown (Sales, Purchase, Receipts, Payments) and saves to
-       dedicated table dbo.vat_int_voucher_totals for VAT Working only.
+    Syncs standard ledger data directly to dbo.row_ledger_data (including Debit_Totals & Credit_Totals).
     """
     if service is None:
         service = TallyService()
 
-    # 1. Sync standard ledger data (keeps row_ledger_data clean)
     rc, err = fetch_tally_ledger_data(company_name=company_name, company_path=company_path, service=service)
-    if err and err != "cancelled":
+    if err:
         return rc, err
-    if getattr(service, 'cancelled', False):
-        return 0, "cancelled"
 
-    # 2. Fetch voucher breakdown for VAT Working
     try:
+        from src.logic.vat_manager import ensure_vat_tables, get_active_vat_company, run_auto_mapping_on_sync
         resolved_comp_name = os.path.basename(company_path) if company_path else (company_name or "default")
         db_name = build_logical_name(resolved_comp_name, company_path=company_path) if company_path else build_logical_name(resolved_comp_name)
-
-        vch_company = company_name or (os.path.basename(company_path) if company_path else "")
-        
-        # Pre-load known debtors and creditors from row_ledger_data to ensure accurate receipt/payment party matching
-        internal_parties = {}
-        try:
-            conn = service.db.get_connection(db_name)
-            if conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT [Name], [Alias] FROM dbo.row_ledger_data
-                    WHERE LOWER(LTRIM(RTRIM([Group]))) IN ('sundry debtors', 'sundry creditors')
-                       OR LOWER(LTRIM(RTRIM(Sub_Group))) IN ('sundry debtors', 'sundry creditors')
-                """)
-                for row in cursor.fetchall():
-                    p_name = str(row[0]).strip() if row[0] else ""
-                    p_alias = str(row[1]).strip() if len(row) > 1 and row[1] else ""
-                    if p_name:
-                        internal_parties[p_name.lower()] = p_name
-                        if p_alias:
-                            internal_parties[p_alias.lower()] = p_name
-        except Exception as pe:
-            logger.debug(f"[fetch_tally_vat_internal_data] Could not pre-load party names: {pe}")
-
-        sales_map, purchase_map, receipts_map, payments_map = fetch_tally_voucher_breakdown(
-            service, company_name=vch_company, known_parties=internal_parties
-        )
-
-        # Build list of distinct parties across maps
-        all_parties = set(sales_map.keys()) | set(purchase_map.keys()) | set(receipts_map.keys()) | set(payments_map.keys())
-        
-        from src.logic.vat_manager import ensure_vat_tables, save_internal_voucher_breakdown
         ensure_vat_tables(service.db, db_name)
-
-        party_records = []
-        for p in all_parties:
-            p_name = str(p).strip()
-            if not p_name:
-                continue
-            s_amt = sales_map.get(p, 0.0)
-            pu_amt = purchase_map.get(p, 0.0)
-            r_amt = receipts_map.get(p, 0.0)
-            py_amt = payments_map.get(p, 0.0)
-            party_records.append({
-                "Name": p_name,
-                "Sales_Amount": round(s_amt, 2),
-                "Purchase_Amount": round(pu_amt, 2),
-                "Sales_Plus_Purchase": round(s_amt + pu_amt, 2),
-                "Receipt_Amount": round(r_amt, 2),
-                "Payment_Amount": round(py_amt, 2)
-            })
-
-        save_internal_voucher_breakdown(db_name, party_records)
-        return rc, ""
+        active_vat = get_active_vat_company(db_name)
+        if active_vat:
+            run_auto_mapping_on_sync(db_name, active_vat)
     except Exception as e:
-        logger.error(f"[fetch_tally_vat_internal_data] voucher breakdown error: {e}", exc_info=True)
-        return rc, ""
+        logger.warning(f"[fetch_tally_vat_internal_data] ensure_vat_tables warning: {e}")
+
+    return rc, ""
 
 
 def fetch_tally_vat_ledger_data(vat_company_name: str, company_name=None, company_path=None, service=None):
@@ -1481,23 +1001,13 @@ def fetch_tally_vat_ledger_data(vat_company_name: str, company_name=None, compan
             err = getattr(service, 'last_error', '') or "Could not connect to Tally. Please ensure Tally is running."
             return 0, err
 
-        # Verify VAT company is open in Tally and capture fiscal dates
+        # Verify VAT company is open in Tally
         try:
-            comp_df = None
-            for q in [
-                "SELECT $Name, $StartingFrom, $EndingAt, $BooksFrom FROM Company",
-                "SELECT $Name, $StartingFrom, $EndingAt FROM Company",
-                "SELECT $Name FROM Company"
-            ]:
-                try:
-                    comp_df = pd.read_sql(q, service.connection)
-                    break
-                except Exception:
-                    continue
-
-            if comp_df is None or comp_df.empty:
+            comp_df = pd.read_sql("SELECT $Name FROM Company", service.connection)
+            if comp_df.empty:
                 return 0, "No companies found running in Tally."
-            open_comps = [str(c).strip() for c in comp_df.iloc[:, 0].tolist()]
+            
+            open_comps = [str(c).strip() for c in comp_df.iloc[:, 0].tolist() if str(c).strip()]
             matched = any(_are_company_names_matching(c, vat_company) for c in open_comps)
             if not matched:
                 return 0, (
@@ -1505,18 +1015,6 @@ def fetch_tally_vat_ledger_data(vat_company_name: str, company_name=None, compan
                     f"Open companies in Tally: {', '.join(open_comps)}\n"
                     f"Please open '{vat_company}' in Tally and try again."
                 )
-
-            # Cache fiscal dates for voucher fetching
-            for _, row in comp_df.iterrows():
-                c_name = str(row.iloc[0]).strip().lower()
-                sf = _to_tally_date_str(row.get("$StartingFrom"))
-                ea = _to_tally_date_str(row.get("$EndingAt"))
-                if sf and ea:
-                    if not hasattr(service, '_company_fiscal_dates'):
-                        service._company_fiscal_dates = {}
-                    service._company_fiscal_dates[c_name] = (sf, ea)
-                    if _are_company_names_matching(c_name, vat_company):
-                        service._company_fiscal_dates[vat_company.lower()] = (sf, ea)
         except Exception as ce:
             logger.warning(f"VAT Company check warning: {ce}")
 
@@ -1538,6 +1036,8 @@ def fetch_tally_vat_ledger_data(vat_company_name: str, company_name=None, compan
                 $CreditLimit,
                 $OpeningBalance,
                 $_ClosingBalance,
+                $DebitTotals,
+                $CreditTotals,
                 $_OverdueBills,
                 $_OnAccountValue,
                 $_CashInFlow,
@@ -1578,6 +1078,8 @@ def fetch_tally_vat_ledger_data(vat_company_name: str, company_name=None, compan
             "$CreditLimit": "Credit_Limit",
             "$OpeningBalance": "Opening_Balance",
             "$_ClosingBalance": "Closing_Balance",
+            "$DebitTotals": "Debit_Totals",
+            "$CreditTotals": "Credit_Totals",
             "$_OverdueBills": "Overdue_Bills",
             "$_OnAccountValue": "On_Account_Value",
             "$_CashInFlow": "CashInFlow",
@@ -1608,6 +1110,12 @@ def fetch_tally_vat_ledger_data(vat_company_name: str, company_name=None, compan
             sub_s = ledger_df["Sub_Group"].astype(str).str.strip().str.lower()
             is_debtor_or_creditor |= sub_s.isin(target_groups) | sub_s.str.contains("sundry debtor|sundry creditor", regex=True)
 
+        # Exclude 'Othere Account' / 'Other Account'
+        if "Sub_Group" in ledger_df.columns:
+            sub_s = ledger_df["Sub_Group"].astype(str).str.strip().str.lower()
+            is_other_account = sub_s.isin({"othere account", "other account", "othere accounts", "other accounts"}) | sub_s.str.contains(r"other.*account|othere.*account", regex=True)
+            is_debtor_or_creditor &= ~is_other_account
+
         ledger_df = ledger_df[is_debtor_or_creditor].copy()
 
         if ledger_df.empty:
@@ -1622,36 +1130,11 @@ def fetch_tally_vat_ledger_data(vat_company_name: str, company_name=None, compan
             if col in ledger_df.columns:
                 ledger_df[col] = pd.to_numeric(ledger_df[col], errors='coerce').fillna(0.0) * -1
 
-        # Collect known debtor/creditor names and aliases from VAT ledger dataframe
-        vat_party_map = {}
-        for _, r in ledger_df.iterrows():
-            p_name = str(r.get("Name", "")).strip()
-            p_alias = str(r.get("Alias", "")).strip() if "Alias" in ledger_df.columns else ""
-            if p_name and p_name != "nan":
-                vat_party_map[p_name.lower()] = p_name
-                if p_alias and p_alias != "nan":
-                    vat_party_map[p_alias.lower()] = p_name
-
-        # Fetch and map Sales, Purchase, Receipts, Payments from Vouchers
-        sales_map, purchase_map, receipts_map, payments_map = fetch_tally_voucher_breakdown(
-            service, company_name=vat_company, known_parties=vat_party_map
-        )
-        # Map voucher amounts: exact match first, case-insensitive fallback to prevent dropping party totals
-        def _map_amounts(name_series, amount_map):
-            clean_map = {str(k).strip(): v for k, v in amount_map.items()}
-            res = name_series.map(clean_map)
-            if res.isna().any():
-                lower_map = {str(k).strip().lower(): v for k, v in amount_map.items()}
-                fallback = name_series.str.lower().map(lower_map)
-                res = res.fillna(fallback)
-            return res.fillna(0.0).round(2)
-
-        name_col = ledger_df["Name"].astype(str).str.strip()
-        ledger_df["Sales_Amount"] = _map_amounts(name_col, sales_map)
-        ledger_df["Purchase_Amount"] = _map_amounts(name_col, purchase_map)
-        ledger_df["Receipt_Amount"] = _map_amounts(name_col, receipts_map)
-        ledger_df["Payment_Amount"] = _map_amounts(name_col, payments_map)
-        ledger_df["Sales_Plus_Purchase"] = (ledger_df["Sales_Amount"] + ledger_df["Purchase_Amount"]).round(2)
+        for col in ["Debit_Totals", "Credit_Totals"]:
+            if col in ledger_df.columns:
+                ledger_df[col] = pd.to_numeric(ledger_df[col], errors='coerce').fillna(0.0).abs().round(2)
+            else:
+                ledger_df[col] = 0.0
 
         ledger_df["vat_company"] = vat_company
 
@@ -1671,54 +1154,62 @@ def fetch_tally_vat_ledger_data(vat_company_name: str, company_name=None, compan
 
         cursor = conn.cursor()
 
-        staging_table = "vat_row_ledger_staging"
+        staging_table = f"vat_row_ledger_staging_{uuid.uuid4().hex[:8]}"
         try:
-            cursor.execute(f"IF OBJECT_ID('dbo.{staging_table}', 'U') IS NOT NULL DROP TABLE dbo.[{staging_table}]")
-            conn.commit()
-        except Exception:
-            pass
+            try:
+                cursor.execute(f"IF OBJECT_ID('dbo.[{staging_table}]', 'U') IS NOT NULL DROP TABLE dbo.[{staging_table}]")
+                conn.commit()
+            except Exception as e:
+                logger.debug(f"Could not drop pre-existing staging table {staging_table}: {e}")
 
-        engine = service._get_sqlalchemy_engine(db_name)
-        logger.info(f"Writing VAT ledger data to staging table '{staging_table}'...")
-        col_type_overrides = {
-            "GUID": NVARCHAR(255),
-            "Name": NVARCHAR(255),
-            "Alias": NVARCHAR(255),
-            "Group": NVARCHAR(255),
-            "Sub_Group": NVARCHAR(255),
-            "Pan_No.": NVARCHAR(255),
-            "vat_company": NVARCHAR(255),
-        }
-        nvarchar_dtype = {
-            col: col_type_overrides.get(col, NVARCHAR(length=None))
-            for col in ledger_df.select_dtypes(include=['object']).columns
-        }
-        ledger_df.to_sql(staging_table, con=engine, if_exists="replace", index=False, dtype=nvarchar_dtype, schema="dbo")
-        engine.dispose()
+            engine = service._get_sqlalchemy_engine(db_name)
+            logger.info(f"Writing VAT ledger data to staging table '{staging_table}'...")
+            col_type_overrides = {
+                "GUID": NVARCHAR(255),
+                "Name": NVARCHAR(255),
+                "Alias": NVARCHAR(255),
+                "Group": NVARCHAR(255),
+                "Sub_Group": NVARCHAR(255),
+                "Pan_No.": NVARCHAR(255),
+                "vat_company": NVARCHAR(255),
+            }
+            nvarchar_dtype = {
+                col: col_type_overrides.get(col, NVARCHAR(length=None))
+                for col in ledger_df.select_dtypes(include=['object']).columns
+            }
+            ledger_df.to_sql(staging_table, con=engine, if_exists="replace", index=False, dtype=nvarchar_dtype, schema="dbo")
+            engine.dispose()
 
-        service._check_cancelled("after VAT ledger staging write")
+            service._check_cancelled("after VAT ledger staging write")
 
-        # Replace rows for this vat_company in dbo.vat_row_ledger_data
-        try:
-            # Query common columns between staging table and target table
-            cursor.execute(f"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{staging_table}'")
-            stg_cols = set(r[0] for r in cursor.fetchall())
-            cursor.execute("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vat_row_ledger_data'")
-            target_cols = set(r[0] for r in cursor.fetchall())
-            common_cols = [c for c in stg_cols if c in target_cols and c != 'id']
-            cols_str = ", ".join(f"[{c}]" for c in common_cols)
+            # Replace rows for this vat_company in dbo.vat_row_ledger_data
+            try:
+                # Query common columns between staging table and target table
+                cursor.execute(f"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{staging_table}'")
+                stg_cols = set(r[0] for r in cursor.fetchall())
+                cursor.execute("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vat_row_ledger_data'")
+                target_cols = set(r[0] for r in cursor.fetchall())
+                common_cols = [c for c in stg_cols if c in target_cols and c != 'id']
+                cols_str = ", ".join(f"[{c}]" for c in common_cols)
 
-            cursor.execute("DELETE FROM dbo.vat_row_ledger_data WHERE vat_company = ?", (vat_company,))
-            cursor.execute(f"""
-                INSERT INTO dbo.vat_row_ledger_data ({cols_str})
-                SELECT {cols_str}
-                FROM dbo.[{staging_table}]
-            """)
-            cursor.execute(f"DROP TABLE dbo.[{staging_table}]")
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
+                cursor.execute("DELETE FROM dbo.vat_row_ledger_data WHERE vat_company = ?", (vat_company,))
+                cursor.execute(f"""
+                    INSERT INTO dbo.vat_row_ledger_data ({cols_str})
+                    SELECT {cols_str}
+                    FROM dbo.[{staging_table}]
+                """)
+                cursor.execute(f"DROP TABLE dbo.[{staging_table}]")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        finally:
+            try:
+                cursor.execute(f"IF OBJECT_ID('dbo.[{staging_table}]', 'U') IS NOT NULL DROP TABLE dbo.[{staging_table}]")
+                conn.commit()
+            except Exception:
+                pass
+            cursor.close()
 
         logger.info(f"VAT ledger data saved for '{vat_company}' in DB '{db_name}': {len(ledger_df)} rows")
 

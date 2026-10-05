@@ -36,7 +36,15 @@ a = Analysis(
         ('config/catalog_config.json', 'config'),      # Per-company catalog header config
     ] + collect_data_files('nepali_datetime'),
 
-    hiddenimports=['pyodbc', 'xlsxwriter'],   # SQL Server driver + Excel writer (auto-detect misses it)
+    hiddenimports=[
+        'pyodbc',
+        'xlsxwriter',
+        'openpyxl',
+        'openpyxl.cell',
+        'openpyxl.styles',
+        'sqlalchemy.dialects.mssql',
+        'sqlalchemy.dialects.mssql.pyodbc',
+    ],   # SQL Server driver + Excel writer + Excel reader + SQLAlchemy dialects
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

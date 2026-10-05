@@ -29,7 +29,9 @@ from src.logic.vat_manager import (
     get_unassigned_internal_debtors, assign_internal_ledger_to_group,
     remove_internal_ledger_from_group, unmap_vat_group, merge_mapping_groups,
     demerge_mapping_group, set_group_internal_ledgers, set_group_vat_ledgers,
-    set_group_manual_name, update_group_internal_ledger, update_group_vat_ledger
+    set_group_manual_name, update_group_internal_ledger, update_group_vat_ledger,
+    merge_vat_ledger_into_group, remove_vat_ledger_from_group,
+    set_mapping_classification, set_unassigned_classification, run_auto_mapping_on_sync
 )
 from src.services.tally_sync import fetch_tally_vat_internal_data, fetch_tally_vat_ledger_data, TallyService
 from src.ui.vat_company_dialog import VatCompanyDialog
@@ -62,6 +64,9 @@ class _VatBalanceLoadWorker(QThread):
             int_debtors = load_internal_debtors(self._db_name)
             vat_debtors = load_vat_debtors(self._db_name, self._vat_company) if self._vat_company else []
             mappings = load_vat_mappings(self._db_name, self._vat_company) if self._vat_company else []
+            if not mappings and self._vat_company:
+                run_auto_mapping_on_sync(self._db_name, self._vat_company)
+                mappings = load_vat_mappings(self._db_name, self._vat_company)
             unassigned_int = get_unassigned_internal_debtors(self._db_name, self._vat_company) if self._vat_company else []
             debtor_conf = load_vat_conf_table_data(self._db_name, self._vat_company, "Debtor") if self._vat_company else []
             creditor_conf = load_vat_conf_table_data(self._db_name, self._vat_company, "Creditor") if self._vat_company else []
@@ -81,15 +86,36 @@ class _VatBalanceLoadWorker(QThread):
             get_db_manager().close_thread_connections()
 
 
-# Authentic columns directly from Tally Ledger + Commercial Sales, Purchase, Receipts, Payments
+class _MappingRefreshWorker(QThread):
+    """Background worker to fetch mappings and unassigned internal debtors without blocking UI."""
+    finished = pyqtSignal(list, list, int)
+    error = pyqtSignal(str)
+
+    def __init__(self, db_name: str, vat_company: str, select_group_id: int = 0, parent=None):
+        super().__init__(parent)
+        self.db_name = db_name
+        self.vat_company = vat_company
+        self.select_group_id = select_group_id
+
+    def run(self):
+        try:
+            mappings = load_vat_mappings(self.db_name, self.vat_company)
+            unassigned_int = get_unassigned_internal_debtors(self.db_name, self.vat_company)
+            self.finished.emit(mappings, unassigned_int, self.select_group_id)
+        except Exception as e:
+            logger.error(f"[_MappingRefreshWorker] error: {e}", exc_info=True)
+            self.error.emit(str(e))
+        finally:
+            get_db_manager().close_thread_connections()
+
+
+# Authentic columns directly from Tally Ledger
 TALLY_LEDGER_COLUMNS = [
     ("Name", "Ledger Name", 250, False),
     ("Group", "Group", 130, False),
     ("Opening_Balance", "Opening Balance", 120, True),
-    ("Sales_Amount", "Sales", 120, True),
-    ("Purchase_Amount", "Purchase", 120, True),
-    ("Receipt_Amount", "Receipts", 120, True),
-    ("Payment_Amount", "Payments", 120, True),
+    ("Debit_Totals", "Debit Total", 120, True),
+    ("Credit_Totals", "Credit Total", 120, True),
     ("Closing_Balance", "Closing Balance", 120, True),
     ("CashOutFlow", "Cash Outflow", 130, True),
     ("CashInFlow", "Cash Inflow", 120, True),
@@ -115,7 +141,7 @@ class LedgerColumnSettingsDialog(QDialog):
 
     DEFAULT_COLUMNS = {
         "Name", "Alias", "Group", "Opening_Balance",
-        "Sales_Amount", "Purchase_Amount", "Receipt_Amount", "Payment_Amount",
+        "Debit_Totals", "Credit_Totals",
         "Closing_Balance"
     }
 
@@ -264,13 +290,18 @@ class _VatLedgerWorker(QThread):
 
 class MappingItemDelegate(UniversalCellDelegate):
     """Delegate for Mapping table: provides seamless in-cell QLineEdit editing with
-    searchable _TallyCompleter for both VAT Ledger (Col 0) and Internal Ledger (Col 1),
-    and editable text for Manual Name (Col 2). Paints unmapped rows fully in red.
+    searchable _TallyCompleter for both VAT Ledger (Col 1) and Internal Ledger (Col 3),
+    and editable text for Manual Name (Col 5). Strictly validates ledger selections
+    against configured options and paints unmapped rows in red.
     """
-    def __init__(self, get_vat_options_callback, get_int_options_callback, parent_table=None, parent=None):
+    def __init__(self, get_vat_options_callback, get_int_options_callback,
+                 resolve_vat_callback=None, resolve_int_callback=None,
+                 parent_table=None, parent=None):
         super().__init__(parent=parent)
         self.get_vat_options_callback = get_vat_options_callback
         self.get_int_options_callback = get_int_options_callback
+        self.resolve_vat_callback = resolve_vat_callback
+        self.resolve_int_callback = resolve_int_callback
         self.parent_table = parent_table
 
     def paint(self, painter, option, index):
@@ -312,6 +343,7 @@ class MappingItemDelegate(UniversalCellDelegate):
 
         if col == 1:  # VAT Ledger (editable with completer)
             ed = QLineEdit(parent)
+            ed._initial_text = index.data() or ""
             ed.setFrame(False)
             ed.setAutoFillBackground(True)
             ed.setStyleSheet(
@@ -339,6 +371,7 @@ class MappingItemDelegate(UniversalCellDelegate):
 
         elif col == 3:  # Internal Ledger (editable with completer)
             ed = QLineEdit(parent)
+            ed._initial_text = index.data() or ""
             ed.setFrame(False)
             ed.setAutoFillBackground(True)
             ed.setStyleSheet(
@@ -393,13 +426,65 @@ class MappingItemDelegate(UniversalCellDelegate):
         if isinstance(editor, QLineEdit):
             val = index.data() or ""
             editor.setText(val)
+            editor._initial_text = val
             editor.selectAll()
         else:
             super().setEditorData(editor, index)
 
     def setModelData(self, editor, model, index):
         if isinstance(editor, QLineEdit):
-            model.setData(index, editor.text().strip(), Qt.ItemDataRole.EditRole)
+            col = index.column()
+            val = editor.text().strip()
+            init_val = getattr(editor, '_initial_text', index.data() or "")
+
+            if col == 3:  # Internal Ledger: strictly validate against options
+                if not val:
+                    # User cleared cell -> unassign/clear
+                    model.setData(index, "", Qt.ItemDataRole.EditRole)
+                    return
+
+                resolved = None
+                if callable(self.resolve_int_callback):
+                    resolved = self.resolve_int_callback(val)
+                elif callable(self.get_int_options_callback):
+                    opts = self.get_int_options_callback()
+                    for opt in (opts or []):
+                        if opt.strip().lower() == val.lower():
+                            resolved = opt
+                            break
+
+                if resolved:
+                    model.setData(index, resolved, Qt.ItemDataRole.EditRole)
+                else:
+                    # Not in the list! REJECT! Revert back to original value
+                    editor.setText(init_val)
+                    return
+
+            elif col == 1:  # VAT Ledger: strictly validate against options
+                if not val:
+                    # VAT ledger cannot be empty
+                    editor.setText(init_val)
+                    return
+
+                resolved = None
+                if callable(self.resolve_vat_callback):
+                    resolved = self.resolve_vat_callback(val)
+                elif callable(self.get_vat_options_callback):
+                    opts = self.get_vat_options_callback()
+                    for opt in (opts or []):
+                        if opt.strip().lower() == val.lower():
+                            resolved = opt
+                            break
+
+                if resolved:
+                    model.setData(index, resolved, Qt.ItemDataRole.EditRole)
+                else:
+                    # Not in the list! REJECT! Revert back to original value
+                    editor.setText(init_val)
+                    return
+
+            else:
+                model.setData(index, val, Qt.ItemDataRole.EditRole)
         else:
             super().setModelData(editor, model, index)
 
@@ -524,10 +609,90 @@ class VatConfTableWidget(QTableWidget):
         super().keyPressEvent(event)
 
 
+class NumericTableWidgetItem(QTableWidgetItem):
+    """QTableWidgetItem that sorts numerically for balances and integer amounts."""
+    def __init__(self, text: str = "", num_value: float = None):
+        super().__init__(text)
+        if num_value is not None:
+            self.num_value = float(num_value)
+        else:
+            try:
+                self.num_value = float(text.replace(",", "").strip())
+            except Exception:
+                self.num_value = 0.0
+
+    def __lt__(self, other):
+        if isinstance(other, NumericTableWidgetItem):
+            return self.num_value < other.num_value
+        try:
+            val_other = float(other.text().replace(",", "").strip())
+            return self.num_value < val_other
+        except Exception:
+            return super().__lt__(other)
+
+
+class _LedgerCellWidget(QWidget):
+    """Cell container widget displaying ledger name, optional classification badge, and small '+' button."""
+    def __init__(self, name: str, has_plus: bool = True, badge: str = "", placeholder: str = "", on_plus = None, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 2, 6, 2)
+        layout.setSpacing(6)
+
+        display_name = name or placeholder
+        self.lbl_name = QLabel(display_name)
+        if placeholder and not name:
+            self.lbl_name.setStyleSheet("color: #94a3b8; font-style: italic; font-size: 11px;")
+        else:
+            self.lbl_name.setStyleSheet("color: inherit; font-size: 12px; font-weight: 500;")
+        layout.addWidget(self.lbl_name, stretch=1)
+
+        if badge:
+            badge_color = "#4338ca" if badge.lower() == "cash sales" else "#b45309"
+            badge_bg = "#e0e7ff" if badge.lower() == "cash sales" else "#fef3c7"
+            lbl_badge = QLabel(f"[{badge}]")
+            lbl_badge.setStyleSheet(f"""
+                QLabel {{
+                    background: {badge_bg};
+                    color: {badge_color};
+                    font-size: 10px;
+                    font-weight: 700;
+                    padding: 1px 5px;
+                    border-radius: 3px;
+                }}
+            """)
+            layout.addWidget(lbl_badge)
+
+        if has_plus:
+            self.btn_plus = QPushButton("+")
+            self.btn_plus.setFixedSize(18, 18)
+            self.btn_plus.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.btn_plus.setStyleSheet("""
+                QPushButton {
+                    background: #f1f5f9;
+                    color: #475569;
+                    font-weight: bold;
+                    font-size: 12px;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 3px;
+                    padding: 0px;
+                    margin: 0px;
+                }
+                QPushButton:hover {
+                    background: #059669;
+                    color: #ffffff;
+                    border-color: #059669;
+                }
+            """)
+            if callable(on_plus):
+                self.btn_plus.clicked.connect(on_plus)
+            layout.addWidget(self.btn_plus)
+
+
 class MappingTableWidget(QTableWidget):
     """QTableWidget with keyboard shortcuts for Mapping table:
-    - Delete / Backspace on Col 3 (Internal Ledger): removes that internal ledger from group
-    - Delete / Backspace on Col 5 (Manual Name): clears manual name
+    - Delete / Backspace on Col 2 (Internal Ledger): removes that internal ledger from group
+    - Delete / Backspace on Col 1 (VAT Ledger): if merged, removes VAT ledger from group
     - Delete / Backspace on Col 0 / row selection: unmaps the entire group
     """
     def keyPressEvent(self, event):
@@ -537,28 +702,32 @@ class MappingTableWidget(QTableWidget):
                 if selected_indexes:
                     selected_rows = sorted(list({idx.row() for idx in selected_indexes}))
                     selected_cols = {idx.column() for idx in selected_indexes}
-                    if selected_cols == {5}:
+                    parent_ui = getattr(self, '_parent_ui', None)
+                    if selected_cols == {2} and parent_ui:
+                        # Col 2 is Internal Ledger
                         for r in selected_rows:
-                            it = self.item(r, 5)
-                            if it and it.text().strip():
-                                it.setText("")
+                            it2 = self.item(r, 2)
+                            i_name = str(it2.data(Qt.ItemDataRole.UserRole + 2) or it2.text()).strip() if it2 else ""
+                            it0 = self.item(r, 0)
+                            gid = it0.data(Qt.ItemDataRole.UserRole) if it0 else 0
+                            if i_name and gid:
+                                remove_internal_ledger_from_group(parent_ui.db_name, parent_ui.active_vat_company, gid, i_name)
+                        parent_ui.refresh_mapping_table()
                         return
-                    elif selected_cols == {3}:
+                    elif selected_cols == {1} and parent_ui:
+                        # Col 1 is VAT Ledger
                         for r in selected_rows:
-                            it = self.item(r, 3)
-                            if it and it.text().strip():
-                                it.setText("")
+                            it1 = self.item(r, 1)
+                            v_name = str(it1.data(Qt.ItemDataRole.UserRole + 2) or it1.text()).strip() if it1 else ""
+                            it0 = self.item(r, 0)
+                            gid = it0.data(Qt.ItemDataRole.UserRole) if it0 else 0
+                            if v_name and gid:
+                                remove_vat_ledger_from_group(parent_ui.db_name, parent_ui.active_vat_company, gid, v_name)
+                        parent_ui.refresh_mapping_table()
                         return
                     else:
-                        parent_ui = getattr(self, '_parent_ui', None)
                         if parent_ui and hasattr(parent_ui, '_unmap_selected_mapping'):
                             parent_ui._unmap_selected_mapping()
-                            return
-                        else:
-                            for r in selected_rows:
-                                it = self.item(r, 3)
-                                if it and it.text().strip():
-                                    it.setText("")
                             return
         super().keyPressEvent(event)
 
@@ -756,6 +925,13 @@ class BalanceUI(QWidget):
         self._loading_path = None         # tracks path currently being fetched
         self._cached_data = {}            # cached data for lazy tab rendering
         self._rendered_tabs = set()       # set of tab keys that have been rendered
+        self._int_lookup = {}             # norm_key -> canonical_name
+        self._int_alias_map = {}          # norm_name_key -> alias
+        self._int_options = []            # list of names and aliases for completer
+        self._vat_lookup = {}             # norm_key -> canonical_name
+        self._vat_alias_map = {}          # norm_name_key -> alias
+        self._vat_options = []            # list of names and aliases for completer
+        self._mapping_refresh_worker = None
 
         self.init_ui()
 
@@ -926,47 +1102,99 @@ class BalanceUI(QWidget):
                 self.conf_tabs.setCurrentIndex(1)
         self._render_current_tab()
 
+    def _update_options_cache(self, int_debtors: list = None, vat_debtors: list = None):
+        """Pre-cache autocomplete options and canonical lookup maps in memory for fast UI interaction."""
+        if int_debtors is not None:
+            self._int_lookup.clear()
+            self._int_alias_map.clear()
+            opts = set()
+            for d in int_debtors:
+                name = str(d.get("Name") or "").strip()
+                alias = str(d.get("Alias") or "").strip()
+                if name.lower() in ("none", "nan", "null"):
+                    name = ""
+                if alias.lower() in ("none", "nan", "null"):
+                    alias = ""
+                if name:
+                    nk = " ".join(name.split()).lower()
+                    self._int_lookup[nk] = name
+                    opts.add(name)
+                    if alias:
+                        ak = " ".join(alias.split()).lower()
+                        self._int_lookup[ak] = name
+                        self._int_alias_map[nk] = alias
+                        opts.add(alias)
+            self._int_options = sorted(list(opts), key=lambda x: x.lower())
+
+        if vat_debtors is not None:
+            self._vat_lookup.clear()
+            self._vat_alias_map.clear()
+            opts = set()
+            for d in vat_debtors:
+                name = str(d.get("Name") or "").strip()
+                alias = str(d.get("Alias") or "").strip()
+                if name.lower() in ("none", "nan", "null"):
+                    name = ""
+                if alias.lower() in ("none", "nan", "null"):
+                    alias = ""
+                if name:
+                    nk = " ".join(name.split()).lower()
+                    self._vat_lookup[nk] = name
+                    opts.add(name)
+                    if alias:
+                        ak = " ".join(alias.split()).lower()
+                        self._vat_lookup[ak] = name
+                        self._vat_alias_map[nk] = alias
+                        opts.add(alias)
+            self._vat_options = sorted(list(opts), key=lambda x: x.lower())
+
+    def resolve_int_ledger(self, text: str) -> str | None:
+        """Resolve typed text (name or alias) to canonical internal debtor Name."""
+        if not text:
+            return None
+        k = " ".join(text.strip().split()).lower()
+        if k in self._int_lookup:
+            return self._int_lookup[k]
+        if not self._int_lookup and self.db_name:
+            self._get_internal_ledger_options()
+            return self._int_lookup.get(k)
+        return None
+
+    def resolve_vat_ledger(self, text: str) -> str | None:
+        """Resolve typed text (name or alias) to canonical VAT debtor Name."""
+        if not text:
+            return None
+        k = " ".join(text.strip().split()).lower()
+        if k in self._vat_lookup:
+            return self._vat_lookup[k]
+        if not self._vat_lookup and self.db_name and self.active_vat_company:
+            self._get_vat_ledger_options()
+            return self._vat_lookup.get(k)
+        return None
+
     def _get_internal_ledger_options(self) -> list[str]:
-        """Return list of internal debtor names and aliases for mapping autocomplete."""
+        """Return cached list of internal debtor names and aliases for mapping autocomplete."""
+        if self._int_options:
+            return self._int_options
         if not self.db_name:
             return []
         try:
             debtors = load_internal_debtors(self.db_name)
-            opts = []
-            for d in debtors:
-                name = str(d.get("Name") or "").strip()
-                alias = str(d.get("Alias") or "").strip()
-                if name.lower() in ("none", "nan", "null"):
-                    name = ""
-                if alias.lower() in ("none", "nan", "null"):
-                    alias = ""
-                if name and name not in opts:
-                    opts.append(name)
-                if alias and alias not in opts:
-                    opts.append(alias)
-            return opts
+            self._update_options_cache(int_debtors=debtors)
+            return self._int_options
         except Exception:
             return []
 
     def _get_vat_ledger_options(self) -> list[str]:
-        """Return list of VAT debtor names and aliases for mapping autocomplete."""
+        """Return cached list of VAT debtor names and aliases for mapping autocomplete."""
+        if self._vat_options:
+            return self._vat_options
         if not self.db_name or not self.active_vat_company:
             return []
         try:
             debtors = load_vat_debtors(self.db_name, self.active_vat_company)
-            opts = []
-            for d in debtors:
-                name = str(d.get("Name") or "").strip()
-                alias = str(d.get("Alias") or "").strip()
-                if name.lower() in ("none", "nan", "null"):
-                    name = ""
-                if alias.lower() in ("none", "nan", "null"):
-                    alias = ""
-                if name and name not in opts:
-                    opts.append(name)
-                if alias and alias not in opts:
-                    opts.append(alias)
-            return opts
+            self._update_options_cache(vat_debtors=debtors)
+            return self._vat_options
         except Exception:
             return []
 
@@ -1050,6 +1278,9 @@ class BalanceUI(QWidget):
 
         header = self.int_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.sectionDoubleClicked.connect(
+            lambda idx: self._on_generic_header_double_clicked(self.int_table, idx, self._update_int_totals)
+        )
         for idx, col in enumerate(TALLY_LEDGER_COLUMNS):
             self.int_table.setColumnWidth(idx, col[2])
 
@@ -1145,6 +1376,9 @@ class BalanceUI(QWidget):
 
         header = self.vat_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.sectionDoubleClicked.connect(
+            lambda idx: self._on_generic_header_double_clicked(self.vat_table, idx, self._update_vat_totals)
+        )
         for idx, col in enumerate(TALLY_LEDGER_COLUMNS):
             self.vat_table.setColumnWidth(idx, col[2])
 
@@ -1199,7 +1433,7 @@ class BalanceUI(QWidget):
         vbox.setContentsMargins(8, 8, 8, 8)
         vbox.setSpacing(8)
 
-        # Top Bar: Search filter, Unmapped badge, Merge/Demerge buttons, Clear mapping, Toggle unassigned panel
+        # Top Bar: Search filter, Unmapped badge, Show 'None' VAT checkbox, Clear mapping, Toggle unassigned panel
         top_bar = QHBoxLayout()
         self.mapping_search = QLineEdit()
         self.mapping_search.setPlaceholderText("Search name or alias...")
@@ -1215,33 +1449,13 @@ class BalanceUI(QWidget):
         self.lbl_unmapped_badge.setVisible(False)
         top_bar.addWidget(self.lbl_unmapped_badge)
 
+        self.chk_show_none_vat = QCheckBox("Show 'None' VAT (Serial 0)")
+        self.chk_show_none_vat.setStyleSheet("font-size: 12px; color: #475569; font-weight: 500;")
+        self.chk_show_none_vat.setChecked(False)
+        self.chk_show_none_vat.toggled.connect(self._on_toggle_none_vat)
+        top_bar.addWidget(self.chk_show_none_vat)
+
         top_bar.addStretch()
-
-        self.btn_merge_mapping = QPushButton("🔗 Merge Selected")
-        self.btn_merge_mapping.setEnabled(False)
-        self.btn_merge_mapping.setStyleSheet("""
-            QPushButton {
-                background: #059669; color: white; font-weight: 600; font-size: 12px;
-                padding: 5px 12px; border-radius: 4px; border: none;
-            }
-            QPushButton:hover { background: #047857; }
-            QPushButton:disabled { background: #cbd5e1; color: #94a3b8; }
-        """)
-        self.btn_merge_mapping.clicked.connect(self._merge_selected_mappings)
-        top_bar.addWidget(self.btn_merge_mapping)
-
-        self.btn_demerge_mapping = QPushButton("✂️ Demerge")
-        self.btn_demerge_mapping.setEnabled(False)
-        self.btn_demerge_mapping.setStyleSheet("""
-            QPushButton {
-                background: #475569; color: white; font-weight: 600; font-size: 12px;
-                padding: 5px 12px; border-radius: 4px; border: none;
-            }
-            QPushButton:hover { background: #334155; }
-            QPushButton:disabled { background: #cbd5e1; color: #94a3b8; }
-        """)
-        self.btn_demerge_mapping.clicked.connect(self._demerge_selected_mapping)
-        top_bar.addWidget(self.btn_demerge_mapping)
 
         self.btn_unmap_mapping = QPushButton("Clear Mapping")
         self.btn_unmap_mapping.setEnabled(False)
@@ -1255,17 +1469,6 @@ class BalanceUI(QWidget):
         """)
         self.btn_unmap_mapping.clicked.connect(self._unmap_selected_mapping)
         top_bar.addWidget(self.btn_unmap_mapping)
-
-        self.btn_toggle_mapping_alias = QPushButton("👁️ Hide Alias")
-        self.btn_toggle_mapping_alias.setStyleSheet("""
-            QPushButton {
-                background: #f1f5f9; color: #334155; font-weight: 600; font-size: 12px;
-                padding: 5px 12px; border-radius: 4px; border: 1px solid #cbd5e1;
-            }
-            QPushButton:hover { background: #e2e8f0; }
-        """)
-        self.btn_toggle_mapping_alias.clicked.connect(self._toggle_mapping_alias_visibility)
-        top_bar.addWidget(self.btn_toggle_mapping_alias)
 
         self.btn_toggle_unassigned = QPushButton("📋 Unassigned Internal (0) ❯")
         self.btn_toggle_unassigned.setStyleSheet("""
@@ -1292,41 +1495,39 @@ class BalanceUI(QWidget):
         self.mapping_table = MappingTableWidget()
         self.mapping_table._parent_ui = self
         self.mapping_table._can_edit = self._can_edit
-        self.mapping_table.setStyleSheet(UNIVERSAL_TABLE_STYLE)
+        self.mapping_table.setStyleSheet(TABLE_WITH_FOOTER_STYLE)
         self.mapping_table.setAlternatingRowColors(True)
         self.mapping_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.mapping_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.mapping_table.verticalHeader().setVisible(False)
 
-        headers = ["#", "VAT Ledger", "VAT Alias", "Internal Ledger", "Internal Alias", "Manual Name"]
+        headers = ["Serial No.", "VAT Ledger Name", "Internal Ledger Name", "Vat Closing", "Int. Closing", "balance"]
         self.mapping_table.setColumnCount(6)
         self.mapping_table.setHorizontalHeaderLabels(headers)
 
         header = self.mapping_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(True)
-        self.mapping_table.setColumnWidth(0, 45)   # #
-        self.mapping_table.setColumnWidth(1, 260)  # VAT Ledger
-        self.mapping_table.setColumnWidth(2, 130)  # VAT Alias
-        self.mapping_table.setColumnWidth(3, 280)  # Internal Ledger
-        self.mapping_table.setColumnWidth(4, 130)  # Internal Alias
-        self.mapping_table.setColumnWidth(5, 180)  # Manual Name
+        self.mapping_table.setColumnWidth(0, 75)   # Serial No.
+        self.mapping_table.setColumnWidth(1, 290)  # VAT Ledger Name
+        self.mapping_table.setColumnWidth(2, 290)  # Internal Ledger Name
+        self.mapping_table.setColumnWidth(3, 130)  # Vat Closing
+        self.mapping_table.setColumnWidth(4, 130)  # Int. Closing
+        self.mapping_table.setColumnWidth(5, 120)  # balance
 
-        # Set mapping delegate with seamless QLineEdit + _TallyCompleter for both sides
-        self.mapping_table.setItemDelegate(
-            MappingItemDelegate(
-                self._get_vat_ledger_options,
-                self._get_internal_ledger_options,
-                parent_table=self.mapping_table,
-                parent=self.mapping_table
-            )
-        )
+        # Double clicking column header sorts that column (Requirement 15)
+        header.sectionDoubleClicked.connect(self._on_mapping_header_double_clicked)
+
         self.mapping_table.itemSelectionChanged.connect(self._on_mapping_selection_changed)
-        self.mapping_table.itemChanged.connect(self._on_mapping_item_changed)
         self.mapping_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.mapping_table.customContextMenuRequested.connect(self._show_mapping_context_menu)
 
-        left_layout.addWidget(self.mapping_table)
+        # Pinned Footer / Total Row (Requirement 13)
+        self.mapping_footer = TableFooterWidget(self.mapping_table)
+        self.mapping_footer_container = TableFooterContainer(self.mapping_table, self.mapping_footer)
+
+        left_layout.addWidget(self.mapping_table, stretch=1)
+        left_layout.addWidget(self.mapping_footer_container)
         self.mapping_splitter.addWidget(left_widget)
 
         # Right Container (Unassigned Internal Ledgers Panel)
@@ -1384,8 +1585,9 @@ class BalanceUI(QWidget):
         self.btn_assign_internal.clicked.connect(self._assign_selected_internal_ledger)
         panel_layout.addWidget(self.btn_assign_internal)
 
-        # Panel List
+        # Panel List (ExtendedSelection allows multi-select using ctrl+select or shift+up/down per Requirement 8)
         self.unassigned_list = QListWidget()
+        self.unassigned_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.unassigned_list.setStyleSheet("""
             QListWidget {
                 border: 1px solid #e2e8f0; border-radius: 4px; background: #ffffff;
@@ -1403,6 +1605,8 @@ class BalanceUI(QWidget):
         """)
         self.unassigned_list.itemDoubleClicked.connect(self._on_unassigned_item_double_clicked)
         self.unassigned_list.itemSelectionChanged.connect(self._on_unassigned_selection_changed)
+        self.unassigned_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.unassigned_list.customContextMenuRequested.connect(self._show_unassigned_context_menu)
         panel_layout.addWidget(self.unassigned_list, stretch=1)
 
         self.mapping_splitter.addWidget(self.unassigned_panel)
@@ -1556,6 +1760,16 @@ class BalanceUI(QWidget):
 
         header = tbl.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.sectionDoubleClicked.connect(
+            lambda idx, t=tbl, gt=group_type: self._on_generic_header_double_clicked(
+                t, idx,
+                lambda: self._update_conf_totals(
+                    t,
+                    self.debtor_footer if gt == "Debtor" else self.creditor_footer,
+                    getattr(self, 'lbl_debtor_count' if gt == "Debtor" else 'lbl_creditor_count', None)
+                )
+            )
+        )
         tbl.setColumnWidth(0, 60)   # SN.
         tbl.setColumnWidth(1, 240)  # Name
         tbl.setColumnWidth(2, 130)  # Alias
@@ -1632,6 +1846,10 @@ class BalanceUI(QWidget):
         self._loading_path = None
         self._load_worker = None
         self._cached_data = data or {}
+        self._update_options_cache(
+            int_debtors=self._cached_data.get("int_debtors", []),
+            vat_debtors=self._cached_data.get("vat_debtors", [])
+        )
         self._rendered_tabs.clear()
         self._render_current_tab()
 
@@ -1692,6 +1910,7 @@ class BalanceUI(QWidget):
     def _populate_ledger_table(self, table: QTableWidget, debtors: list[dict]):
         """Fill table with only the authentic fields from Tally ledger data."""
         table.blockSignals(True)
+        table.setUpdatesEnabled(False)
         table.setRowCount(len(debtors))
 
         for row, d in enumerate(debtors):
@@ -1725,7 +1944,14 @@ class BalanceUI(QWidget):
                             raw_alias = ""
                         val_str = raw_alias
 
-                item = QTableWidgetItem(val_str)
+                if is_numeric:
+                    try:
+                        n_val = float(raw_val) if raw_val is not None else 0.0
+                    except Exception:
+                        n_val = 0.0
+                    item = NumericTableWidgetItem(val_str, n_val)
+                else:
+                    item = QTableWidgetItem(val_str)
                 if field_key == "Name":
                     item.setData(Qt.ItemDataRole.UserRole, str(d.get("Name", "") or "").strip())
                     item.setData(Qt.ItemDataRole.UserRole + 1, str(d.get("Alias", "") or "").strip())
@@ -1737,6 +1963,7 @@ class BalanceUI(QWidget):
 
                 table.setItem(row, col_idx, item)
 
+        table.setUpdatesEnabled(True)
         table.blockSignals(False)
 
     # ── COLUMN VISIBILITY SETTINGS ───────────────────────────────────
@@ -1748,13 +1975,21 @@ class BalanceUI(QWidget):
             return set(LedgerColumnSettingsDialog.DEFAULT_COLUMNS)
         if isinstance(val, str):
             res = set(x.strip() for x in val.split(",") if x.strip())
-            res.add("Name")
-            return res
-        if isinstance(val, (list, set)):
+        elif isinstance(val, (list, set)):
             res = set(val)
-            res.add("Name")
-            return res
-        return {c[0] for c in TALLY_LEDGER_COLUMNS}
+        else:
+            res = {c[0] for c in TALLY_LEDGER_COLUMNS}
+        res.add("Name")
+
+        # Auto-migrate old commercial columns to Debit_Totals and Credit_Totals
+        old_cols = {"Sales_Amount", "Purchase_Amount", "Receipt_Amount", "Payment_Amount", "Sales_Plus_Purchase"}
+        if res.intersection(old_cols):
+            res.difference_update(old_cols)
+            res.add("Debit_Totals")
+            res.add("Credit_Totals")
+            self.save_visible_column_keys(res)
+
+        return res
 
     def save_visible_column_keys(self, cols: set):
         s = QSettings("JKCatalog", "VatBalanceLedgerColumns")
@@ -1992,7 +2227,7 @@ class BalanceUI(QWidget):
         if hasattr(self, 'btn_toggle_mapping_alias'):
             self.btn_toggle_mapping_alias.setText(txt)
 
-    def refresh_mapping_table(self, select_group_id: int = 0):
+    def refresh_mapping_table(self, select_group_id: int = 0, async_load: bool = True):
         """Populate Mapping table and Unassigned Internal Ledgers panel for active VAT company."""
         if not self.db_name or not self.active_vat_company:
             self.mapping_table.setRowCount(0)
@@ -2002,8 +2237,28 @@ class BalanceUI(QWidget):
                 self.lbl_unmapped_badge.setVisible(False)
             return
 
-        mappings = load_vat_mappings(self.db_name, self.active_vat_company)
-        unassigned_int = get_unassigned_internal_debtors(self.db_name, self.active_vat_company)
+        if async_load:
+            # Stop any in-flight mapping worker
+            if hasattr(self, '_mapping_refresh_worker') and self._mapping_refresh_worker and self._mapping_refresh_worker.isRunning():
+                try:
+                    self._mapping_refresh_worker.finished.disconnect()
+                except Exception:
+                    pass
+                self._mapping_refresh_worker.quit()
+                self._mapping_refresh_worker.wait(200)
+
+            self._mapping_refresh_worker = _MappingRefreshWorker(
+                self.db_name, self.active_vat_company, select_group_id=select_group_id, parent=self
+            )
+            self._mapping_refresh_worker.finished.connect(self._on_mapping_refreshed)
+            self._mapping_refresh_worker.start()
+        else:
+            mappings = load_vat_mappings(self.db_name, self.active_vat_company)
+            unassigned_int = get_unassigned_internal_debtors(self.db_name, self.active_vat_company)
+            self._on_mapping_refreshed(mappings, unassigned_int, select_group_id)
+
+    def _on_mapping_refreshed(self, mappings: list, unassigned_int: list, select_group_id: int = 0):
+        """Handle refreshed mapping data on UI thread."""
         if not hasattr(self, '_cached_data') or self._cached_data is None:
             self._cached_data = {}
         self._cached_data["mappings"] = mappings
@@ -2022,189 +2277,221 @@ class BalanceUI(QWidget):
                     break
 
     def _populate_mapping_from_data(self, mappings: list):
-        """Fill the mapping table using vertical sub-row cells for multiple ledgers per group.
-
-        Columns:
-        0: # (spanned across group rows)
-        1: VAT Ledger
-        2: VAT Alias
-        3: Internal Ledger
-        4: Internal Alias
-        5: Manual Name (spanned across group rows)
-        6: Status (spanned across group rows)
+        """Fill mapping table with 6 columns:
+        0: Serial No.
+        1: VAT Ledger Name (with '+' button)
+        2: Internal Ledger Name (with '+' button)
+        3: Vat Closing (integer rounded)
+        4: Int. Closing (integer rounded)
+        5: balance
         """
         self.mapping_table.blockSignals(True)
+        self.mapping_table.setUpdatesEnabled(False)
         self.mapping_table.clearSpans()
+
+        show_none_vat = self.chk_show_none_vat.isChecked() if hasattr(self, 'chk_show_none_vat') else False
+
+        filtered_mappings = []
+        for m in mappings:
+            is_none_vat = m.get("is_none_vat", False) or (m.get("serial_no") == 0)
+            if is_none_vat and not show_none_vat:
+                continue
+            filtered_mappings.append(m)
 
         total_rows = 0
         group_specs = []
         unmapped_count = 0
 
-        for m in mappings:
-            v_ledgers = [v for v in m.get("vat_ledgers", []) if v and v.strip()]
-            v_aliases = m.get("vat_aliases", [])
-            i_ledgers = [i for i in m.get("internal_ledgers", []) if i and i.strip()]
-            i_aliases = m.get("internal_aliases", [])
+        for m in filtered_mappings:
+            vat_items = m.get("vat_items", [])
+            internal_items = m.get("internal_items", [])
 
-            if not v_ledgers and m.get("vat_ledger"):
-                v_ledgers = [m.get("vat_ledger")]
-                v_aliases = [""]
-            if not i_ledgers and m.get("internal_ledger"):
-                i_ledgers = [m.get("internal_ledger")]
-                i_aliases = [""]
+            if not vat_items and m.get("vat_ledger"):
+                vat_items = [{
+                    "id": m.get("id"),
+                    "name": m.get("vat_ledger"),
+                    "alias": "",
+                    "closing": 0.0,
+                    "serial_no": m.get("serial_no", 0),
+                    "classification": m.get("classification", "")
+                }]
+            if not internal_items and m.get("internal_ledger"):
+                internal_items = [{
+                    "id": m.get("id"),
+                    "name": m.get("internal_ledger"),
+                    "alias": "",
+                    "closing": 0.0
+                }]
 
-            n_rows = max(len(v_ledgers), len(i_ledgers), 1)
-            group_specs.append((m, v_ledgers, v_aliases, i_ledgers, i_aliases, n_rows))
+            n_rows = max(len(vat_items), len(internal_items), 1)
+            group_specs.append((m, vat_items, internal_items, n_rows))
             total_rows += n_rows
 
-            is_unmapped = m.get("is_unmapped", False) or (not i_ledgers)
-            if is_unmapped:
+            is_unmapped = m.get("is_unmapped", False) or (not internal_items)
+            if is_unmapped and not m.get("is_none_vat", False):
                 unmapped_count += 1
 
         self.mapping_table.setRowCount(total_rows)
 
         cur_row = 0
-        for grp_idx, (m, v_ledgers, v_aliases, i_ledgers, i_aliases, n_rows) in enumerate(group_specs, start=1):
+        for grp_idx, (m, vat_items, internal_items, n_rows) in enumerate(group_specs, start=1):
             start_row = cur_row
             group_id = m.get("group_id", 0) or m.get("id", 0)
-            man_name = m.get("manual_name", "") or ""
-            is_unmapped = m.get("is_unmapped", False) or (not i_ledgers)
-            is_merged = m.get("is_merged", False) or (len(v_ledgers) > 1)
+            is_unmapped = m.get("is_unmapped", False) or (not internal_items)
+            is_merged = m.get("is_merged", False) or (len(vat_items) > 1)
+            is_none_vat = m.get("is_none_vat", False) or (m.get("serial_no") == 0)
 
-            if is_unmapped:
-                status_text = "🔴 Unmapped"
-            elif is_merged:
-                v_cnt = len(v_ledgers)
-                i_cnt = len(i_ledgers)
-                status_text = f"🔗 Merged ({v_cnt} VAT : {i_cnt} Int)" if i_cnt > 1 else f"🔗 Merged ({v_cnt} VAT)"
-            elif len(i_ledgers) > 1:
-                status_text = f"1 : {len(i_ledgers)}"
-            else:
-                status_text = "Mapped"
-
-            if is_unmapped:
-                bg_color = QColor("#fecaca")
+            # Soft background colors
+            if is_unmapped and not is_none_vat:
+                bg_color = QColor("#fef2f2")
                 fg_color = QColor("#991b1b")
-                status_fg = QColor("#991b1b")
+            elif is_none_vat:
+                bg_color = QColor("#f8fafc")
+                fg_color = QColor("#64748b")
             else:
                 bg_color = QColor("#ffffff") if (grp_idx % 2 == 1) else QColor("#f8fafc")
                 fg_color = QColor("#0f172a")
-                status_fg = QColor("#2563eb") if is_merged else QColor("#059669")
 
             for k in range(n_rows):
                 r = start_row + k
 
-                # Col 0: #
-                it_num = QTableWidgetItem(str(grp_idx) if k == 0 else "")
-                it_num.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                it_num.setBackground(bg_color)
-                it_num.setForeground(fg_color)
-                it_num.setData(Qt.ItemDataRole.UserRole, group_id)
-                it_num._mapping_group = m
-                it_num.setFlags(it_num.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                if is_unmapped:
-                    f = it_num.font()
-                    f.setBold(True)
-                    it_num.setFont(f)
-                self.mapping_table.setItem(r, 0, it_num)
+                # 0: Serial No.
+                if k < len(vat_items):
+                    v_item = vat_items[k]
+                    sn_val = v_item.get("serial_no")
+                    if sn_val is None or sn_val == 0:
+                        sn_val = m.get("serial_no", 0)
+                    sn_str = str(sn_val)
+                elif k == 0 and is_unmapped:
+                    sn_val = m.get("serial_no", 0)
+                    sn_str = str(sn_val)
+                else:
+                    sn_val = 0
+                    sn_str = ""
 
-                # Col 1: VAT Ledger
-                v_name = v_ledgers[k] if k < len(v_ledgers) else ""
-                if v_name.lower() in ("none", "nan", "null"):
+                it_sn = NumericTableWidgetItem(sn_str, float(sn_val))
+                it_sn.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                it_sn.setBackground(bg_color)
+                it_sn.setForeground(fg_color)
+                it_sn.setData(Qt.ItemDataRole.UserRole, group_id)
+                it_sn._mapping_group = m
+                it_sn.setFlags(it_sn.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                if is_unmapped and not is_none_vat:
+                    f = it_sn.font()
+                    f.setBold(True)
+                    it_sn.setFont(f)
+                self.mapping_table.setItem(r, 0, it_sn)
+
+                # 1: VAT Ledger Name (with '+' button)
+                if k < len(vat_items):
+                    v_item = vat_items[k]
+                    v_name = v_item.get("name", "")
+                    v_cls = v_item.get("classification") or (m.get("classification", "") if is_unmapped else "")
+                    v_closing = float(v_item.get("closing", 0.0) or 0.0)
+                else:
                     v_name = ""
+                    v_cls = ""
+                    v_closing = 0.0
+
                 it_vl = QTableWidgetItem(v_name)
-                it_vl.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                 it_vl.setBackground(bg_color)
                 it_vl.setForeground(fg_color)
                 it_vl.setData(Qt.ItemDataRole.UserRole, group_id)
                 it_vl.setData(Qt.ItemDataRole.UserRole + 2, v_name)
                 it_vl._mapping_group = m
-                if is_unmapped:
-                    f = it_vl.font()
-                    f.setBold(True)
-                    it_vl.setFont(f)
-                if not self._can_edit:
-                    it_vl.setFlags(it_vl.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                it_vl.setFlags(it_vl.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.mapping_table.setItem(r, 1, it_vl)
 
-                # Col 2: VAT Alias (Read-only)
-                v_alias = v_aliases[k] if k < len(v_aliases) else ""
-                if v_alias.lower() in ("none", "nan", "null"):
-                    v_alias = ""
-                it_va = QTableWidgetItem(v_alias)
-                it_va.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-                it_va.setBackground(bg_color)
-                it_va.setForeground(fg_color)
-                it_va.setData(Qt.ItemDataRole.UserRole, group_id)
-                it_va._mapping_group = m
-                it_va.setFlags(it_va.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.mapping_table.setItem(r, 2, it_va)
+                if v_name:
+                    cell_v = _LedgerCellWidget(
+                        name=v_name,
+                        has_plus=True,
+                        badge=v_cls,
+                        on_plus=lambda target_row=r, gid=group_id: self._on_add_vat_ledger_clicked(target_row, gid)
+                    )
+                    self.mapping_table.setCellWidget(r, 1, cell_v)
 
-                # Col 3: Internal Ledger
-                i_name = i_ledgers[k] if k < len(i_ledgers) else ""
-                if i_name.lower() in ("none", "nan", "null"):
+                # 2: Internal Ledger Name (with '+' button)
+                if k < len(internal_items):
+                    i_item = internal_items[k]
+                    i_name = i_item.get("name", "")
+                    i_closing = float(i_item.get("closing", 0.0) or 0.0)
+                else:
                     i_name = ""
+                    i_closing = 0.0
+
                 it_il = QTableWidgetItem(i_name)
-                it_il.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                 it_il.setBackground(bg_color)
                 it_il.setForeground(fg_color)
                 it_il.setData(Qt.ItemDataRole.UserRole, group_id)
                 it_il.setData(Qt.ItemDataRole.UserRole + 2, i_name)
                 it_il._mapping_group = m
-                if is_unmapped:
-                    f = it_il.font()
-                    f.setBold(True)
-                    it_il.setFont(f)
-                if not self._can_edit:
-                    it_il.setFlags(it_il.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.mapping_table.setItem(r, 3, it_il)
+                it_il.setFlags(it_il.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.mapping_table.setItem(r, 2, it_il)
 
-                # Col 4: Internal Alias (Read-only)
-                i_alias = i_aliases[k] if k < len(i_aliases) else ""
-                if i_alias.lower() in ("none", "nan", "null"):
-                    i_alias = ""
-                it_ia = QTableWidgetItem(i_alias)
-                it_ia.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-                it_ia.setBackground(bg_color)
-                it_ia.setForeground(fg_color)
-                it_ia.setData(Qt.ItemDataRole.UserRole, group_id)
-                it_ia._mapping_group = m
-                it_ia.setFlags(it_ia.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.mapping_table.setItem(r, 4, it_ia)
+                # Set cell widget with + button
+                cell_i = _LedgerCellWidget(
+                    name=i_name,
+                    has_plus=True,
+                    placeholder="Click + to add internal ledger" if (is_unmapped and k == 0) else "",
+                    on_plus=lambda target_row=r, gid=group_id: self._on_add_internal_ledger_clicked(target_row, gid)
+                )
+                self.mapping_table.setCellWidget(r, 2, cell_i)
 
-                # Col 5: Manual Name
-                it_mn = QTableWidgetItem(man_name if k == 0 else "")
-                it_mn.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-                it_mn.setBackground(bg_color)
-                it_mn.setForeground(fg_color)
-                it_mn.setData(Qt.ItemDataRole.UserRole, group_id)
-                it_mn._mapping_group = m
-                if not self._can_edit:
-                    it_mn.setFlags(it_mn.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.mapping_table.setItem(r, 5, it_mn)
+                # 3: Vat Closing (Integer rounded, no decimals)
+                if v_name:
+                    v_close_str = f"{int(round(v_closing)):,}"
+                else:
+                    v_close_str = ""
 
-            if n_rows > 1:
-                self.mapping_table.setSpan(start_row, 0, n_rows, 1)
-                self.mapping_table.setSpan(start_row, 5, n_rows, 1)
+                it_vc = NumericTableWidgetItem(v_close_str, v_closing)
+                it_vc.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                it_vc.setBackground(bg_color)
+                it_vc.setForeground(fg_color)
+                it_vc.setData(Qt.ItemDataRole.UserRole, group_id)
+                it_vc.setFlags(it_vc.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.mapping_table.setItem(r, 3, it_vc)
+
+                # 4: Int. Closing (Integer rounded, no decimals)
+                if i_name:
+                    i_close_str = f"{int(round(i_closing)):,}"
+                else:
+                    i_close_str = ""
+
+                it_ic = NumericTableWidgetItem(i_close_str, i_closing)
+                it_ic.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                it_ic.setBackground(bg_color)
+                it_ic.setForeground(fg_color)
+                it_ic.setData(Qt.ItemDataRole.UserRole, group_id)
+                it_ic.setFlags(it_ic.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.mapping_table.setItem(r, 4, it_ic)
+
+                # 5: balance (Placeholder column)
+                it_bal = NumericTableWidgetItem("", 0.0)
+                it_bal.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                it_bal.setBackground(bg_color)
+                it_bal.setForeground(fg_color)
+                it_bal.setData(Qt.ItemDataRole.UserRole, group_id)
+                it_bal.setFlags(it_bal.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.mapping_table.setItem(r, 5, it_bal)
 
             cur_row += n_rows
 
-        # Maintain alias column visibility
-        hide_alias = getattr(self, '_hide_mapping_alias', False)
-        self.mapping_table.setColumnHidden(2, hide_alias)
-        self.mapping_table.setColumnHidden(4, hide_alias)
-
+        self.mapping_table.setUpdatesEnabled(True)
         self.mapping_table.blockSignals(False)
 
         # Update Unmapped VAT badge
         if hasattr(self, 'lbl_unmapped_badge'):
             if unmapped_count > 0:
-                self.lbl_unmapped_badge.setText(f"🔴 {unmapped_count} Unmapped VAT")
+                self.lbl_unmapped_badge.setText(f"🔴 {unmapped_count} Unmapped")
                 self.lbl_unmapped_badge.setVisible(True)
             else:
                 self.lbl_unmapped_badge.setVisible(False)
 
-        # Reset button states
+        # Update Grand Total Footer
+        self._update_mapping_totals()
+
+        # Update button states
         self._on_mapping_selection_changed()
 
     def _populate_unassigned_list(self, unassigned_items: list = None):
@@ -2230,9 +2517,11 @@ class BalanceUI(QWidget):
             if isinstance(entry, dict):
                 name = (entry.get("Name") or "").strip()
                 alias = (entry.get("Alias") or "").strip()
+                cls = (entry.get("Classification") or "").strip()
             else:
                 name = str(entry).strip()
                 alias = ""
+                cls = ""
 
             if name.lower() in ("none", "nan", "null"):
                 name = ""
@@ -2247,9 +2536,16 @@ class BalanceUI(QWidget):
                 if not match:
                     continue
 
-            item = QListWidgetItem(name)
+            display_txt = f"{name}  [{cls}]" if cls else name
+            item = QListWidgetItem(display_txt)
             item.setData(Qt.ItemDataRole.UserRole, name)
             item.setData(Qt.ItemDataRole.UserRole + 1, alias)
+            item.setData(Qt.ItemDataRole.UserRole + 2, cls)
+            if cls:
+                item.setForeground(QColor("#4338ca") if cls.lower() == "cash sales" else QColor("#b45309"))
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
             self.unassigned_list.addItem(item)
 
         self.unassigned_list.blockSignals(False)
@@ -2298,99 +2594,102 @@ class BalanceUI(QWidget):
     def _populate_vat_conf_table_from_data(self, tbl: QTableWidget, group_type: str, rows: list):
         """Populate Debtor or Creditor Vat Conf table from pre-fetched rows."""
         tbl.blockSignals(True)
-        tbl.setRowCount(len(rows))
+        tbl.setUpdatesEnabled(False)
+        try:
+            tbl.setRowCount(len(rows))
 
-        for r_idx, r in enumerate(rows):
-            # 0: SN. (Editable Cartoon Number validated against reserved numbers)
-            it_sn = QTableWidgetItem(r["sn"])
-            it_sn.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            it_sn._prev_sn = r["sn"]
-            if not self._can_edit:
-                it_sn.setFlags(it_sn.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            tbl.setItem(r_idx, 0, it_sn)
+            for r_idx, r in enumerate(rows):
+                # 0: SN. (Editable Cartoon Number validated against reserved numbers)
+                it_sn = QTableWidgetItem(r["sn"])
+                it_sn.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                it_sn._prev_sn = r["sn"]
+                if not self._can_edit:
+                    it_sn.setFlags(it_sn.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 0, it_sn)
 
-            # 1: Name (Read-only, pure name, no parentheses)
-            raw_name = (r.get("name") or "").strip()
-            if raw_name.lower() in ("none", "nan", "null"):
-                raw_name = ""
-            it_name = QTableWidgetItem(raw_name)
-            it_name.setData(Qt.ItemDataRole.UserRole, raw_name)
-            it_name.setFlags(it_name.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            tbl.setItem(r_idx, 1, it_name)
+                # 1: Name (Read-only, pure name, no parentheses)
+                raw_name = (r.get("name") or "").strip()
+                if raw_name.lower() in ("none", "nan", "null"):
+                    raw_name = ""
+                it_name = QTableWidgetItem(raw_name)
+                it_name.setData(Qt.ItemDataRole.UserRole, raw_name)
+                it_name.setFlags(it_name.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 1, it_name)
 
-            # 2: Alias (Read-only, pure alias, no parentheses)
-            raw_alias = (r.get("alias") or "").strip()
-            if raw_alias.lower() in ("none", "nan", "null"):
-                raw_alias = ""
-            it_alias = QTableWidgetItem(raw_alias)
-            it_alias.setData(Qt.ItemDataRole.UserRole, raw_alias)
-            it_alias.setFlags(it_alias.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            tbl.setItem(r_idx, 2, it_alias)
+                # 2: Alias (Read-only, pure alias, no parentheses)
+                raw_alias = (r.get("alias") or "").strip()
+                if raw_alias.lower() in ("none", "nan", "null"):
+                    raw_alias = ""
+                it_alias = QTableWidgetItem(raw_alias)
+                it_alias.setData(Qt.ItemDataRole.UserRole, raw_alias)
+                it_alias.setFlags(it_alias.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 2, it_alias)
 
-            # 3: Opening Amount (Read-only, right-aligned)
-            it_op = QTableWidgetItem(f"{r['opening_amount']:,.2f}")
-            it_op.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            it_op.setFlags(it_op.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            tbl.setItem(r_idx, 3, it_op)
+                # 3: Opening Amount (Read-only, right-aligned numeric item for correct sorting)
+                it_op = NumericTableWidgetItem(f"{r['opening_amount']:,.2f}", float(r['opening_amount']))
+                it_op.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                it_op.setFlags(it_op.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 3, it_op)
 
-            # 4: Closing Amount (Read-only, right-aligned)
-            it_cl = QTableWidgetItem(f"{r['closing_amount']:,.2f}")
-            it_cl.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            it_cl.setFlags(it_cl.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            tbl.setItem(r_idx, 4, it_cl)
+                # 4: Closing Amount (Read-only, right-aligned numeric item for correct sorting)
+                it_cl = NumericTableWidgetItem(f"{r['closing_amount']:,.2f}", float(r['closing_amount']))
+                it_cl.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                it_cl.setFlags(it_cl.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 4, it_cl)
 
-            # 5: Need Print ? (Read-only, centered)
-            it_np = QTableWidgetItem(r["need_print"])
-            it_np.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            if r["need_print"] == "Yes":
-                it_np.setForeground(QColor("#059669"))
-                font = it_np.font()
-                font.setBold(True)
-                it_np.setFont(font)
-            it_np.setFlags(it_np.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            tbl.setItem(r_idx, 5, it_np)
+                # 5: Need Print ? (Read-only, centered)
+                it_np = QTableWidgetItem(r["need_print"])
+                it_np.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if r["need_print"] == "Yes":
+                    it_np.setForeground(QColor("#059669"))
+                    font = it_np.font()
+                    font.setBold(True)
+                    it_np.setFont(font)
+                it_np.setFlags(it_np.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 5, it_np)
 
-            # 6: Did You Print (Editable Yes/No, accepts 1/0, Y/N, T/F)
-            it_dyp = QTableWidgetItem(r["did_you_print"])
-            it_dyp.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            if not self._can_edit:
-                it_dyp.setFlags(it_dyp.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            tbl.setItem(r_idx, 6, it_dyp)
+                # 6: Did You Print (Editable Yes/No, accepts 1/0, Y/N, T/F)
+                it_dyp = QTableWidgetItem(r["did_you_print"])
+                it_dyp.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if not self._can_edit:
+                    it_dyp.setFlags(it_dyp.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 6, it_dyp)
 
-            # 7: CRM (Editable autocomplete)
-            it_crm = QTableWidgetItem(r["crm"])
-            if not self._can_edit:
-                it_crm.setFlags(it_crm.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            tbl.setItem(r_idx, 7, it_crm)
+                # 7: CRM (Editable autocomplete)
+                it_crm = QTableWidgetItem(r["crm"])
+                if not self._can_edit:
+                    it_crm.setFlags(it_crm.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 7, it_crm)
 
-            # 8: Get Back (Editable Yes/No, accepts 1/0, Y/N, T/F)
-            it_gb = QTableWidgetItem(r["get_back"])
-            it_gb.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            if not self._can_edit:
-                it_gb.setFlags(it_gb.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            tbl.setItem(r_idx, 8, it_gb)
+                # 8: Get Back (Editable Yes/No, accepts 1/0, Y/N, T/F)
+                it_gb = QTableWidgetItem(r["get_back"])
+                it_gb.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if not self._can_edit:
+                    it_gb.setFlags(it_gb.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 8, it_gb)
 
-            # 9: Opening ? (Editable numeric, compared against Opening Amount)
-            it_exp_op = QTableWidgetItem(r["expected_opening"])
-            it_exp_op.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            if not self._can_edit:
-                it_exp_op.setFlags(it_exp_op.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            tbl.setItem(r_idx, 9, it_exp_op)
+                # 9: Opening ? (Editable numeric, compared against Opening Amount)
+                it_exp_op = QTableWidgetItem(r["expected_opening"])
+                it_exp_op.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                if not self._can_edit:
+                    it_exp_op.setFlags(it_exp_op.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 9, it_exp_op)
 
-            # 10: Closing ? (Editable numeric, compared against Closing Amount)
-            it_exp_cl = QTableWidgetItem(r["expected_closing"])
-            it_exp_cl.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            if not self._can_edit:
-                it_exp_cl.setFlags(it_exp_cl.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            tbl.setItem(r_idx, 10, it_exp_cl)
+                # 10: Closing ? (Editable numeric, compared against Closing Amount)
+                it_exp_cl = QTableWidgetItem(r["expected_closing"])
+                it_exp_cl.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                if not self._can_edit:
+                    it_exp_cl.setFlags(it_exp_cl.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 10, it_exp_cl)
 
-            # Apply full row solid red highlight if mismatched or empty
-            self._update_vat_conf_row_style(tbl, r_idx)
+                # Apply full row solid red highlight if mismatched or empty
+                self._update_vat_conf_row_style(tbl, r_idx)
 
-        # Maintain alias column visibility
-        tbl.setColumnHidden(2, getattr(self, '_hide_conf_alias', False))
-
-        tbl.blockSignals(False)
+            # Maintain alias column visibility
+            tbl.setColumnHidden(2, getattr(self, '_hide_conf_alias', False))
+        finally:
+            tbl.setUpdatesEnabled(True)
+            tbl.blockSignals(False)
         if group_type == "Debtor" and hasattr(self, 'debtor_footer'):
             self._update_conf_totals(self.debtor_table, self.debtor_footer, getattr(self, 'lbl_debtor_count', None))
         elif group_type == "Creditor" and hasattr(self, 'creditor_footer'):
@@ -2444,62 +2743,24 @@ class BalanceUI(QWidget):
 
     def _on_mapping_selection_changed(self):
         """Update button enabled states based on current selection in Mapping table."""
-        if not hasattr(self, 'btn_merge_mapping'):
-            return
-
         selected_indexes = self.mapping_table.selectedIndexes()
-        group_ids = []
-        for idx in selected_indexes:
-            it = self.mapping_table.item(idx.row(), 0)
-            gid = it.data(Qt.ItemDataRole.UserRole) if it else 0
-            if gid and gid not in group_ids:
-                group_ids.append(gid)
-
-        count = len(group_ids)
-
-        if count >= 2:
-            self.btn_merge_mapping.setEnabled(True)
-            self.btn_merge_mapping.setText(f"🔗 Merge Selected ({count})")
-        else:
-            self.btn_merge_mapping.setEnabled(False)
-            self.btn_merge_mapping.setText("🔗 Merge Selected")
-
-        has_any_mapped = False
-        has_merged = False
-        for gid in group_ids:
-            for r in range(self.mapping_table.rowCount()):
-                it = self.mapping_table.item(r, 0)
-                if it and it.data(Qt.ItemDataRole.UserRole) == gid:
-                    mapping_data = getattr(it, '_mapping_group', {})
-                    if not mapping_data.get("is_unmapped", False):
-                        has_any_mapped = True
-                    if mapping_data.get("is_merged", False) or len(mapping_data.get("vat_ledgers", [])) > 1:
-                        has_merged = True
-                    break
-
-        self.btn_demerge_mapping.setEnabled(count == 1 and has_merged)
-        self.btn_unmap_mapping.setEnabled(has_any_mapped)
+        has_sel = bool(selected_indexes)
+        if hasattr(self, 'btn_unmap_mapping'):
+            self.btn_unmap_mapping.setEnabled(has_sel)
 
         has_unassigned_sel = bool(self.unassigned_list.selectedItems()) if hasattr(self, 'unassigned_list') else False
         if hasattr(self, 'btn_assign_internal'):
-            self.btn_assign_internal.setEnabled(has_unassigned_sel and count == 1)
+            self.btn_assign_internal.setEnabled(has_unassigned_sel and has_sel)
 
     def _on_unassigned_selection_changed(self):
         """Update assign button when an unassigned internal debtor is selected."""
-        if not hasattr(self, 'btn_assign_internal'):
-            return
-        has_unassigned_sel = bool(self.unassigned_list.selectedItems())
-        selected_indexes = self.mapping_table.selectedIndexes()
-        group_ids = []
-        for idx in selected_indexes:
-            it = self.mapping_table.item(idx.row(), 0)
-            gid = it.data(Qt.ItemDataRole.UserRole) if it else 0
-            if gid and gid not in group_ids:
-                group_ids.append(gid)
-        self.btn_assign_internal.setEnabled(has_unassigned_sel and len(group_ids) == 1)
+        has_unassigned_sel = bool(self.unassigned_list.selectedItems()) if hasattr(self, 'unassigned_list') else False
+        has_mapping_sel = bool(self.mapping_table.selectedIndexes()) if hasattr(self, 'mapping_table') else False
+        if hasattr(self, 'btn_assign_internal'):
+            self.btn_assign_internal.setEnabled(has_unassigned_sel and has_mapping_sel)
 
     def _filter_unassigned_list(self, text: str):
-        """Filter the unassigned internal list in real time matching Name and Alias."""
+        """Filter the unassigned internal list in real time matching Name, Alias, and Classification."""
         q = text.strip().lower()
         visible_cnt = 0
         total_cnt = self.unassigned_list.count()
@@ -2509,8 +2770,9 @@ class BalanceUI(QWidget):
                 continue
             name = str(it.data(Qt.ItemDataRole.UserRole) or "").lower()
             alias = str(it.data(Qt.ItemDataRole.UserRole + 1) or "").lower()
+            cls = str(it.data(Qt.ItemDataRole.UserRole + 2) or "").lower()
             txt = it.text().lower()
-            match = (not q) or (q in txt) or (q in name) or (q in alias)
+            match = (not q) or (q in txt) or (q in name) or (q in alias) or (q in cls)
             it.setHidden(not match)
             if match:
                 visible_cnt += 1
@@ -2538,37 +2800,42 @@ class BalanceUI(QWidget):
             self.btn_toggle_unassigned.setText(f"📋 Unassigned Internal ({cnt}) ❮")
 
     def _assign_selected_internal_ledger(self):
-        """Assign the selected unassigned internal debtor to the selected VAT group in the table."""
+        """Assign all selected unassigned internal debtors to the selected VAT group in the table."""
         if not self._can_edit:
             return
         selected_indexes = self.mapping_table.selectedIndexes()
-        group_ids = []
+        target_group_id = None
         for idx in selected_indexes:
             it = self.mapping_table.item(idx.row(), 0)
             gid = it.data(Qt.ItemDataRole.UserRole) if it else 0
-            if gid and gid not in group_ids:
-                group_ids.append(gid)
+            if gid:
+                target_group_id = gid
+                break
 
-        if len(group_ids) != 1:
-            QMessageBox.information(self, "Select VAT Row", "Please select exactly one VAT group in the mapping table to assign to.")
+        if not target_group_id:
+            QMessageBox.information(self, "Select VAT Row", "Please select a VAT group in the mapping table to assign to.")
             return
 
         unassigned_items = self.unassigned_list.selectedItems()
         if not unassigned_items:
-            QMessageBox.information(self, "Select Internal Ledger", "Please select an internal ledger from the unassigned list.")
+            QMessageBox.information(self, "Select Internal Ledger", "Please select one or more internal ledgers from the unassigned list.")
             return
 
-        group_id = group_ids[0]
-        int_name = str(unassigned_items[0].data(Qt.ItemDataRole.UserRole) or unassigned_items[0].text()).strip()
-        ok = assign_internal_ledger_to_group(self.db_name, self.active_vat_company, group_id, int_name)
-        if ok:
-            self.refresh_mapping_table(select_group_id=group_id)
+        for item in unassigned_items:
+            int_name = str(item.data(Qt.ItemDataRole.UserRole) or item.text()).strip()
+            if int_name:
+                assign_internal_ledger_to_group(self.db_name, self.active_vat_company, target_group_id, int_name)
+
+        self.refresh_mapping_table(select_group_id=target_group_id)
 
     def _on_unassigned_item_double_clicked(self, item: QListWidgetItem):
         """Double-clicking an unassigned internal debtor assigns it to selected VAT group (or first unmapped)."""
         if not self._can_edit:
             return
         int_name = str(item.data(Qt.ItemDataRole.UserRole) or item.text()).strip()
+        if not int_name:
+            return
+
         selected_indexes = self.mapping_table.selectedIndexes()
         target_group_id = None
         for idx in selected_indexes:
@@ -2593,47 +2860,8 @@ class BalanceUI(QWidget):
         if ok:
             self.refresh_mapping_table(select_group_id=target_group_id)
 
-    def _merge_selected_mappings(self):
-        """Merge selected VAT mapping rows into a unified group."""
-        if not self._can_edit:
-            return
-        selected_indexes = self.mapping_table.selectedIndexes()
-        group_ids = []
-        for idx in selected_indexes:
-            it = self.mapping_table.item(idx.row(), 0)
-            gid = it.data(Qt.ItemDataRole.UserRole) if it else 0
-            if gid and gid not in group_ids:
-                group_ids.append(gid)
-
-        if len(group_ids) < 2:
-            return
-
-        target_gid = merge_mapping_groups(self.db_name, self.active_vat_company, group_ids)
-        if target_gid:
-            self.refresh_mapping_table(select_group_id=target_gid)
-
-    def _demerge_selected_mapping(self):
-        """Demerge the selected merged group back into individual VAT ledger groups."""
-        if not self._can_edit:
-            return
-        selected_indexes = self.mapping_table.selectedIndexes()
-        group_ids = []
-        for idx in selected_indexes:
-            it = self.mapping_table.item(idx.row(), 0)
-            gid = it.data(Qt.ItemDataRole.UserRole) if it else 0
-            if gid and gid not in group_ids:
-                group_ids.append(gid)
-
-        if len(group_ids) != 1:
-            return
-
-        group_id = group_ids[0]
-        ok = demerge_mapping_group(self.db_name, self.active_vat_company, group_id)
-        if ok:
-            self.refresh_mapping_table(select_group_id=group_id)
-
     def _unmap_selected_mapping(self):
-        """Clear/unmap all internal ledgers from the selected group, returning them to unassigned list."""
+        """Clear/unmap internal ledgers from the selected group(s), returning them to unassigned list."""
         if not self._can_edit:
             return
         selected_indexes = self.mapping_table.selectedIndexes()
@@ -2652,152 +2880,315 @@ class BalanceUI(QWidget):
 
         self.refresh_mapping_table()
 
-    def _on_mapping_item_changed(self, item: QTableWidgetItem):
-        """User modified an editable cell in Mapping table."""
+    def _on_add_vat_ledger_clicked(self, row: int, group_id: int):
+        """Insert a temporary inline row immediately below row with QLineEdit completer for adding a VAT Ledger."""
         if not self._can_edit:
             return
-        try:
-            row = item.row()
-            col = item.column()
-            if row < 0 or col not in (1, 3, 5):
-                return
+        insert_row = row + 1
+        self.mapping_table.insertRow(insert_row)
+        for c in range(6):
+            it = QTableWidgetItem("")
+            it.setData(Qt.ItemDataRole.UserRole, group_id)
+            it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.mapping_table.setItem(insert_row, c, it)
 
-            group_id = item.data(Qt.ItemDataRole.UserRole)
-            if not group_id:
-                it0 = self.mapping_table.item(row, 0)
-                group_id = it0.data(Qt.ItemDataRole.UserRole) if it0 else 0
-            if not group_id:
-                return
+        ed = QLineEdit()
+        ed.setPlaceholderText("Type or select VAT Ledger and press Enter...")
+        ed.setStyleSheet("""
+            QLineEdit {
+                background: #ffffff; border: 2px solid #059669; border-radius: 4px;
+                padding: 2px 6px; font-size: 12px; color: #0f172a;
+            }
+        """)
+        all_vat_names = get_vat_debtor_names(self.db_name, self.active_vat_company)
+        completer = _TallyCompleter(all_vat_names, ed)
+        completer.setMaxVisibleItems(12)
+        completer.popup().setMinimumWidth(320)
+        ed.setCompleter(completer)
+        ed.textEdited.connect(completer.update_prefix)
 
-            active_comp = self.active_vat_company
-            if not active_comp and self.db_name:
-                active_comp = get_active_vat_company(self.db_name)
-                self.active_vat_company = active_comp
-            if not active_comp:
-                logger.warning(f"[_on_mapping_item_changed] No active VAT company configured for db '{self.db_name}'")
-                return
-
-            if col == 1:  # VAT Ledger
-                old_name = str(item.data(Qt.ItemDataRole.UserRole + 2) or "").strip()
-                v_val = item.text().strip()
-                if not v_val:
+        def _commit_vat():
+            v_name = ed.text().strip()
+            if v_name:
+                ok = merge_vat_ledger_into_group(self.db_name, self.active_vat_company, group_id, v_name)
+                if ok:
                     self.refresh_mapping_table(select_group_id=group_id)
                     return
-                if v_val != old_name:
-                    update_group_vat_ledger(self.db_name, active_comp, group_id, old_name, v_val)
-                    QTimer.singleShot(150, lambda gid=group_id: self.refresh_mapping_table(select_group_id=gid))
+            if insert_row < self.mapping_table.rowCount():
+                self.mapping_table.removeRow(insert_row)
 
-            elif col == 3:  # Internal Ledger
-                old_name = str(item.data(Qt.ItemDataRole.UserRole + 2) or "").strip()
-                i_val = item.text().strip()
-                if i_val != old_name:
-                    update_group_internal_ledger(self.db_name, active_comp, group_id, old_name, i_val)
-                    QTimer.singleShot(150, lambda gid=group_id: self.refresh_mapping_table(select_group_id=gid))
+        ed.returnPressed.connect(_commit_vat)
+        completer.activated.connect(lambda txt: QTimer.singleShot(50, _commit_vat))
 
-            elif col == 5:  # Manual Name
-                m_val = item.text().strip()
-                set_group_manual_name(self.db_name, active_comp, group_id, m_val)
-        except Exception as e:
-            logger.error(f"[_on_mapping_item_changed] Failed: {e}", exc_info=True)
-            QMessageBox.critical(self, "Save Error", f"Failed to save mapping: {e}")
+        self.mapping_table.setCellWidget(insert_row, 1, ed)
+        ed.setFocus()
 
-    def _show_mapping_context_menu(self, pos):
-        """Right-click context menu on Mapping table."""
+    def _on_add_internal_ledger_clicked(self, row: int, group_id: int):
+        """Insert a temporary inline row immediately below row with QLineEdit completer for adding an Internal Ledger."""
         if not self._can_edit:
             return
-        selected_indexes = self.mapping_table.selectedIndexes()
-        selected_group_ids = []
-        for idx in selected_indexes:
-            it = self.mapping_table.item(idx.row(), 0)
-            gid = it.data(Qt.ItemDataRole.UserRole) if it else 0
-            if gid and gid not in selected_group_ids:
-                selected_group_ids.append(gid)
+        insert_row = row + 1
+        self.mapping_table.insertRow(insert_row)
+        for c in range(6):
+            it = QTableWidgetItem("")
+            it.setData(Qt.ItemDataRole.UserRole, group_id)
+            it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.mapping_table.setItem(insert_row, c, it)
 
-        if not selected_group_ids:
-            row = self.mapping_table.rowAt(pos.y())
-            if row >= 0:
-                self.mapping_table.selectRow(row)
-                it = self.mapping_table.item(row, 0)
-                gid = it.data(Qt.ItemDataRole.UserRole) if it else 0
-                if gid:
-                    selected_group_ids = [gid]
-            else:
-                return
+        ed = QLineEdit()
+        ed.setPlaceholderText("Type or select Internal Ledger and press Enter...")
+        ed.setStyleSheet("""
+            QLineEdit {
+                background: #ffffff; border: 2px solid #059669; border-radius: 4px;
+                padding: 2px 6px; font-size: 12px; color: #0f172a;
+            }
+        """)
+        all_int_names = get_internal_debtor_names(self.db_name)
+        completer = _TallyCompleter(all_int_names, ed)
+        completer.setMaxVisibleItems(12)
+        completer.popup().setMinimumWidth(320)
+        ed.setCompleter(completer)
+        ed.textEdited.connect(completer.update_prefix)
+
+        def _commit_int():
+            i_name = ed.text().strip()
+            if i_name:
+                ok = assign_internal_ledger_to_group(self.db_name, self.active_vat_company, group_id, i_name)
+                if ok:
+                    self.refresh_mapping_table(select_group_id=group_id)
+                    return
+            if insert_row < self.mapping_table.rowCount():
+                self.mapping_table.removeRow(insert_row)
+
+        ed.returnPressed.connect(_commit_int)
+        completer.activated.connect(lambda txt: QTimer.singleShot(50, _commit_int))
+
+        self.mapping_table.setCellWidget(insert_row, 2, ed)
+        ed.setFocus()
+
+    def _show_mapping_context_menu(self, pos):
+        """Right-click context menu on Mapping table for removing VAT/Int ledgers and setting classifications."""
+        if not self._can_edit:
+            return
+
+        row = self.mapping_table.rowAt(pos.y())
+        if row < 0:
+            return
+
+        it0 = self.mapping_table.item(row, 0)
+        if not it0:
+            return
+        gid = it0.data(Qt.ItemDataRole.UserRole)
+        mapping_data = getattr(it0, '_mapping_group', {})
+
+        it1 = self.mapping_table.item(row, 1)
+        v_name = str(it1.data(Qt.ItemDataRole.UserRole + 2) or it1.text()).strip() if it1 else ""
+
+        it2 = self.mapping_table.item(row, 2)
+        i_name = str(it2.data(Qt.ItemDataRole.UserRole + 2) or it2.text()).strip() if it2 else ""
 
         menu = QMenu(self)
 
-        # If 2 or more distinct groups selected: offer Merge and Unmap Selected
-        if len(selected_group_ids) >= 2:
-            act_merge = menu.addAction(f"🔗 Merge Selected ({len(selected_group_ids)})")
-            act_unmap_all = menu.addAction(f"Clear / Unmap Selected ({len(selected_group_ids)})")
+        # 1. VAT Ledger Remove (Requirement 2: remove single VAT ledger from merged VATs)
+        is_merged = mapping_data.get("is_merged", False) or len(mapping_data.get("vat_items", [])) > 1
+        if is_merged and v_name:
+            act_remove_vat = menu.addAction(f"Remove VAT Ledger '{v_name}' from Group")
+            def _do_remove_vat():
+                ok = remove_vat_ledger_from_group(self.db_name, self.active_vat_company, gid, v_name)
+                if ok:
+                    self.refresh_mapping_table(select_group_id=gid)
+            act_remove_vat.triggered.connect(_do_remove_vat)
+
+        # 2. Internal Ledger Remove (Requirement 3: unmap single internal ledger)
+        if i_name:
+            act_remove_int = menu.addAction(f"Remove Internal Ledger '{i_name}' (Unmap)")
+            def _do_remove_int():
+                ok = remove_internal_ledger_from_group(self.db_name, self.active_vat_company, gid, i_name)
+                if ok:
+                    self.refresh_mapping_table(select_group_id=gid)
+            act_remove_int.triggered.connect(_do_remove_int)
+
+        # 3. Classifications for 1 x 0 (unmatched VAT ledger) (Requirement 9)
+        is_unmapped = mapping_data.get("is_unmapped", False) or not mapping_data.get("internal_items")
+        if is_unmapped and v_name:
             menu.addSeparator()
-            txt = "👁️ Show Alias Columns" if getattr(self, '_hide_mapping_alias', False) else "👁️ Hide Alias Columns"
-            act_toggle_alias = menu.addAction(txt)
-            selected_act = menu.exec(self.mapping_table.viewport().mapToGlobal(pos))
-            if selected_act == act_merge:
-                self._merge_selected_mappings()
-            elif selected_act == act_unmap_all:
-                self._unmap_selected_mapping()
-            elif selected_act == act_toggle_alias:
-                self._toggle_mapping_alias_visibility()
+            cur_cls = mapping_data.get("classification", "")
+            act_cash = menu.addAction("Classify as: Cash Sales")
+            act_old = menu.addAction("Classify as: Old Party")
+            act_cash.triggered.connect(lambda: self._set_mapping_cls(gid, v_name, "Cash Sales"))
+            act_old.triggered.connect(lambda: self._set_mapping_cls(gid, v_name, "Old Party"))
+            if cur_cls:
+                act_clear_cls = menu.addAction("Clear Classification")
+                act_clear_cls.triggered.connect(lambda: self._set_mapping_cls(gid, v_name, ""))
+
+        # 4. Clear/Unmap All
+        if mapping_data.get("internal_items"):
+            menu.addSeparator()
+            act_unmap_all = menu.addAction("Clear All Mappings for Group")
+            act_unmap_all.triggered.connect(lambda: self._unmap_group(gid))
+
+        if not menu.isEmpty():
+            menu.exec(self.mapping_table.viewport().mapToGlobal(pos))
+
+    def _set_mapping_cls(self, group_id: int, vat_ledger_name: str, cls: str):
+        set_mapping_classification(self.db_name, self.active_vat_company, group_id, vat_ledger_name, cls)
+        self.refresh_mapping_table(select_group_id=group_id)
+
+    def _unmap_group(self, group_id: int):
+        unmap_vat_group(self.db_name, self.active_vat_company, group_id)
+        self.refresh_mapping_table()
+
+    def _show_unassigned_context_menu(self, pos):
+        """Right-click context menu for unassigned internal debtors: Assign to 'None' VAT, Classify as Cash Sales / Old Party."""
+        if not self._can_edit:
+            return
+        selected_items = self.unassigned_list.selectedItems()
+        if not selected_items:
             return
 
-        group_id = selected_group_ids[0]
-        target_item = None
-        for r in range(self.mapping_table.rowCount()):
-            it = self.mapping_table.item(r, 0)
-            if it and it.data(Qt.ItemDataRole.UserRole) == group_id:
-                target_item = it
-                break
+        menu = QMenu(self)
+        count = len(selected_items)
+        lbl_suffix = f" ({count})" if count > 1 else ""
 
-        if not target_item:
-            return
-
-        mapping_data = getattr(target_item, '_mapping_group', {})
-        is_merged = mapping_data.get("is_merged", False) or len(mapping_data.get("vat_ledgers", [])) > 1
-        is_unmapped = mapping_data.get("is_unmapped", False) or not mapping_data.get("internal_ledgers")
-        has_manual = bool(mapping_data.get("manual_name", "").strip())
-
-        act_unmap = None
-        act_demerge = None
-        act_assign_selected = None
-        act_clear_manual = None
-
-        if not is_unmapped:
-            act_unmap = menu.addAction("Remove Mapping (Unmap)")
-
-        if is_merged:
-            act_demerge = menu.addAction("✂️ Demerge Group")
-
-        # If an unassigned internal ledger is selected in the right panel, offer quick assign
-        if hasattr(self, 'unassigned_list') and self.unassigned_list.selectedItems():
-            sel_un = self.unassigned_list.selectedItems()[0]
-            un_name = sel_un.data(Qt.ItemDataRole.UserRole) or sel_un.text()
-            act_assign_selected = menu.addAction(f"Assign '{un_name}'")
-
-        if has_manual:
-            act_clear_manual = menu.addAction("Clear Manual Name")
-
-        if is_unmapped and not act_assign_selected:
-            act_unmap = menu.addAction("Clear / Reset Row")
+        # Option: Assign to 'None' VAT (Serial 0) (Requirement 4)
+        act_none = menu.addAction(f"Assign to 'None' VAT (Serial 0){lbl_suffix}")
+        act_none.triggered.connect(self._assign_unassigned_to_none_vat)
 
         menu.addSeparator()
-        txt = "👁️ Show Alias Columns" if getattr(self, '_hide_mapping_alias', False) else "👁️ Hide Alias Columns"
-        act_toggle_alias = menu.addAction(txt)
+        # Requirement 9: Cash Sales / Old Party
+        act_cash = menu.addAction(f"Classify as: Cash Sales{lbl_suffix}")
+        act_old = menu.addAction(f"Classify as: Old Party{lbl_suffix}")
+        act_clear_cls = menu.addAction(f"Clear Classification{lbl_suffix}")
 
-        selected_act = menu.exec(self.mapping_table.viewport().mapToGlobal(pos))
-        if selected_act == act_unmap:
-            self._unmap_selected_mapping()
-        elif selected_act == act_demerge:
-            self._demerge_selected_mapping()
-        elif selected_act == act_assign_selected:
-            self._assign_selected_internal_ledger()
-        elif selected_act == act_clear_manual:
-            active_comp = self.active_vat_company or get_active_vat_company(self.db_name)
-            set_group_manual_name(self.db_name, active_comp, group_id, "")
-            self.refresh_mapping_table(select_group_id=group_id)
-        elif selected_act == act_toggle_alias:
-            self._toggle_mapping_alias_visibility()
+        act_cash.triggered.connect(lambda: self._set_unassigned_cls("Cash Sales"))
+        act_old.triggered.connect(lambda: self._set_unassigned_cls("Old Party"))
+        act_clear_cls.triggered.connect(lambda: self._set_unassigned_cls(""))
+
+        menu.exec(self.unassigned_list.viewport().mapToGlobal(pos))
+
+    def _set_unassigned_cls(self, classification: str):
+        selected_items = self.unassigned_list.selectedItems()
+        for it in selected_items:
+            int_name = str(it.data(Qt.ItemDataRole.UserRole) or it.text()).strip()
+            if int_name:
+                set_unassigned_classification(self.db_name, self.active_vat_company, int_name, classification)
+        self.refresh_mapping_table()
+
+    def _assign_unassigned_to_none_vat(self):
+        """Assign selected internal debtor(s) to default 'None' VAT (Serial 0) group (Requirement 4)."""
+        selected_items = self.unassigned_list.selectedItems()
+        if not selected_items or not self.db_name or not self.active_vat_company:
+            return
+        db = get_db_manager()
+        rows = db.execute_query(
+            self.db_name,
+            "SELECT TOP 1 group_id FROM dbo.vat_ledger_mapping WHERE vat_company = ? AND (serial_no = 0 OR LOWER(vat_ledger_name) = 'none')",
+            (self.active_vat_company,)
+        )
+        if rows and rows[0][0]:
+            none_gid = rows[0][0]
+        else:
+            run_auto_mapping_on_sync(self.db_name, self.active_vat_company)
+            rows2 = db.execute_query(
+                self.db_name,
+                "SELECT TOP 1 group_id FROM dbo.vat_ledger_mapping WHERE vat_company = ? AND (serial_no = 0 OR LOWER(vat_ledger_name) = 'none')",
+                (self.active_vat_company,)
+            )
+            none_gid = rows2[0][0] if rows2 else 1
+
+        for it in selected_items:
+            int_name = str(it.data(Qt.ItemDataRole.UserRole) or it.text()).strip()
+            if int_name:
+                assign_internal_ledger_to_group(self.db_name, self.active_vat_company, none_gid, int_name)
+
+        self.refresh_mapping_table(select_group_id=none_gid)
+
+    def _on_toggle_none_vat(self, checked: bool):
+        """Show or hide the default 'None' VAT (Serial 0) mapping group."""
+        if hasattr(self, '_cached_data') and self._cached_data:
+            mappings = self._cached_data.get("mappings", [])
+            self._populate_mapping_from_data(mappings)
+
+    def _on_mapping_header_double_clicked(self, logical_index: int):
+        """Sort mapping groups A -> Z (ascending), toggling to descending on second click (Requirement 15)."""
+        if not hasattr(self, '_cached_data') or not self._cached_data:
+            return
+        mappings = list(self._cached_data.get("mappings", []))
+        if not mappings:
+            return
+
+        cur_col = getattr(self.mapping_table, '_sort_col', -1)
+        cur_order = getattr(self.mapping_table, '_sort_order', None)
+        if cur_col == logical_index and cur_order == "asc":
+            order = "desc"
+            reverse = True
+        else:
+            order = "asc"
+            reverse = False
+
+        self.mapping_table._sort_col = logical_index
+        self.mapping_table._sort_order = order
+
+        if logical_index == 0:
+            mappings.sort(key=lambda m: (m.get("serial_no") or 0), reverse=reverse)
+        elif logical_index == 1:
+            mappings.sort(key=lambda m: (m.get("vat_ledger") or "").lower(), reverse=reverse)
+        elif logical_index == 2:
+            mappings.sort(key=lambda m: (m.get("internal_ledger") or "").lower(), reverse=reverse)
+        elif logical_index == 3:
+            mappings.sort(key=lambda m: sum(float(v.get("closing", 0.0) or 0.0) for v in m.get("vat_items", [])), reverse=reverse)
+        elif logical_index == 4:
+            mappings.sort(key=lambda m: sum(float(i.get("closing", 0.0) or 0.0) for i in m.get("internal_items", [])), reverse=reverse)
+        elif logical_index == 5:
+            mappings.sort(key=lambda m: m.get("group_id", 0), reverse=reverse)
+
+        self._populate_mapping_from_data(mappings)
+
+    def _update_mapping_totals(self):
+        """Recalculate pinned grand totals for visible rows in mapping table (Requirement 13)."""
+        if not hasattr(self, 'mapping_footer'):
+            return
+        total_vat = 0.0
+        total_int = 0.0
+        for r in range(self.mapping_table.rowCount()):
+            if self.mapping_table.isRowHidden(r):
+                continue
+            it3 = self.mapping_table.item(r, 3)
+            it4 = self.mapping_table.item(r, 4)
+            if it3 and hasattr(it3, 'num_value'):
+                total_vat += it3.num_value
+            elif it3 and it3.text():
+                try:
+                    total_vat += float(it3.text().replace(",", "").strip())
+                except Exception:
+                    pass
+            if it4 and hasattr(it4, 'num_value'):
+                total_int += it4.num_value
+            elif it4 and it4.text():
+                try:
+                    total_int += float(it4.text().replace(",", "").strip())
+                except Exception:
+                    pass
+
+        self.mapping_footer.sync_columns()
+        self.mapping_footer.update_totals({
+            3: f"{int(round(total_vat)):,}",
+            4: f"{int(round(total_int)):,}",
+        }, label_col=0, label_text="Total")
+
+    def _on_generic_header_double_clicked(self, table: QTableWidget, col_idx: int, update_totals_fn=None):
+        """Double-clicking a column header sorts that column A -> Z (ascending), toggling on subsequent clicks (Requirement 15)."""
+        cur_col = getattr(table, '_sort_col', -1)
+        cur_order = getattr(table, '_sort_order', None)
+        if cur_col == col_idx and cur_order == Qt.SortOrder.AscendingOrder:
+            order = Qt.SortOrder.DescendingOrder
+        else:
+            order = Qt.SortOrder.AscendingOrder
+        table._sort_col = col_idx
+        table._sort_order = order
+        table.sortItems(col_idx, order)
+        if callable(update_totals_fn):
+            update_totals_fn()
 
     def _on_vat_conf_item_changed(self, item: QTableWidgetItem, group_type: str, tbl: QTableWidget):
         """User modified an editable cell in Vat Conf (Debtor/Creditor)."""
@@ -2926,30 +3317,38 @@ class BalanceUI(QWidget):
 
     def _filter_int_table(self, query: str):
         q = query.strip().lower()
-        for r in range(self.int_table.rowCount()):
-            it = self.int_table.item(r, 0)
-            if not it:
-                self.int_table.setRowHidden(r, bool(q))
-                continue
-            name = str(it.data(Qt.ItemDataRole.UserRole) or "").lower()
-            alias = str(it.data(Qt.ItemDataRole.UserRole + 1) or "").lower()
-            txt = it.text().lower()
-            match = (not q) or (q in txt) or (q in name) or (q in alias)
-            self.int_table.setRowHidden(r, not match)
+        self.int_table.setUpdatesEnabled(False)
+        try:
+            for r in range(self.int_table.rowCount()):
+                it = self.int_table.item(r, 0)
+                if not it:
+                    self.int_table.setRowHidden(r, bool(q))
+                    continue
+                name = str(it.data(Qt.ItemDataRole.UserRole) or "").lower()
+                alias = str(it.data(Qt.ItemDataRole.UserRole + 1) or "").lower()
+                txt = it.text().lower()
+                match = (not q) or (q in txt) or (q in name) or (q in alias)
+                self.int_table.setRowHidden(r, not match)
+        finally:
+            self.int_table.setUpdatesEnabled(True)
         self._update_int_totals()
 
     def _filter_vat_table(self, query: str):
         q = query.strip().lower()
-        for r in range(self.vat_table.rowCount()):
-            it = self.vat_table.item(r, 0)
-            if not it:
-                self.vat_table.setRowHidden(r, bool(q))
-                continue
-            name = str(it.data(Qt.ItemDataRole.UserRole) or "").lower()
-            alias = str(it.data(Qt.ItemDataRole.UserRole + 1) or "").lower()
-            txt = it.text().lower()
-            match = (not q) or (q in txt) or (q in name) or (q in alias)
-            self.vat_table.setRowHidden(r, not match)
+        self.vat_table.setUpdatesEnabled(False)
+        try:
+            for r in range(self.vat_table.rowCount()):
+                it = self.vat_table.item(r, 0)
+                if not it:
+                    self.vat_table.setRowHidden(r, bool(q))
+                    continue
+                name = str(it.data(Qt.ItemDataRole.UserRole) or "").lower()
+                alias = str(it.data(Qt.ItemDataRole.UserRole + 1) or "").lower()
+                txt = it.text().lower()
+                match = (not q) or (q in txt) or (q in name) or (q in alias)
+                self.vat_table.setRowHidden(r, not match)
+        finally:
+            self.vat_table.setUpdatesEnabled(True)
         self._update_vat_totals()
 
     def _filter_mapping_table(self, query: str):
@@ -2958,8 +3357,13 @@ class BalanceUI(QWidget):
         if total_rows == 0:
             return
         if not q:
-            for r in range(total_rows):
-                self.mapping_table.setRowHidden(r, False)
+            self.mapping_table.setUpdatesEnabled(False)
+            try:
+                for r in range(total_rows):
+                    self.mapping_table.setRowHidden(r, False)
+            finally:
+                self.mapping_table.setUpdatesEnabled(True)
+            self._update_mapping_totals()
             return
 
         # Group row indices by group_id
@@ -2969,32 +3373,37 @@ class BalanceUI(QWidget):
             gid = it.data(Qt.ItemDataRole.UserRole) if it else r
             groups.setdefault(gid, []).append(r)
 
-        for gid, rows in groups.items():
-            first_it = self.mapping_table.item(rows[0], 0)
-            m = getattr(first_it, "_mapping_group", {}) if first_it else {}
-            v_names = " ".join(m.get("vat_ledgers", [])).lower()
-            v_aliases = " ".join(m.get("vat_aliases", [])).lower()
-            i_names = " ".join(m.get("internal_ledgers", [])).lower()
-            i_aliases = " ".join(m.get("internal_aliases", [])).lower()
-            m_names = str(m.get("manual_name") or "").lower()
+        self.mapping_table.setUpdatesEnabled(False)
+        try:
+            for gid, rows in groups.items():
+                first_it = self.mapping_table.item(rows[0], 0)
+                m = getattr(first_it, "_mapping_group", {}) if first_it else {}
+                v_names = " ".join(m.get("vat_ledgers", [])).lower()
+                v_aliases = " ".join(m.get("vat_aliases", [])).lower()
+                i_names = " ".join(m.get("internal_ledgers", [])).lower()
+                i_aliases = " ".join(m.get("internal_aliases", [])).lower()
+                m_names = str(m.get("manual_name") or "").lower()
 
-            group_match = (
-                (q in v_names) or (q in v_aliases) or
-                (q in i_names) or (q in i_aliases) or (q in m_names)
-            )
+                group_match = (
+                    (q in v_names) or (q in v_aliases) or
+                    (q in i_names) or (q in i_aliases) or (q in m_names)
+                )
 
-            if not group_match:
-                for r in rows:
-                    for c in range(self.mapping_table.columnCount()):
-                        it = self.mapping_table.item(r, c)
-                        if it and q in it.text().lower():
-                            group_match = True
+                if not group_match:
+                    for r in rows:
+                        for c in range(self.mapping_table.columnCount()):
+                            it = self.mapping_table.item(r, c)
+                            if it and q in it.text().lower():
+                                group_match = True
+                                break
+                        if group_match:
                             break
-                    if group_match:
-                        break
 
-            for r in rows:
-                self.mapping_table.setRowHidden(r, not group_match)
+                for r in rows:
+                    self.mapping_table.setRowHidden(r, not group_match)
+        finally:
+            self.mapping_table.setUpdatesEnabled(True)
+        self._update_mapping_totals()
 
     # ── SYNCHRONIZATION ──────────────────────────────────────────────
 
@@ -3040,6 +3449,8 @@ class BalanceUI(QWidget):
         else:
             debtors = load_internal_debtors(self.db_name) if self.db_name else []
             d_count = len(debtors)
+            if self.db_name and self.active_vat_company:
+                run_auto_mapping_on_sync(self.db_name, self.active_vat_company)
             QMessageBox.information(
                 self, "Sync Complete",
                 f"Synced {count} total internal ledgers from Tally ({d_count} Sundry Debtors)."
@@ -3095,6 +3506,8 @@ class BalanceUI(QWidget):
             d_count = len(debtors)
             c_count = count - d_count
             c_info = f", {c_count} Creditors" if c_count > 0 else ""
+            if self.db_name and self.active_vat_company:
+                run_auto_mapping_on_sync(self.db_name, self.active_vat_company)
             QMessageBox.information(
                 self, "Sync Complete",
                 f"Successfully synced {count} total VAT ledgers ({d_count} Debtors{c_info}) for '{self.active_vat_company}'."

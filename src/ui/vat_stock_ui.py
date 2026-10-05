@@ -126,6 +126,51 @@ class StockMappingItemDelegate(UniversalCellDelegate):
             return
         super().updateEditorGeometry(editor, option, index)
 
+    def setEditorData(self, editor, index):
+        if isinstance(editor, QLineEdit):
+            val = index.data() or ""
+            editor.setText(val)
+            editor._initial_text = val
+            editor.selectAll()
+        else:
+            super().setEditorData(editor, index)
+
+    def setModelData(self, editor, model, index):
+        if isinstance(editor, QLineEdit):
+            col = index.column()
+            val = editor.text().strip()
+            init_val = getattr(editor, '_initial_text', index.data() or "")
+
+            if col in (0, 1):
+                if not val:
+                    if col == 1:
+                        # Clearing internal stock item is allowed (unmaps)
+                        model.setData(index, "", Qt.ItemDataRole.EditRole)
+                        return
+                    else:
+                        # VAT item cannot be empty -> revert
+                        editor.setText(init_val)
+                        return
+
+                callback = self.get_vat_options_callback if col == 0 else self.get_int_options_callback
+                options = callback() if callable(callback) else []
+                resolved = None
+                for opt in (options or []):
+                    if opt.strip().lower() == val.lower():
+                        resolved = opt.strip()
+                        break
+
+                if resolved:
+                    model.setData(index, resolved, Qt.ItemDataRole.EditRole)
+                else:
+                    # Item not in allowed list! Revert
+                    editor.setText(init_val)
+                    return
+            else:
+                model.setData(index, val, Qt.ItemDataRole.EditRole)
+        else:
+            super().setModelData(editor, model, index)
+
 
 
 # ── Background Worker for non-blocking stock data load ────────────────
@@ -464,6 +509,8 @@ class StockUI(QWidget):
             """)
             if cur.fetchone()[0] == 0:
                 self.int_table.setRowCount(0)
+                cur.close()
+                conn.commit()
                 return
 
             cur.execute("""
@@ -472,13 +519,20 @@ class StockUI(QWidget):
                 ORDER BY Item_Name
             """)
             rows = cur.fetchall()
+            cur.close()
+            conn.commit()
             self._populate_int_stock_table_from_rows(rows)
         except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             logger.error(f"[refresh_int_stock_table] error: {e}")
 
     def _populate_int_stock_table_from_rows(self, rows: list):
         """Populate Internal Stock table from pre-fetched rows."""
         self.int_table.blockSignals(True)
+        self.int_table.setUpdatesEnabled(False)
         self.int_table.setRowCount(len(rows))
 
         for r_idx, r in enumerate(rows):
@@ -488,6 +542,7 @@ class StockUI(QWidget):
                     it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self.int_table.setItem(r_idx, c_idx, it)
 
+        self.int_table.setUpdatesEnabled(True)
         self.int_table.blockSignals(False)
 
     def _select_excel_file(self):
@@ -644,14 +699,18 @@ class StockUI(QWidget):
 
     def _filter_mapping_table(self, text: str):
         q = text.strip().lower()
-        for r in range(self.mapping_table.rowCount()):
-            c0 = self.mapping_table.item(r, 0)
-            c1 = self.mapping_table.item(r, 1)
-            c2 = self.mapping_table.item(r, 2)
-            t0 = c0.text().lower() if c0 else ""
-            t1 = c1.text().lower() if c1 else ""
-            t2 = c2.text().lower() if c2 else ""
-            self.mapping_table.setRowHidden(r, (q not in t0) and (q not in t1) and (q not in t2))
+        self.mapping_table.setUpdatesEnabled(False)
+        try:
+            for r in range(self.mapping_table.rowCount()):
+                c0 = self.mapping_table.item(r, 0)
+                c1 = self.mapping_table.item(r, 1)
+                c2 = self.mapping_table.item(r, 2)
+                t0 = c0.text().lower() if c0 else ""
+                t1 = c1.text().lower() if c1 else ""
+                t2 = c2.text().lower() if c2 else ""
+                self.mapping_table.setRowHidden(r, (q not in t0) and (q not in t1) and (q not in t2))
+        finally:
+            self.mapping_table.setUpdatesEnabled(True)
 
     def _on_stock_mapping_item_changed(self, item: QTableWidgetItem):
         try:
@@ -668,6 +727,22 @@ class StockUI(QWidget):
             i_name = c1.text().strip()
             m_name = c2.text().strip()
 
+            # Strictly validate i_name against internal stock names if non-empty
+            if i_name:
+                valid_items = self.get_internal_stock_names()
+                canon = None
+                for vi in valid_items:
+                    if vi.strip().lower() == i_name.lower():
+                        canon = vi.strip()
+                        break
+                if not canon:
+                    # Invalid item name not in list! Revert
+                    self.mapping_table.blockSignals(True)
+                    c1.setText("")
+                    self.mapping_table.blockSignals(False)
+                    return
+                i_name = canon
+
             is_unmapped = (not v_name or not i_name)
             self.mapping_table.blockSignals(True)
             try:
@@ -677,14 +752,12 @@ class StockUI(QWidget):
                     for it in (c0, c1, c2):
                         it.setBackground(normal_bg)
                         it.setForeground(normal_fg)
-                        it.setToolTip("")
                 else:
                     red_bg = QColor("#fecaca")
                     red_fg = QColor("#991b1b")
                     for it in (c0, c1, c2):
                         it.setBackground(red_bg)
                         it.setForeground(red_fg)
-                    c1.setToolTip("Unmapped - click to search and select matching stock item")
             finally:
                 self.mapping_table.blockSignals(False)
             self.mapping_table.viewport().update()
