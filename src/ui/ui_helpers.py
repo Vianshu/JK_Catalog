@@ -1,4 +1,4 @@
-﻿"""
+"""
 ui_helpers.py -- Shared, reusable UI utility functions.
 
 Import individual helpers instead of copy-pasting the same boilerplate

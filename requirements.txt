@@ -6,3 +6,4 @@ bcrypt
 nepali_datetime
 PyMuPDF
 sqlalchemy
+xlsxwriter

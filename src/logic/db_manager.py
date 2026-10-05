@@ -296,6 +296,26 @@ class DBManager:
             self.close_all()
             self._server_name = value
 
+    def _get_best_driver(self):
+        """Detect the best available SQL Server ODBC driver on this machine."""
+        if hasattr(self, '_odbc_driver') and self._odbc_driver:
+            return self._odbc_driver
+        try:
+            available = pyodbc.drivers()
+            if "ODBC Driver 17 for SQL Server" in available:
+                self._odbc_driver = "ODBC Driver 17 for SQL Server"
+            elif "ODBC Driver 18 for SQL Server" in available:
+                self._odbc_driver = "ODBC Driver 18 for SQL Server"
+            elif "SQL Server Native Client 11.0" in available:
+                self._odbc_driver = "SQL Server Native Client 11.0"
+            elif "SQL Server" in available:
+                self._odbc_driver = "SQL Server"
+            else:
+                self._odbc_driver = "ODBC Driver 17 for SQL Server"
+        except Exception:
+            self._odbc_driver = "ODBC Driver 17 for SQL Server"
+        return self._odbc_driver
+
     # ─── CONNECTION STRING ────────────────────────────────────────────────────
 
     def _build_connection_string(self, database_name=None):
@@ -304,12 +324,15 @@ class DBManager:
         Uses Windows Authentication (Trusted_Connection) so no
         SQL credentials are needed — the Windows login is enough.
         """
+        driver = self._get_best_driver()
         parts = [
-            "DRIVER={ODBC Driver 17 for SQL Server}",
+            f"DRIVER={{{driver}}}",
             f"SERVER={self._server_name}",
             "Trusted_Connection=yes",
             "MARS_Connection=yes",
         ]
+        if "18" in driver:
+            parts.append("TrustServerCertificate=yes")
         if database_name:
             parts.append(f"DATABASE={database_name}")
         return ";".join(parts)

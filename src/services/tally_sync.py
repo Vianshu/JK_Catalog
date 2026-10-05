@@ -188,14 +188,18 @@ class TallyService:
             return False
 
     def _get_sqlalchemy_engine(self, db_name):
-        """Create a SQLAlchemy engine using the server name from db_manager (not hardcoded)."""
+        """Create a SQLAlchemy engine using the server name and driver from db_manager."""
         server = self.db.server_name or r".\SQLEXPRESS"
-        params = urllib.parse.quote_plus(
-            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={server};"
-            f"DATABASE={db_name};"
-            f"Trusted_Connection=yes;"
-        )
+        driver = self.db._get_best_driver() if hasattr(self.db, '_get_best_driver') else "ODBC Driver 17 for SQL Server"
+        conn_parts = [
+            f"DRIVER={{{driver}}}",
+            f"SERVER={server}",
+            f"DATABASE={db_name}",
+            "Trusted_Connection=yes",
+        ]
+        if "18" in driver:
+            conn_parts.append("TrustServerCertificate=yes")
+        params = urllib.parse.quote_plus(";".join(conn_parts) + ";")
         return create_engine(f"mssql+pyodbc:///?odbc_connect={params}", fast_executemany=True)
 
     def _ensure_row_data_db(self, company_path):
@@ -877,10 +881,26 @@ def fetch_tally_ledger_data(company_name=None, company_path=None, service=None):
 
         cursor = conn.cursor()
 
-        # Use staging table pattern to prevent data loss on failure
-        staging_table = "row_ledger_data_staging"
+        # Clean up any stale staging tables (> 2 hrs) from prior crashes
         try:
-            cursor.execute(f"IF OBJECT_ID('dbo.{staging_table}', 'U') IS NOT NULL DROP TABLE dbo.[{staging_table}]")
+            cursor.execute("""
+                SELECT name FROM sys.tables
+                WHERE (name LIKE 'row_ledger_staging_%' OR name LIKE 'vat_row_ledger_staging_%')
+                  AND create_date < DATEADD(hour, -2, GETDATE())
+            """)
+            stale_tables = [r[0] for r in cursor.fetchall()]
+            for st in stale_tables:
+                cursor.execute(f"IF OBJECT_ID('dbo.[{st}]', 'U') IS NOT NULL DROP TABLE dbo.[{st}]")
+            if stale_tables:
+                conn.commit()
+        except Exception:
+            pass
+
+        # Session-isolated staging table pattern to prevent data loss or collisions on multi-user concurrency
+        session_id = uuid.uuid4().hex[:8]
+        staging_table = f"row_ledger_staging_{session_id}"
+        try:
+            cursor.execute(f"IF OBJECT_ID('dbo.[{staging_table}]', 'U') IS NOT NULL DROP TABLE dbo.[{staging_table}]")
             conn.commit()
         except Exception:
             pass
@@ -917,7 +937,7 @@ def fetch_tally_ledger_data(company_name=None, company_path=None, service=None):
         # Atomic swap: drop old → rename staging
         try:
             cursor.execute("IF OBJECT_ID('dbo.row_ledger_data', 'U') IS NOT NULL DROP TABLE dbo.row_ledger_data")
-            cursor.execute(f"EXEC sp_rename 'dbo.{staging_table}', 'row_ledger_data'")
+            cursor.execute(f"EXEC sp_rename 'dbo.[{staging_table}]', 'row_ledger_data'")
             try:
                 cursor.execute("CREATE NONCLUSTERED INDEX IX_row_ledger_data_name ON dbo.row_ledger_data ([Name])")
             except Exception:
@@ -926,6 +946,13 @@ def fetch_tally_ledger_data(company_name=None, company_path=None, service=None):
         except Exception:
             conn.rollback()
             raise
+        finally:
+            try:
+                cursor.execute(f"IF OBJECT_ID('dbo.[{staging_table}]', 'U') IS NOT NULL DROP TABLE dbo.[{staging_table}]")
+                conn.commit()
+            except Exception:
+                pass
+            cursor.close()
 
         logger.info(f"Ledger data saved to SQL Server: db='{db_name}', rows={len(ledger_df)}")
         return len(ledger_df), ""

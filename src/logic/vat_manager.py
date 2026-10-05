@@ -1183,6 +1183,11 @@ def set_group_internal_ledgers(db_name: str, vat_company: str, group_id: int, in
                     empty_rows.append((rec_id, v_n))
                 del current_map[cur_key]
 
+        # Get existing serial_no for group so newly inserted rows maintain stable serial numbers
+        cur.execute("SELECT TOP 1 serial_no FROM dbo.vat_ledger_mapping WHERE vat_company = ? AND group_id = ? AND serial_no IS NOT NULL", (vat_company, group_id))
+        sn_res = cur.fetchone()
+        group_sn = sn_res[0] if sn_res and sn_res[0] is not None else None
+
         # For target names not currently in DB:
         for name in clean_names:
             if name.lower() not in current_map:
@@ -1196,9 +1201,9 @@ def set_group_internal_ledgers(db_name: str, vat_company: str, group_id: int, in
                     current_map[name.lower()] = (placeholder_id, placeholder_vat)
                 else:
                     cur.execute("""
-                        INSERT INTO dbo.vat_ledger_mapping (vat_company, vat_ledger_name, internal_ledger_name, manual_name, is_manual, group_id)
-                        VALUES (?, ?, ?, ?, 1, ?)
-                    """, (vat_company, primary_vat, name, manual_name, group_id))
+                        INSERT INTO dbo.vat_ledger_mapping (vat_company, vat_ledger_name, internal_ledger_name, manual_name, is_manual, group_id, serial_no)
+                        VALUES (?, ?, ?, ?, 1, ?, ?)
+                    """, (vat_company, primary_vat, name, manual_name, group_id, group_sn))
 
         # Delete redundant empty placeholder rows ONLY IF that VAT ledger already has a mapped row in the group
         for e_id, e_vat in empty_rows:
@@ -1444,10 +1449,17 @@ def demerge_mapping_group(db_name: str, vat_company: str, group_id: int) -> bool
 
         for v in vats[1:]:
             cur.execute("""
-                UPDATE dbo.vat_ledger_mapping
-                SET group_id = id, updated_at = GETDATE()
+                SELECT MIN(id) FROM dbo.vat_ledger_mapping
                 WHERE vat_company = ? AND group_id = ? AND vat_ledger_name = ?
             """, (vat_company, group_id, v))
+            min_row = cur.fetchone()
+            new_gid = min_row[0] if min_row and min_row[0] is not None else None
+            if new_gid is not None:
+                cur.execute("""
+                    UPDATE dbo.vat_ledger_mapping
+                    SET group_id = ?, updated_at = GETDATE()
+                    WHERE vat_company = ? AND group_id = ? AND vat_ledger_name = ?
+                """, (new_gid, vat_company, group_id, v))
         logger.info(f"User changed mapping in demerge_mapping_group")
         conn.commit()
         return True

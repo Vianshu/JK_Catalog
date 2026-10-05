@@ -1,4 +1,4 @@
-﻿"""
+"""
 Build History -- delta-based catalog undo.
 
 Stores only what changed per build (CRM pending adds, serial shifts) --

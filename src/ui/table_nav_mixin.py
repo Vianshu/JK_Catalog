@@ -165,6 +165,10 @@ def get_visual_text(table, r, c):
     it = table.item(r, c)
     if not it:
         return ""
+
+    u2 = it.data(Qt.ItemDataRole.UserRole + 2)
+    if not it.text().strip() and u2:
+        return str(u2).strip()
         
     index = table.model().index(r, c)
     

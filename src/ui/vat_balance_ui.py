@@ -633,8 +633,10 @@ class NumericTableWidgetItem(QTableWidgetItem):
 
 class _LedgerCellWidget(QWidget):
     """Cell container widget displaying ledger name, optional classification badge, and small '+' button."""
-    def __init__(self, name: str, has_plus: bool = True, badge: str = "", placeholder: str = "", on_plus = None, parent=None):
+    def __init__(self, name: str, has_plus: bool = True, badge: str = "", placeholder: str = "", on_plus = None, can_edit: bool = True, text_color: str = "", parent=None):
         super().__init__(parent)
+        self.can_edit = can_edit
+        self._name = name or ""
         layout = QHBoxLayout(self)
         layout.setContentsMargins(6, 2, 6, 2)
         layout.setSpacing(6)
@@ -644,7 +646,8 @@ class _LedgerCellWidget(QWidget):
         if placeholder and not name:
             self.lbl_name.setStyleSheet("color: #94a3b8; font-style: italic; font-size: 11px;")
         else:
-            self.lbl_name.setStyleSheet("color: inherit; font-size: 12px; font-weight: 500;")
+            c_str = text_color or "#0f172a"
+            self.lbl_name.setStyleSheet(f"color: {c_str}; font-size: 12px; font-weight: 500;")
         layout.addWidget(self.lbl_name, stretch=1)
 
         if badge:
@@ -686,7 +689,19 @@ class _LedgerCellWidget(QWidget):
             """)
             if callable(on_plus):
                 self.btn_plus.clicked.connect(on_plus)
+            self.btn_plus.setEnabled(can_edit)
+            self.btn_plus.setVisible(can_edit)
             layout.addWidget(self.btn_plus)
+
+    def text(self) -> str:
+        """Return the ledger name for export, printing, and clipboard."""
+        return self._name or ""
+
+    def set_editable(self, can_edit: bool):
+        self.can_edit = can_edit
+        if hasattr(self, 'btn_plus'):
+            self.btn_plus.setEnabled(can_edit)
+            self.btn_plus.setVisible(can_edit)
 
 
 class MappingTableWidget(QTableWidget):
@@ -2393,7 +2408,7 @@ class BalanceUI(QWidget):
                     v_cls = ""
                     v_closing = 0.0
 
-                it_vl = QTableWidgetItem(v_name)
+                it_vl = QTableWidgetItem("")
                 it_vl.setBackground(bg_color)
                 it_vl.setForeground(fg_color)
                 it_vl.setData(Qt.ItemDataRole.UserRole, group_id)
@@ -2407,9 +2422,13 @@ class BalanceUI(QWidget):
                         name=v_name,
                         has_plus=True,
                         badge=v_cls,
-                        on_plus=lambda target_row=r, gid=group_id: self._on_add_vat_ledger_clicked(target_row, gid)
+                        on_plus=lambda target_row=r, gid=group_id: self._on_add_vat_ledger_clicked(target_row, gid),
+                        can_edit=getattr(self, '_can_edit', True),
+                        text_color=fg_color.name(),
                     )
                     self.mapping_table.setCellWidget(r, 1, cell_v)
+                else:
+                    self.mapping_table.removeCellWidget(r, 1)
 
                 # 2: Internal Ledger Name (with '+' button)
                 if k < len(internal_items):
@@ -2420,7 +2439,7 @@ class BalanceUI(QWidget):
                     i_name = ""
                     i_closing = 0.0
 
-                it_il = QTableWidgetItem(i_name)
+                it_il = QTableWidgetItem("")
                 it_il.setBackground(bg_color)
                 it_il.setForeground(fg_color)
                 it_il.setData(Qt.ItemDataRole.UserRole, group_id)
@@ -2434,7 +2453,9 @@ class BalanceUI(QWidget):
                     name=i_name,
                     has_plus=True,
                     placeholder="Click + to add internal ledger" if (is_unmapped and k == 0) else "",
-                    on_plus=lambda target_row=r, gid=group_id: self._on_add_internal_ledger_clicked(target_row, gid)
+                    on_plus=lambda target_row=r, gid=group_id: self._on_add_internal_ledger_clicked(target_row, gid),
+                    can_edit=getattr(self, '_can_edit', True),
+                    text_color=fg_color.name(),
                 )
                 self.mapping_table.setCellWidget(r, 2, cell_i)
 
@@ -3393,9 +3414,12 @@ class BalanceUI(QWidget):
                     for r in rows:
                         for c in range(self.mapping_table.columnCount()):
                             it = self.mapping_table.item(r, c)
-                            if it and q in it.text().lower():
-                                group_match = True
-                                break
+                            if it:
+                                val_txt = it.text().lower()
+                                u2_txt = str(it.data(Qt.ItemDataRole.UserRole + 2) or "").lower()
+                                if (q in val_txt) or (q in u2_txt):
+                                    group_match = True
+                                    break
                         if group_match:
                             break
 
@@ -3543,15 +3567,21 @@ class BalanceUI(QWidget):
             self.btn_tab_sync_int.setEnabled(can_edit)
         if hasattr(self, 'btn_tab_sync_vat'):
             self.btn_tab_sync_vat.setEnabled(can_edit)
-        # Lock mapping table editing across editable columns (1: VAT, 3: Int, 5: Manual)
+        # Lock mapping table editing across editable columns (1: VAT, 2: Int) and action buttons
         for r in range(self.mapping_table.rowCount()):
-            for c in (1, 3, 5):
+            for c in (1, 2):
+                cell_w = self.mapping_table.cellWidget(r, c)
+                if cell_w and hasattr(cell_w, 'set_editable'):
+                    cell_w.set_editable(can_edit)
                 it = self.mapping_table.item(r, c)
                 if it:
                     if can_edit:
                         it.setFlags(it.flags() | Qt.ItemFlag.ItemIsEditable)
                     else:
                         it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
+        if hasattr(self, 'btn_unmap_mapping'):
+            self.btn_unmap_mapping.setEnabled(can_edit and bool(self.mapping_table.selectedItems()))
 
         # Propagate _can_edit to conf tables so VatConfDelegate can check it
         self.debtor_table._can_edit = can_edit
