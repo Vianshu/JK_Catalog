@@ -26,8 +26,8 @@ from src.ui.table_nav_mixin import (
 )
 
 # Custom data roles for GUID/bank-ref storage (invisible to user, stored behind display text)
-_GUID_ROLE = Qt.ItemDataRole.UserRole        # stores ledger GUID in party cells
-_BREF_ROLE = Qt.ItemDataRole.UserRole + 1   # stores bank_ref UUID in bank cells
+_GUID_ROLE = Qt.ItemDataRole.UserRole + 20   # stores ledger GUID in party cells
+_BREF_ROLE = Qt.ItemDataRole.UserRole + 21   # stores bank_ref UUID in bank cells
 
 
 class NumericTableWidgetItem(QTableWidgetItem):
@@ -57,13 +57,30 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         return index.data(Qt.ItemDataRole.DisplayRole)
         
     def _match_autocomplete_val(self, val, data_list):
-        val_lower = val.lower()
+        if not val or not data_list:
+            return None
+        val_str = str(val).strip()
+        val_lower = val_str.lower()
+        # 1. Exact case-insensitive match
         for item in data_list:
-            if val_lower == str(item).lower():
+            if val_lower == str(item).lower().strip():
                 return item
+        # 2. Normalized match (ignoring spaces, punctuation)
+        from src.ui.table_nav_mixin import _norm
+        val_norm = _norm(val_str)
+        if val_norm:
+            for item in data_list:
+                if val_norm == _norm(str(item)):
+                    return item
+        # 3. Substring match
         for item in sorted(str(x) for x in data_list):
-            if val_lower in item.lower():
+            if val_lower in str(item).lower():
                 return item
+        # 4. Normalized substring match
+        if val_norm:
+            for item in sorted(str(x) for x in data_list):
+                if val_norm in _norm(str(item)):
+                    return item
         return None
 
     def _party_set_model_cb(self, val, index):
@@ -71,8 +88,10 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         if not val:
             self.table.blockSignals(True)
             model.setData(index, "", Qt.ItemDataRole.EditRole)
+            model.setData(index, "", Qt.ItemDataRole.DisplayRole)
             model.setData(index, None, _GUID_ROLE)
             self.table.blockSignals(False)
+            self.table.viewport().update()
             self.save_cheques_to_db()
             return
             
@@ -92,6 +111,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         # Block signals so save fires once with both values already set
         self.table.blockSignals(True)
         model.setData(index, matched, Qt.ItemDataRole.DisplayRole)
+        model.setData(index, matched, Qt.ItemDataRole.EditRole)
         model.setData(index, guid, _GUID_ROLE)
         self.table.blockSignals(False)
         self.table.viewport().update()   # repaint so initStyleOption picks up the new name
@@ -102,8 +122,10 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         if not val:
             self.table.blockSignals(True)
             model.setData(index, "", Qt.ItemDataRole.EditRole)
+            model.setData(index, "", Qt.ItemDataRole.DisplayRole)
             model.setData(index, None, _BREF_ROLE)
             self.table.blockSignals(False)
+            self.table.viewport().update()
             self.save_cheques_to_db()
             return
             
@@ -112,21 +134,47 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             return # reject
             
         bref = self.bank_name_to_ref.get(matched, "") or self.bank_name_to_ref.get(matched.lower(), "")
+        if not bref:
+            bref = str(_uuid_mod.uuid4())
+            self.bref_to_name[bref] = matched
+            self.bank_name_to_ref[matched] = bref
+            self.bank_name_to_ref[matched.lower()] = bref
+            try:
+                conn = self.db.get_connection(self.cheque_db_name)
+                if conn:
+                    cur = conn.cursor()
+                    cur.execute("UPDATE bank_list SET bank_ref = ? WHERE bank_name = ? AND (bank_ref IS NULL OR bank_ref = '')", (bref, matched))
+                    conn.commit()
+            except Exception:
+                pass
+
         # Block signals so save fires once with both values already set
         self.table.blockSignals(True)
         model.setData(index, matched, Qt.ItemDataRole.DisplayRole)
+        model.setData(index, matched, Qt.ItemDataRole.EditRole)
         model.setData(index, bref, _BREF_ROLE)
         self.table.blockSignals(False)
+        self.table.viewport().update()
         self.save_cheques_to_db()
 
     def _crm_set_model_cb(self, val, index):
         model = index.model()
         if not val:
+            self.table.blockSignals(True)
             model.setData(index, "", Qt.ItemDataRole.EditRole)
+            model.setData(index, "", Qt.ItemDataRole.DisplayRole)
+            self.table.blockSignals(False)
+            self.table.viewport().update()
+            self.save_cheques_to_db()
             return
         matched = self._match_autocomplete_val(val, self.crm_list_data)
         if matched:
+            self.table.blockSignals(True)
             model.setData(index, matched, Qt.ItemDataRole.EditRole)
+            model.setData(index, matched, Qt.ItemDataRole.DisplayRole)
+            self.table.blockSignals(False)
+            self.table.viewport().update()
+            self.save_cheques_to_db()
 
     def __init__(self, company_path=None):
         super().__init__()
@@ -277,7 +325,8 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             self, cell_type="autocomplete",
             autocomplete_items=lambda: self.bank_list_data,
             display_cb=self._bank_display_cb,
-            set_model_cb=self._bank_set_model_cb
+            set_model_cb=self._bank_set_model_cb,
+            enforce_match=False
         )
         self.table.setItemDelegateForColumn(3, bank_del)
         
@@ -598,28 +647,21 @@ class ChequeListUI(ExcelTableMixin, QWidget):
 
         # Force repaint on next event loop tick so the cheque table shows new bank name
         QTimer.singleShot(0, self.table.viewport().repaint)
+        self.save_cheques_to_db()
         self.update_bank_counts()
 
 
     # ================= SUMMARY =================
     def update_summary(self):
-        """Count and sum cheques based on the current filter selection."""
+        """Count and sum cheques based on visible rows."""
         total = 0.0
         count = 0
-        idx = self.cmb_filter.currentIndex() if hasattr(self, 'cmb_filter') else 0
         for r in range(self.table.rowCount()):
+            if self.table.isRowHidden(r):
+                continue
             # A row "exists" when Party Name is filled
             party = self.table.item(r, 2)
             if not (party and party.text().strip()):
-                continue
-
-            clear_item = self.table.item(r, 8)
-            has_date = clear_item and clear_item.text().strip()
-
-            # Apply filter logic
-            if idx == 1 and not has_date:  # Viewing Cleared -> skip Uncleared
-                continue
-            if idx == 2 and has_date:      # Viewing Uncleared -> skip Cleared
                 continue
 
             count += 1
@@ -940,6 +982,16 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         self.cheque_db_name = build_logical_name(company_name, company_path=path)
         self.ledger_db_name = build_logical_name(company_name, company_path=path)
 
+        # Reset filter and search bar on company load/switch
+        if hasattr(self, 'cmb_filter'):
+            self.cmb_filter.blockSignals(True)
+            self.cmb_filter.setCurrentIndex(0)
+            self.cmb_filter.blockSignals(False)
+        if hasattr(self, 'search_bar'):
+            self.search_bar.blockSignals(True)
+            self.search_bar.clear()
+            self.search_bar.blockSignals(False)
+
         # 3. Setup Cheque DB
         self.db.ensure_database_exists(self.cheque_db_name, path)
         self.db.ensure_table(self.cheque_db_name, "cheques", """
@@ -960,6 +1012,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
 
     def load_all_data(self):
         if not self.cheque_db_name: return
+        self._reload_dropdown_data()
         conn = self.db.get_connection(self.cheque_db_name)
         if not conn: return
         cursor = conn.cursor()
@@ -1066,9 +1119,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         
         # --- 3. Final Triggers (सही क्रम) ---
         self.sync_cheque_rows()      # रोज़ को सिंक करें
-        self.apply_initial_hide()    # पहले डेटा छुपाएं (App Start Hide)
-        self.update_summary()        # फिर समरी कैलकुलेट करें (ताकि छुपा हुआ डेटा न गिना जाए)
-        self.update_bank_counts()    # बैंक काउंट अपडेट करें
+        self.apply_filter()          # Apply current filter and update summary/bank counts
         self.table.resizeColumnsToContents()
         
         # Column widths already set in setup_ui via balanced _col_widths
@@ -1076,7 +1127,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._reload_dropdown_data()
-        self.update_summary()
+        self.apply_filter()
         self.table.resizeColumnsToContents()  # re-fit columns every time the tab is opened
     
     def refresh_ledger_maps(self):
@@ -1161,17 +1212,29 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             conn = self.db.get_connection(self.cheque_db_name)
             if conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT bank_name FROM bank_list")
-                self.bank_list_data = [r[0] for r in cursor.fetchall() if r[0]]
+                try:
+                    cursor.execute("SELECT bank_name, bank_ref FROM bank_list")
+                    bnks = cursor.fetchall()
+                except Exception:
+                    cursor.execute("SELECT bank_name FROM bank_list")
+                    bnks = [(r[0], "") for r in cursor.fetchall()]
+
+                self.bank_list_data = []
+                for bname, bref in bnks:
+                    bname = (bname or "").strip()
+                    bref  = (bref  or "").strip()
+                    if bname:
+                        self.bank_list_data.append(bname)
+                        if bref:
+                            self.bref_to_name[bref] = bname
+                            self.bank_name_to_ref[bname.lower()] = bref
+                            self.bank_name_to_ref[bname] = bref
         except Exception:
             pass
     
     def apply_initial_hide(self):
-        """App start logic to hide cleared rows"""
-        for r in range(self.table.rowCount()):
-            clear_date_item = self.table.item(r, 8)
-            if clear_date_item and clear_date_item.text().strip():
-                self.table.setRowHidden(r, True)
+        """App start logic to apply current filter to table rows."""
+        self.apply_filter()
                 
     def ensure_bank_row_capacity(self):
         self.bank_table.blockSignals(True)

@@ -130,34 +130,79 @@ def ensure_vat_tables(db, db_name: str):
                 WHERE group_id IS NULL;
             """)
 
-            # Backfill serial_no for existing rows (Dense Rank per vat_company, vat_ledger_name)
+            # Backfill serial_no for existing rows (strictly append-only, preserving existing positive serial numbers)
             cur.execute("""
                 IF EXISTS (
                     SELECT 1 FROM dbo.vat_ledger_mapping 
-                    WHERE serial_no IS NULL 
+                    WHERE (serial_no IS NULL OR serial_no < 0)
                       AND vat_ledger_name IS NOT NULL 
                       AND LTRIM(RTRIM(vat_ledger_name)) <> ''
                 )
                 BEGIN
-                    WITH NumberedVats AS (
+                    UPDATE dbo.vat_ledger_mapping 
+                    SET serial_no = 0 
+                    WHERE LOWER(LTRIM(RTRIM(vat_ledger_name))) = 'none';
+
+                    WITH Unnumbered AS (
                         SELECT vat_company, vat_ledger_name,
-                               DENSE_RANK() OVER (PARTITION BY vat_company ORDER BY MIN(id)) AS sn
+                               ROW_NUMBER() OVER (PARTITION BY vat_company ORDER BY MIN(id)) AS rn
                         FROM dbo.vat_ledger_mapping
                         WHERE vat_ledger_name IS NOT NULL 
                           AND LTRIM(RTRIM(vat_ledger_name)) <> '' 
                           AND LOWER(LTRIM(RTRIM(vat_ledger_name))) <> 'none'
+                          AND (serial_no IS NULL OR serial_no <= 0)
                         GROUP BY vat_company, vat_ledger_name
+                    ),
+                    MaxSN AS (
+                        SELECT vat_company, ISNULL(MAX(serial_no), 0) AS max_sn
+                        FROM dbo.vat_ledger_mapping
+                        WHERE serial_no > 0
+                        GROUP BY vat_company
                     )
                     UPDATE m
-                    SET m.serial_no = nv.sn
+                    SET m.serial_no = ISNULL(mx.max_sn, 0) + u.rn
                     FROM dbo.vat_ledger_mapping m
-                    JOIN NumberedVats nv ON m.vat_company = nv.vat_company AND m.vat_ledger_name = nv.vat_ledger_name
+                    JOIN Unnumbered u ON m.vat_company = u.vat_company AND m.vat_ledger_name = u.vat_ledger_name
+                    LEFT JOIN MaxSN mx ON m.vat_company = mx.vat_company
                     WHERE m.serial_no IS NULL OR m.serial_no <= 0;
-
-                    UPDATE dbo.vat_ledger_mapping 
-                    SET serial_no = 0 
-                    WHERE LOWER(LTRIM(RTRIM(vat_ledger_name))) = 'none';
                 END
+            """)
+            # Clean up duplicate unmapped rows where the same VAT debtor is already mapped elsewhere
+            cur.execute("""
+                WITH Dupes AS (
+                    SELECT id, vat_company, vat_ledger_name, internal_ledger_name,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY vat_company, LOWER(REPLACE(LTRIM(RTRIM(vat_ledger_name)), ' ', ''))
+                               ORDER BY 
+                                   CASE WHEN internal_ledger_name IS NOT NULL AND LTRIM(RTRIM(internal_ledger_name)) <> '' THEN 0 ELSE 1 END,
+                                   CASE WHEN is_manual = 1 THEN 0 ELSE 1 END,
+                                   id ASC
+                           ) AS rn
+                    FROM dbo.vat_ledger_mapping
+                    WHERE vat_ledger_name IS NOT NULL AND LTRIM(RTRIM(vat_ledger_name)) <> ''
+                      AND LOWER(LTRIM(RTRIM(vat_ledger_name))) <> 'none'
+                )
+                DELETE FROM dbo.vat_ledger_mapping
+                WHERE id IN (
+                    SELECT d.id FROM Dupes d
+                    WHERE d.rn > 1 
+                      AND (d.internal_ledger_name IS NULL OR LTRIM(RTRIM(d.internal_ledger_name)) = '')
+                );
+            """)
+            # Clean up identical duplicate mapping rows within same group
+            cur.execute("""
+                WITH ExactDupes AS (
+                    SELECT id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY vat_company, group_id,
+                                            LOWER(REPLACE(LTRIM(RTRIM(vat_ledger_name)), ' ', '')),
+                                            LOWER(REPLACE(LTRIM(RTRIM(internal_ledger_name)), ' ', ''))
+                               ORDER BY id ASC
+                           ) AS rn
+                    FROM dbo.vat_ledger_mapping
+                )
+                DELETE FROM dbo.vat_ledger_mapping
+                WHERE id IN (SELECT id FROM ExactDupes WHERE rn > 1);
             """)
             conn.commit()
     except Exception as e:
@@ -484,9 +529,9 @@ def load_vat_debtors(db_name: str, vat_company: str) -> list[dict]:
 
 
 def get_vat_debtor_names(db_name: str, vat_company: str) -> list[str]:
-    """Return list of all VAT company Sundry Debtor ledger names."""
+    """Return list of all VAT company Sundry Debtor ledger names (excluding reserved None)."""
     debtors = load_vat_debtors(db_name, vat_company)
-    return [d["Name"].strip() for d in debtors if d.get("Name")]
+    return [d["Name"].strip() for d in debtors if d.get("Name") and d["Name"].strip().lower() not in ("none", "nan", "null")]
 
 
 def _load_debtor_names_and_aliases(cur, table_name: str, vat_company: str = None) -> list[dict]:
@@ -569,6 +614,7 @@ def cleanup_invalid_mappings(db_name: str, vat_company: str) -> None:
             SET group_id = id
             WHERE vat_company = ? AND group_id IS NULL
         """, (vat_company,))
+        deduplicate_internal_ledgers_across_groups(cur, vat_company)
         conn.commit()
         cur.close()
     except Exception as e:
@@ -614,6 +660,7 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
             AND LOWER(LTRIM(RTRIM(ISNULL(Sub_Group, '')))) NOT IN ('othere account', 'other account', 'othere accounts', 'other accounts')
             AND LOWER(ISNULL(Sub_Group, '')) NOT LIKE '%other%account%'
             AND LOWER(ISNULL(Sub_Group, '')) NOT LIKE '%othere%account%'
+            ORDER BY Name
         """, (vat_company,))
         vat_info = {}
         for r in cur.fetchall():
@@ -652,6 +699,72 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
                     "Alias": (r[1] or "").strip(),
                     "Closing": float(r[2] or 0.0)
                 }
+
+        # Clean up any duplicate unmapped rows for this company before reading
+        try:
+            cur.execute("""
+                WITH Dupes AS (
+                    SELECT id, vat_company, vat_ledger_name, internal_ledger_name,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY vat_company, LOWER(REPLACE(LTRIM(RTRIM(vat_ledger_name)), ' ', ''))
+                               ORDER BY 
+                                   CASE WHEN internal_ledger_name IS NOT NULL AND LTRIM(RTRIM(internal_ledger_name)) <> '' THEN 0 ELSE 1 END,
+                                   CASE WHEN is_manual = 1 THEN 0 ELSE 1 END,
+                                   id ASC
+                           ) AS rn
+                    FROM dbo.vat_ledger_mapping
+                    WHERE vat_company = ?
+                      AND vat_ledger_name IS NOT NULL AND LTRIM(RTRIM(vat_ledger_name)) <> ''
+                      AND LOWER(LTRIM(RTRIM(vat_ledger_name))) <> 'none'
+                )
+                DELETE FROM dbo.vat_ledger_mapping
+                WHERE id IN (
+                    SELECT d.id FROM Dupes d
+                    WHERE d.rn > 1 
+                      AND (d.internal_ledger_name IS NULL OR LTRIM(RTRIM(d.internal_ledger_name)) = '')
+                );
+            """, (vat_company,))
+            conn.commit()
+        except Exception:
+            pass
+
+        try:
+            deduplicate_internal_ledgers_across_groups(cur, vat_company)
+            conn.commit()
+        except Exception:
+            pass
+
+        # 4.5 Ensure any VAT debtors from vat_row_ledger_data are persisted in dbo.vat_ledger_mapping with stable serial numbers
+        cur.execute("""
+            SELECT DISTINCT LOWER(REPLACE(LTRIM(RTRIM(vat_ledger_name)), ' ', ''))
+            FROM dbo.vat_ledger_mapping
+            WHERE vat_company = ? AND vat_ledger_name IS NOT NULL AND LTRIM(RTRIM(vat_ledger_name)) <> ''
+        """, (vat_company,))
+        existing_vat_keys = {r[0] for r in cur.fetchall() if r[0]}
+
+        cur.execute("SELECT ISNULL(MAX(serial_no), 0) FROM dbo.vat_ledger_mapping WHERE vat_company = ? AND serial_no > 0", (vat_company,))
+        max_sn_val = cur.fetchone()[0] or 0
+
+        inserted_any = False
+        for vk, v_data in sorted(vat_info.items(), key=lambda x: x[1]["Name"]):
+            raw_vname = v_data["Name"]
+            if raw_vname.lower() in ("none", "nan", "null"):
+                continue
+            vk_norm = raw_vname.replace(" ", "").lower()
+            if vk_norm not in existing_vat_keys:
+                max_sn_val += 1
+                cur.execute("""
+                    INSERT INTO dbo.vat_ledger_mapping (vat_company, vat_ledger_name, internal_ledger_name, manual_name, is_manual, serial_no, classification)
+                    OUTPUT INSERTED.id
+                    VALUES (?, ?, '', '', 0, ?, '')
+                """, (vat_company, raw_vname, max_sn_val))
+                new_row_id = cur.fetchone()[0]
+                cur.execute("UPDATE dbo.vat_ledger_mapping SET group_id = id WHERE id = ?", (new_row_id,))
+                existing_vat_keys.add(vk_norm)
+                inserted_any = True
+
+        if inserted_any:
+            conn.commit()
 
         # 5. Fetch all stored mapping rows
         cur.execute("""
@@ -702,7 +815,7 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
                 v_meta = vat_info.get(vk, {})
                 v_alias = v_meta.get("Alias", "")
                 v_closing = v_meta.get("Closing", 0.0)
-                if not any(vi["name"].lower() == v_name.lower() for vi in g["vat_items"]):
+                if not any(" ".join(vi["name"].split()).lower() == vk for vi in g["vat_items"]):
                     g["vat_items"].append({
                         "id": rec_id,
                         "name": v_name,
@@ -720,7 +833,7 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
                 i_meta = int_info.get(ik, {})
                 i_alias = i_meta.get("Alias", "")
                 i_closing = i_meta.get("Closing", 0.0)
-                if not any(ii["name"].lower() == i_name.lower() for ii in g["internal_items"]):
+                if not any(" ".join(ii["name"].split()).lower() == ik for ii in g["internal_items"]):
                     g["internal_items"].append({
                         "id": rec_id,
                         "name": i_name,
@@ -735,14 +848,40 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
             if is_man:
                 g["is_manual"] = True
 
-        result = []
+        # Deduplication safeguard:
+        # 1) If a VAT debtor is already mapped in a group with internal ledgers,
+        #    discard any duplicate unmapped singleton groups for that same VAT debtor.
+        # 2) Discard duplicate unmapped groups that share the exact same VAT debtors.
+        mapped_ledger_keys = set()
+        for g in groups_dict.values():
+            if g["internal_items"]:
+                for v in g["vat_ledgers"]:
+                    mapped_ledger_keys.add(" ".join(v.split()).lower())
+
+        deduped_groups = []
+        seen_unmapped_keys = set()
         for gid, g in groups_dict.items():
+            if not g["internal_items"]:
+                all_already_mapped = all(" ".join(v.split()).lower() in mapped_ledger_keys for v in g["vat_ledgers"]) if g["vat_ledgers"] else False
+                if all_already_mapped:
+                    continue
+                if g["vat_ledgers"]:
+                    group_key = tuple(sorted(" ".join(v.split()).lower() for v in g["vat_ledgers"]))
+                    if group_key in seen_unmapped_keys:
+                        continue
+                    seen_unmapped_keys.add(group_key)
+            deduped_groups.append(g)
+
+        result = []
+        for g in deduped_groups:
+            gid = g["group_id"]
             v_list = g["vat_ledgers"]
             i_list = g["internal_ledgers"]
             m_list = g["manual_names"]
             is_unmapped = (len(i_list) == 0)
             is_merged = (len(v_list) > 1)
-            is_none_vat = (g["serial_no"] == 0 or any(v["name"].lower() == "none" or v["serial_no"] == 0 for v in g["vat_items"]))
+            # A group is strictly None VAT only if it explicitly represents the reserved 'None' VAT ledger
+            is_none_vat = any(v["name"].strip().lower() == "none" for v in g["vat_items"]) or (not g["vat_items"] and str(g.get("vat_ledger", "")).strip().lower() == "none")
 
             result.append({
                 "id": min(g["db_ids"]) if g["db_ids"] else gid,
@@ -765,19 +904,44 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
                 "db_ids": g["db_ids"],
             })
 
-        # Requirement 8: Unmatched ledgers (1 x 0) must appear FIRST
-        # Matched groups next
-        # 'None' VAT (Serial 0) at the end
-        unmapped_groups = [r for r in result if r["is_unmapped"] and not r["is_none_vat"]]
-        matched_groups = [r for r in result if not r["is_unmapped"] and not r["is_none_vat"]]
-        none_vat_groups = [r for r in result if r["is_none_vat"]]
+        def _is_cash_sales_group(g):
+            ints = [str(x).strip().lower() for x in g.get("internal_ledgers", [])]
+            cls = str(g.get("classification", "")).strip().lower()
+            return "cash sales" in ints or cls == "cash sales"
 
-        unmapped_groups.sort(key=lambda r: (r["serial_no"] or 999999, r["vat_ledger"].lower()))
-        matched_groups.sort(key=lambda r: (r["serial_no"] or 999999, r["vat_ledger"].lower()))
+        def _is_old_party_group(g):
+            ints = [str(x).strip().lower() for x in g.get("internal_ledgers", [])]
+            cls = str(g.get("classification", "")).strip().lower()
+            return "old party" in ints or cls == "old party"
+
+        none_vat_groups = [r for r in result if r["is_none_vat"]]
+        rem_groups = [r for r in result if not r["is_none_vat"]]
+
+        cash_sales_groups = [r for r in rem_groups if _is_cash_sales_group(r)]
+        old_party_groups = [r for r in rem_groups if not _is_cash_sales_group(r) and _is_old_party_group(r)]
+
+        # 1. Not assigned mappings (no internal ledger assigned, not Cash Sales / Old Party)
+        not_assigned_groups = [
+            r for r in rem_groups
+            if not _is_cash_sales_group(r) and not _is_old_party_group(r)
+            and (r["is_unmapped"] or not r.get("internal_items"))
+        ]
+
+        # 2. Normal mappings (mapped to real internal debtors)
+        normal_groups = [
+            r for r in rem_groups
+            if not _is_cash_sales_group(r) and not _is_old_party_group(r)
+            and not (r["is_unmapped"] or not r.get("internal_items"))
+        ]
+
+        not_assigned_groups.sort(key=lambda r: (r["serial_no"] or 999999, r["vat_ledger"].lower()))
+        normal_groups.sort(key=lambda r: (r["serial_no"] or 999999, r["vat_ledger"].lower()))
+        cash_sales_groups.sort(key=lambda r: (r["serial_no"] or 999999, r["vat_ledger"].lower()))
+        old_party_groups.sort(key=lambda r: (r["serial_no"] or 999999, r["vat_ledger"].lower()))
         none_vat_groups.sort(key=lambda r: (r["serial_no"] or 0, r["vat_ledger"].lower()))
 
         cur.close()
-        return unmapped_groups + matched_groups + none_vat_groups
+        return not_assigned_groups + normal_groups + cash_sales_groups + old_party_groups + none_vat_groups
 
     except Exception as e:
         try:
@@ -849,7 +1013,78 @@ def get_unassigned_internal_debtors(db_name: str, vat_company: str) -> list[dict
         return []
 
 
-def assign_internal_ledger_to_group(db_name: str, vat_company: str, group_id: int, internal_ledger: str) -> bool:
+def _remove_internal_ledger_from_other_groups(cur, vat_company: str, target_group_id: int, internal_ledger: str):
+    """Ensure internal_ledger exists ONLY in target_group_id across the company.
+    
+    If it was present in any other group, safely removes it:
+    - If the other group has other rows for that VAT ledger, deletes the row.
+    - If this was the only row for that VAT ledger in the other group, sets internal_ledger_name = ''
+      so the VAT ledger remains in the table as unmapped.
+    Does NOT affect placeholder values ('Cash Sales', 'Old Party').
+    """
+    if not internal_ledger or internal_ledger.lower() in ("cash sales", "old party"):
+        return
+    cur.execute("""
+        SELECT id, group_id, vat_ledger_name
+        FROM dbo.vat_ledger_mapping
+        WHERE vat_company = ? AND group_id <> ? 
+          AND LOWER(LTRIM(RTRIM(internal_ledger_name))) = LOWER(?)
+    """, (vat_company, target_group_id, internal_ledger))
+    other_rows = cur.fetchall()
+    for row_id, o_gid, o_vname in other_rows:
+        cur.execute("""
+            SELECT COUNT(*) FROM dbo.vat_ledger_mapping
+            WHERE vat_company = ? AND group_id = ? 
+              AND LOWER(LTRIM(RTRIM(vat_ledger_name))) = LOWER(?)
+              AND id <> ?
+        """, (vat_company, o_gid, o_vname, row_id))
+        has_other = cur.fetchone()[0] > 0
+        if has_other:
+            cur.execute("DELETE FROM dbo.vat_ledger_mapping WHERE id = ?", (row_id,))
+        else:
+            cur.execute("""
+                UPDATE dbo.vat_ledger_mapping
+                SET internal_ledger_name = '', classification = '', is_manual = 1, updated_at = GETDATE()
+                WHERE id = ?
+            """, (row_id,))
+
+
+def deduplicate_internal_ledgers_across_groups(cur, vat_company: str):
+    """Enforce global uniqueness: each internal ledger belongs to at most one group.
+    
+    Excludes 'Cash Sales' and 'Old Party'.
+    Keeps the assignment in the latest/highest-ID group and clears/removes from others.
+    """
+    if not vat_company:
+        return
+    try:
+        cur.execute("""
+            SELECT LOWER(LTRIM(RTRIM(internal_ledger_name)))
+            FROM dbo.vat_ledger_mapping
+            WHERE vat_company = ? 
+              AND internal_ledger_name IS NOT NULL 
+              AND LTRIM(RTRIM(internal_ledger_name)) <> ''
+              AND LOWER(LTRIM(RTRIM(internal_ledger_name))) NOT IN ('cash sales', 'old party')
+            GROUP BY LOWER(LTRIM(RTRIM(internal_ledger_name)))
+            HAVING COUNT(DISTINCT group_id) > 1
+        """, (vat_company,))
+        dupe_names = [r[0] for r in cur.fetchall() if r[0]]
+        for dupe in dupe_names:
+            cur.execute("""
+                SELECT TOP 1 group_id 
+                FROM dbo.vat_ledger_mapping
+                WHERE vat_company = ? AND LOWER(LTRIM(RTRIM(internal_ledger_name))) = ?
+                ORDER BY ISNULL(updated_at, '1900-01-01') DESC, id DESC
+            """, (vat_company, dupe))
+            res = cur.fetchone()
+            if res and res[0]:
+                keep_gid = res[0]
+                _remove_internal_ledger_from_other_groups(cur, vat_company, keep_gid, dupe)
+    except Exception as e:
+        logger.warning(f"[deduplicate_internal_ledgers_across_groups] {e}")
+
+
+def assign_internal_ledger_to_group(db_name: str, vat_company: str, group_id: int, internal_ledger: str, target_vat_name: str = None) -> bool:
     """Assign an internal ledger to a mapping group (supports 1:N and M:N)."""
     if not vat_company or not group_id:
         return False
@@ -876,29 +1111,117 @@ def assign_internal_ledger_to_group(db_name: str, vat_company: str, group_id: in
                 alias_map[" ".join(al.split()).lower()] = nm
 
         clean_val = " ".join(internal_ledger.split()).lower()
-        canon = name_map.get(clean_val) or alias_map.get(clean_val)
-        if not canon:
-            logger.warning(f"[assign_internal_ledger_to_group] Rejected: '{internal_ledger}' is not in internal debtors list")
-            return False
+        if clean_val in ("cash sales", "old party"):
+            canon = "Cash Sales" if clean_val == "cash sales" else "Old Party"
+        else:
+            canon = name_map.get(clean_val) or alias_map.get(clean_val)
+            if not canon and '(' in internal_ledger and ')' in internal_ledger:
+                before = " ".join(internal_ledger[:internal_ledger.rfind('(')].strip().split()).lower()
+                inside = " ".join(internal_ledger[internal_ledger.rfind('(')+1:internal_ledger.rfind(')')].strip().split()).lower()
+                canon = name_map.get(before) or alias_map.get(before) or name_map.get(inside) or alias_map.get(inside)
+            if not canon and '[' in internal_ledger and ']' in internal_ledger:
+                before = " ".join(internal_ledger[:internal_ledger.rfind('[')].strip().split()).lower()
+                inside = " ".join(internal_ledger[internal_ledger.rfind('[')+1:internal_ledger.rfind(']')].strip().split()).lower()
+                canon = name_map.get(before) or alias_map.get(before) or name_map.get(inside) or alias_map.get(inside)
+            if not canon:
+                logger.warning(f"[assign_internal_ledger_to_group] Rejected: '{internal_ledger}' is not in internal debtors list")
+                return False
         internal_ledger = canon
+
+        if internal_ledger in ("Cash Sales", "Old Party"):
+            # Guard: Reserved 'None' VAT group cannot be mapped to Cash Sales or Old Party
+            cur.execute("""
+                SELECT 1 FROM dbo.vat_ledger_mapping 
+                WHERE vat_company = ? AND (group_id = ? OR id = ?)
+                  AND (serial_no = 0 OR LOWER(LTRIM(RTRIM(vat_ledger_name))) = 'none')
+            """, (vat_company, group_id, group_id))
+            if cur.fetchone() or (target_vat_name and target_vat_name.strip().lower() == "none"):
+                logger.warning(f"[assign_internal_ledger_to_group] 'None' VAT cannot be mapped to '{internal_ledger}'")
+                return False
+
+            # Assign Cash Sales or Old Party to the group
+            cur.execute("""
+                SELECT id, vat_ledger_name, internal_ledger_name 
+                FROM dbo.vat_ledger_mapping 
+                WHERE vat_company = ? AND group_id = ?
+            """, (vat_company, group_id))
+            g_rows = cur.fetchall()
+            if not g_rows:
+                return False
+
+            # Choose target row (matching target_vat_name if specified, or first placeholder/unmapped, or first row)
+            target_id = None
+            if target_vat_name:
+                for rid, v_n, _ in g_rows:
+                    if v_n and v_n.strip().lower() == target_vat_name.strip().lower():
+                        target_id = rid
+                        break
+            if not target_id:
+                for rid, _, iname in g_rows:
+                    if not iname or iname.strip().lower() in ("", "cash sales", "old party"):
+                        target_id = rid
+                        break
+            if not target_id:
+                target_id = g_rows[0][0]
+
+            cur.execute("""
+                UPDATE dbo.vat_ledger_mapping
+                SET internal_ledger_name = ?, classification = ?, is_manual = 1, updated_at = GETDATE()
+                WHERE id = ?
+            """, (internal_ledger, internal_ledger, target_id))
+
+            # For any other rows in this group, clear internal_ledger_name while preserving VAT ledgers!
+            other_ids = [r[0] for r in g_rows if r[0] != target_id]
+            for oid in other_ids:
+                cur.execute("""
+                    UPDATE dbo.vat_ledger_mapping
+                    SET internal_ledger_name = '', classification = '', is_manual = 1, updated_at = GETDATE()
+                    WHERE id = ?
+                """, (oid,))
+
+            cur.execute("""
+                DELETE FROM dbo.vat_unassigned_classification
+                WHERE vat_company = ? AND LOWER(LTRIM(RTRIM(internal_ledger_name))) = LOWER(?)
+            """, (vat_company, internal_ledger))
+
+            logger.info(f"User changed mapping in assign_internal_ledger_to_group: group {group_id} -> '{internal_ledger}'")
+            conn.commit()
+            return True
 
         # Check if group has an unmapped placeholder row
         cur.execute("""
             SELECT id FROM dbo.vat_ledger_mapping 
             WHERE vat_company = ? AND group_id = ? 
-              AND (internal_ledger_name IS NULL OR LTRIM(RTRIM(internal_ledger_name)) = '')
+              AND (internal_ledger_name IS NULL OR LTRIM(RTRIM(internal_ledger_name)) = ''
+                   OR LOWER(LTRIM(RTRIM(internal_ledger_name))) IN ('cash sales', 'old party'))
         """, (vat_company, group_id))
-        unmapped_row = cur.fetchone()
-        if unmapped_row:
+        placeholder_rows = cur.fetchall()
+        if placeholder_rows:
+            primary_id = placeholder_rows[0][0]
             cur.execute("""
                 UPDATE dbo.vat_ledger_mapping
                 SET internal_ledger_name = ?, classification = '', is_manual = 1, updated_at = GETDATE()
                 WHERE id = ?
-            """, (internal_ledger, unmapped_row[0]))
+            """, (internal_ledger, primary_id))
+            if len(placeholder_rows) > 1:
+                cur.execute("""
+                    SELECT vat_ledger_name FROM dbo.vat_ledger_mapping WHERE id = ?
+                """, (primary_id,))
+                p_vrow = cur.fetchone()
+                p_vname = p_vrow[0].strip().lower() if p_vrow and p_vrow[0] else ""
+                for x_row in placeholder_rows[1:]:
+                    cur.execute("""
+                        SELECT vat_ledger_name FROM dbo.vat_ledger_mapping WHERE id = ?
+                    """, (x_row[0],))
+                    x_vrow = cur.fetchone()
+                    x_vname = x_vrow[0].strip().lower() if x_vrow and x_vrow[0] else ""
+                    if x_vname == p_vname:
+                        cur.execute("DELETE FROM dbo.vat_ledger_mapping WHERE id = ?", (x_row[0],))
             cur.execute("""
                 DELETE FROM dbo.vat_unassigned_classification
                 WHERE vat_company = ? AND LOWER(LTRIM(RTRIM(internal_ledger_name))) = LOWER(?)
             """, (vat_company, internal_ledger))
+            _remove_internal_ledger_from_other_groups(cur, vat_company, group_id, internal_ledger)
             logger.info(f"User changed mapping in assign_internal_ledger_to_group: group {group_id} -> '{internal_ledger}'")
             conn.commit()
             return True
@@ -920,18 +1243,34 @@ def assign_internal_ledger_to_group(db_name: str, vat_company: str, group_id: in
         v_name = v_row[0] if v_row else ""
         m_name = v_row[1] if v_row else ""
         sn = v_row[2] if v_row else None
+
+        if not v_name and target_vat_name:
+            v_name = target_vat_name
+            cur.execute("SELECT ISNULL(MAX(serial_no), 0) + 1 FROM dbo.vat_ledger_mapping WHERE vat_company = ? AND serial_no > 0", (vat_company,))
+            sn = cur.fetchone()[0] or 1
+
         if not v_name:
             return False
 
         cur.execute("""
             INSERT INTO dbo.vat_ledger_mapping (vat_company, vat_ledger_name, internal_ledger_name, manual_name, is_manual, group_id, serial_no, classification)
+            OUTPUT INSERTED.id
             VALUES (?, ?, ?, ?, 1, ?, ?, '')
         """, (vat_company, v_name, internal_ledger, m_name, group_id, sn))
+        new_row_id = cur.fetchone()[0]
+
+        effective_gid = new_row_id if group_id >= 900000 else group_id
+        # If group_id was virtual, resolve it to new_row_id
+        if group_id >= 900000:
+            cur.execute("UPDATE dbo.vat_ledger_mapping SET group_id = id WHERE id = ?", (new_row_id,))
+
         cur.execute("""
             DELETE FROM dbo.vat_unassigned_classification
             WHERE vat_company = ? AND LOWER(LTRIM(RTRIM(internal_ledger_name))) = LOWER(?)
         """, (vat_company, internal_ledger))
-        logger.info(f"User changed mapping in assign_internal_ledger_to_group: group {group_id} -> '{internal_ledger}'")
+        if internal_ledger.lower() not in ("cash sales", "old party"):
+            _remove_internal_ledger_from_other_groups(cur, vat_company, effective_gid, internal_ledger)
+        logger.info(f"User changed mapping in assign_internal_ledger_to_group: group {effective_gid} -> '{internal_ledger}'")
         conn.commit()
         return True
     except Exception as e:
@@ -977,7 +1316,7 @@ def remove_internal_ledger_from_group(db_name: str, vat_company: str, group_id: 
             else:
                 cur.execute("""
                     UPDATE dbo.vat_ledger_mapping
-                    SET internal_ledger_name = '', is_manual = 1, updated_at = GETDATE()
+                    SET internal_ledger_name = '', classification = '', is_manual = 1, updated_at = GETDATE()
                     WHERE id = ?
                 """, (rec_id,))
                 rows = [(r[0], r[1], "") if r[0] == rec_id else r for r in rows]
@@ -1025,11 +1364,24 @@ def update_group_internal_ledger(db_name: str, vat_company: str, group_id: int, 
                 alias_map[" ".join(al.split()).lower()] = nm
 
         clean_new = " ".join(new_name.split()).lower()
-        canon = name_map.get(clean_new) or alias_map.get(clean_new)
-        if not canon:
-            logger.warning(f"[update_group_internal_ledger] Rejected: '{new_name}' is not in internal debtors list")
-            return False
+        if clean_new in ("cash sales", "old party"):
+            canon = "Cash Sales" if clean_new == "cash sales" else "Old Party"
+        else:
+            canon = name_map.get(clean_new) or alias_map.get(clean_new)
+            if not canon:
+                logger.warning(f"[update_group_internal_ledger] Rejected: '{new_name}' is not in internal debtors list")
+                return False
         new_name = canon
+
+        if new_name in ("Cash Sales", "Old Party"):
+            cur.execute("""
+                SELECT 1 FROM dbo.vat_ledger_mapping 
+                WHERE vat_company = ? AND (group_id = ? OR id = ?)
+                  AND (serial_no = 0 OR LOWER(LTRIM(RTRIM(vat_ledger_name))) = 'none')
+            """, (vat_company, group_id, group_id))
+            if cur.fetchone():
+                logger.warning(f"[update_group_internal_ledger] 'None' VAT cannot be mapped to '{new_name}'")
+                return False
 
         if old_name:
             cur.execute("""
@@ -1038,11 +1390,14 @@ def update_group_internal_ledger(db_name: str, vat_company: str, group_id: int, 
             """, (vat_company, group_id, old_name.lower()))
             row = cur.fetchone()
             if row:
+                cls_val = new_name if new_name in ("Cash Sales", "Old Party") else ''
                 cur.execute("""
                     UPDATE dbo.vat_ledger_mapping
-                    SET internal_ledger_name = ?, is_manual = 1, updated_at = GETDATE()
+                    SET internal_ledger_name = ?, classification = ?, is_manual = 1, updated_at = GETDATE()
                     WHERE id = ?
-                """, (new_name, row[0]))
+                """, (new_name, cls_val, row[0]))
+                if new_name.lower() not in ("cash sales", "old party"):
+                    _remove_internal_ledger_from_other_groups(cur, vat_company, group_id, new_name)
                 logger.info(f"User changed mapping in update_group_internal_ledger: group {group_id} '{old_name}' -> '{new_name}'")
                 conn.commit()
                 return True
@@ -1223,6 +1578,8 @@ def set_group_internal_ledgers(db_name: str, vat_company: str, group_id: int, in
                         INSERT INTO dbo.vat_ledger_mapping (vat_company, vat_ledger_name, internal_ledger_name, manual_name, is_manual, group_id, serial_no)
                         VALUES (?, ?, ?, ?, 1, ?, ?)
                     """, (vat_company, primary_vat, name, manual_name, group_id, group_sn))
+                if name.lower() not in ("cash sales", "old party"):
+                    _remove_internal_ledger_from_other_groups(cur, vat_company, group_id, name)
 
         # Delete redundant empty placeholder rows ONLY IF that VAT ledger already has a mapped row in the group
         for e_id, e_vat in empty_rows:
@@ -1298,13 +1655,31 @@ def set_group_vat_ledgers(db_name: str, vat_company: str, group_id: int, vat_led
         # 1. Demerge: For any VAT ledger in current group that is no longer in target_set
         for cur_v_lower, r_list in current_vats_dict.items():
             if cur_v_lower not in target_set:
-                for r in r_list:
-                    # Separate out into its own group
+                r_ids = [r[0] for r in r_list]
+                if group_id in r_ids:
+                    # The removed ledger owns group_id: target_set ledgers need a new group_id
                     cur.execute("""
-                        UPDATE dbo.vat_ledger_mapping
-                        SET group_id = id, updated_at = GETDATE()
-                        WHERE id = ?
-                    """, (r[0],))
+                        SELECT id FROM dbo.vat_ledger_mapping
+                        WHERE vat_company = ? AND group_id = ?
+                          AND LOWER(REPLACE(LTRIM(RTRIM(vat_ledger_name)), ' ', '')) <> ?
+                    """, (vat_company, group_id, cur_v_lower.replace(" ", "")))
+                    other_rows = cur.fetchall()
+                    if other_rows:
+                        new_other_gid = min(r[0] for r in other_rows)
+                        for o_id in [r[0] for r in other_rows]:
+                            cur.execute("""
+                                UPDATE dbo.vat_ledger_mapping
+                                SET group_id = ?, updated_at = GETDATE()
+                                WHERE id = ?
+                            """, (new_other_gid, o_id))
+                else:
+                    new_gid = min(r_ids)
+                    for r_id in r_ids:
+                        cur.execute("""
+                            UPDATE dbo.vat_ledger_mapping
+                            SET group_id = ?, updated_at = GETDATE()
+                            WHERE id = ?
+                        """, (new_gid, r_id))
 
         # 2. Merge: For any VAT ledger in clean_vats that belongs to another group or table
         for v_name in clean_vats:
@@ -1391,7 +1766,7 @@ def unmap_vat_group(db_name: str, vat_company: str, group_id: int) -> bool:
         for rec_id in to_keep:
             cur.execute("""
                 UPDATE dbo.vat_ledger_mapping
-                SET internal_ledger_name = '', is_manual = 1, updated_at = GETDATE()
+                SET internal_ledger_name = '', classification = '', is_manual = 1, updated_at = GETDATE()
                 WHERE id = ?
             """, (rec_id,))
         logger.info(f"User changed mapping in unmap_vat_group")
@@ -1417,6 +1792,19 @@ def merge_mapping_groups(db_name: str, vat_company: str, group_ids: list[int]) -
         return 0
     cur = conn.cursor()
     try:
+        # Exclude reserved 'None' group from merging
+        placeholders = ",".join("?" for _ in clean_gids)
+        cur.execute(f"""
+            SELECT DISTINCT group_id FROM dbo.vat_ledger_mapping
+            WHERE vat_company = ? AND group_id IN ({placeholders})
+              AND (serial_no = 0 OR LOWER(LTRIM(RTRIM(vat_ledger_name))) = 'none')
+        """, [vat_company] + clean_gids)
+        none_gids = {r[0] for r in cur.fetchall()}
+        if none_gids:
+            clean_gids = [g for g in clean_gids if g not in none_gids]
+            if len(clean_gids) <= 1:
+                return clean_gids[0] if clean_gids else 0
+
         target_gid = clean_gids[0]
         placeholders = ",".join("?" for _ in clean_gids)
         cur.execute(f"""
@@ -1459,27 +1847,34 @@ def demerge_mapping_group(db_name: str, vat_company: str, group_id: int) -> bool
     cur = conn.cursor()
     try:
         cur.execute("""
-            SELECT DISTINCT vat_ledger_name FROM dbo.vat_ledger_mapping
+            SELECT id, vat_ledger_name FROM dbo.vat_ledger_mapping
             WHERE vat_company = ? AND group_id = ?
+            ORDER BY id
         """, (vat_company, group_id))
-        vats = [r[0] for r in cur.fetchall()]
-        if len(vats) <= 1:
+        all_rows = cur.fetchall()
+        if not all_rows:
             return False
 
-        for v in vats[1:]:
-            cur.execute("""
-                SELECT MIN(id) FROM dbo.vat_ledger_mapping
-                WHERE vat_company = ? AND group_id = ? AND vat_ledger_name = ?
-            """, (vat_company, group_id, v))
-            min_row = cur.fetchone()
-            new_gid = min_row[0] if min_row and min_row[0] is not None else None
-            if new_gid is not None:
+        # Group rows by normalized vat_ledger_name
+        vat_to_rows = {}
+        for r_id, v_name in all_rows:
+            vk = " ".join((v_name or "").split()).lower()
+            vat_to_rows.setdefault(vk, []).append((r_id, v_name))
+
+        if len(vat_to_rows) <= 1:
+            return False
+
+        # Each distinct VAT ledger gets its own group_id (the min id among its rows)
+        for vk, r_list in vat_to_rows.items():
+            min_id = min(r[0] for r in r_list)
+            for r_id, _ in r_list:
                 cur.execute("""
                     UPDATE dbo.vat_ledger_mapping
                     SET group_id = ?, updated_at = GETDATE()
-                    WHERE vat_company = ? AND group_id = ? AND vat_ledger_name = ?
-                """, (new_gid, vat_company, group_id, v))
-        logger.info(f"User changed mapping in demerge_mapping_group")
+                    WHERE id = ?
+                """, (min_id, r_id))
+
+        logger.info(f"User changed mapping in demerge_mapping_group for group {group_id} -> separated {len(vat_to_rows)} VAT ledgers")
         conn.commit()
         return True
     except Exception as e:
@@ -1550,10 +1945,16 @@ def save_manual_mapping(db_name: str, vat_company: str, record_id: int, vat_ledg
             if not vat_ledger:
                 return 0
             cur.execute("""
-                INSERT INTO dbo.vat_ledger_mapping (vat_company, vat_ledger_name, internal_ledger_name, manual_name, is_manual)
+                SELECT ISNULL(MAX(serial_no), 0) + 1 FROM dbo.vat_ledger_mapping
+                WHERE vat_company = ? AND serial_no > 0
+            """, (vat_company,))
+            next_sn = cur.fetchone()[0] or 1
+
+            cur.execute("""
+                INSERT INTO dbo.vat_ledger_mapping (vat_company, vat_ledger_name, internal_ledger_name, manual_name, is_manual, serial_no)
                 OUTPUT INSERTED.id
-                VALUES (?, ?, ?, ?, 1)
-            """, (vat_company, vat_ledger, internal_ledger, manual_name))
+                VALUES (?, ?, ?, ?, 1, ?)
+            """, (vat_company, vat_ledger, internal_ledger, manual_name, next_sn))
             new_id = cur.fetchone()[0]
             cur.execute("UPDATE dbo.vat_ledger_mapping SET group_id = id WHERE id = ?", (new_id,))
             logger.info(f"User changed mapping in save_manual_mapping")
@@ -1565,16 +1966,26 @@ def save_manual_mapping(db_name: str, vat_company: str, record_id: int, vat_ledg
         return 0
 
 
-def merge_vat_ledger_into_group(db_name: str, vat_company: str, target_group_id: int, vat_ledger_name: str) -> bool:
+def merge_vat_ledger_into_group(db_name: str, vat_company: str, target_group_id: int, vat_ledger_name: str, target_vat_name: str = None) -> bool:
     """Take vat_ledger_name and place it into target_group_id.
     
     Retains its original serial number and shifts any existing internal mappings with it.
+    Guards strictly against merging the reserved 'None' VAT ledger.
     """
     if not vat_company or not target_group_id:
         return False
     vat_ledger_name = (vat_ledger_name or "").strip()
+    if vat_ledger_name.startswith("↳ "):
+        vat_ledger_name = vat_ledger_name[2:].strip()
     if not vat_ledger_name:
         return False
+    if vat_ledger_name.lower() == "none":
+        logger.warning("[merge_vat_ledger_into_group] 'None' VAT ledger cannot be merged")
+        return False
+    if target_vat_name and target_vat_name.strip().lower() == "none":
+        logger.warning("[merge_vat_ledger_into_group] Cannot merge into reserved 'None' VAT group")
+        return False
+
     db = get_db_manager()
     ensure_vat_tables(db, db_name)
     conn = db.get_connection(db_name)
@@ -1582,10 +1993,78 @@ def merge_vat_ledger_into_group(db_name: str, vat_company: str, target_group_id:
         return False
     cur = conn.cursor()
     try:
+        # Guard: Target group must not be the reserved 'None' group
+        cur.execute("""
+            SELECT 1 FROM dbo.vat_ledger_mapping 
+            WHERE vat_company = ? AND (group_id = ? OR id = ?)
+              AND (serial_no = 0 OR LOWER(LTRIM(RTRIM(vat_ledger_name))) = 'none')
+        """, (vat_company, target_group_id, target_group_id))
+        if cur.fetchone():
+            logger.warning(f"[merge_vat_ledger_into_group] Cannot merge into reserved 'None' group {target_group_id}")
+            return False
+
+        # Resolve real target group ID in DB (handles virtual group IDs >= 900000)
+        cur.execute("""
+            SELECT TOP 1 id, group_id FROM dbo.vat_ledger_mapping 
+            WHERE vat_company = ? AND (group_id = ? OR id = ?)
+        """, (vat_company, target_group_id, target_group_id))
+        target_row = cur.fetchone()
+        if target_row:
+            real_target_gid = target_row[1] or target_row[0]
+        else:
+            if target_vat_name:
+                cur.execute("""
+                    SELECT id, group_id FROM dbo.vat_ledger_mapping
+                    WHERE vat_company = ? AND LOWER(REPLACE(LTRIM(RTRIM(vat_ledger_name)), ' ', '')) = LOWER(REPLACE(?, ' ', ''))
+                """, (vat_company, target_vat_name))
+                existing_t = cur.fetchone()
+                if existing_t:
+                    real_target_gid = existing_t[1] or existing_t[0]
+                else:
+                    cur.execute("SELECT ISNULL(MAX(serial_no), 0) + 1 FROM dbo.vat_ledger_mapping WHERE vat_company = ? AND serial_no > 0", (vat_company,))
+                    t_sn = cur.fetchone()[0] or 1
+                    cur.execute("""
+                        INSERT INTO dbo.vat_ledger_mapping (vat_company, vat_ledger_name, internal_ledger_name, manual_name, is_manual, serial_no, classification)
+                        OUTPUT INSERTED.id
+                        VALUES (?, ?, '', '', 1, ?, '')
+                    """, (vat_company, target_vat_name, t_sn))
+                    new_t_id = cur.fetchone()[0]
+                    cur.execute("UPDATE dbo.vat_ledger_mapping SET group_id = id WHERE id = ?", (new_t_id,))
+                    real_target_gid = new_t_id
+            else:
+                real_target_gid = target_group_id
+
+        # Resolve canonical VAT debtor name if alias or combo was passed
+        cur.execute("""
+            SELECT DISTINCT LTRIM(RTRIM(Name)) AS Name, LTRIM(RTRIM(ISNULL(Alias, ''))) AS Alias
+            FROM dbo.vat_row_ledger_data
+            WHERE vat_company = ? AND (
+                LOWER(LTRIM(RTRIM([Group]))) = 'sundry debtors'
+                OR LOWER(LTRIM(RTRIM(Sub_Group))) = 'sundry debtors'
+                OR LOWER([Group]) LIKE '%debtor%'
+                OR LOWER(Sub_Group) LIKE '%debtor%'
+            )
+        """, (vat_company,))
+        for vn, va in cur.fetchall():
+            if not vn:
+                continue
+            vn_clean = " ".join(vn.split()).lower()
+            va_clean = " ".join(va.split()).lower() if va else ""
+            in_clean = " ".join(vat_ledger_name.split()).lower()
+            if in_clean in (vn_clean, va_clean, f"{vn_clean} ({va_clean})", f"{vn_clean} [{va_clean}]"):
+                vat_ledger_name = vn
+                break
+            if '(' in vat_ledger_name and ')' in vat_ledger_name:
+                before = " ".join(vat_ledger_name[:vat_ledger_name.rfind('(')].strip().split()).lower()
+                inside = " ".join(vat_ledger_name[vat_ledger_name.rfind('(')+1:vat_ledger_name.rfind(')')].strip().split()).lower()
+                if before in (vn_clean, va_clean) or inside in (vn_clean, va_clean):
+                    vat_ledger_name = vn
+                    break
+
         # Check if vat_ledger_name already exists in dbo.vat_ledger_mapping
         cur.execute("""
             SELECT id, group_id, serial_no FROM dbo.vat_ledger_mapping
-            WHERE vat_company = ? AND LOWER(LTRIM(RTRIM(vat_ledger_name))) = LOWER(?)
+            WHERE vat_company = ? AND LOWER(REPLACE(LTRIM(RTRIM(vat_ledger_name)), ' ', '')) = LOWER(REPLACE(?, ' ', ''))
         """, (vat_company, vat_ledger_name))
         existing_rows = cur.fetchall()
 
@@ -1593,8 +2072,8 @@ def merge_vat_ledger_into_group(db_name: str, vat_company: str, target_group_id:
             cur.execute("""
                 UPDATE dbo.vat_ledger_mapping
                 SET group_id = ?, updated_at = GETDATE()
-                WHERE vat_company = ? AND LOWER(LTRIM(RTRIM(vat_ledger_name))) = LOWER(?)
-            """, (target_group_id, vat_company, vat_ledger_name))
+                WHERE vat_company = ? AND LOWER(REPLACE(LTRIM(RTRIM(vat_ledger_name)), ' ', '')) = LOWER(REPLACE(?, ' ', ''))
+            """, (real_target_gid, vat_company, vat_ledger_name))
         else:
             cur.execute("""
                 SELECT ISNULL(MAX(serial_no), 0) + 1 FROM dbo.vat_ledger_mapping
@@ -1605,7 +2084,7 @@ def merge_vat_ledger_into_group(db_name: str, vat_company: str, target_group_id:
             cur.execute("""
                 INSERT INTO dbo.vat_ledger_mapping (vat_company, vat_ledger_name, internal_ledger_name, manual_name, is_manual, group_id, serial_no, classification)
                 VALUES (?, ?, '', '', 1, ?, ?, '')
-            """, (vat_company, vat_ledger_name, target_group_id, next_sn))
+            """, (vat_company, vat_ledger_name, real_target_gid, next_sn))
 
         # Cleanup redundant empty placeholders
         cur.execute("""
@@ -1617,7 +2096,7 @@ def merge_vat_ledger_into_group(db_name: str, vat_company: str, target_group_id:
                   WHERE vat_company = ? AND group_id = ?
                     AND internal_ledger_name IS NOT NULL AND LTRIM(RTRIM(internal_ledger_name)) <> ''
               )
-        """, (vat_company, target_group_id, vat_company, target_group_id))
+        """, (vat_company, real_target_gid, vat_company, real_target_gid))
 
         logger.info(f"User merged VAT ledger '{vat_ledger_name}' into group {target_group_id}")
         conn.commit()
@@ -1635,7 +2114,13 @@ def remove_vat_ledger_from_group(db_name: str, vat_company: str, group_id: int, 
     """
     if not vat_company or not group_id:
         return False
+    try:
+        group_id = int(group_id)
+    except (ValueError, TypeError):
+        return False
     vat_ledger_name = (vat_ledger_name or "").strip()
+    if vat_ledger_name.startswith("↳ "):
+        vat_ledger_name = vat_ledger_name[2:].strip()
     if not vat_ledger_name:
         return False
     db = get_db_manager()
@@ -1646,30 +2131,43 @@ def remove_vat_ledger_from_group(db_name: str, vat_company: str, group_id: int, 
     cur = conn.cursor()
     try:
         cur.execute("""
-            SELECT DISTINCT vat_ledger_name FROM dbo.vat_ledger_mapping
+            SELECT id, vat_ledger_name FROM dbo.vat_ledger_mapping
             WHERE vat_company = ? AND group_id = ?
-        """, (vat_company, group_id))
-        all_vats = [r[0] for r in cur.fetchall()]
-        if len(all_vats) <= 1:
-            return False
-
-        cur.execute("""
-            SELECT id FROM dbo.vat_ledger_mapping
-            WHERE vat_company = ? AND group_id = ? AND LOWER(LTRIM(RTRIM(vat_ledger_name))) = LOWER(?)
             ORDER BY id
-        """, (vat_company, group_id, vat_ledger_name))
-        target_rows = cur.fetchall()
-        if not target_rows:
+        """, (vat_company, group_id))
+        all_rows = cur.fetchall()
+        if not all_rows:
             return False
 
-        new_group_id = target_rows[0][0]
-        cur.execute("""
-            UPDATE dbo.vat_ledger_mapping
-            SET group_id = ?, updated_at = GETDATE()
-            WHERE vat_company = ? AND group_id = ? AND LOWER(LTRIM(RTRIM(vat_ledger_name))) = LOWER(?)
-        """, (new_group_id, vat_company, group_id, vat_ledger_name))
+        norm_target = " ".join(vat_ledger_name.split()).lower()
+        target_ids = [r[0] for r in all_rows if " ".join((r[1] or "").split()).lower() == norm_target]
+        remaining_rows = [r for r in all_rows if " ".join((r[1] or "").split()).lower() != norm_target]
 
-        logger.info(f"User removed VAT ledger '{vat_ledger_name}' from group {group_id} -> new group {new_group_id}")
+        if not target_ids or not remaining_rows:
+            return False
+
+        # If the target ledger owns the current group_id (group_id in target_ids):
+        # Target ledger keeps group_id, while remaining ledgers in the group move to their own new group_id
+        if group_id in target_ids:
+            new_remaining_gid = min(r[0] for r in remaining_rows)
+            for r_id, _ in remaining_rows:
+                cur.execute("""
+                    UPDATE dbo.vat_ledger_mapping
+                    SET group_id = ?, updated_at = GETDATE()
+                    WHERE id = ?
+                """, (new_remaining_gid, r_id))
+            logger.info(f"User removed anchor VAT ledger '{vat_ledger_name}' from group {group_id} -> remaining moved to new group {new_remaining_gid}")
+        else:
+            # The target ledger does NOT own group_id: move the target ledger to its own min(id)
+            new_target_gid = min(target_ids)
+            for t_id in target_ids:
+                cur.execute("""
+                    UPDATE dbo.vat_ledger_mapping
+                    SET group_id = ?, updated_at = GETDATE()
+                    WHERE id = ?
+                """, (new_target_gid, t_id))
+            logger.info(f"User removed VAT ledger '{vat_ledger_name}' from group {group_id} -> new group {new_target_gid}")
+
         conn.commit()
         return True
     except Exception as e:
@@ -1682,6 +2180,9 @@ def set_mapping_classification(db_name: str, vat_company: str, group_id: int, va
     """Classify an unmatched VAT ledger as 'Cash Sales', 'Old Party', or ''."""
     if not vat_company:
         return False
+    vat_ledger_name = (vat_ledger_name or "").strip()
+    if vat_ledger_name.startswith("↳ "):
+        vat_ledger_name = vat_ledger_name[2:].strip()
     db = get_db_manager()
     ensure_vat_tables(db, db_name)
     conn = db.get_connection(db_name)
@@ -1690,11 +2191,41 @@ def set_mapping_classification(db_name: str, vat_company: str, group_id: int, va
     cur = conn.cursor()
     try:
         cls = classification.strip()
-        cur.execute("""
-            UPDATE dbo.vat_ledger_mapping
-            SET classification = ?, updated_at = GETDATE()
-            WHERE vat_company = ? AND group_id = ? AND LOWER(LTRIM(RTRIM(vat_ledger_name))) = LOWER(?)
-        """, (cls, vat_company, group_id, vat_ledger_name.strip()))
+        if cls in ("Cash Sales", "Old Party"):
+            if vat_ledger_name.lower() == "none":
+                return False
+            cur.execute("""
+                SELECT 1 FROM dbo.vat_ledger_mapping 
+                WHERE vat_company = ? AND group_id = ? 
+                  AND (serial_no = 0 OR LOWER(LTRIM(RTRIM(vat_ledger_name))) = 'none')
+            """, (vat_company, group_id))
+            if cur.fetchone():
+                return False
+
+            cur.execute("""
+                UPDATE dbo.vat_ledger_mapping
+                SET classification = ?,
+                    internal_ledger_name = CASE 
+                        WHEN internal_ledger_name IS NULL OR LTRIM(RTRIM(internal_ledger_name)) = '' 
+                             OR LOWER(LTRIM(RTRIM(internal_ledger_name))) IN ('cash sales', 'old party') 
+                        THEN ? 
+                        ELSE internal_ledger_name 
+                    END,
+                    updated_at = GETDATE()
+                WHERE vat_company = ? AND group_id = ? AND LOWER(REPLACE(LTRIM(RTRIM(vat_ledger_name)), ' ', '')) = LOWER(REPLACE(?, ' ', ''))
+            """, (cls, cls, vat_company, group_id, vat_ledger_name))
+        else:
+            cur.execute("""
+                UPDATE dbo.vat_ledger_mapping
+                SET classification = ?,
+                    internal_ledger_name = CASE 
+                        WHEN LOWER(LTRIM(RTRIM(internal_ledger_name))) IN ('cash sales', 'old party') 
+                        THEN '' 
+                        ELSE internal_ledger_name 
+                    END,
+                    updated_at = GETDATE()
+                WHERE vat_company = ? AND group_id = ? AND LOWER(REPLACE(LTRIM(RTRIM(vat_ledger_name)), ' ', '')) = LOWER(REPLACE(?, ' ', ''))
+            """, (cls, vat_company, group_id, vat_ledger_name))
         conn.commit()
         return True
     except Exception as e:
@@ -1810,12 +2341,32 @@ def run_auto_mapping_on_sync(db_name: str, vat_company: str):
         """, (vat_company, vat_company, vat_company, vat_company))
         conn.commit()
 
-        # 4. Load all VAT debtors (names) and Internal debtors (names)
-        vat_debtor_names = get_vat_debtor_names(db_name, vat_company)
-        int_debtor_names = get_internal_debtor_names(db_name)
+        # 4. Load all VAT debtors (names + aliases) and Internal debtors (names + aliases)
+        vat_debtors = _load_debtor_names_and_aliases(cur, "vat_row_ledger_data", vat_company)
+        int_debtors = _load_debtor_names_and_aliases(cur, "row_ledger_data")
 
-        vat_dict = { " ".join(v.split()).lower(): v.strip() for v in vat_debtor_names if v.strip() and v.strip().lower() not in ("none", "nan", "null") }
-        int_dict = { " ".join(i.split()).lower(): i.strip() for i in int_debtor_names if i.strip() and i.strip().lower() not in ("none", "nan", "null") }
+        vat_dict = {}
+        vat_alias_map = {}
+        for v in vat_debtors:
+            nm = (v.get("Name") or "").strip()
+            al = (v.get("Alias") or "").strip()
+            if nm and nm.lower() not in ("none", "nan", "null"):
+                k = " ".join(nm.split()).lower()
+                vat_dict[k] = nm
+                if al and al.lower() not in ("none", "nan", "null"):
+                    vat_alias_map[k] = " ".join(al.split()).lower()
+
+        int_dict = {}
+        for i in int_debtors:
+            nm = (i.get("Name") or "").strip()
+            al = (i.get("Alias") or "").strip()
+            if nm and nm.lower() not in ("none", "nan", "null"):
+                k_nm = " ".join(nm.split()).lower()
+                int_dict[k_nm] = nm
+            if al and al.lower() not in ("none", "nan", "null"):
+                k_al = " ".join(al.split()).lower()
+                if k_al not in int_dict:
+                    int_dict[k_al] = nm
 
         # 5. Fetch existing DB rows
         cur.execute("""
@@ -1840,26 +2391,42 @@ def run_auto_mapping_on_sync(db_name: str, vat_company: str):
                 max_serial = sn
             if vk and vk != "none":
                 existing_vats.setdefault(vk, []).append((r_id, g_id, i_clean, sn, cls))
-            if ik:
+            if ik and ik not in ("cash sales", "old party"):
                 assigned_ints.add(ik)
 
-        # 6. Check existing unmapped VAT rows (1 x 0): if unassigned internal ledger with matching name exists
+        # 6. Check existing unmapped VAT rows (1 x 0) or placeholder ('Cash Sales', 'Old Party'):
+        # If matching internal ledger exists in int_dict (from active Tally/Excel sync),
+        # automatically map to the real internal ledger and remove 'Cash Sales' / 'Old Party'.
         for vk, r_list in list(existing_vats.items()):
-            if len(r_list) == 1 and not r_list[0][2]:
-                r_id, g_id, _, sn, cls = r_list[0]
-                # Strict name match only (Requirement 7)
+            eligible_rows = [
+                row_item for row_item in r_list 
+                if not row_item[2] or row_item[2].lower() in ("cash sales", "old party")
+            ]
+            if eligible_rows and len(eligible_rows) == len(r_list):
+                r_id, g_id, old_int, sn, cls = eligible_rows[0]
+                
+                # Check match against int_dict (by VAT name or VAT alias)
+                va = vat_alias_map.get(vk, "")
+                matched_int = None
                 if vk in int_dict and vk not in assigned_ints:
                     matched_int = int_dict[vk]
+                elif va and va in int_dict and va not in assigned_ints:
+                    matched_int = int_dict[va]
+
+                if matched_int:
                     cur.execute("""
                         UPDATE dbo.vat_ledger_mapping
                         SET internal_ledger_name = ?, classification = '', updated_at = GETDATE()
                         WHERE id = ?
                     """, (matched_int, r_id))
-                    assigned_ints.add(vk)
+                    assigned_ints.add(" ".join(matched_int.split()).lower())
+                    if len(eligible_rows) > 1:
+                        for extra_r in eligible_rows[1:]:
+                            cur.execute("DELETE FROM dbo.vat_ledger_mapping WHERE id = ?", (extra_r[0],))
                     cur.execute("""
                         DELETE FROM dbo.vat_unassigned_classification
                         WHERE vat_company = ? AND LOWER(LTRIM(RTRIM(internal_ledger_name))) = ?
-                    """, (vat_company, vk))
+                    """, (vat_company, " ".join(matched_int.split()).lower()))
 
         # 7. Add new VAT debtors that don't exist yet in vat_ledger_mapping
         new_vat_rows = []
@@ -1867,15 +2434,20 @@ def run_auto_mapping_on_sync(db_name: str, vat_company: str):
             if vk not in existing_vats:
                 max_serial += 1
                 sn = max_serial
-                # Check for strict name match
+                va = vat_alias_map.get(vk, "")
+                matched_int = None
                 if vk in int_dict and vk not in assigned_ints:
                     matched_int = int_dict[vk]
+                elif va and va in int_dict and va not in assigned_ints:
+                    matched_int = int_dict[va]
+
+                if matched_int:
                     new_vat_rows.append((vat_company, v_name, matched_int, "", 0, sn, ""))
-                    assigned_ints.add(vk)
+                    assigned_ints.add(" ".join(matched_int.split()).lower())
                     cur.execute("""
                         DELETE FROM dbo.vat_unassigned_classification
                         WHERE vat_company = ? AND LOWER(LTRIM(RTRIM(internal_ledger_name))) = ?
-                    """, (vat_company, vk))
+                    """, (vat_company, " ".join(matched_int.split()).lower()))
                 elif vk in int_dict and vk in assigned_ints:
                     matched_int = int_dict[vk]
                     new_vat_rows.append((vat_company, v_name, matched_int, "", 0, sn, ""))
@@ -2154,6 +2726,30 @@ def save_stock_mapping(db_name: str, company_name: str, record_id: int, vat_item
         conn.rollback()
         logger.error(f"[save_stock_mapping] error: {e}", exc_info=True)
         raise
+
+
+def clear_stock_mappings(db_name: str, company_name: str = None) -> bool:
+    """Cleanly clear VAT stock mapping records from dbo.vat_stock_mapping."""
+    if not db_name:
+        return False
+    db = get_db_manager()
+    ensure_vat_tables(db, db_name)
+    conn = db.get_connection(db_name)
+    if not conn:
+        return False
+    try:
+        cur = conn.cursor()
+        if company_name:
+            cur.execute("DELETE FROM dbo.vat_stock_mapping WHERE company_name = ?", (company_name,))
+        else:
+            cur.execute("TRUNCATE TABLE dbo.vat_stock_mapping")
+        conn.commit()
+        logger.info(f"[clear_stock_mappings] Cleanly cleared vat_stock_mapping for company='{company_name}' in db='{db_name}'")
+        return True
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"[clear_stock_mappings] error: {e}", exc_info=True)
+        return False
 
 
 # ─── VAT CONF LOGIC ──────────────────────────────────────────────────────────

@@ -105,7 +105,17 @@ class _TallyCompleter(QCompleter):
         """Called from editor.textEdited — only fires on real keystrokes."""
         self._typed_text = text
         self._proxy.set_prefix(text)
-        self._highlight_first()   # synchronous — viewport().update() is safe here
+        if not text:
+            def _safe_comp():
+                try:
+                    popup = self.popup()
+                    if popup and not popup.isVisible():
+                        self.complete()
+                except RuntimeError:
+                    pass
+            QTimer.singleShot(10, _safe_comp)
+        else:
+            self._highlight_first()   # synchronous — viewport().update() is safe here
 
 
     def _highlight_first(self):
@@ -220,7 +230,7 @@ QTableWidget::item:open {
 """
 
 class UniversalCellDelegate(QStyledItemDelegate):
-    def __init__(self, owner=None, parent=None, cell_type=None, autocomplete_items=None, display_cb=None, set_model_cb=None, enforce_match=True):
+    def __init__(self, owner=None, parent=None, cell_type=None, autocomplete_items=None, display_cb=None, set_model_cb=None, enforce_match=True, auto_popup=True):
         if parent is None and owner is not None:
             parent = owner
         super().__init__(parent)
@@ -235,6 +245,7 @@ class UniversalCellDelegate(QStyledItemDelegate):
         self._display_cb = display_cb
         self._set_model_cb = set_model_cb
         self._enforce_match = enforce_match
+        self._auto_popup = auto_popup
 
     def initStyleOption(self, option, index):
         super().initStyleOption(option, index)
@@ -273,7 +284,9 @@ class UniversalCellDelegate(QStyledItemDelegate):
             painter.restore()
 
     def createEditor(self, parent, option, index):
-        cell_type = index.data(CELL_TYPE_ROLE) or self._cell_type
+        cell_type = index.data(CELL_TYPE_ROLE)
+        if cell_type not in ("date", "number", "autocomplete"):
+            cell_type = self._cell_type
 
         if cell_type == "date":
             # Plain text editor — user types YYYY-MM-DD directly; no calendar popup.
@@ -330,6 +343,15 @@ class UniversalCellDelegate(QStyledItemDelegate):
                         e.setText(selected)
                         QTimer.singleShot(0, lambda: self._commit_and_move(e))
                     completer.activated.connect(_on_activated)
+
+                    if self._auto_popup:
+                        def _safe_complete(c=completer, e=editor):
+                            try:
+                                if e.isVisible() and c.popup():
+                                    c.complete()
+                            except RuntimeError:
+                                pass
+                        QTimer.singleShot(25, _safe_complete)
         return editor
 
     def updateEditorGeometry(self, editor, option, index):
@@ -344,7 +366,9 @@ class UniversalCellDelegate(QStyledItemDelegate):
         super().updateEditorGeometry(editor, option, index)
 
     def setEditorData(self, editor, index):
-        cell_type = index.data(CELL_TYPE_ROLE) or self._cell_type
+        cell_type = index.data(CELL_TYPE_ROLE)
+        if cell_type not in ("date", "number", "autocomplete"):
+            cell_type = self._cell_type
 
         # F2 / Edit Mode: schedule cursor-at-end BEFORE any early returns so it applies
         # to date, autocomplete, and plain text cells alike.
@@ -447,7 +471,9 @@ class UniversalCellDelegate(QStyledItemDelegate):
         return super().eventFilter(obj, event)
 
     def setModelData(self, editor, model, index):
-        cell_type = index.data(CELL_TYPE_ROLE) or self._cell_type
+        cell_type = index.data(CELL_TYPE_ROLE)
+        if cell_type not in ("date", "number", "autocomplete"):
+            cell_type = self._cell_type
 
         if cell_type == "date" and isinstance(editor, QLineEdit):
             import re as _re

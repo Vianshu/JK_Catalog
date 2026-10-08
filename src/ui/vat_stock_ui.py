@@ -18,7 +18,7 @@ from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
 
 from src.logic.db_manager import get_db_manager, build_logical_name
-from src.logic.vat_manager import load_stock_mappings, save_stock_mapping, ensure_vat_tables
+from src.logic.vat_manager import load_stock_mappings, save_stock_mapping, clear_stock_mappings, ensure_vat_tables
 from src.ui.table_nav_mixin import UniversalCellDelegate, UNIVERSAL_TABLE_STYLE, _TallyCompleter
 from src.utils.app_logger import get_logger
 
@@ -30,11 +30,12 @@ class StockMappingItemDelegate(UniversalCellDelegate):
     searchable _TallyCompleter for both VAT Stock Item (Col 0) and Internal Stock Item (Col 1),
     and editable text for Manual Name (Col 2). Paints unmapped rows fully in red.
     """
-    def __init__(self, get_vat_options_callback, get_int_options_callback, parent_table=None, parent=None):
+    def __init__(self, get_vat_options_callback, get_int_options_callback, parent_table=None, stock_ui=None, parent=None):
         super().__init__(parent=parent)
         self.get_vat_options_callback = get_vat_options_callback
         self.get_int_options_callback = get_int_options_callback
         self.parent_table = parent_table
+        self.stock_ui = stock_ui
 
     def paint(self, painter, option, index):
         # Full row must be marked red if either VAT or Internal stock cell is empty
@@ -152,6 +153,13 @@ class StockMappingItemDelegate(UniversalCellDelegate):
                         editor.setText(init_val)
                         return
 
+                # If col 1, check if user typed an alias -> resolve to canonical Item_Name
+                if col == 1 and getattr(self, 'stock_ui', None):
+                    self.stock_ui._ensure_stock_alias_cache()
+                    v_key = " ".join(val.split()).lower()
+                    if v_key in self.stock_ui._alias_to_int_stock_map:
+                        val = self.stock_ui._alias_to_int_stock_map[v_key]
+
                 callback = self.get_vat_options_callback if col == 0 else self.get_int_options_callback
                 options = callback() if callable(callback) else []
                 resolved = None
@@ -161,6 +169,11 @@ class StockMappingItemDelegate(UniversalCellDelegate):
                         break
 
                 if resolved:
+                    # If resolved itself was an alias in options, map to canonical name
+                    if col == 1 and getattr(self, 'stock_ui', None):
+                        r_key = " ".join(resolved.split()).lower()
+                        if r_key in self.stock_ui._alias_to_int_stock_map:
+                            resolved = self.stock_ui._alias_to_int_stock_map[r_key]
                     model.setData(index, resolved, Qt.ItemDataRole.EditRole)
                 else:
                     # Item not in allowed list! Revert
@@ -199,10 +212,22 @@ class _VatStockLoadWorker(QThread):
                     """)
                     if cur.fetchone()[0] > 0:
                         cur.execute("""
-                            SELECT Item_Name, SubGroup, Category, Part_No, Closing_Qty, Closing_Rate, Closing_Value, Unit
-                            FROM dbo.stock_items
-                            ORDER BY Item_Name
+                            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                            WHERE TABLE_NAME = 'stock_items' AND COLUMN_NAME = 'FirstAlias'
                         """)
+                        has_alias = cur.fetchone()[0] > 0
+                        if has_alias:
+                            cur.execute("""
+                                SELECT Item_Name, SubGroup, Category, Part_No, Closing_Qty, Closing_Rate, Closing_Value, Unit, FirstAlias
+                                FROM dbo.stock_items
+                                ORDER BY Item_Name
+                            """)
+                        else:
+                            cur.execute("""
+                                SELECT Item_Name, SubGroup, Category, Part_No, Closing_Qty, Closing_Rate, Closing_Value, Unit, '' AS FirstAlias
+                                FROM dbo.stock_items
+                                ORDER BY Item_Name
+                            """)
                         stock_rows = cur.fetchall()
 
             mappings = load_stock_mappings(self._db_name, self._company_name, self._vat_items)
@@ -231,6 +256,13 @@ class StockUI(QWidget):
         self._load_worker = None
         self._last_loaded_path = None
         self._loading_path = None
+
+        # Name & Alias caching
+        self._int_stock_alias_map = {}
+        self._int_stock_part_map = {}
+        self._alias_to_int_stock_map = {}
+        self._vat_stock_alias_map = {}
+        self._int_stock_autocomplete_options = []
 
         self.init_ui()
 
@@ -306,7 +338,7 @@ class StockUI(QWidget):
         lbl.setStyleSheet("font-weight: bold; font-size: 14px; color: #0f172a;")
 
         self.int_search = QLineEdit()
-        self.int_search.setPlaceholderText("Filter stock item name...")
+        self.int_search.setPlaceholderText("Filter name, alias or part no...")
         self.int_search.setFixedWidth(260)
         self.int_search.textChanged.connect(self._filter_int_stock_table)
 
@@ -352,7 +384,7 @@ class StockUI(QWidget):
         vbox.setContentsMargins(10, 10, 10, 10)
         vbox.setSpacing(8)
 
-        # Top Bar: File selector + Import action
+        # Top Bar: File selector + Import action + Filter
         top_bar = QHBoxLayout()
         
         self.btn_select_file = QPushButton("Select Excel File")
@@ -365,12 +397,29 @@ class StockUI(QWidget):
         """)
         self.btn_select_file.clicked.connect(self._select_excel_file)
 
+        self.btn_clear_data = QPushButton("Clear Stock Data")
+        self.btn_clear_data.setStyleSheet("""
+            QPushButton {
+                background: #ef4444; color: white; font-weight: 600;
+                border: none; border-radius: 4px; padding: 6px 16px;
+            }
+            QPushButton:hover { background: #dc2626; }
+        """)
+        self.btn_clear_data.clicked.connect(self._clear_vat_stock_data)
+
         self.lbl_file_path = QLabel("No Excel file selected")
         self.lbl_file_path.setStyleSheet("color: #64748b; font-size: 12px;")
 
+        self.vat_stock_search = QLineEdit()
+        self.vat_stock_search.setPlaceholderText("Filter name, alias or code...")
+        self.vat_stock_search.setFixedWidth(240)
+        self.vat_stock_search.textChanged.connect(self._filter_vat_stock_table)
+
         top_bar.addWidget(self.btn_select_file)
+        top_bar.addWidget(self.btn_clear_data)
         top_bar.addWidget(self.lbl_file_path)
         top_bar.addStretch()
+        top_bar.addWidget(self.vat_stock_search)
         vbox.addLayout(top_bar)
 
         # Dynamic Preview Table
@@ -395,7 +444,7 @@ class StockUI(QWidget):
         # Clean Top Bar: Search filter only, no extra clutter or descriptive paragraphs
         top_bar = QHBoxLayout()
         self.mapping_search = QLineEdit()
-        self.mapping_search.setPlaceholderText("Search stock mapping...")
+        self.mapping_search.setPlaceholderText("Search name or alias...")
         self.mapping_search.setFixedWidth(260)
         self.mapping_search.textChanged.connect(self._filter_mapping_table)
         top_bar.addWidget(self.mapping_search)
@@ -431,6 +480,7 @@ class StockUI(QWidget):
                 self.get_vat_stock_names,
                 self.get_internal_stock_names,
                 parent_table=self.mapping_table,
+                stock_ui=self,
                 parent=self.mapping_table
             )
         )
@@ -455,6 +505,12 @@ class StockUI(QWidget):
         self.current_company_path = company_path
         self.current_company_name = company_name or (os.path.basename(os.path.normpath(company_path)) if company_path else "")
         self.db_name = build_logical_name(self.current_company_name, company_path=self.current_company_path) if company_path else ""
+
+        # Clear alias caches on company change
+        self._int_stock_alias_map.clear()
+        self._int_stock_part_map.clear()
+        self._alias_to_int_stock_map.clear()
+        self._int_stock_autocomplete_options.clear()
 
         if not self.db_name or not self.db.database_exists(self.db_name):
             return
@@ -491,6 +547,70 @@ class StockUI(QWidget):
         self._load_worker = None
         logger.error(f"[StockUI._on_load_error] {msg}")
 
+    def _ensure_stock_alias_cache(self, force: bool = False):
+        """Ensure internal stock alias cache is loaded from dbo.stock_items."""
+        if self._int_stock_alias_map and not force:
+            return
+
+        if not self.db_name or not self.db.database_exists(self.db_name):
+            return
+
+        try:
+            conn = self.db.get_connection(self.db_name)
+            if not conn:
+                return
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES 
+                WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'stock_items'
+            """)
+            if cur.fetchone()[0] == 0:
+                cur.close()
+                return
+
+            cur.execute("""
+                SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = 'stock_items' AND COLUMN_NAME = 'FirstAlias'
+            """)
+            has_alias = cur.fetchone()[0] > 0
+
+            if has_alias:
+                cur.execute("""
+                    SELECT DISTINCT Item_Name, FirstAlias, Part_No
+                    FROM dbo.stock_items
+                    WHERE Item_Name IS NOT NULL AND LTRIM(RTRIM(Item_Name)) <> ''
+                """)
+            else:
+                cur.execute("""
+                    SELECT DISTINCT Item_Name, '' AS FirstAlias, Part_No
+                    FROM dbo.stock_items
+                    WHERE Item_Name IS NOT NULL AND LTRIM(RTRIM(Item_Name)) <> ''
+                """)
+            rows = cur.fetchall()
+            cur.close()
+
+            opt_names = []
+            for r in rows:
+                iname = str(r[0]).strip() if r[0] else ""
+                if not iname:
+                    continue
+                opt_names.append(iname)
+                ik = " ".join(iname.split()).lower()
+                alias = str(r[1]).strip() if r[1] else ""
+                part = str(r[2]).strip() if len(r) > 2 and r[2] else ""
+
+                if alias and alias.lower() not in ("none", "nan", "null"):
+                    self._int_stock_alias_map[ik] = alias
+                    self._alias_to_int_stock_map[" ".join(alias.split()).lower()] = iname
+                    if alias not in opt_names:
+                        opt_names.append(alias)
+                if part and part.lower() not in ("none", "nan", "null"):
+                    self._int_stock_part_map[ik] = part
+
+            self._int_stock_autocomplete_options = sorted(list(set(opt_names)))
+        except Exception as e:
+            logger.error(f"[_ensure_stock_alias_cache] error: {e}")
+
     def refresh_int_stock_table(self):
         """Load internal stock items from dbo.stock_items in company DB (sync path)."""
         if not self.db_name or not self.db.database_exists(self.db_name):
@@ -514,10 +634,22 @@ class StockUI(QWidget):
                 return
 
             cur.execute("""
-                SELECT Item_Name, SubGroup, Category, Part_No, Closing_Qty, Closing_Rate, Closing_Value, Unit
-                FROM dbo.stock_items
-                ORDER BY Item_Name
+                SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = 'stock_items' AND COLUMN_NAME = 'FirstAlias'
             """)
+            has_alias = cur.fetchone()[0] > 0
+            if has_alias:
+                cur.execute("""
+                    SELECT Item_Name, SubGroup, Category, Part_No, Closing_Qty, Closing_Rate, Closing_Value, Unit, FirstAlias
+                    FROM dbo.stock_items
+                    ORDER BY Item_Name
+                """)
+            else:
+                cur.execute("""
+                    SELECT Item_Name, SubGroup, Category, Part_No, Closing_Qty, Closing_Rate, Closing_Value, Unit, '' AS FirstAlias
+                    FROM dbo.stock_items
+                    ORDER BY Item_Name
+                """)
             rows = cur.fetchall()
             cur.close()
             conn.commit()
@@ -535,15 +667,45 @@ class StockUI(QWidget):
         self.int_table.setUpdatesEnabled(False)
         self.int_table.setRowCount(len(rows))
 
+        self._ensure_stock_alias_cache()
+
         for r_idx, r in enumerate(rows):
-            for c_idx, val in enumerate(r):
+            item_name = str(r[0]).strip() if len(r) > 0 and r[0] is not None else ""
+            part_no = str(r[3]).strip() if len(r) > 3 and r[3] is not None else ""
+            alias_val = str(r[8]).strip() if len(r) > 8 and r[8] is not None else ""
+
+            if item_name:
+                ik = " ".join(item_name.split()).lower()
+                if not alias_val and ik in self._int_stock_alias_map:
+                    alias_val = self._int_stock_alias_map[ik]
+                elif alias_val and alias_val.lower() not in ("none", "nan", "null"):
+                    self._int_stock_alias_map[ik] = alias_val
+                    self._alias_to_int_stock_map[" ".join(alias_val.split()).lower()] = item_name
+
+                if not part_no and ik in self._int_stock_part_map:
+                    part_no = self._int_stock_part_map[ik]
+                elif part_no and part_no.lower() not in ("none", "nan", "null"):
+                    self._int_stock_part_map[ik] = part_no
+
+            for c_idx in range(min(8, len(r))):
+                val = r[c_idx]
                 it = QTableWidgetItem(str(val) if val is not None else "")
-                if c_idx in (4, 5, 6):  # Numeric qty/rate/value
+                if c_idx == 0:
+                    it.setData(Qt.ItemDataRole.UserRole, item_name)
+                    if alias_val:
+                        it.setData(Qt.ItemDataRole.UserRole + 1, alias_val)
+                    if part_no:
+                        it.setData(Qt.ItemDataRole.UserRole + 2, part_no)
+                elif c_idx in (4, 5, 6):  # Numeric qty/rate/value
                     it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self.int_table.setItem(r_idx, c_idx, it)
 
         self.int_table.setUpdatesEnabled(True)
         self.int_table.blockSignals(False)
+
+        q = self.int_search.text().strip() if hasattr(self, 'int_search') else ""
+        if q:
+            self._filter_int_stock_table(q)
 
     def _select_excel_file(self):
         """Open file dialog for user to select VAT stock Excel file."""
@@ -595,10 +757,25 @@ class StockUI(QWidget):
                         if ("item" in c_clean or "particular" in c_clean or "desc" in c_clean) and not any(x in c_clean for x in ("date", "time", "vch", "voucher", "rate", "qty", "amount", "total")):
                             item_col = c
                             break
-                if not item_col:
-                    item_col = cols[0]
+                # Also find alias / item code / part no column if present in Excel
+                alias_col = None
+                for c in cols:
+                    c_clean = str(c).strip().lower().replace("_", " ")
+                    if c_clean in ("alias", "item alias", "item code", "code", "part no", "part_no", "firstalias"):
+                        alias_col = c
+                        break
 
                 self.imported_vat_items = sorted(list(set(str(v).strip() for v in df[item_col].dropna() if str(v).strip())))
+
+                self._vat_stock_alias_map.clear()
+                if alias_col:
+                    for _, row in df[[item_col, alias_col]].dropna().iterrows():
+                        v_name = str(row[item_col]).strip()
+                        v_alias = str(row[alias_col]).strip()
+                        if v_name and v_alias and v_alias.lower() not in ("none", "nan", "null"):
+                            vk = " ".join(v_name.split()).lower()
+                            self._vat_stock_alias_map[vk] = v_alias
+
                 self.refresh_stock_mapping_table()
 
             QMessageBox.information(
@@ -609,6 +786,55 @@ class StockUI(QWidget):
         except Exception as e:
             logger.error(f"[_select_excel_file] read error: {e}")
             QMessageBox.critical(self, "Read Error", f"Failed to read Excel file:\n{e}")
+
+    def _filter_vat_stock_table(self, text: str):
+        q = text.strip().lower()
+        self.vat_table.setUpdatesEnabled(False)
+        try:
+            for r in range(self.vat_table.rowCount()):
+                if not q:
+                    self.vat_table.setRowHidden(r, False)
+                    continue
+                row_match = False
+                for c in range(self.vat_table.columnCount()):
+                    it = self.vat_table.item(r, c)
+                    if it and q in it.text().lower():
+                        row_match = True
+                        break
+                self.vat_table.setRowHidden(r, not row_match)
+        finally:
+            self.vat_table.setUpdatesEnabled(True)
+
+    def _clear_vat_stock_data(self):
+        """Cleanly clear imported VAT stock items, preview table, and database mappings."""
+        if not self._can_edit:
+            return
+        ans = QMessageBox.question(
+            self,
+            "Clear VAT Stock Data",
+            "Are you sure you want to clear all imported VAT stock data and mappings for this company?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if ans != QMessageBox.StandardButton.Yes:
+            return
+
+        self.imported_vat_items = []
+        self._vat_stock_alias_map.clear()
+        self._selected_excel_path = None
+        self.lbl_file_path.setText("No Excel file selected")
+        if hasattr(self, 'vat_stock_search'):
+            self.vat_stock_search.clear()
+        self.vat_table.blockSignals(True)
+        self.vat_table.setRowCount(0)
+        self.vat_table.setColumnCount(0)
+        self.vat_table.blockSignals(False)
+
+        if self.db_name:
+            clear_stock_mappings(self.db_name, self.current_company_name)
+
+        self.refresh_stock_mapping_table()
+        QMessageBox.information(self, "Cleared", "VAT stock data and mappings cleared cleanly.")
 
     def get_vat_stock_names(self) -> list[str]:
         """Return distinct VAT stock item names for autocomplete."""
@@ -631,6 +857,7 @@ class StockUI(QWidget):
 
     def _populate_stock_mapping_from_data(self, mappings: list):
         """Populate Stock Mapping table from pre-fetched mappings."""
+        self._ensure_stock_alias_cache()
         self.mapping_table.blockSignals(True)
         self.mapping_table.setRowCount(len(mappings))
 
@@ -644,6 +871,15 @@ class StockUI(QWidget):
             c0 = QTableWidgetItem(vat_item_name)
             c1 = QTableWidgetItem(int_item_name)
             c2 = QTableWidgetItem(man_name)
+
+            v_key = " ".join(vat_item_name.split()).lower()
+            i_key = " ".join(int_item_name.split()).lower()
+            if v_key in self._vat_stock_alias_map:
+                c0.setData(Qt.ItemDataRole.UserRole + 1, self._vat_stock_alias_map[v_key])
+            if i_key in self._int_stock_alias_map:
+                c1.setData(Qt.ItemDataRole.UserRole + 1, self._int_stock_alias_map[i_key])
+            if i_key in self._int_stock_part_map:
+                c1.setData(Qt.ItemDataRole.UserRole + 2, self._int_stock_part_map[i_key])
 
             for it in (c0, c1, c2):
                 it.setData(Qt.ItemDataRole.UserRole, rec_id)
@@ -669,25 +905,15 @@ class StockUI(QWidget):
 
         self.mapping_table.blockSignals(False)
 
+        q = self.mapping_search.text().strip() if hasattr(self, 'mapping_search') else ""
+        if q:
+            self._filter_mapping_table(q)
+
     def get_internal_stock_names(self) -> list[str]:
-        """Return distinct internal stock item names for autocomplete."""
-        # Query dbo.stock_items directly for authentic Item_Name
-        if self.db_name and self.db.database_exists(self.db_name):
-            try:
-                conn = self.db.get_connection(self.db_name)
-                if conn:
-                    cur = conn.cursor()
-                    cur.execute("""
-                        SELECT DISTINCT Item_Name 
-                        FROM dbo.stock_items 
-                        WHERE Item_Name IS NOT NULL AND LTRIM(RTRIM(Item_Name)) <> ''
-                        ORDER BY Item_Name
-                    """)
-                    rows = cur.fetchall()
-                    if rows:
-                        return [r[0].strip() for r in rows if r[0]]
-            except Exception as e:
-                logger.error(f"[get_internal_stock_names] DB query error: {e}")
+        """Return distinct internal stock item names and aliases for autocomplete."""
+        self._ensure_stock_alias_cache()
+        if self._int_stock_autocomplete_options:
+            return self._int_stock_autocomplete_options
 
         # Fallback to int_table if DB query not available
         names = []
@@ -695,20 +921,47 @@ class StockUI(QWidget):
             it = self.int_table.item(r, 0)
             if it and it.text().strip():
                 names.append(it.text().strip())
+                alias = str(it.data(Qt.ItemDataRole.UserRole + 1) or "").strip()
+                if alias and alias.lower() not in ("none", "nan", "null"):
+                    names.append(alias)
         return sorted(list(set(names)))
 
     def _filter_mapping_table(self, text: str):
         q = text.strip().lower()
         self.mapping_table.setUpdatesEnabled(False)
         try:
+            self._ensure_stock_alias_cache()
             for r in range(self.mapping_table.rowCount()):
+                if not q:
+                    self.mapping_table.setRowHidden(r, False)
+                    continue
+
                 c0 = self.mapping_table.item(r, 0)
                 c1 = self.mapping_table.item(r, 1)
                 c2 = self.mapping_table.item(r, 2)
                 t0 = c0.text().lower() if c0 else ""
                 t1 = c1.text().lower() if c1 else ""
                 t2 = c2.text().lower() if c2 else ""
-                self.mapping_table.setRowHidden(r, (q not in t0) and (q not in t1) and (q not in t2))
+
+                alias0 = str(c0.data(Qt.ItemDataRole.UserRole + 1) or "").lower() if c0 else ""
+                if not alias0 and t0:
+                    alias0 = self._vat_stock_alias_map.get(" ".join(t0.split()).lower(), "").lower()
+
+                alias1 = str(c1.data(Qt.ItemDataRole.UserRole + 1) or "").lower() if c1 else ""
+                if not alias1 and t1:
+                    alias1 = self._int_stock_alias_map.get(" ".join(t1.split()).lower(), "").lower()
+
+                part1 = str(c1.data(Qt.ItemDataRole.UserRole + 2) or "").lower() if c1 else ""
+                if not part1 and t1:
+                    part1 = self._int_stock_part_map.get(" ".join(t1.split()).lower(), "").lower()
+
+                match = (
+                    (q in t0) or (q in t1) or (q in t2)
+                    or (alias0 and q in alias0)
+                    or (alias1 and q in alias1)
+                    or (part1 and q in part1)
+                )
+                self.mapping_table.setRowHidden(r, not match)
         finally:
             self.mapping_table.setUpdatesEnabled(True)
 
@@ -729,12 +982,24 @@ class StockUI(QWidget):
 
             # Strictly validate i_name against internal stock names if non-empty
             if i_name:
+                self._ensure_stock_alias_cache()
+                i_key = " ".join(i_name.split()).lower()
+                if i_key in self._alias_to_int_stock_map:
+                    i_name = self._alias_to_int_stock_map[i_key]
+                    self.mapping_table.blockSignals(True)
+                    c1.setText(i_name)
+                    self.mapping_table.blockSignals(False)
+
                 valid_items = self.get_internal_stock_names()
                 canon = None
                 for vi in valid_items:
                     if vi.strip().lower() == i_name.lower():
                         canon = vi.strip()
                         break
+                # If canon is an alias, resolve to actual item name
+                if canon and " ".join(canon.split()).lower() in self._alias_to_int_stock_map:
+                    canon = self._alias_to_int_stock_map[" ".join(canon.split()).lower()]
+
                 if not canon:
                     # Invalid item name not in list! Revert
                     self.mapping_table.blockSignals(True)
@@ -742,6 +1007,9 @@ class StockUI(QWidget):
                     self.mapping_table.blockSignals(False)
                     return
                 i_name = canon
+                self.mapping_table.blockSignals(True)
+                c1.setText(i_name)
+                self.mapping_table.blockSignals(False)
 
             is_unmapped = (not v_name or not i_name)
             self.mapping_table.blockSignals(True)
@@ -806,14 +1074,45 @@ class StockUI(QWidget):
 
     def _filter_int_stock_table(self, text: str):
         q = text.strip().lower()
-        for r in range(self.int_table.rowCount()):
-            it = self.int_table.item(r, 0)
-            self.int_table.setRowHidden(r, q not in it.text().lower() if it else False)
+        self.int_table.setUpdatesEnabled(False)
+        try:
+            self._ensure_stock_alias_cache()
+            for r in range(self.int_table.rowCount()):
+                if not q:
+                    self.int_table.setRowHidden(r, False)
+                    continue
+
+                it0 = self.int_table.item(r, 0)
+                if not it0:
+                    self.int_table.setRowHidden(r, True)
+                    continue
+
+                name = str(it0.data(Qt.ItemDataRole.UserRole) or it0.text() or "").lower()
+                alias = str(it0.data(Qt.ItemDataRole.UserRole + 1) or "").lower()
+                if not alias and name:
+                    alias = self._int_stock_alias_map.get(" ".join(name.split()).lower(), "").lower()
+                part = str(it0.data(Qt.ItemDataRole.UserRole + 2) or "").lower()
+                if not part and name:
+                    part = self._int_stock_part_map.get(" ".join(name.split()).lower(), "").lower()
+
+                row_match = (q in name) or (alias and q in alias) or (part and q in part)
+                if not row_match:
+                    for c in range(self.int_table.columnCount()):
+                        it = self.int_table.item(r, c)
+                        if it and q in it.text().lower():
+                            row_match = True
+                            break
+
+                self.int_table.setRowHidden(r, not row_match)
+        finally:
+            self.int_table.setUpdatesEnabled(True)
 
     def apply_edit_mode(self, can_edit: bool):
         self._can_edit = can_edit
         self.mapping_table._can_edit = can_edit
         self.btn_select_file.setEnabled(can_edit)
+        if hasattr(self, 'btn_clear_data'):
+            self.btn_clear_data.setEnabled(can_edit)
         self.mapping_table.blockSignals(True)
         for r in range(self.mapping_table.rowCount()):
             for c in range(3):
