@@ -330,7 +330,7 @@ class PageIndex:
     CALENDAR = 16
     LEDGER_ROW_DATA = 17
     SECURITY = 18
-    CATALOG_ON_ACCOUNT = 19
+    CATALOG_ON_ACCOUNT = 9   # Aliased to ON_ACCOUNT for backward compatibility
 
 class MainWindow(QWidget):
 
@@ -796,7 +796,6 @@ class MainWindow(QWidget):
             ("Full Catalo&g", self.show_full_catalog_page, False, None, "tab.catalog"),
             ("Rep&orts", self.show_reports_page, False, None, "tab.reports"),
             ("Cat / &Price List", self.handle_catalog_price_list, False, None, "tab.cat_price_list"),
-            ("On Accoun&t", self.handle_catalog_on_account, False, None, "tab.catalog_on_account"),
             ("&Create CRM", self.handle_create_crm, False, None, "settings.manage_crm"),
             ("&Alter CRM", self.handle_alter_crm, False, None, "settings.manage_crm")
         ])
@@ -825,7 +824,7 @@ class MainWindow(QWidget):
             ("&Back", self.go_back_to_main, True),
             ("Sync &Ledger", self.on_sync_ledger_clicked, False, None, "ledger.sync"),
             ("Ledger &Rows", self.on_ledger_row_data_clicked, False, None, "tab.ledger"),
-            ("&On Account", lambda: self.main_stack.setCurrentIndex(PageIndex.ON_ACCOUNT), False, None, "tab.payment_list"),
+            ("&On Account", self.handle_on_account, False, None, "tab.on_account"),
             ("C&hq. List", self.handle_cheque_list, False, None, "tab.cheque_list"),
             ("&Godown List", lambda: self.main_stack.setCurrentIndex(PageIndex.GODOWN), False, None, "tab.godown"),
             ("&Sales Chat", lambda: self.main_stack.setCurrentIndex(PageIndex.SALES_CHAT), False, None, "tab.sales_chat"),
@@ -1041,7 +1040,7 @@ class MainWindow(QWidget):
             if getattr(self, 'current_company_path', ''):
                 comp_name = getattr(self, 'current_company', '') or (os.path.basename(self.current_company_path) if self.current_company_path else '')
                 self.vat_stock_page.load_data(self.current_company_path, company_name=comp_name)
-        elif idx == PageIndex.CATALOG_ON_ACCOUNT and hasattr(self, 'on_account_page'):
+        elif idx in (PageIndex.ON_ACCOUNT, PageIndex.CATALOG_ON_ACCOUNT) and hasattr(self, 'on_account_page'):
             if getattr(self, 'current_company_path', ''):
                 self.on_account_page.load_data(self.current_company_path)
 
@@ -1113,7 +1112,8 @@ class MainWindow(QWidget):
         self.main_stack.addWidget(self.super_master_page)  # 6
         self.main_stack.addWidget(self.reports_page)       # 7
         self.main_stack.addWidget(PriceListUI())           # 8
-        self.main_stack.addWidget(QLabel("On Account"))    # 9
+        self.on_account_page = OnAccountUI()
+        self.main_stack.addWidget(self.on_account_page)    # 9
         self.main_stack.addWidget(self.godown_page)        # 10
         
         self.main_stack.addWidget(SalesChatUI())           # 11
@@ -1135,8 +1135,7 @@ class MainWindow(QWidget):
         self.security_page = SecurityUI(self)
         self.main_stack.addWidget(self.security_page) # Index 18
 
-        self.on_account_page = OnAccountUI()
-        self.main_stack.addWidget(self.on_account_page)    # Index 19
+        self.main_stack.addWidget(QLabel(""))              # Index 19 (legacy placeholder)
 
 
     # --- Helper UI Functions ---
@@ -1466,7 +1465,7 @@ class MainWindow(QWidget):
                 if perm_key and isinstance(perm_key, str):
                     # Check if this subtab's parent tab is denied
                     parent_denied = any(perm_key.startswith(p) for p in denied_prefixes)
-                    allowed = (not parent_denied) and s.can(perm_key)
+                    allowed = (not parent_denied) and (s.can(perm_key) or (perm_key == "tab.on_account" and s.can("tab.catalog_on_account")))
                     btn.setEnabled(allowed)
                     if not allowed:
                         btn.setToolTip(f"Access denied — requires '{perm_key}' permission")
@@ -1667,7 +1666,7 @@ class MainWindow(QWidget):
         if self._security_mgr:
             self._security_mgr.refresh_session_permissions(self.user_session)
         
-        if self.user_session.can(permission_key):
+        if self.user_session.can(permission_key) or (permission_key == "tab.on_account" and self.user_session.can("tab.catalog_on_account")):
             return True
         
         QMessageBox.warning(self, "Access Denied",
@@ -1958,12 +1957,17 @@ class MainWindow(QWidget):
             self.ledger_row_data_page.load_data(self.current_company_path)
             self.main_stack.setCurrentIndex(PageIndex.LEDGER_ROW_DATA)
 
-    def handle_catalog_on_account(self):
-        if not self._check_permission("tab.catalog_on_account", "On Account"):
-            return
+    def handle_on_account(self):
+        if not (self._check_permission("tab.on_account", "On Account") or 
+                (self.user_session and self.user_session.can("tab.catalog_on_account"))):
+            if not self._check_permission("tab.on_account", "On Account"):
+                return
         if hasattr(self, 'on_account_page') and getattr(self, 'current_company_path', ''):
             self.on_account_page.load_data(self.current_company_path)
-        self.main_stack.setCurrentIndex(PageIndex.CATALOG_ON_ACCOUNT)
+        self.main_stack.setCurrentIndex(PageIndex.ON_ACCOUNT)
+
+    def handle_catalog_on_account(self):
+        self.handle_on_account()
 
     def handle_vat_balance(self):
         if not self._check_permission("tab.vat_balance", "Vat Balance"):

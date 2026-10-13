@@ -37,6 +37,7 @@ PERMISSION_REGISTRY = {
     "tab.cat_price_list":   "Catalog Price List tab",
     "tab.vat_balance":      "Vat Balance tab",
     "tab.vat_stock":        "Vat Stock tab",
+    "tab.on_account":       "On Account tab",
     "tab.catalog_on_account": "Catalog On Account tab",
     "tab.supp_payment":     "Supplier Payment tab",
     "tab.pur_import":       "Purchase Import tab",

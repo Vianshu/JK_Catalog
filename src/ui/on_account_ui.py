@@ -1,9 +1,10 @@
 """
-Catalog -> On Account Screen.
+Tally Internal -> On Account Screen.
 
 Displays ledgers where:
 - Group = 'Sundry Debtors'
 - On_Account_Value is non-zero (both positive and negative non-zero values qualify)
+- Excludes subgroups: 'Othere Account' / 'Other Account' and 'Recovery party list'
 Filtered at the database layer from dbo.row_ledger_data.
 """
 
@@ -22,7 +23,7 @@ logger = get_logger(__name__)
 
 
 class OnAccountUI(QWidget):
-    """Catalog On Account table view."""
+    """Tally Internal On Account table view."""
     def __init__(self):
         super().__init__()
         self.setObjectName("OnAccountContainer")
@@ -104,10 +105,16 @@ class OnAccountUI(QWidget):
                 return
 
             # Query-level filtering: Group = 'Sundry Debtors' AND On_Account_Value != 0
+            # Exclude subgroups: 'Othere Account' / 'Other Account' and 'Recovery party list'
             query = """
                 SELECT Name, On_Account_Value, Opening_Balance, Closing_Balance, Sub_Group
                 FROM dbo.row_ledger_data
-                WHERE [Group] = 'Sundry Debtors' AND On_Account_Value != 0
+                WHERE [Group] = 'Sundry Debtors' 
+                  AND On_Account_Value != 0
+                  AND LOWER(LTRIM(RTRIM(ISNULL(Sub_Group, '')))) NOT IN ('othere account', 'other account', 'othere accounts', 'other accounts')
+                  AND LOWER(ISNULL(Sub_Group, '')) NOT LIKE '%other%account%'
+                  AND LOWER(ISNULL(Sub_Group, '')) NOT LIKE '%othere%account%'
+                  AND LOWER(ISNULL(Sub_Group, '')) NOT LIKE '%recovery%'
                 ORDER BY Name
             """
             cur.execute(query)
@@ -154,4 +161,4 @@ class OnAccountUI(QWidget):
             self.table.setRowHidden(r, q not in it.text().lower() if it else False)
 
     def get_current_table(self) -> tuple[str, QTableWidget]:
-        return "Catalog - On Account", self.table
+        return "Tally Internal - On Account", self.table

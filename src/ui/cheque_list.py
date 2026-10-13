@@ -982,11 +982,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         self.cheque_db_name = build_logical_name(company_name, company_path=path)
         self.ledger_db_name = build_logical_name(company_name, company_path=path)
 
-        # Reset filter and search bar on company load/switch
-        if hasattr(self, 'cmb_filter'):
-            self.cmb_filter.blockSignals(True)
-            self.cmb_filter.setCurrentIndex(0)
-            self.cmb_filter.blockSignals(False)
+        # Clear search bar on company load/switch, preserving current filter selection
         if hasattr(self, 'search_bar'):
             self.search_bar.blockSignals(True)
             self.search_bar.clear()
