@@ -24,6 +24,8 @@ company_history.json
 # Local dev / scratch folders (never commit)
 ignore/
 temp_data/
+scratch/
 build_all.bat
 table_standardization_spec.md
 supp_payment_ui_ux_design.md
+

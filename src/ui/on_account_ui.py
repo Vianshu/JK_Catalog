@@ -22,6 +22,27 @@ from src.utils.app_logger import get_logger
 logger = get_logger(__name__)
 
 
+class NumericTableWidgetItem(QTableWidgetItem):
+    """QTableWidgetItem that sorts numerically for amounts."""
+    def __init__(self, text: str = "", num_value: float = None):
+        super().__init__(text)
+        if num_value is not None:
+            self.num_value = float(num_value)
+        else:
+            try:
+                self.num_value = float(text.replace(",", "").strip())
+            except Exception:
+                self.num_value = 0.0
+
+    def __lt__(self, other):
+        if hasattr(other, 'num_value'):
+            return self.num_value < other.num_value
+        try:
+            return self.num_value < float(other.text().replace(",", "").strip())
+        except Exception:
+            return super().__lt__(other)
+
+
 class OnAccountUI(QWidget):
     """Tally Internal On Account table view."""
     def __init__(self):
@@ -71,13 +92,19 @@ class OnAccountUI(QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.table.verticalHeader().setVisible(False)
         self.table.setItemDelegate(UniversalCellDelegate(self.table))
 
-        headers = ["Ledger Name", "On Account Value", "Opening Balance", "Closing Balance", "Sub Group"]
+        headers = ["Name", "On Account"]
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
+
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(1, 180)
+        header.sectionDoubleClicked.connect(self._on_header_double_clicked)
+
         layout.addWidget(self.table)
 
     def load_data(self, company_path: str = None):
@@ -107,7 +134,7 @@ class OnAccountUI(QWidget):
             # Query-level filtering: Group = 'Sundry Debtors' AND On_Account_Value != 0
             # Exclude subgroups: 'Othere Account' / 'Other Account' and 'Recovery party list'
             query = """
-                SELECT Name, On_Account_Value, Opening_Balance, Closing_Balance, Sub_Group
+                SELECT Name, On_Account_Value
                 FROM dbo.row_ledger_data
                 WHERE [Group] = 'Sundry Debtors' 
                   AND On_Account_Value != 0
@@ -129,30 +156,26 @@ class OnAccountUI(QWidget):
 
                 # On Account Value (numeric, right-aligned)
                 val_on_acc = float(r[1] or 0.0)
-                it_on_acc = QTableWidgetItem(f"{val_on_acc:,.2f}")
+                it_on_acc = NumericTableWidgetItem(f"{val_on_acc:,.2f}", val_on_acc)
                 it_on_acc.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self.table.setItem(r_idx, 1, it_on_acc)
 
-                # Opening Balance (numeric, right-aligned)
-                val_op = float(r[2] or 0.0)
-                it_op = QTableWidgetItem(f"{val_op:,.2f}")
-                it_op.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                self.table.setItem(r_idx, 2, it_op)
-
-                # Closing Balance (numeric, right-aligned)
-                val_cl = float(r[3] or 0.0)
-                it_cl = QTableWidgetItem(f"{val_cl:,.2f}")
-                it_cl.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                self.table.setItem(r_idx, 3, it_cl)
-
-                # Sub Group
-                self.table.setItem(r_idx, 4, QTableWidgetItem(str(r[4] or "")))
-
             self.table.blockSignals(False)
-            self.table.resizeColumnsToContents()
 
         except Exception as e:
             logger.error(f"[OnAccountUI.load_data] error: {e}")
+
+    def _on_header_double_clicked(self, logical_index: int):
+        """Sort columns on double-click (Name alphabetically, On Account numerically)."""
+        cur_col = getattr(self.table, '_sort_col', -1)
+        cur_order = getattr(self.table, '_sort_order', None)
+        if cur_col == logical_index and cur_order == Qt.SortOrder.AscendingOrder:
+            order = Qt.SortOrder.DescendingOrder
+        else:
+            order = Qt.SortOrder.AscendingOrder
+        self.table._sort_col = logical_index
+        self.table._sort_order = order
+        self.table.sortItems(logical_index, order)
 
     def _filter_table(self, query: str):
         q = query.strip().lower()
@@ -162,3 +185,4 @@ class OnAccountUI(QWidget):
 
     def get_current_table(self) -> tuple[str, QTableWidget]:
         return "Tally Internal - On Account", self.table
+

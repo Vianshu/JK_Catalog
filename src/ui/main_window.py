@@ -236,36 +236,72 @@ class MenuButtonWidget(QFrame):
         self.setObjectName("MenuButtonWidget")
         self.setProperty("active", False)
         self.hotkey_char = None
+        self._alt_held = False
 
         if is_back:
             self.setProperty("is_back", True)
 
-        # Prepare content
+        # Prepare content and parse hotkey mnemonic (&Letter)
         self.plain_text = text.replace("&", "")
-        self.html_text = self.plain_text
+        self.has_hotkey = False
+        self.prefix_text = ""
+        self.char_text = ""
+        self.suffix_text = ""
+
+        if "&" in text:
+            idx = text.index("&")
+            if idx < len(text) - 1:
+                self.has_hotkey = True
+                self.prefix_text = text[:idx]
+                self.char_text = text[idx + 1]
+                self.suffix_text = text[idx + 2:].replace("&", "")
+                self.hotkey_char = self.char_text.upper()
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(0)
 
-        if "&" in text:
-            try:
-                idx = text.index("&")
-                if idx < len(text) - 1:
-                    char = text[idx+1]
-                    self.html_text = f"<font color='#ff4d4d'><b>[{char.upper()}]</b></font> {self.plain_text}"
-                    self.hotkey_char = char.upper()
-            except Exception:
-                pass
-
-        self.lbl = QLabel(self.plain_text)
+        self.lbl = QLabel()
         self.lbl.setObjectName("MenuLabel")
-        # Inline stylesheet needed — Fusion style engine ignores QSS on child labels.
         self.lbl.setStyleSheet(self._SS_NORMAL)
         # Pass hover hit-tests through to the parent frame so enterEvent/leaveEvent fire.
         self.lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout.addWidget(self.lbl)
         layout.addStretch()
+
+        self._update_label_text()
+
+    def _update_label_text(self):
+        """Render label text with permanently highlighted hotkey letter."""
+        if not self.has_hotkey:
+            self.lbl.setText(self.plain_text)
+            return
+
+        if not self.isEnabled():
+            # Disabled state — dimmed monochrome
+            color = "rgba(255,255,255,0.4)"
+            self.lbl.setText(
+                f"{self.prefix_text}<span style='color: {color}; text-decoration: underline;'>{self.char_text}</span>{self.suffix_text}"
+            )
+            return
+
+        if self._alt_held:
+            # Active Alt mode — electric sky blue with glowing underline
+            color = "#38bdf8"
+            self.lbl.setText(
+                f"{self.prefix_text}<span style='color: {color}; text-decoration: underline; font-weight: 800; background-color: rgba(56, 189, 248, 0.2); border-radius: 3px;'>{self.char_text}</span>{self.suffix_text}"
+            )
+        else:
+            # Normal state — vivid amber/gold with bold underline for instant mnemonic recall
+            color = "#fbbf24"
+            self.lbl.setText(
+                f"{self.prefix_text}<span style='color: {color}; text-decoration: underline; font-weight: 800;'>{self.char_text}</span>{self.suffix_text}"
+            )
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.Type.EnabledChange:
+            self._update_label_text()
+        super().changeEvent(event)
 
     # ── hover: manually update bg (frame) + weight (label) ──────────────────
     def enterEvent(self, event):
@@ -284,11 +320,9 @@ class MenuButtonWidget(QFrame):
 
     # ────────────────────────────────────────────────────────────────────────
     def set_hotkey_visibility(self, visible):
-        """Toggle between plain text and hotkey badge."""
-        if visible and self.hotkey_char:
-            self.lbl.setText(self.html_text)
-        else:
-            self.lbl.setText(self.plain_text)
+        """Toggle between default amber highlight and Alt-held electric blue highlight."""
+        self._alt_held = bool(visible)
+        self._update_label_text()
 
     def mousePressEvent(self, e):
         self.clicked.emit()
@@ -1404,9 +1438,10 @@ class MainWindow(QWidget):
             self._security_mgr = SecurityManager(
                 os.path.dirname(company_path) if company_path else "")
 
-            # Propagate security manager to pages that need audit logging
-            for page in [self.reports_page, self.full_catalog_page]:
-                page._security_mgr = self._security_mgr
+            # Propagate security manager to pages that need audit logging or admin auth
+            for page in [self.reports_page, self.full_catalog_page, getattr(self, 'vat_balance_page', None)]:
+                if page:
+                    page._security_mgr = self._security_mgr
 
             self._perm_poll_timer.start()
 
@@ -1580,6 +1615,8 @@ class MainWindow(QWidget):
         # Vat Balance
         if hasattr(self, 'vat_balance_page') and self.vat_balance_page:
             self.vat_balance_page.apply_edit_mode(s.can("vat_balance.edit"))
+            if hasattr(self.vat_balance_page, 'apply_clear_mapping_permission'):
+                self.vat_balance_page.apply_clear_mapping_permission(s.can("vat_balance.clear_mapping"))
             if hasattr(self.vat_balance_page, 'btn_sync_vat'):
                 self.vat_balance_page.btn_sync_vat.setEnabled(s.can("vat_balance.sync"))
             if hasattr(self.vat_balance_page, 'btn_sync_int'):

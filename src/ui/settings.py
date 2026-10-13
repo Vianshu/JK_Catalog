@@ -516,6 +516,7 @@ class SecurityUI(QWidget):
             ]),
             ("Vat Working", [
                 ("Vat Balance",         ["tab.vat_balance"],    ["vat_balance.edit", "vat_balance.sync"]),
+                (" ↳ Clear Mapping",    [],                     ["vat_balance.clear_mapping"]),
                 ("Vat Stock",           ["tab.vat_stock"],      ["vat_stock.edit"]),
                 ("Export / Print",      [],                     ["vat.export_print"]),
             ]),

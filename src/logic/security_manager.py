@@ -1107,6 +1107,73 @@ class SecurityManager:
             logger.error(f"Super admin verification failed: {e}")
             return False
 
+    def verify_admin_password(self, password: str, folder_path: str = None, company_name: str = None) -> bool:
+        """Verify if the given password matches any active admin of the company, or Super Admin.
+
+        Args:
+            password: The password string to verify.
+            folder_path: Optional company folder path.
+            company_name: Optional company display name.
+
+        Returns:
+            bool: True if credentials match an admin, False otherwise.
+        """
+        if not password:
+            return False
+
+        # 1. Check Super Admin from admin_config.json
+        try:
+            path = SecurityManager._admin_config_path()
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                stored_hash = data.get('password_hash', '')
+                if stored_hash and self._verify_password(password, stored_hash):
+                    return True
+        except Exception as e:
+            logger.debug(f"Super admin check error: {e}")
+
+        # 2. Check company admin user(s) in SQL Server
+        conn = self.db.get_connection(self._db_security)
+        if not conn:
+            return False
+
+        try:
+            cursor = conn.cursor()
+            company_id = None
+            if company_name:
+                cursor.execute("SELECT id FROM companies WHERE display_name = ?", (company_name,))
+                r = cursor.fetchone()
+                if r:
+                    company_id = r[0]
+            if company_id is None and folder_path:
+                norm_path = os.path.normpath(os.path.abspath(folder_path))
+                cursor.execute("SELECT id FROM companies WHERE folder_path = ?", (norm_path,))
+                r = cursor.fetchone()
+                if r:
+                    company_id = r[0]
+
+            if company_id is not None:
+                cursor.execute("""
+                    SELECT password_hash FROM users 
+                    WHERE company_id = ? AND is_admin = 1 AND is_active = 1
+                """, (company_id,))
+                rows = cursor.fetchall()
+                for (phash,) in rows:
+                    if phash and self._verify_password(password, phash):
+                        return True
+            else:
+                # Fallback: check any active admin
+                cursor.execute("SELECT password_hash FROM users WHERE is_admin = 1 AND is_active = 1")
+                rows = cursor.fetchall()
+                for (phash,) in rows:
+                    if phash and self._verify_password(password, phash):
+                        return True
+        except Exception as e:
+            logger.error(f"[verify_admin_password] error: {e}")
+
+        return False
+
     # ─── DELETE OPERATIONS ────────────────────────────────────────────────────
 
     def delete_company(self, folder_path):

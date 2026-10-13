@@ -45,10 +45,11 @@ PERMISSION_REGISTRY = {
     "tab.for_branch":       "Branch Submenu",
 
     # ── Vat Working ──
-    "vat_balance.edit":     "Edit Vat Balance and Conf data",
-    "vat_balance.sync":     "Sync Vat Ledger from Tally",
-    "vat_stock.edit":       "Edit Vat Stock data",
-    "vat.export_print":     "Export or Print Vat Working tables",
+    "vat_balance.edit":          "Edit Vat Balance and Conf data",
+    "vat_balance.sync":          "Sync Vat Ledger from Tally",
+    "vat_balance.clear_mapping": "Clear Mapping in Vat Working",
+    "vat_stock.edit":            "Edit Vat Stock data",
+    "vat.export_print":          "Export or Print Vat Working tables",
 
     # ── Final Data ──
     "final_data.edit":      "Edit True/False toggles and cell values",

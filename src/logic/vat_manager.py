@@ -2886,10 +2886,12 @@ def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str) ->
             name = r[0].strip() if r[0] else ""
             if name.lower() in ("none", "nan", "null"):
                 name = ""
-            op_amt = float(r[1] or 0.0)
-            cl_amt = float(r[2] or 0.0)
-            c_in = float(r[3] or 0.0)
-            c_out = float(r[4] or 0.0)
+            op_raw = r[1]
+            cl_raw = r[2]
+            op_amt = None if (op_raw is None or (isinstance(op_raw, float) and op_raw != op_raw)) else (0.0 if abs(float(op_raw)) < 1e-9 else float(op_raw))
+            cl_amt = None if (cl_raw is None or (isinstance(cl_raw, float) and cl_raw != cl_raw)) else (0.0 if abs(float(cl_raw)) < 1e-9 else float(cl_raw))
+            c_in = 0.0 if (r[3] is None or (isinstance(r[3], float) and r[3] != r[3])) else (0.0 if abs(float(r[3])) < 1e-9 else float(r[3]))
+            c_out = 0.0 if (r[4] is None or (isinstance(r[4], float) and r[4] != r[4])) else (0.0 if abs(float(r[4])) < 1e-9 else float(r[4]))
             did_print = r[5].strip() if r[5] else "No"
             crm_val = r[6].strip() if r[6] else ""
             get_back = r[7].strip() if r[7] else "No"
@@ -2905,7 +2907,7 @@ def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str) ->
             # Use saved SN if user edited it; otherwise use generated cartoon number
             final_sn = saved_sn if saved_sn else (cns[idx] if idx < len(cns) else str(idx + 1))
 
-            need_print = calculate_need_print(op_amt, cl_amt, c_in, c_out)
+            need_print = calculate_need_print(op_amt or 0.0, cl_amt or 0.0, c_in, c_out)
 
             results.append({
                 "sn": final_sn,

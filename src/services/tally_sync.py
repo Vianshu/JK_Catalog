@@ -66,6 +66,18 @@ def _are_company_names_matching(tally_name: str, target_name: str) -> bool:
     return False
 
 
+def _clean_signed_numeric(series: pd.Series) -> pd.Series:
+    """Invert sign for non-nulls (Tally convention), preserve NaN as SQL NULL, and normalize -0.0 to 0.0."""
+    s = pd.to_numeric(series, errors='coerce') * -1
+    return s.apply(lambda v: np.nan if pd.isna(v) else (0.0 if abs(v) < 1e-9 else round(float(v), 2)))
+
+
+def _clean_unsigned_numeric(series: pd.Series) -> pd.Series:
+    """Preserve NaN as SQL NULL, take absolute value, and normalize -0.0 to 0.0."""
+    s = pd.to_numeric(series, errors='coerce').abs()
+    return s.apply(lambda v: np.nan if pd.isna(v) else (0.0 if v < 1e-9 else round(float(v), 2)))
+
+
 class TallyService:
     def __init__(self):
         self.connection = None
@@ -859,6 +871,7 @@ def fetch_tally_ledger_data(company_name=None, company_path=None, service=None):
                 resolved_mapping[actual_col] = new_name
         ledger_df.rename(columns=resolved_mapping, inplace=True)
 
+
         numeric_cols = [
             "Credit_Limit", "Opening_Balance", "Closing_Balance",
             "Overdue_Bills", "On_Account_Value", "CashInFlow",
@@ -866,13 +879,13 @@ def fetch_tally_ledger_data(company_name=None, company_path=None, service=None):
         ]
         for col in numeric_cols:
             if col in ledger_df.columns:
-                ledger_df[col] = pd.to_numeric(ledger_df[col], errors='coerce').fillna(0.0) * -1
+                ledger_df[col] = _clean_signed_numeric(ledger_df[col])
 
         for col in ["Debit_Totals", "Credit_Totals"]:
             if col in ledger_df.columns:
-                ledger_df[col] = pd.to_numeric(ledger_df[col], errors='coerce').fillna(0.0).abs().round(2)
+                ledger_df[col] = _clean_unsigned_numeric(ledger_df[col])
             else:
-                ledger_df[col] = 0.0
+                ledger_df[col] = np.nan
 
         service._check_cancelled("before ledger SQL write")
 
@@ -1161,13 +1174,13 @@ def fetch_tally_vat_ledger_data(vat_company_name: str, company_name=None, compan
         ]
         for col in numeric_cols:
             if col in ledger_df.columns:
-                ledger_df[col] = pd.to_numeric(ledger_df[col], errors='coerce').fillna(0.0) * -1
+                ledger_df[col] = _clean_signed_numeric(ledger_df[col])
 
         for col in ["Debit_Totals", "Credit_Totals"]:
             if col in ledger_df.columns:
-                ledger_df[col] = pd.to_numeric(ledger_df[col], errors='coerce').fillna(0.0).abs().round(2)
+                ledger_df[col] = _clean_unsigned_numeric(ledger_df[col])
             else:
-                ledger_df[col] = 0.0
+                ledger_df[col] = np.nan
 
         ledger_df["vat_company"] = vat_company
 

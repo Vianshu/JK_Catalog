@@ -9,6 +9,7 @@ Contains 4 views switchable via sidebar Left Panel:
 """
 
 import os
+import re
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget, QTabWidget, QPushButton,
     QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QProgressDialog,
@@ -41,6 +42,47 @@ from src.utils.app_logger import get_logger
 from src.utils.path_utils import get_icon
 
 logger = get_logger(__name__)
+
+
+def extract_company_year(name: str) -> str:
+    """Extract fiscal year or year string from company name (e.g. '2083/84', '2024-25', '082/083')."""
+    if not name:
+        return ""
+    s = str(name).strip()
+
+    # 1. Look inside parentheses for year / fiscal year pattern
+    paren_matches = re.findall(r'\(([^)]+)\)', s)
+    for cand in reversed(paren_matches):
+        cand = cand.strip()
+        # Look for range like 2081/82, 081/082, 2024-25, 2024-2025
+        m = re.search(r'\b((?:20)?\d{2}\s*[/_-]\s*(?:20)?\d{2,4})\b', cand)
+        if m:
+            return m.group(1).strip()
+        # Look for 4-digit year like 2024 or 2081
+        m = re.search(r'\b(20\d{2})\b', cand)
+        if m:
+            return m.group(1).strip()
+        # Look for 6-digit fiscal like 082083
+        m = re.search(r'\b(0\d{2})(0\d{2})\b', cand)
+        if m:
+            return f"{m.group(1)}/{m.group(2)}"
+
+    # 2. Year range pattern in full string (e.g. 2081/82, 081/082, 2024-25)
+    m = re.search(r'\b((?:20)?\d{2}\s*[/_-]\s*(?:20)?\d{2,4})\b', s)
+    if m:
+        return m.group(1).strip()
+
+    # 3. 6-digit fiscal pattern like 082083 -> 082/083
+    m = re.search(r'\b(0\d{2})(0\d{2})\b', s)
+    if m:
+        return f"{m.group(1)}/{m.group(2)}"
+
+    # 4. 4-digit year like 2082 or 2024
+    m = re.search(r'\b(20\d{2})\b', s)
+    if m:
+        return m.group(1).strip()
+
+    return ""
 
 
 # ── Background Worker for non-blocking data load ─────────────────────
@@ -234,6 +276,128 @@ class LedgerColumnSettingsDialog(QDialog):
             if cb.isChecked():
                 selected.add(k)
         return selected
+
+
+class AdminPasswordConfirmDialog(QDialog):
+    """Confirmation dialog requiring admin password before proceeding with sensitive actions like Clear Mapping."""
+
+    def __init__(self, title: str = "Confirm Action", prompt: str = "Enter Admin Password to confirm:",
+                 security_mgr=None, company_path: str = "", company_name: str = "", parent=None):
+        super().__init__(parent)
+        self.security_mgr = security_mgr
+        self.company_path = company_path
+        self.company_name = company_name
+        self.setWindowTitle(title)
+        self.setFixedWidth(420)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        self.setStyleSheet("""
+            QDialog {
+                background: #ffffff;
+            }
+            QLabel {
+                font-family: 'Segoe UI', system-ui, sans-serif;
+            }
+            QLineEdit {
+                border: 1.5px solid #cbd5e1;
+                border-radius: 6px;
+                padding: 7px 12px;
+                font-size: 13px;
+                background: #f8fafc;
+                color: #0f172a;
+            }
+            QLineEdit:focus {
+                border-color: #ef4444;
+                background: #ffffff;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(14)
+
+        # Header with warning prompt
+        hdr_lay = QHBoxLayout()
+        hdr_lay.setSpacing(12)
+        lbl_icon = QLabel("⚠️")
+        lbl_icon.setStyleSheet("font-size: 26px;")
+        hdr_lay.addWidget(lbl_icon)
+
+        lbl_prompt = QLabel(prompt)
+        lbl_prompt.setStyleSheet("font-size: 13px; font-weight: 600; color: #0f172a;")
+        lbl_prompt.setWordWrap(True)
+        hdr_lay.addWidget(lbl_prompt, 1)
+        layout.addLayout(hdr_lay)
+
+        # Password input
+        self.txt_password = QLineEdit()
+        self.txt_password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.txt_password.setPlaceholderText("Enter Admin Password...")
+        self.txt_password.returnPressed.connect(self._on_confirm)
+        layout.addWidget(self.txt_password)
+
+        # Error label
+        self.lbl_error = QLabel("")
+        self.lbl_error.setStyleSheet("color: #ef4444; font-size: 12px; font-weight: 600;")
+        self.lbl_error.setVisible(False)
+        layout.addWidget(self.lbl_error)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+        btn_layout.addStretch()
+
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.setStyleSheet("""
+            QPushButton {
+                background: #f1f5f9; color: #475569; font-weight: 600; font-size: 12px;
+                padding: 7px 16px; border-radius: 5px; border: 1px solid #cbd5e1;
+            }
+            QPushButton:hover { background: #e2e8f0; color: #1e293b; }
+        """)
+        self.btn_cancel.clicked.connect(self.reject)
+        btn_layout.addWidget(self.btn_cancel)
+
+        self.btn_confirm = QPushButton("Confirm Clear")
+        self.btn_confirm.setStyleSheet("""
+            QPushButton {
+                background: #ef4444; color: #ffffff; font-weight: 700; font-size: 12px;
+                padding: 7px 18px; border-radius: 5px; border: none;
+            }
+            QPushButton:hover { background: #dc2626; }
+            QPushButton:pressed { background: #b91c1c; }
+        """)
+        self.btn_confirm.clicked.connect(self._on_confirm)
+        btn_layout.addWidget(self.btn_confirm)
+
+        layout.addLayout(btn_layout)
+        self.txt_password.setFocus()
+
+    def _on_confirm(self):
+        pw = self.txt_password.text().strip()
+        if not pw:
+            self.lbl_error.setText("Please enter the admin password.")
+            self.lbl_error.setVisible(True)
+            self.txt_password.setFocus()
+            return
+
+        mgr = self.security_mgr
+        if not mgr:
+            from src.logic.security_manager import SecurityManager
+            data_path = os.path.dirname(self.company_path) if self.company_path else ""
+            mgr = SecurityManager(data_path)
+
+        is_valid = mgr.verify_admin_password(
+            password=pw,
+            folder_path=self.company_path,
+            company_name=self.company_name
+        )
+        if is_valid:
+            self.accept()
+        else:
+            self.lbl_error.setText("Incorrect admin password.")
+            self.lbl_error.setVisible(True)
+            self.txt_password.selectAll()
+            self.txt_password.setFocus()
 
 
 # ─── WORKER THREADS ──────────────────────────────────────────────────────────
@@ -1140,6 +1304,8 @@ class BalanceUI(QWidget):
         self.db_name = ""
         self.active_vat_company = ""
         self._can_edit = True
+        self._can_clear_mapping = True
+        self._security_mgr = None
         self._load_worker = None          # background data fetch thread
         self._last_loaded_path = None     # dedup guard: skip reload if path unchanged
         self._loading_path = None         # tracks path currently being fetched
@@ -1256,6 +1422,10 @@ class BalanceUI(QWidget):
         self.vat_conf_widget = self._create_vat_conf_tab()
         self.tabs.addTab(self.vat_conf_widget, "Vat Conf.")
 
+        # Tab 4: Empty Ledger (to the right of Vat Conf.)
+        self.empty_ledger_widget = self._create_empty_ledger_tab()
+        self.tabs.addTab(self.empty_ledger_widget, "Empty Ledger")
+
         self.tabs.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self.tabs, stretch=1)
 
@@ -1309,7 +1479,7 @@ class BalanceUI(QWidget):
         return widget
 
     def set_current_view(self, index: int):
-        """Switch active tab (0: Int, 1: Vat, 2: Mapping, 3: Debtor, 4: Creditor)."""
+        """Switch active tab (0: Int, 1: Vat, 2: Mapping, 3: Debtor, 4: Creditor, 5: Empty Ledger)."""
         if index in (0, 1, 2):
             self.tabs.setCurrentIndex(index)
         elif index == 3:
@@ -1320,6 +1490,8 @@ class BalanceUI(QWidget):
             self.tabs.setCurrentIndex(3)
             if hasattr(self, 'conf_tabs'):
                 self.conf_tabs.setCurrentIndex(1)
+        elif index == 5:
+            self.tabs.setCurrentIndex(4)
         self._render_current_tab()
 
     def _update_options_cache(self, int_debtors: list = None, vat_debtors: list = None):
@@ -1820,19 +1992,20 @@ class BalanceUI(QWidget):
         self.mapping_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.mapping_table.verticalHeader().setVisible(False)
 
-        headers = ["Serial No.", "VAT Ledger Name", "Internal Ledger Name", "Vat Closing", "Int. Closing", "balance"]
-        self.mapping_table.setColumnCount(6)
+        headers = ["S.no", "VAT Ledger Name", "Internal Ledger Name", "Vat Closing", "Int. Closing", "Balance", "Negative"]
+        self.mapping_table.setColumnCount(7)
         self.mapping_table.setHorizontalHeaderLabels(headers)
 
         header = self.mapping_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(True)
-        self.mapping_table.setColumnWidth(0, 75)   # Serial No.
-        self.mapping_table.setColumnWidth(1, 290)  # VAT Ledger Name
-        self.mapping_table.setColumnWidth(2, 290)  # Internal Ledger Name
-        self.mapping_table.setColumnWidth(3, 130)  # Vat Closing
-        self.mapping_table.setColumnWidth(4, 130)  # Int. Closing
-        self.mapping_table.setColumnWidth(5, 120)  # balance
+        self.mapping_table.setColumnWidth(0, 70)   # S.no
+        self.mapping_table.setColumnWidth(1, 270)  # VAT Ledger Name
+        self.mapping_table.setColumnWidth(2, 270)  # Internal Ledger Name
+        self.mapping_table.setColumnWidth(3, 120)  # Vat Closing
+        self.mapping_table.setColumnWidth(4, 120)  # Int. Closing
+        self.mapping_table.setColumnWidth(5, 115)  # Balance
+        self.mapping_table.setColumnWidth(6, 115)  # Negative
 
         # Double clicking column header sorts that column (Requirement 15)
         header.sectionDoubleClicked.connect(self._on_mapping_header_double_clicked)
@@ -2137,6 +2310,193 @@ class BalanceUI(QWidget):
         tbl.itemChanged.connect(lambda item, gt=group_type, t=tbl: self._on_vat_conf_item_changed(item, gt, t))
         return tbl
 
+    # ── EMPTY LEDGER TAB ──────────────────────────────────────────────
+
+    def _create_empty_ledger_tab(self) -> QWidget:
+        widget = QWidget()
+        vbox = QVBoxLayout(widget)
+        vbox.setContentsMargins(8, 8, 8, 8)
+        vbox.setSpacing(8)
+
+        # Top Bar: Title + Count + Search
+        top_bar = QHBoxLayout()
+        lbl = QLabel("Empty Ledger")
+        lbl.setStyleSheet("font-weight: bold; font-size: 14px; color: #0f172a;")
+
+        self.lbl_empty_count = QLabel("")
+        self.lbl_empty_count.setStyleSheet(
+            "font-size: 12px; font-weight: 600; color: #475569; "
+            "padding: 3px 10px; background: #f8fafc; border-radius: 4px; border: 1px solid #cbd5e1;"
+        )
+
+        self.empty_search = QLineEdit()
+        self.empty_search.setPlaceholderText("Search empty ledger...")
+        self.empty_search.setFixedWidth(240)
+        self.empty_search.textChanged.connect(self._filter_empty_ledger_table)
+
+        top_bar.addWidget(lbl)
+        top_bar.addSpacing(10)
+        top_bar.addWidget(self.lbl_empty_count)
+        top_bar.addStretch()
+        top_bar.addWidget(self.empty_search)
+        vbox.addLayout(top_bar)
+
+        self.empty_ledger_table = QTableWidget()
+        self.empty_ledger_table.setStyleSheet(UNIVERSAL_TABLE_STYLE)
+        self.empty_ledger_table.setAlternatingRowColors(True)
+        self.empty_ledger_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.empty_ledger_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.empty_ledger_table.verticalHeader().setVisible(False)
+        self.empty_ledger_table.setItemDelegate(UniversalCellDelegate(self.empty_ledger_table))
+        self.empty_ledger_table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.empty_ledger_table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+
+        headers = ["Vat Ledger", "From", "Year"]
+        self.empty_ledger_table.setColumnCount(len(headers))
+        self.empty_ledger_table.setHorizontalHeaderLabels(headers)
+
+        header = self.empty_ledger_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.sectionDoubleClicked.connect(
+            lambda idx: self._on_generic_header_double_clicked(self.empty_ledger_table, idx)
+        )
+        self.empty_ledger_table.setColumnWidth(0, 320)
+        self.empty_ledger_table.setColumnWidth(1, 160)
+        self.empty_ledger_table.setColumnWidth(2, 160)
+
+        vbox.addWidget(self.empty_ledger_table, stretch=1)
+        return widget
+
+    def _populate_empty_ledger_table(self, debtors: list[dict] = None):
+        """Populate Empty Ledger tab with sundry debtors where all transaction and balance amounts never came."""
+        if debtors is None:
+            if hasattr(self, '_cached_data') and "vat_debtors" in self._cached_data:
+                debtors = self._cached_data["vat_debtors"]
+            elif self.db_name and self.active_vat_company:
+                debtors = load_vat_debtors(self.db_name, self.active_vat_company)
+            else:
+                debtors = []
+
+        # Extract year from current company name or active vat company
+        year_str = extract_company_year(getattr(self, 'current_company_name', ''))
+        if not year_str and getattr(self, 'active_vat_company', None):
+            year_str = extract_company_year(self.active_vat_company)
+
+        # Fields to check: Opening, sales (debit), purchase (credit), receipt (cash inflow), payment (cash outflow), closing, overdue, on-account, quarters
+        check_fields = [
+            "Opening_Balance", "Debit_Totals", "Credit_Totals",
+            "CashInFlow", "CashOutFlow", "Closing_Balance",
+            "Overdue_Bills", "On_Account_Value", "This_Qtr_Balance", "Prev_Qtr_Balance"
+        ]
+
+        def _is_empty_debtor(d: dict) -> bool:
+            name = str(d.get("Name") or "").strip()
+            if not name or name.lower() in ("none", "nan", "null"):
+                return False
+
+            # Ensure it is a sundry debtor and not 'other account'
+            grp = str(d.get("Group") or "").strip().lower()
+            sub_grp = str(d.get("Sub_Group") or "").strip().lower()
+            if any(x in sub_grp for x in ("other account", "othere account")):
+                return False
+            if grp and not ("debtor" in grp or "debtor" in sub_grp):
+                return False
+
+            for field in check_fields:
+                val = d.get(field)
+                if val is None:
+                    continue
+                if isinstance(val, float) and val != val:  # NaN
+                    continue
+                s_val = str(val).strip().lower()
+                if s_val in ("", "none", "nan", "null"):
+                    continue
+                try:
+                    s_clean = s_val.replace(",", "").replace("₹", "").strip()
+                    num = float(s_clean)
+                    if abs(num) > 1e-6:
+                        return False
+                except Exception:
+                    return False
+            return True
+
+        empty_debtors = [d for d in debtors if _is_empty_debtor(d)]
+
+        self.empty_ledger_table.blockSignals(True)
+        self.empty_ledger_table.setUpdatesEnabled(False)
+        self.empty_ledger_table.setRowCount(len(empty_debtors))
+
+        for row, d in enumerate(empty_debtors):
+            v_name = str(d.get("Name") or "").strip()
+            v_alias = str(d.get("Alias") or "").strip()
+
+            # Col 0: Vat Ledger
+            item_name = QTableWidgetItem(v_name)
+            item_name.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            item_name.setFlags(item_name.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            item_name.setData(Qt.ItemDataRole.UserRole, v_name)
+            item_name.setData(Qt.ItemDataRole.UserRole + 1, v_alias)
+            self.empty_ledger_table.setItem(row, 0, item_name)
+
+            # Col 1: From (Placeholder for future year end logic)
+            item_from = QTableWidgetItem("")
+            item_from.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_from.setFlags(item_from.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.empty_ledger_table.setItem(row, 1, item_from)
+
+            # Col 2: Year (Taken from current company open in Tally)
+            item_year = QTableWidgetItem(year_str)
+            item_year.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_year.setFlags(item_year.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.empty_ledger_table.setItem(row, 2, item_year)
+
+        self.empty_ledger_table.setUpdatesEnabled(True)
+        self.empty_ledger_table.blockSignals(False)
+
+        count = len(empty_debtors)
+        if hasattr(self, 'lbl_empty_count'):
+            self.lbl_empty_count.setText(f"{count} Ledgers" if count > 0 else "0 Ledgers")
+
+        if hasattr(self, 'empty_search') and self.empty_search.text().strip():
+            self._filter_empty_ledger_table(self.empty_search.text())
+
+    def _filter_empty_ledger_table(self, query: str = ""):
+        """Filter Empty Ledger table rows based on search query."""
+        if not hasattr(self, 'empty_ledger_table'):
+            return
+        q = (query or "").strip().lower()
+        visible_count = 0
+        total_rows = self.empty_ledger_table.rowCount()
+
+        self.empty_ledger_table.blockSignals(True)
+        self.empty_ledger_table.setUpdatesEnabled(False)
+        for r in range(total_rows):
+            if not q:
+                self.empty_ledger_table.setRowHidden(r, False)
+                visible_count += 1
+            else:
+                name_item = self.empty_ledger_table.item(r, 0)
+                from_item = self.empty_ledger_table.item(r, 1)
+                year_item = self.empty_ledger_table.item(r, 2)
+
+                name_txt = (name_item.text() if name_item else "").lower()
+                alias_txt = str(name_item.data(Qt.ItemDataRole.UserRole + 1) or "").lower() if name_item else ""
+                from_txt = (from_item.text() if from_item else "").lower()
+                year_txt = (year_item.text() if year_item else "").lower()
+
+                match = (q in name_txt) or (q in alias_txt) or (q in from_txt) or (q in year_txt)
+                self.empty_ledger_table.setRowHidden(r, not match)
+                if match:
+                    visible_count += 1
+        self.empty_ledger_table.setUpdatesEnabled(True)
+        self.empty_ledger_table.blockSignals(False)
+
+        if hasattr(self, 'lbl_empty_count'):
+            if q and visible_count != total_rows:
+                self.lbl_empty_count.setText(f"{visible_count} of {total_rows} Ledgers")
+            else:
+                self.lbl_empty_count.setText(f"{total_rows} Ledgers" if total_rows > 0 else "0 Ledgers")
+
     # ── DATA LOADING ─────────────────────────────────────────────────
 
     def load_data(self, company_path: str, company_name: str = None, force: bool = False):
@@ -2244,6 +2604,11 @@ class BalanceUI(QWidget):
                     )
                     self._rendered_tabs.add("creditor_conf")
 
+        elif current_idx == 4:
+            if "empty_ledger" not in self._rendered_tabs:
+                self._populate_empty_ledger_table(self._cached_data.get("vat_debtors", []))
+                self._rendered_tabs.add("empty_ledger")
+
     def _on_tab_changed(self, index: int):
         self._render_current_tab()
 
@@ -2266,18 +2631,33 @@ class BalanceUI(QWidget):
             for col_idx, (field_key, _, _, is_numeric) in enumerate(TALLY_LEDGER_COLUMNS):
                 raw_val = d.get(field_key)
                 if is_numeric:
-                    if raw_val is None:
-                        val_str = "0.00"
+                    is_blank = (
+                        raw_val is None
+                        or (isinstance(raw_val, float) and raw_val != raw_val)
+                        or str(raw_val).strip().lower() in ("", "nan", "none", "null")
+                    )
+                    if is_blank:
+                        val_str = ""
+                        n_val = 0.0
                     elif field_key == "BillwiseOn":
                         try:
-                            val_str = str(int(float(raw_val)))
+                            n_val = float(raw_val)
+                            val_str = str(int(n_val))
                         except Exception:
                             val_str = str(raw_val)
+                            n_val = 0.0
                     else:
                         try:
-                            val_str = f"{float(raw_val):,.2f}"
+                            v = float(raw_val)
+                            if abs(v) < 1e-9:
+                                v = 0.0
+                                val_str = "0.00"
+                            else:
+                                val_str = f"{v:,.2f}"
+                            n_val = v
                         except Exception:
                             val_str = str(raw_val)
+                            n_val = 0.0
                 else:
                     val_str = str(raw_val or "") if raw_val is not None else ""
                     if val_str.lower() in ("none", "nan", "null"):
@@ -2294,10 +2674,6 @@ class BalanceUI(QWidget):
                         val_str = raw_alias
 
                 if is_numeric:
-                    try:
-                        n_val = float(raw_val) if raw_val is not None else 0.0
-                    except Exception:
-                        n_val = 0.0
                     item = NumericTableWidgetItem(val_str, n_val)
                 else:
                     item = QTableWidgetItem(val_str)
@@ -2432,8 +2808,13 @@ class BalanceUI(QWidget):
             self.lbl_int_count.setText(f"<b>{visible_count}</b> ledgers")
 
         if hasattr(self, 'int_footer'):
+            def _fmt_tot(v):
+                if abs(v) < 1e-9:
+                    return "₹0.00"
+                return f"-₹{abs(v):,.2f}" if v < 0 else f"₹{v:,.2f}"
+
             formatted_totals = {
-                idx: (f"-₹{abs(val):,.2f}" if val < 0 else f"₹{val:,.2f}")
+                idx: _fmt_tot(val)
                 for idx, val in totals.items()
             }
             self.int_footer.update_totals(formatted_totals, label_col=0, label_text="Grand Total")
@@ -2484,8 +2865,13 @@ class BalanceUI(QWidget):
             self.lbl_vat_count.setText(f"<b>{visible_count}</b> ledgers")
 
         if hasattr(self, 'vat_footer'):
+            def _fmt_tot(v):
+                if abs(v) < 1e-9:
+                    return "₹0.00"
+                return f"-₹{abs(v):,.2f}" if v < 0 else f"₹{v:,.2f}"
+
             formatted_totals = {
-                idx: (f"-₹{abs(val):,.2f}" if val < 0 else f"₹{val:,.2f}")
+                idx: _fmt_tot(val)
                 for idx, val in totals.items()
             }
             self.vat_footer.update_totals(formatted_totals, label_col=0, label_text="Grand Total")
@@ -2529,6 +2915,8 @@ class BalanceUI(QWidget):
                         pass
 
         def _fmt(val):
+            if abs(val) < 1e-9:
+                return "₹0.00"
             return f"-₹{abs(val):,.2f}" if val < 0 else f"₹{val:,.2f}"
 
         totals_dict = {
@@ -2848,14 +3236,49 @@ class BalanceUI(QWidget):
                 it_ic.setFlags(it_ic.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.mapping_table.setItem(r, 4, it_ic)
 
-                # 5: balance (Placeholder column)
-                it_bal = NumericTableWidgetItem("", 0.0)
+                # TODO: Multi-item/merged group logic to be confirmed by user.
+                # Evaluated row-by-row on this row's v_closing and i_closing.
+                # 1) If value of vat closing balance is negative, balance is blank and vat closing is shown in negative column (as positive absolute number).
+                # 2) If int closing balance > vat closing balance, balance is blank and (vat - int) difference is shown in negative column (as positive absolute number).
+                # 3) If vat closing and int closing are positive (or >= 0) and vat closing > int closing, (vat - int) is shown in balance.
+                bal_str = ""
+                bal_val = 0.0
+                neg_str = ""
+                neg_val = 0.0
+
+                if v_closing < -1e-9:
+                    # Rule 1: Vat closing is negative
+                    v_int = abs(int(round(v_closing)))
+                    neg_str = f"{v_int:,}"
+                    neg_val = float(v_int)
+                elif i_closing > v_closing + 1e-9:
+                    # Rule 2: Int closing > Vat closing
+                    diff_neg = abs(int(round(v_closing - i_closing)))
+                    neg_str = f"{diff_neg:,}"
+                    neg_val = float(diff_neg)
+                elif v_closing >= 0 and i_closing >= 0 and v_closing > i_closing + 1e-9:
+                    # Rule 3: Both positive, Vat closing > Int closing
+                    diff_bal = int(round(v_closing - i_closing))
+                    bal_str = f"{diff_bal:,}"
+                    bal_val = float(diff_bal)
+
+                # 5: Balance
+                it_bal = NumericTableWidgetItem(bal_str, bal_val)
                 it_bal.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 it_bal.setBackground(bg_color)
                 it_bal.setForeground(fg_color)
                 it_bal.setData(Qt.ItemDataRole.UserRole, group_id)
                 it_bal.setFlags(it_bal.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.mapping_table.setItem(r, 5, it_bal)
+
+                # 6: Negative
+                it_neg = NumericTableWidgetItem(neg_str, neg_val)
+                it_neg.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                it_neg.setBackground(bg_color)
+                it_neg.setForeground(fg_color)
+                it_neg.setData(Qt.ItemDataRole.UserRole, group_id)
+                it_neg.setFlags(it_neg.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.mapping_table.setItem(r, 6, it_neg)
 
             cur_row += n_rows
 
@@ -3013,13 +3436,33 @@ class BalanceUI(QWidget):
                 tbl.setItem(r_idx, 2, it_alias)
 
                 # 3: Opening Amount (Read-only, right-aligned numeric item for correct sorting)
-                it_op = NumericTableWidgetItem(f"{r['opening_amount']:,.2f}", float(r['opening_amount']))
+                op_amt = r.get("opening_amount")
+                is_op_blank = (
+                    op_amt is None
+                    or (isinstance(op_amt, float) and op_amt != op_amt)
+                    or str(op_amt).strip().lower() in ("", "nan", "none", "null")
+                )
+                if is_op_blank:
+                    it_op = NumericTableWidgetItem("", 0.0)
+                else:
+                    f_op = 0.0 if abs(float(op_amt)) < 1e-9 else float(op_amt)
+                    it_op = NumericTableWidgetItem(f"{f_op:,.2f}", f_op)
                 it_op.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 it_op.setFlags(it_op.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 tbl.setItem(r_idx, 3, it_op)
 
                 # 4: Closing Amount (Read-only, right-aligned numeric item for correct sorting)
-                it_cl = NumericTableWidgetItem(f"{r['closing_amount']:,.2f}", float(r['closing_amount']))
+                cl_amt = r.get("closing_amount")
+                is_cl_blank = (
+                    cl_amt is None
+                    or (isinstance(cl_amt, float) and cl_amt != cl_amt)
+                    or str(cl_amt).strip().lower() in ("", "nan", "none", "null")
+                )
+                if is_cl_blank:
+                    it_cl = NumericTableWidgetItem("", 0.0)
+                else:
+                    f_cl = 0.0 if abs(float(cl_amt)) < 1e-9 else float(cl_amt)
+                    it_cl = NumericTableWidgetItem(f"{f_cl:,.2f}", f_cl)
                 it_cl.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 it_cl.setFlags(it_cl.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 tbl.setItem(r_idx, 4, it_cl)
@@ -3133,7 +3576,8 @@ class BalanceUI(QWidget):
         selected_indexes = self.mapping_table.selectedIndexes()
         has_sel = bool(selected_indexes)
         if hasattr(self, 'btn_unmap_mapping'):
-            self.btn_unmap_mapping.setEnabled(has_sel)
+            can_clear = getattr(self, '_can_clear_mapping', True) and getattr(self, '_can_edit', True)
+            self.btn_unmap_mapping.setEnabled(has_sel and can_clear)
 
         has_unassigned_sel = bool(self.unassigned_list.selectedItems()) if hasattr(self, 'unassigned_list') else False
         if hasattr(self, 'btn_assign_internal'):
@@ -3248,9 +3692,13 @@ class BalanceUI(QWidget):
             self.refresh_mapping_table(select_group_id=target_group_id)
 
     def _unmap_selected_mapping(self):
-        """Clear/unmap internal ledgers from the selected group(s), returning them to unassigned list."""
-        if not self._can_edit:
+        """Clear/unmap internal ledgers from the selected group(s), returning them to unassigned list.
+        Requires 'vat_balance.clear_mapping' permission and admin password confirmation.
+        """
+        if not getattr(self, '_can_edit', True) or not getattr(self, '_can_clear_mapping', True):
+            QMessageBox.warning(self, "Permission Denied", "You do not have permission to clear mappings.")
             return
+
         selected_indexes = self.mapping_table.selectedIndexes()
         group_ids = []
         for idx in selected_indexes:
@@ -3260,6 +3708,20 @@ class BalanceUI(QWidget):
                 group_ids.append(gid)
 
         if not group_ids:
+            return
+
+        # Security confirmation dialog requiring Admin Password
+        comp_path = getattr(self, 'current_company_path', '') or getattr(self, 'company_path', '')
+        comp_name = getattr(self, 'current_company_name', '') or getattr(self, 'active_vat_company', '')
+        dlg = AdminPasswordConfirmDialog(
+            title="Confirm Clear Mapping",
+            prompt=f"Are you sure you want to clear mapping for {len(group_ids)} selected group(s)?\n\nInternal ledgers will be unlinked and returned to Unassigned.\nTo proceed, please enter Admin Password:",
+            security_mgr=getattr(self, '_security_mgr', None),
+            company_path=comp_path,
+            company_name=comp_name,
+            parent=self
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
         for gid in group_ids:
@@ -3655,21 +4117,43 @@ class BalanceUI(QWidget):
         elif logical_index == 4:
             mappings.sort(key=lambda m: sum(float(i.get("closing", 0.0) or 0.0) for i in m.get("internal_items", [])), reverse=reverse)
         elif logical_index == 5:
-            mappings.sort(key=lambda m: m.get("group_id", 0), reverse=reverse)
+            def _get_bal(m):
+                v = sum(float(x.get("closing", 0.0) or 0.0) for x in m.get("vat_items", []))
+                i = sum(float(x.get("closing", 0.0) or 0.0) for x in m.get("internal_items", []))
+                return max(0.0, v - i) if (v >= 0 and i >= 0) else 0.0
+            mappings.sort(key=_get_bal, reverse=reverse)
+        elif logical_index == 6:
+            def _get_neg(m):
+                v = sum(float(x.get("closing", 0.0) or 0.0) for x in m.get("vat_items", []))
+                i = sum(float(x.get("closing", 0.0) or 0.0) for x in m.get("internal_items", []))
+                if v < 0:
+                    return abs(v)
+                if i > v:
+                    return abs(v - i)
+                return 0.0
+            mappings.sort(key=_get_neg, reverse=reverse)
 
         self._populate_mapping_from_data(mappings)
 
     def _update_mapping_totals(self):
-        """Recalculate pinned grand totals for visible rows in mapping table (Requirement 13)."""
+        """Recalculate pinned grand totals for visible rows in mapping table.
+        - Values in columns 3, 4, 5, 6 displayed in lakhs (divided by 1,00,000).
+        - Under column 2 (Internal Ledger Name), displays 'Actual Rs.' followed by unrounded (total_vat - total_int).
+        """
         if not hasattr(self, 'mapping_footer'):
             return
         total_vat = 0.0
         total_int = 0.0
+        total_bal = 0.0
+        total_neg = 0.0
         for r in range(self.mapping_table.rowCount()):
             if self.mapping_table.isRowHidden(r):
                 continue
             it3 = self.mapping_table.item(r, 3)
             it4 = self.mapping_table.item(r, 4)
+            it5 = self.mapping_table.item(r, 5)
+            it6 = self.mapping_table.item(r, 6)
+
             if it3 and hasattr(it3, 'num_value'):
                 total_vat += it3.num_value
             elif it3 and it3.text():
@@ -3677,6 +4161,7 @@ class BalanceUI(QWidget):
                     total_vat += float(it3.text().replace(",", "").strip())
                 except Exception:
                     pass
+
             if it4 and hasattr(it4, 'num_value'):
                 total_int += it4.num_value
             elif it4 and it4.text():
@@ -3685,10 +4170,48 @@ class BalanceUI(QWidget):
                 except Exception:
                     pass
 
+            if it5 and hasattr(it5, 'num_value'):
+                total_bal += it5.num_value
+            elif it5 and it5.text():
+                try:
+                    total_bal += float(it5.text().replace(",", "").strip())
+                except Exception:
+                    pass
+
+            if it6 and hasattr(it6, 'num_value'):
+                total_neg += it6.num_value
+            elif it6 and it6.text():
+                try:
+                    total_neg += float(it6.text().replace(",", "").strip())
+                except Exception:
+                    pass
+
+        def _format_lakhs(val: float) -> str:
+            sign = "-" if val < 0 else ""
+            abs_val = abs(val)
+            lakhs = int(abs_val // 100000)
+            if lakhs == 0:
+                return "0 lakh"
+            elif lakhs == 1:
+                return f"{sign}1 lakh"
+            else:
+                return f"{sign}{lakhs:,} lakhs"
+
+        # Point 5: "Actual Rs." which shows (vatclosing - intclosing)
+        actual_diff = total_vat - total_int
+        actual_diff_int = int(round(actual_diff))
+        if actual_diff_int < 0:
+            actual_str = f"Actual Rs. -{abs(actual_diff_int):,}"
+        else:
+            actual_str = f"Actual Rs. {actual_diff_int:,}"
+
         self.mapping_footer.sync_columns()
         self.mapping_footer.update_totals({
-            3: f"{int(round(total_vat)):,}",
-            4: f"{int(round(total_int)):,}",
+            2: actual_str,
+            3: _format_lakhs(total_vat),
+            4: _format_lakhs(total_int),
+            5: _format_lakhs(total_bal),
+            6: _format_lakhs(total_neg),
         }, label_col=0, label_text="Total")
 
     def _on_generic_header_double_clicked(self, table: QTableWidget, col_idx: int, update_totals_fn=None):
@@ -4115,7 +4638,16 @@ class BalanceUI(QWidget):
                             it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
         if hasattr(self, 'btn_unmap_mapping'):
-            self.btn_unmap_mapping.setEnabled(can_edit and bool(self.mapping_table.selectedItems()))
+            can_clear = getattr(self, '_can_clear_mapping', True) and can_edit
+            self.btn_unmap_mapping.setEnabled(can_clear and bool(self.mapping_table.selectedItems()))
+
+    def apply_clear_mapping_permission(self, can_clear: bool):
+        """Update permission to clear mapping."""
+        self._can_clear_mapping = can_clear
+        if hasattr(self, 'btn_unmap_mapping'):
+            has_sel = bool(self.mapping_table.selectedIndexes()) if hasattr(self, 'mapping_table') else False
+            can_edit = getattr(self, '_can_edit', True)
+            self.btn_unmap_mapping.setEnabled(can_clear and can_edit and has_sel)
 
         # Propagate _can_edit to conf tables so VatConfDelegate can check it
         if hasattr(self, 'debtor_table'):
@@ -4150,4 +4682,6 @@ class BalanceUI(QWidget):
             if hasattr(self, 'conf_tabs') and self.conf_tabs.currentIndex() == 1:
                 return f"VAT Conf - Creditor ({self.active_vat_company})", self.creditor_table
             return f"VAT Conf - Debtor ({self.active_vat_company})", self.debtor_table
+        elif idx == 4:
+            return f"VAT Working - Empty Ledger ({self.active_vat_company})", self.empty_ledger_table
         return "VAT Working Table", self.int_table
