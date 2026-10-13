@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QProgressDialog,
     QMessageBox, QLineEdit, QStyledItemDelegate, QAbstractItemView, QTabBar,
     QDialog, QCheckBox, QScrollArea, QSplitter, QListWidget, QListWidgetItem, QMenu,
-    QComboBox, QStyle, QStyleOptionViewItem
+    QComboBox, QStyle, QStyleOptionViewItem, QStyleOptionHeader
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QSettings, QEvent, QRect, QPoint
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QBrush, QCursor
@@ -32,12 +32,15 @@ from src.logic.vat_manager import (
     demerge_mapping_group, set_group_internal_ledgers, set_group_vat_ledgers,
     set_group_manual_name, update_group_internal_ledger, update_group_vat_ledger,
     merge_vat_ledger_into_group, remove_vat_ledger_from_group,
-    set_mapping_classification, set_unassigned_classification, run_auto_mapping_on_sync
+    set_mapping_classification, set_unassigned_classification, run_auto_mapping_on_sync,
+    calculate_need_print, get_unique_vat_creditor_subgroups
 )
 from src.services.tally_sync import fetch_tally_vat_internal_data, fetch_tally_vat_ledger_data, TallyService
 from src.ui.vat_company_dialog import VatCompanyDialog
+from src.ui.vat_crm_mapping_dialog import VatSubgroupCrmMappingDialog
 from src.ui.table_nav_mixin import UniversalCellDelegate, UNIVERSAL_TABLE_STYLE, _TallyCompleter, _norm
 from src.ui.settings import load_crm_list
+import difflib
 from src.utils.app_logger import get_logger
 from src.utils.path_utils import get_icon
 
@@ -655,7 +658,7 @@ class MappingItemDelegate(UniversalCellDelegate):
 
 class VatConfDelegate(UniversalCellDelegate):
     """Delegate for Vat Conf table:
-
+    - Dynamic column resolution based on horizontal header labels
     - SN.: seamless centered QLineEdit
     - Did You Print / Get Back: seamless centered QLineEdit normalizing 1/0, Y/N, T/F
     - CRM: seamless QLineEdit with _TallyCompleter
@@ -686,6 +689,12 @@ class VatConfDelegate(UniversalCellDelegate):
             return None
 
         col = index.column()
+        header_text = ""
+        if table:
+            hi = table.horizontalHeaderItem(col)
+            if hi:
+                header_text = hi.text().strip().lower()
+
         ed = QLineEdit(parent)
         ed.setFrame(False)
         ed.setAutoFillBackground(True)
@@ -696,21 +705,21 @@ class VatConfDelegate(UniversalCellDelegate):
         ed.setTextMargins(0, 0, 0, 0)
         ed.setContentsMargins(0, 0, 0, 0)
 
-        if col in (0, 5, 6, 8):
+        if header_text in ("sn.", "pan no.", "need print ?", "did you print", "get back", "need confirmation", "get confirmation"):
             ed.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        elif col in (3, 4, 9, 10):
+        elif header_text in ("opening amount", "closing amount", "opening ?", "closing ?", "opening", "closing", "his opening", "his closing"):
             ed.setAlignment(Qt.AlignmentFlag.AlignRight)
         else:
             ed.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
-        if col == 0 and table:
-            it = table.item(index.row(), 0)
+        if header_text == "sn." and table:
+            it = table.item(index.row(), col)
             if it:
                 it._prev_sn = it.text().strip()
 
-        if col in (6, 8):
+        if header_text in ("did you print", "get back", "get confirmation"):
             ed.setPlaceholderText("Y/N or 1/0")
-        elif col == 7:  # CRM autocomplete
+        elif header_text == "crm":
             crms = self.get_crm_callback() or []
             completer = _TallyCompleter(crms, ed)
             completer.setMaxVisibleItems(10)
@@ -750,20 +759,64 @@ class VatConfDelegate(UniversalCellDelegate):
         if isinstance(editor, QLineEdit):
             col = index.column()
             val = editor.text().strip()
-            if col in (6, 8):
+            table = self.parent()
+            header_text = ""
+            if table:
+                hi = table.horizontalHeaderItem(col)
+                if hi:
+                    header_text = hi.text().strip().lower()
+            if header_text in ("did you print", "get back", "get confirmation"):
                 val = normalize_yes_no(val)
             model.setData(index, val, Qt.ItemDataRole.EditRole)
         else:
             super().setModelData(editor, model, index)
 
 
+class WordWrapHeaderView(QHeaderView):
+    """Header view with automatic text wrapping and centered bold text."""
+    def __init__(self, orientation=Qt.Orientation.Horizontal, parent=None):
+        super().__init__(orientation, parent)
+        self.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def paintSection(self, painter, rect, logicalIndex):
+        painter.save()
+        opt = QStyleOptionHeader()
+        self.initStyleOption(opt)
+        opt.rect = rect
+        opt.section = logicalIndex
+        opt.text = ""  # We paint text ourselves with word wrap
+        self.style().drawControl(QStyle.ControlElement.CE_Header, opt, painter, self)
+
+        model = self.model()
+        if model:
+            val = model.headerData(logicalIndex, self.orientation(), Qt.ItemDataRole.DisplayRole)
+            if val:
+                text_rect = rect.adjusted(4, 2, -4, -2)
+                painter.setPen(QColor("#0f172a"))
+                font = self.font()
+                font.setBold(True)
+                painter.setFont(font)
+                painter.drawText(
+                    text_rect,
+                    int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap),
+                    str(val)
+                )
+        painter.restore()
+
+    def sizeHint(self):
+        sz = super().sizeHint()
+        return QSize(sz.width(), max(sz.height(), 46))
+
+
 class VatConfTableWidget(QTableWidget):
-    """QTableWidget with spacebar toggle for Did You Print (Col 6) and Get Back (Col 8)."""
+    """QTableWidget with spacebar toggle for Did You Print, Get Back, and Get Confirmation."""
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Space and self.state() != QTableWidget.State.EditingState:
             col = self.currentColumn()
             row = self.currentRow()
-            if col in (6, 8) and row >= 0:
+            hi = self.horizontalHeaderItem(col) if col >= 0 else None
+            header_text = hi.text().strip().lower() if hi else ""
+            if header_text in ("did you print", "get back", "get confirmation") and row >= 0:
                 item = self.item(row, col)
                 if item and (item.flags() & Qt.ItemFlag.ItemIsEditable):
                     cur_val = (item.text() or "").strip()
@@ -793,6 +846,53 @@ class NumericTableWidgetItem(QTableWidgetItem):
             return self.num_value < val_other
         except Exception:
             return super().__lt__(other)
+
+
+class SnTableWidgetItem(NumericTableWidgetItem):
+    """SN item that sorts numerically for cartoon numbers, preserving text and _prev_sn."""
+    def __init__(self, text: str = ""):
+        s = (text or "").strip()
+        try:
+            val = float(int(s)) if s.isdigit() else 999999999.0
+        except Exception:
+            val = 999999999.0
+        super().__init__(s, val)
+        self._prev_sn = s
+
+
+class YesNoTableWidgetItem(QTableWidgetItem):
+    """Sorts 'Yes' before 'No' (or blanks) in Ascending order."""
+    def __init__(self, text: str = ""):
+        super().__init__(text)
+
+    def __lt__(self, other):
+        def _rank(txt):
+            t = (txt or "").strip().lower()
+            if t == "yes":
+                return 0
+            if t == "no":
+                return 1
+            if t == "no need":
+                return 2
+            if t == "n/a":
+                return 3
+            return 4
+        val_self = _rank(self.text())
+        val_other = _rank(other.text() if other else "")
+        if val_self != val_other:
+            return val_self < val_other
+        return super().__lt__(other)
+
+
+class ExpAmountTableWidgetItem(NumericTableWidgetItem):
+    """Editable numeric item for expected opening/closing that sorts by numeric value."""
+    def __init__(self, text: str = ""):
+        s = (text or "").strip()
+        try:
+            val = float(s.replace(",", ""))
+        except Exception:
+            val = 0.0
+        super().__init__(s, val)
 
 
 class _LedgerCellWidget(QWidget):
@@ -2144,7 +2244,7 @@ class BalanceUI(QWidget):
         vbox.setContentsMargins(8, 8, 8, 8)
         vbox.setSpacing(8)
 
-        # Top Bar: Title + Search + Count
+        # Top Bar: Title + Search + Count + CRM Mapping + Hide Alias
         top_bar = QHBoxLayout()
         lbl = QLabel("Debtor")
         lbl.setStyleSheet("font-weight: bold; font-size: 14px; color: #0f172a;")
@@ -2156,9 +2256,19 @@ class BalanceUI(QWidget):
         )
 
         self.debtor_search = QLineEdit()
-        self.debtor_search.setPlaceholderText("Search name or alias...")
+        self.debtor_search.setPlaceholderText("Search all columns...")
         self.debtor_search.setFixedWidth(240)
         self.debtor_search.textChanged.connect(lambda txt: self._filter_conf_table(self.debtor_table, txt))
+
+        self.btn_crm_mapping = QPushButton("🔗 CRM Mapping")
+        self.btn_crm_mapping.setStyleSheet("""
+            QPushButton {
+                background: #059669; color: white; font-weight: 600; font-size: 11px;
+                padding: 5px 14px; border-radius: 4px; border: none;
+            }
+            QPushButton:hover { background: #047857; }
+        """)
+        self.btn_crm_mapping.clicked.connect(self._open_crm_mapping_dialog)
 
         self.btn_toggle_debtor_alias = QPushButton("👁️ Hide Alias")
         self.btn_toggle_debtor_alias.setStyleSheet("""
@@ -2174,6 +2284,7 @@ class BalanceUI(QWidget):
         top_bar.addSpacing(10)
         top_bar.addWidget(self.lbl_debtor_count)
         top_bar.addStretch()
+        top_bar.addWidget(self.btn_crm_mapping)
         top_bar.addWidget(self.debtor_search)
         top_bar.addWidget(self.btn_toggle_debtor_alias)
         vbox.addLayout(top_bar)
@@ -2193,13 +2304,30 @@ class BalanceUI(QWidget):
         vbox.addWidget(table_container, stretch=1)
         return widget
 
+    def _open_crm_mapping_dialog(self):
+        """Open CRM Mapping popup dialog for Debtor Sub Groups."""
+        if not self.db_name or not self.active_vat_company:
+            QMessageBox.warning(self, "No Active VAT Company", "Please configure and select an active VAT Company first.")
+            return
+        dlg = VatSubgroupCrmMappingDialog(
+            db_name=self.db_name,
+            vat_company=self.active_vat_company,
+            company_path=self.current_company_path,
+            parent=self
+        )
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            # Reload debtor conf table so new mappings appear immediately
+            d_rows = load_vat_conf_table_data(self.db_name, self.active_vat_company, "debtor", self.current_company_path)
+            self._cached_data["debtor_conf"] = d_rows
+            self._populate_vat_conf_table_from_data(self.debtor_table, "Debtor", d_rows)
+
     def _create_creditor_tab(self) -> QWidget:
         widget = QWidget()
         vbox = QVBoxLayout(widget)
         vbox.setContentsMargins(8, 8, 8, 8)
         vbox.setSpacing(8)
 
-        # Top Bar: Title + Search + Count
+        # Top Bar: Title + Sub Group Filter + Search + Count
         top_bar = QHBoxLayout()
         lbl = QLabel("Creditor")
         lbl.setStyleSheet("font-weight: bold; font-size: 14px; color: #0f172a;")
@@ -2210,60 +2338,563 @@ class BalanceUI(QWidget):
             "padding: 3px 10px; background: #f8fafc; border-radius: 4px; border: 1px solid #cbd5e1;"
         )
 
-        self.creditor_search = QLineEdit()
-        self.creditor_search.setPlaceholderText("Search name or alias...")
-        self.creditor_search.setFixedWidth(240)
-        self.creditor_search.textChanged.connect(lambda txt: self._filter_conf_table(self.creditor_table, txt))
+        lbl_sg = QLabel("Sub Groups:")
+        lbl_sg.setStyleSheet("font-size: 12px; font-weight: 600; color: #334155;")
 
-        self.btn_toggle_creditor_alias = QPushButton("👁️ Hide Alias")
-        self.btn_toggle_creditor_alias.setStyleSheet("""
+        self.creditor_subgroup_edit = QLineEdit()
+        self.creditor_subgroup_edit.setPlaceholderText("Enter 3–4 Sub Groups (comma-separated)...")
+        self.creditor_subgroup_edit.setClearButtonEnabled(True)
+        self.creditor_subgroup_edit.setFixedWidth(280)
+        # Restore persisted subgroups from QSettings
+        settings = QSettings("JKCatalog", "VatConfCreditorSubgroups")
+        saved_sg = settings.value("subgroups", "")
+        if saved_sg:
+            self.creditor_subgroup_edit.setText(str(saved_sg))
+        self.creditor_subgroup_edit.textChanged.connect(lambda _t: self._apply_creditor_filters())
+
+        self.btn_creditor_subgroups = QPushButton("📋 Select Sub Groups")
+        self.btn_creditor_subgroups.setStyleSheet("""
             QPushButton {
                 background: #f1f5f9; color: #334155; font-weight: 600; font-size: 12px;
                 padding: 5px 12px; border-radius: 4px; border: 1px solid #cbd5e1;
             }
             QPushButton:hover { background: #e2e8f0; }
         """)
-        self.btn_toggle_creditor_alias.clicked.connect(self._toggle_conf_alias_visibility)
+        self.btn_creditor_subgroups.clicked.connect(self._show_creditor_subgroups_menu)
+
+        self.creditor_search = QLineEdit()
+        self.creditor_search.setPlaceholderText("Search all columns...")
+        self.creditor_search.setClearButtonEnabled(True)
+        self.creditor_search.setFixedWidth(200)
+        self.creditor_search.textChanged.connect(lambda _t: self._apply_creditor_filters())
 
         top_bar.addWidget(lbl)
-        top_bar.addSpacing(10)
+        top_bar.addSpacing(6)
         top_bar.addWidget(self.lbl_creditor_count)
+        top_bar.addSpacing(14)
+        top_bar.addWidget(lbl_sg)
+        top_bar.addWidget(self.creditor_subgroup_edit)
+        top_bar.addWidget(self.btn_creditor_subgroups)
         top_bar.addStretch()
         top_bar.addWidget(self.creditor_search)
-        top_bar.addWidget(self.btn_toggle_creditor_alias)
         vbox.addLayout(top_bar)
 
-        self.creditor_table = self._build_vat_conf_table("Creditor")
-        self.creditor_table.setStyleSheet(TABLE_WITH_FOOTER_STYLE)
-        self.creditor_footer = TableFooterWidget(self.creditor_table)
-        self.creditor_footer_container = TableFooterContainer(self.creditor_table, self.creditor_footer)
+        self.creditor_table = self._build_creditor_table()
 
         table_container = QWidget()
         table_layout = QVBoxLayout(table_container)
         table_layout.setContentsMargins(0, 0, 0, 0)
         table_layout.setSpacing(0)
         table_layout.addWidget(self.creditor_table, stretch=1)
-        table_layout.addWidget(self.creditor_footer_container)
+
+        # Overlay label for "No Creditor Fund" when empty
+        self.lbl_creditor_empty = QLabel("No Creditor Fund", self.creditor_table)
+        self.lbl_creditor_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_creditor_empty.setStyleSheet(
+            "color: #64748b; font-size: 15px; font-weight: bold; background: transparent;"
+        )
+        self.lbl_creditor_empty.setVisible(False)
+
+        def _on_creditor_table_resize(event):
+            QTableWidget.resizeEvent(self.creditor_table, event)
+            if hasattr(self, 'lbl_creditor_empty'):
+                self.lbl_creditor_empty.setGeometry(0, 46, self.creditor_table.width(), max(self.creditor_table.height() - 46, 100))
+
+        self.creditor_table.resizeEvent = _on_creditor_table_resize
 
         vbox.addWidget(table_container, stretch=1)
         return widget
 
-    def _filter_conf_table(self, tbl: QTableWidget, query: str):
-        q = query.strip().lower()
-        for r in range(tbl.rowCount()):
-            it = tbl.item(r, 1)  # Name column
-            it_alias = tbl.item(r, 2)  # Alias column
+    def _build_creditor_table(self) -> QTableWidget:
+        tbl = VatConfTableWidget()
+        tbl.setStyleSheet(UNIVERSAL_TABLE_STYLE)
+        tbl.setAlternatingRowColors(True)
+        tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectItems)
+        tbl.verticalHeader().setVisible(False)
+
+        wrap_header = WordWrapHeaderView(Qt.Orientation.Horizontal, tbl)
+        tbl.setHorizontalHeader(wrap_header)
+
+        headers = [
+            "Ledger Name",
+            "Opening",
+            "Closing",
+            "Need Confirmation",
+            "Get Confirmation",
+            "His Opening",
+            "His Closing"
+        ]
+        tbl.setColumnCount(len(headers))
+        tbl.setHorizontalHeaderLabels(headers)
+
+        header = tbl.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.sectionDoubleClicked.connect(
+            lambda idx, t=tbl: self._on_generic_header_double_clicked(t, idx)
+        )
+
+        tbl.setColumnWidth(0, 240)  # Ledger Name
+        tbl.setColumnWidth(1, 120)  # Opening
+        tbl.setColumnWidth(2, 120)  # Closing
+        tbl.setColumnWidth(3, 115)  # Need Confirmation
+        tbl.setColumnWidth(4, 115)  # Get Confirmation
+        tbl.setColumnWidth(5, 120)  # His Opening
+        tbl.setColumnWidth(6, 120)  # His Closing
+
+        tbl.setItemDelegate(
+            VatConfDelegate(lambda: load_crm_list(self.current_company_path), tbl)
+        )
+        tbl.itemChanged.connect(lambda item, t=tbl: self._on_creditor_item_changed(item, t))
+        return tbl
+
+    def _show_creditor_subgroups_menu(self):
+        """Show checkable popup menu with unique creditor Sub Groups from DB."""
+        if not self.db_name or not self.active_vat_company:
+            QMessageBox.information(self, "No Active VAT Company", "Please select an active VAT Company first.")
+            return
+
+        subgroups = get_unique_vat_creditor_subgroups(self.db_name, self.active_vat_company)
+        if not subgroups:
+            QMessageBox.information(self, "No Sub Groups", "No Sub Groups found for Sundry Creditors in this VAT Company.")
+            return
+
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #ffffff; border: 1px solid #cbd5e1;
+                border-radius: 6px; padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 24px 6px 12px; font-size: 12px; color: #1e293b;
+            }
+            QMenu::item:selected {
+                background-color: #f1f5f9; color: #0f172a; border-radius: 4px;
+            }
+        """)
+
+        cur_text = self.creditor_subgroup_edit.text().strip()
+        cur_selected = [s.strip().lower() for s in re.split(r'[,;]+', cur_text) if s.strip()]
+
+        actions = []
+        for sg in subgroups:
+            act = menu.addAction(sg)
+            act.setCheckable(True)
+            act.setChecked(sg.lower() in cur_selected)
+            actions.append((sg, act))
+
+        menu.addSeparator()
+        act_clear = menu.addAction("Clear All")
+
+        chosen = menu.exec(QCursor.pos())
+        if chosen == act_clear:
+            self.creditor_subgroup_edit.setText("")
+        elif chosen is not None:
+            checked_sgs = [sg for sg, act in actions if act.isChecked()]
+            self.creditor_subgroup_edit.setText(", ".join(checked_sgs))
+
+    def _apply_creditor_filters(self):
+        """Filter Creditor table by entered Sub Groups and search query."""
+        tbl = getattr(self, 'creditor_table', None)
+        if not tbl:
+            return
+
+        sg_text = self.creditor_subgroup_edit.text().strip() if hasattr(self, 'creditor_subgroup_edit') else ""
+        QSettings("JKCatalog", "VatConfCreditorSubgroups").setValue("subgroups", sg_text)
+        sg_tokens = [tok.strip().lower() for tok in re.split(r'[,;]+', sg_text) if tok.strip()]
+
+        search_query = self.creditor_search.text().strip().lower() if hasattr(self, 'creditor_search') else ""
+        search_tokens = search_query.split() if search_query else []
+
+        total_rows = tbl.rowCount()
+        visible_count = 0
+
+        tbl.blockSignals(True)
+        tbl.setUpdatesEnabled(False)
+        try:
+            for r in range(total_rows):
+                # 1. Sub Group filtering: If entered, ONLY matching ledgers appear
+                if sg_tokens:
+                    item_name = tbl.item(r, 0)
+                    row_sg = str(item_name.data(Qt.ItemDataRole.UserRole + 1) or "").strip().lower() if item_name else ""
+                    matches_sg = any(tok == row_sg or tok in row_sg for tok in sg_tokens)
+                    if not matches_sg:
+                        tbl.setRowHidden(r, True)
+                        continue
+
+                # 2. Search query filtering
+                if not search_tokens:
+                    tbl.setRowHidden(r, False)
+                    visible_count += 1
+                    continue
+
+                row_words = []
+                full_cell_strings = []
+                for c in range(tbl.columnCount()):
+                    it = tbl.item(r, c)
+                    if it:
+                        txt = it.text().strip()
+                        if txt:
+                            txt_low = txt.lower()
+                            full_cell_strings.append(txt_low)
+                            row_words.extend(txt_low.split())
+                        urole = it.data(Qt.ItemDataRole.UserRole)
+                        if urole and str(urole).strip():
+                            u_str = str(urole).strip().lower()
+                            if u_str not in full_cell_strings:
+                                full_cell_strings.append(u_str)
+                                row_words.extend(u_str.split())
+
+                full_row_str = " ".join(full_cell_strings)
+
+                # Tier 1: Substring match
+                if search_query in full_row_str:
+                    tbl.setRowHidden(r, False)
+                    visible_count += 1
+                    continue
+
+                # Tier 2: All tokens present in row
+                if all(tok in full_row_str for tok in search_tokens):
+                    tbl.setRowHidden(r, False)
+                    visible_count += 1
+                    continue
+
+                # Tier 3: Fuzzy / closest match
+                is_fuzzy_match = True
+                for tok in search_tokens:
+                    tok_len = len(tok)
+                    token_matched = False
+                    for w in row_words:
+                        if tok in w or w in tok:
+                            token_matched = True
+                            break
+                        if tok_len >= 3 and abs(tok_len - len(w)) <= 3:
+                            ratio = difflib.SequenceMatcher(None, tok, w).ratio()
+                            if ratio >= 0.70:
+                                token_matched = True
+                                break
+                    if not token_matched:
+                        is_fuzzy_match = False
+                        break
+
+                if is_fuzzy_match:
+                    tbl.setRowHidden(r, False)
+                    visible_count += 1
+                else:
+                    tbl.setRowHidden(r, True)
+
+        finally:
+            tbl.setUpdatesEnabled(True)
+            tbl.blockSignals(False)
+
+        # Update counter & empty overlay
+        if visible_count == 0:
+            if hasattr(self, 'lbl_creditor_count'):
+                self.lbl_creditor_count.setText("No Creditor Fund")
+            if hasattr(self, 'lbl_creditor_empty'):
+                self.lbl_creditor_empty.setVisible(True)
+                self.lbl_creditor_empty.setGeometry(0, 46, tbl.width(), max(tbl.height() - 46, 100))
+        else:
+            if hasattr(self, 'lbl_creditor_empty'):
+                self.lbl_creditor_empty.setVisible(False)
+            if hasattr(self, 'lbl_creditor_count'):
+                if visible_count < total_rows:
+                    self.lbl_creditor_count.setText(f"<b>{visible_count}</b> / {total_rows} records")
+                else:
+                    self.lbl_creditor_count.setText(f"<b>{visible_count}</b> records")
+
+    def _populate_creditor_table_from_data(self, rows: list):
+        """Populate Creditor tab table (7 columns) from pre-fetched rows."""
+        tbl = self.creditor_table
+        tbl.blockSignals(True)
+        tbl.setUpdatesEnabled(False)
+        try:
+            tbl.setRowCount(len(rows))
+
+            for r_idx, r in enumerate(rows):
+                # 0: Ledger Name (Read-only, left-aligned)
+                raw_name = (r.get("name") or "").strip()
+                if raw_name.lower() in ("none", "nan", "null"):
+                    raw_name = ""
+                it_name = QTableWidgetItem(raw_name)
+                it_name.setData(Qt.ItemDataRole.UserRole, raw_name)
+                # Store sub_group in UserRole + 1 for filtering
+                raw_sg = (r.get("sub_group") or "").strip()
+                it_name.setData(Qt.ItemDataRole.UserRole + 1, raw_sg)
+                it_name.setFlags(it_name.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 0, it_name)
+
+                # 1: Opening (Read-only, right-aligned numeric item)
+                op_amt = r.get("opening_amount")
+                is_op_blank = (
+                    op_amt is None
+                    or (isinstance(op_amt, float) and op_amt != op_amt)
+                    or str(op_amt).strip().lower() in ("", "nan", "none", "null")
+                )
+                if is_op_blank:
+                    it_op = NumericTableWidgetItem("", 0.0)
+                else:
+                    f_op = 0.0 if abs(float(op_amt)) < 1e-9 else float(op_amt)
+                    it_op = NumericTableWidgetItem(f"{f_op:,.2f}", f_op)
+                it_op.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                it_op.setFlags(it_op.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 1, it_op)
+
+                # 2: Closing (Read-only, right-aligned numeric item)
+                cl_amt = r.get("closing_amount")
+                is_cl_blank = (
+                    cl_amt is None
+                    or (isinstance(cl_amt, float) and cl_amt != cl_amt)
+                    or str(cl_amt).strip().lower() in ("", "nan", "none", "null")
+                )
+                if is_cl_blank:
+                    it_cl = NumericTableWidgetItem("", 0.0)
+                else:
+                    f_cl = 0.0 if abs(float(cl_amt)) < 1e-9 else float(cl_amt)
+                    it_cl = NumericTableWidgetItem(f"{f_cl:,.2f}", f_cl)
+                it_cl.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                it_cl.setFlags(it_cl.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 2, it_cl)
+
+                # 3: Need Confirmation (Read-only, centered)
+                # If any transaction or balance exceeds ₹1,00,000 -> Yes, else No
+                need_conf = r.get("need_confirmation") or r.get("need_print")
+                if not need_conf:
+                    need_conf = calculate_need_print(
+                        f_op if not is_op_blank else 0.0,
+                        f_cl if not is_cl_blank else 0.0,
+                        r.get("cash_in", 0.0),
+                        r.get("cash_out", 0.0)
+                    )
+                it_nc = YesNoTableWidgetItem(need_conf)
+                it_nc.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if need_conf == "Yes":
+                    it_nc.setForeground(QColor("#059669"))
+                    font = it_nc.font()
+                    font.setBold(True)
+                    it_nc.setFont(font)
+                it_nc.setFlags(it_nc.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 3, it_nc)
+
+                # 4: Get Confirmation (Editable, centered)
+                # If exceeds 1 lakh -> blank by default; if not -> N/A by default; unless saved by user
+                saved_get_back = (r.get("get_back") or "").strip()
+                if saved_get_back:
+                    get_conf = saved_get_back
+                else:
+                    get_conf = "" if need_conf == "Yes" else "N/A"
+                it_gc = YesNoTableWidgetItem(get_conf)
+                it_gc.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if not self._can_edit:
+                    it_gc.setFlags(it_gc.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 4, it_gc)
+
+                # 5: His Opening (Editable numeric, compared against Opening)
+                it_exp_op = ExpAmountTableWidgetItem(r.get("expected_opening", ""))
+                it_exp_op.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                if not self._can_edit:
+                    it_exp_op.setFlags(it_exp_op.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 5, it_exp_op)
+
+                # 6: His Closing (Editable numeric, compared against Closing)
+                it_exp_cl = ExpAmountTableWidgetItem(r.get("expected_closing", ""))
+                it_exp_cl.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                if not self._can_edit:
+                    it_exp_cl.setFlags(it_exp_cl.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 6, it_exp_cl)
+
+                # Apply row styling (mismatch check between Opening vs His Opening, Closing vs His Closing)
+                self._update_creditor_row_style(tbl, r_idx)
+
+        finally:
+            tbl.setUpdatesEnabled(True)
+            tbl.blockSignals(False)
+
+        # Apply active filters (subgroups & search query)
+        self._apply_creditor_filters()
+
+    def _update_creditor_row_style(self, tbl: QTableWidget, row: int):
+        """Paint row in soft red if His Opening != Opening or His Closing != Closing."""
+        # Col 1: Opening, Col 2: Closing, Col 5: His Opening, Col 6: His Closing
+        act_op_item = tbl.item(row, 1)
+        act_cl_item = tbl.item(row, 2)
+        exp_op_item = tbl.item(row, 5)
+        exp_cl_item = tbl.item(row, 6)
+
+        try:
+            act_op_val = float(act_op_item.text().replace(",", "").strip()) if act_op_item and act_op_item.text().strip() else 0.0
+        except ValueError:
+            act_op_val = 0.0
+
+        try:
+            act_cl_val = float(act_cl_item.text().replace(",", "").strip()) if act_cl_item and act_cl_item.text().strip() else 0.0
+        except ValueError:
+            act_cl_val = 0.0
+
+        exp_op_text = exp_op_item.text().strip() if exp_op_item else ""
+        exp_cl_text = exp_cl_item.text().strip() if exp_cl_item else ""
+
+        # Empty expected fields are NOT mismatches
+        op_matches = check_amount_match(act_op_val, exp_op_text)
+        cl_matches = check_amount_match(act_cl_val, exp_cl_text)
+        is_mismatch = not (op_matches and cl_matches)
+
+        red_bg = QColor("#fecaca")
+        red_fg = QColor("#991b1b")
+        normal_bg = QColor("#ffffff") if row % 2 == 0 else QColor("#f8fafc")
+        normal_fg = QColor("#0f172a")
+
+        for c in range(tbl.columnCount()):
+            it = tbl.item(row, c)
             if not it:
-                tbl.setRowHidden(r, bool(q))
                 continue
-            name = str(it.data(Qt.ItemDataRole.UserRole) or it.text() or "").lower()
-            alias = str(it_alias.text() if it_alias else "").lower()
-            match = (not q) or (q in name) or (q in alias)
-            tbl.setRowHidden(r, not match)
+            if is_mismatch:
+                it.setBackground(red_bg)
+                it.setForeground(red_fg)
+            else:
+                it.setBackground(normal_bg)
+                if c == 3 and it.text().strip() == "Yes":
+                    it.setForeground(QColor("#059669"))
+                else:
+                    it.setForeground(normal_fg)
+
+    def _on_creditor_item_changed(self, item: QTableWidgetItem, tbl: QTableWidget):
+        """User modified an editable cell in Creditor tab (Get Confirmation, His Opening, His Closing)."""
+        col = item.column()
+        row = item.row()
+        name_item = tbl.item(row, 0)
+        if not name_item:
+            return
+        ledger_name = str(name_item.data(Qt.ItemDataRole.UserRole) or name_item.text()).strip()
+        val = item.text().strip()
+
+        active_comp = self.active_vat_company
+        if not active_comp and self.db_name:
+            active_comp = get_active_vat_company(self.db_name)
+            self.active_vat_company = active_comp
+        if not active_comp:
+            return
+
+        # Col 4: Get Confirmation
+        if col == 4:
+            val = normalize_yes_no(val)
+            tbl.blockSignals(True)
+            item.setText(val)
+            tbl.blockSignals(False)
+            try:
+                save_vat_conf_field(self.db_name, active_comp, "creditor", ledger_name, "get_back", val)
+            except Exception as e:
+                logger.error(f"Failed to save creditor get_back: {e}")
+
+        # Col 5: His Opening
+        elif col == 5:
+            try:
+                save_vat_conf_field(self.db_name, active_comp, "creditor", ledger_name, "expected_opening", val)
+            except Exception as e:
+                logger.error(f"Failed to save creditor expected_opening: {e}")
+            self._update_creditor_row_style(tbl, row)
+
+        # Col 6: His Closing
+        elif col == 6:
+            try:
+                save_vat_conf_field(self.db_name, active_comp, "creditor", ledger_name, "expected_closing", val)
+            except Exception as e:
+                logger.error(f"Failed to save creditor expected_closing: {e}")
+            self._update_creditor_row_style(tbl, row)
+
+    def _filter_conf_table(self, tbl: QTableWidget, query: str):
+        """Multi-column search across all columns with multi-token and fuzzy matching."""
+        q = (query or "").strip().lower()
+        if not q:
+            for r in range(tbl.rowCount()):
+                tbl.setRowHidden(r, False)
+        else:
+            tokens = q.split()
+            for r in range(tbl.rowCount()):
+                row_words = []
+                full_cell_strings = []
+                for c in range(tbl.columnCount()):
+                    if tbl.isColumnHidden(c):
+                        continue
+                    it = tbl.item(r, c)
+                    if it:
+                        txt = it.text().strip()
+                        if txt:
+                            txt_low = txt.lower()
+                            full_cell_strings.append(txt_low)
+                            row_words.extend(txt_low.split())
+                        urole = it.data(Qt.ItemDataRole.UserRole)
+                        if urole and str(urole).strip():
+                            u_str = str(urole).strip().lower()
+                            if u_str not in full_cell_strings:
+                                full_cell_strings.append(u_str)
+                                row_words.extend(u_str.split())
+
+                full_row_str = " ".join(full_cell_strings)
+
+                # Tier 1: Substring match
+                if q in full_row_str:
+                    tbl.setRowHidden(r, False)
+                    continue
+
+                # Tier 2: All tokens present in row
+                if all(tok in full_row_str for tok in tokens):
+                    tbl.setRowHidden(r, False)
+                    continue
+
+                # Tier 3: Fuzzy / closest match
+                is_fuzzy_match = True
+                for tok in tokens:
+                    tok_len = len(tok)
+                    token_matched = False
+                    for w in row_words:
+                        if tok in w or w in tok:
+                            token_matched = True
+                            break
+                        if tok_len >= 3 and abs(tok_len - len(w)) <= 3:
+                            ratio = difflib.SequenceMatcher(None, tok, w).ratio()
+                            if ratio >= 0.70:
+                                token_matched = True
+                                break
+                    if not token_matched:
+                        is_fuzzy_match = False
+                        break
+
+                tbl.setRowHidden(r, not is_fuzzy_match)
+
         if tbl == getattr(self, 'debtor_table', None) and hasattr(self, 'debtor_footer'):
             self._update_conf_totals(self.debtor_table, self.debtor_footer, getattr(self, 'lbl_debtor_count', None))
-        elif tbl == getattr(self, 'creditor_table', None) and hasattr(self, 'creditor_footer'):
-            self._update_conf_totals(self.creditor_table, self.creditor_footer, getattr(self, 'lbl_creditor_count', None))
+
+    def _auto_fit_conf_columns(self, tbl: QTableWidget):
+        """Auto-adjust column widths to fit content while respecting readable min bounds."""
+        min_widths = {
+            "sn.": 55,
+            "name": 220,
+            "pan no.": 110,
+            "alias": 110,
+            "opening amount": 120,
+            "closing amount": 120,
+            "need print ?": 95,
+            "did you print": 95,
+            "sub group": 140,
+            "crm": 130,
+            "get back": 85,
+            "opening ?": 105,
+            "closing ?": 105,
+            "ledger name": 240,
+            "opening": 120,
+            "closing": 120,
+            "need confirmation": 115,
+            "get confirmation": 115,
+            "his opening": 120,
+            "his closing": 120,
+        }
+        tbl.resizeColumnsToContents()
+        for c in range(tbl.columnCount()):
+            hi = tbl.horizontalHeaderItem(c)
+            ht = hi.text().strip().lower() if hi else ""
+            min_w = min_widths.get(ht, 80)
+            cw = tbl.columnWidth(c)
+            tbl.setColumnWidth(c, max(cw + 14, min_w))
 
     def _build_vat_conf_table(self, group_type: str) -> QTableWidget:
         tbl = VatConfTableWidget()
@@ -2273,8 +2904,8 @@ class BalanceUI(QWidget):
         tbl.verticalHeader().setVisible(False)
 
         headers = [
-            "SN.", "Name", "Alias", "Opening Amount", "Closing Amount",
-            "Need Print ?", "Did You Print", "CRM", "Get Back",
+            "SN.", "Name", "Pan No.", "Alias", "Opening Amount", "Closing Amount",
+            "Need Print ?", "Did You Print", "Sub Group", "CRM", "Get Back",
             "Opening ?", "Closing ?"
         ]
         tbl.setColumnCount(len(headers))
@@ -2292,17 +2923,19 @@ class BalanceUI(QWidget):
                 )
             )
         )
-        tbl.setColumnWidth(0, 60)   # SN.
-        tbl.setColumnWidth(1, 240)  # Name
-        tbl.setColumnWidth(2, 130)  # Alias
-        tbl.setColumnWidth(3, 120)  # Opening Amount
-        tbl.setColumnWidth(4, 120)  # Closing Amount
-        tbl.setColumnWidth(5, 95)   # Need Print ?
-        tbl.setColumnWidth(6, 95)   # Did You Print
-        tbl.setColumnWidth(7, 140)  # CRM
-        tbl.setColumnWidth(8, 90)   # Get Back
-        tbl.setColumnWidth(9, 110)  # Opening ?
-        tbl.setColumnWidth(10, 110) # Closing ?
+        tbl.setColumnWidth(0, 55)   # SN.
+        tbl.setColumnWidth(1, 230)  # Name
+        tbl.setColumnWidth(2, 110)  # Pan No.
+        tbl.setColumnWidth(3, 110)  # Alias
+        tbl.setColumnWidth(4, 120)  # Opening Amount
+        tbl.setColumnWidth(5, 120)  # Closing Amount
+        tbl.setColumnWidth(6, 95)   # Need Print ?
+        tbl.setColumnWidth(7, 95)   # Did You Print
+        tbl.setColumnWidth(8, 140)  # Sub Group
+        tbl.setColumnWidth(9, 130)  # CRM
+        tbl.setColumnWidth(10, 85)  # Get Back
+        tbl.setColumnWidth(11, 105) # Opening ?
+        tbl.setColumnWidth(12, 105) # Closing ?
 
         tbl.setItemDelegate(
             VatConfDelegate(lambda: load_crm_list(self.current_company_path), tbl)
@@ -2599,8 +3232,8 @@ class BalanceUI(QWidget):
                     self._rendered_tabs.add("debtor_conf")
             elif conf_idx == 1:
                 if "creditor_conf" not in self._rendered_tabs:
-                    self._populate_vat_conf_table_from_data(
-                        self.creditor_table, "Creditor", self._cached_data.get("creditor_conf", [])
+                    self._populate_creditor_table_from_data(
+                        self._cached_data.get("creditor_conf", [])
                     )
                     self._rendered_tabs.add("creditor_conf")
 
@@ -2880,6 +3513,29 @@ class BalanceUI(QWidget):
         """Compute and display column-aligned totals for Vat Conf (Debtor / Creditor)."""
         if not tbl or not footer:
             return
+
+        col_op = -1
+        col_cl = -1
+        col_eop = -1
+        col_ecl = -1
+        col_alias = -1
+        col_name = 1
+        for c in range(tbl.columnCount()):
+            hi = tbl.horizontalHeaderItem(c)
+            ht = hi.text().strip().lower() if hi else ""
+            if ht == "opening amount":
+                col_op = c
+            elif ht == "closing amount":
+                col_cl = c
+            elif ht == "opening ?":
+                col_eop = c
+            elif ht == "closing ?":
+                col_ecl = c
+            elif ht == "alias":
+                col_alias = c
+            elif ht == "name":
+                col_name = c
+
         visible_count = 0
         tot_op = 0.0
         tot_cl = 0.0
@@ -2889,47 +3545,53 @@ class BalanceUI(QWidget):
         for r in range(tbl.rowCount()):
             if not tbl.isRowHidden(r):
                 visible_count += 1
-                it_op = tbl.item(r, 3)
-                if it_op and it_op.text().strip():
-                    try:
-                        tot_op += float(it_op.text().replace(",", ""))
-                    except Exception:
-                        pass
-                it_cl = tbl.item(r, 4)
-                if it_cl and it_cl.text().strip():
-                    try:
-                        tot_cl += float(it_cl.text().replace(",", ""))
-                    except Exception:
-                        pass
-                it_eop = tbl.item(r, 9)
-                if it_eop and it_eop.text().strip():
-                    try:
-                        tot_exp_op += float(it_eop.text().replace(",", ""))
-                    except Exception:
-                        pass
-                it_ecl = tbl.item(r, 10)
-                if it_ecl and it_ecl.text().strip():
-                    try:
-                        tot_exp_cl += float(it_ecl.text().replace(",", ""))
-                    except Exception:
-                        pass
+                if col_op >= 0:
+                    it_op = tbl.item(r, col_op)
+                    if it_op and it_op.text().strip():
+                        try:
+                            tot_op += float(it_op.text().replace(",", ""))
+                        except Exception:
+                            pass
+                if col_cl >= 0:
+                    it_cl = tbl.item(r, col_cl)
+                    if it_cl and it_cl.text().strip():
+                        try:
+                            tot_cl += float(it_cl.text().replace(",", ""))
+                        except Exception:
+                            pass
+                if col_eop >= 0:
+                    it_eop = tbl.item(r, col_eop)
+                    if it_eop and it_eop.text().strip():
+                        try:
+                            tot_exp_op += float(it_eop.text().replace(",", ""))
+                        except Exception:
+                            pass
+                if col_ecl >= 0:
+                    it_ecl = tbl.item(r, col_ecl)
+                    if it_ecl and it_ecl.text().strip():
+                        try:
+                            tot_exp_cl += float(it_ecl.text().replace(",", ""))
+                        except Exception:
+                            pass
 
         def _fmt(val):
             if abs(val) < 1e-9:
                 return "₹0.00"
             return f"-₹{abs(val):,.2f}" if val < 0 else f"₹{val:,.2f}"
 
-        totals_dict = {
-            3: _fmt(tot_op),
-            4: _fmt(tot_cl),
-        }
-        if tot_exp_op != 0.0:
-            totals_dict[9] = _fmt(tot_exp_op)
-        if tot_exp_cl != 0.0:
-            totals_dict[10] = _fmt(tot_exp_cl)
+        totals_dict = {}
+        if col_op >= 0:
+            totals_dict[col_op] = _fmt(tot_op)
+        if col_cl >= 0:
+            totals_dict[col_cl] = _fmt(tot_cl)
+        if col_eop >= 0 and tot_exp_op != 0.0:
+            totals_dict[col_eop] = _fmt(tot_exp_op)
+        if col_ecl >= 0 and tot_exp_cl != 0.0:
+            totals_dict[col_ecl] = _fmt(tot_exp_cl)
 
-        footer.setColumnHidden(2, tbl.isColumnHidden(2))
-        footer.update_totals(totals_dict, label_col=1, label_text="Grand Total")
+        if col_alias >= 0:
+            footer.setColumnHidden(col_alias, tbl.isColumnHidden(col_alias))
+        footer.update_totals(totals_dict, label_col=col_name, label_text="Grand Total")
         if lbl_count:
             total_rows = tbl.rowCount()
             if visible_count < total_rows:
@@ -2938,16 +3600,24 @@ class BalanceUI(QWidget):
                 lbl_count.setText(f"<b>{visible_count}</b> records")
 
     def _toggle_conf_alias_visibility(self):
-        """Toggle visibility of Alias column (Col 2) in Debtor and Creditor Vat Conf tables."""
+        """Toggle visibility of Alias column in Debtor and Creditor Vat Conf tables."""
         self._hide_conf_alias = not getattr(self, '_hide_conf_alias', False)
-        if hasattr(self, 'debtor_table'):
-            self.debtor_table.setColumnHidden(2, self._hide_conf_alias)
-            if hasattr(self, 'debtor_footer'):
-                self._update_conf_totals(self.debtor_table, self.debtor_footer, getattr(self, 'lbl_debtor_count', None))
-        if hasattr(self, 'creditor_table'):
-            self.creditor_table.setColumnHidden(2, self._hide_conf_alias)
-            if hasattr(self, 'creditor_footer'):
-                self._update_conf_totals(self.creditor_table, self.creditor_footer, getattr(self, 'lbl_creditor_count', None))
+        for tbl, footer, lbl in [
+            (getattr(self, 'debtor_table', None), getattr(self, 'debtor_footer', None), getattr(self, 'lbl_debtor_count', None)),
+            (getattr(self, 'creditor_table', None), getattr(self, 'creditor_footer', None), getattr(self, 'lbl_creditor_count', None))
+        ]:
+            if tbl:
+                col_alias = -1
+                for c in range(tbl.columnCount()):
+                    hi = tbl.horizontalHeaderItem(c)
+                    if hi and hi.text().strip().lower() == "alias":
+                        col_alias = c
+                        break
+                if col_alias >= 0:
+                    tbl.setColumnHidden(col_alias, self._hide_conf_alias)
+                if footer:
+                    self._update_conf_totals(tbl, footer, lbl)
+
         txt = "👁️ Show Alias" if self._hide_conf_alias else "👁️ Hide Alias"
         if hasattr(self, 'btn_toggle_debtor_alias'):
             self.btn_toggle_debtor_alias.setText(txt)
@@ -3383,7 +4053,7 @@ class BalanceUI(QWidget):
         self._cached_data["debtor_conf"] = d_rows
         self._cached_data["creditor_conf"] = c_rows
         self._populate_vat_conf_table_from_data(self.debtor_table, "Debtor", d_rows)
-        self._populate_vat_conf_table_from_data(self.creditor_table, "Creditor", c_rows)
+        self._populate_creditor_table_from_data(c_rows)
         if hasattr(self, '_rendered_tabs'):
             self._rendered_tabs.add("debtor_conf")
             self._rendered_tabs.add("creditor_conf")
@@ -3394,11 +4064,14 @@ class BalanceUI(QWidget):
             tbl.setRowCount(0)
             if group_type == "Debtor" and hasattr(self, 'debtor_footer'):
                 self._update_conf_totals(self.debtor_table, self.debtor_footer, getattr(self, 'lbl_debtor_count', None))
-            elif group_type == "Creditor" and hasattr(self, 'creditor_footer'):
-                self._update_conf_totals(self.creditor_table, self.creditor_footer, getattr(self, 'lbl_creditor_count', None))
+            elif group_type == "Creditor":
+                self._apply_creditor_filters()
             return
 
         rows = load_vat_conf_table_data(self.db_name, self.active_vat_company, group_type)
+        if group_type == "Creditor":
+            self._populate_creditor_table_from_data(rows)
+            return
         self._populate_vat_conf_table_from_data(tbl, group_type, rows)
 
     def _populate_vat_conf_table_from_data(self, tbl: QTableWidget, group_type: str, rows: list):
@@ -3406,18 +4079,26 @@ class BalanceUI(QWidget):
         tbl.blockSignals(True)
         tbl.setUpdatesEnabled(False)
         try:
+            if str(group_type).lower() == "debtor":
+                # Default sort: Need Print == 'Yes' first, then 'No', then alphabetically by Name
+                rows.sort(
+                    key=lambda r: (
+                        0 if (r.get("need_print") or "").strip().lower() == "yes" else 1,
+                        (r.get("name") or "").strip().lower()
+                    )
+                )
+
             tbl.setRowCount(len(rows))
 
             for r_idx, r in enumerate(rows):
-                # 0: SN. (Editable Cartoon Number validated against reserved numbers)
-                it_sn = QTableWidgetItem(r["sn"])
+                # 0: SN. (Numeric-sorted cartoon number)
+                it_sn = SnTableWidgetItem(r.get("sn", ""))
                 it_sn.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                it_sn._prev_sn = r["sn"]
                 if not self._can_edit:
                     it_sn.setFlags(it_sn.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 tbl.setItem(r_idx, 0, it_sn)
 
-                # 1: Name (Read-only, pure name, no parentheses)
+                # 1: Name (Read-only)
                 raw_name = (r.get("name") or "").strip()
                 if raw_name.lower() in ("none", "nan", "null"):
                     raw_name = ""
@@ -3426,16 +4107,25 @@ class BalanceUI(QWidget):
                 it_name.setFlags(it_name.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 tbl.setItem(r_idx, 1, it_name)
 
-                # 2: Alias (Read-only, pure alias, no parentheses)
+                # 2: Pan No. (Read-only, centered)
+                raw_pan = (r.get("pan_no") or "").strip()
+                if raw_pan.lower() in ("none", "nan", "null"):
+                    raw_pan = ""
+                it_pan = QTableWidgetItem(raw_pan)
+                it_pan.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                it_pan.setFlags(it_pan.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 2, it_pan)
+
+                # 3: Alias (Read-only)
                 raw_alias = (r.get("alias") or "").strip()
                 if raw_alias.lower() in ("none", "nan", "null"):
                     raw_alias = ""
                 it_alias = QTableWidgetItem(raw_alias)
                 it_alias.setData(Qt.ItemDataRole.UserRole, raw_alias)
                 it_alias.setFlags(it_alias.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(r_idx, 2, it_alias)
+                tbl.setItem(r_idx, 3, it_alias)
 
-                # 3: Opening Amount (Read-only, right-aligned numeric item for correct sorting)
+                # 4: Opening Amount (Read-only, right-aligned numeric item)
                 op_amt = r.get("opening_amount")
                 is_op_blank = (
                     op_amt is None
@@ -3449,9 +4139,9 @@ class BalanceUI(QWidget):
                     it_op = NumericTableWidgetItem(f"{f_op:,.2f}", f_op)
                 it_op.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 it_op.setFlags(it_op.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(r_idx, 3, it_op)
+                tbl.setItem(r_idx, 4, it_op)
 
-                # 4: Closing Amount (Read-only, right-aligned numeric item for correct sorting)
+                # 5: Closing Amount (Read-only, right-aligned numeric item)
                 cl_amt = r.get("closing_amount")
                 is_cl_blank = (
                     cl_amt is None
@@ -3465,72 +4155,101 @@ class BalanceUI(QWidget):
                     it_cl = NumericTableWidgetItem(f"{f_cl:,.2f}", f_cl)
                 it_cl.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 it_cl.setFlags(it_cl.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(r_idx, 4, it_cl)
+                tbl.setItem(r_idx, 5, it_cl)
 
-                # 5: Need Print ? (Read-only, centered)
-                it_np = QTableWidgetItem(r["need_print"])
+                # 6: Need Print ? (Read-only, centered, Yes-first sort)
+                it_np = YesNoTableWidgetItem(r.get("need_print", ""))
                 it_np.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                if r["need_print"] == "Yes":
+                if r.get("need_print") == "Yes":
                     it_np.setForeground(QColor("#059669"))
                     font = it_np.font()
                     font.setBold(True)
                     it_np.setFont(font)
                 it_np.setFlags(it_np.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(r_idx, 5, it_np)
+                tbl.setItem(r_idx, 6, it_np)
 
-                # 6: Did You Print (Editable Yes/No, accepts 1/0, Y/N, T/F)
-                it_dyp = QTableWidgetItem(r["did_you_print"])
+                # 7: Did You Print (Editable Yes/No/No Need)
+                it_dyp = YesNoTableWidgetItem(r.get("did_you_print", ""))
                 it_dyp.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 if not self._can_edit:
                     it_dyp.setFlags(it_dyp.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(r_idx, 6, it_dyp)
+                tbl.setItem(r_idx, 7, it_dyp)
 
-                # 7: CRM (Editable autocomplete)
-                it_crm = QTableWidgetItem(r["crm"])
+                # 8: Sub Group (Read-only)
+                raw_sg = (r.get("sub_group") or "").strip()
+                if raw_sg.lower() in ("none", "nan", "null"):
+                    raw_sg = ""
+                it_sg = QTableWidgetItem(raw_sg)
+                it_sg.setFlags(it_sg.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                tbl.setItem(r_idx, 8, it_sg)
+
+                # 9: CRM (Editable autocomplete)
+                it_crm = QTableWidgetItem(r.get("crm", ""))
                 if not self._can_edit:
                     it_crm.setFlags(it_crm.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(r_idx, 7, it_crm)
+                tbl.setItem(r_idx, 9, it_crm)
 
-                # 8: Get Back (Editable Yes/No, accepts 1/0, Y/N, T/F)
-                it_gb = QTableWidgetItem(r["get_back"])
+                # 10: Get Back (Editable Yes/No/N/A)
+                it_gb = YesNoTableWidgetItem(r.get("get_back", ""))
                 it_gb.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 if not self._can_edit:
                     it_gb.setFlags(it_gb.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(r_idx, 8, it_gb)
+                tbl.setItem(r_idx, 10, it_gb)
 
-                # 9: Opening ? (Editable numeric, compared against Opening Amount)
-                it_exp_op = QTableWidgetItem(r["expected_opening"])
+                # 11: Opening ? (Editable numeric, compared against Opening Amount)
+                it_exp_op = ExpAmountTableWidgetItem(r.get("expected_opening", ""))
                 it_exp_op.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 if not self._can_edit:
                     it_exp_op.setFlags(it_exp_op.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(r_idx, 9, it_exp_op)
+                tbl.setItem(r_idx, 11, it_exp_op)
 
-                # 10: Closing ? (Editable numeric, compared against Closing Amount)
-                it_exp_cl = QTableWidgetItem(r["expected_closing"])
+                # 12: Closing ? (Editable numeric, compared against Closing Amount)
+                it_exp_cl = ExpAmountTableWidgetItem(r.get("expected_closing", ""))
                 it_exp_cl.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 if not self._can_edit:
                     it_exp_cl.setFlags(it_exp_cl.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(r_idx, 10, it_exp_cl)
+                tbl.setItem(r_idx, 12, it_exp_cl)
 
-                # Apply full row solid red highlight if mismatched or empty
+                # Apply full row solid red highlight if mismatched
                 self._update_vat_conf_row_style(tbl, r_idx)
 
-            # Maintain alias column visibility
-            tbl.setColumnHidden(2, getattr(self, '_hide_conf_alias', False))
+            # Maintain alias column visibility dynamically
+            for c in range(tbl.columnCount()):
+                hi = tbl.horizontalHeaderItem(c)
+                if hi and hi.text().strip().lower() == "alias":
+                    tbl.setColumnHidden(c, getattr(self, '_hide_conf_alias', False))
+                    break
+
+            # Auto-fit column widths
+            self._auto_fit_conf_columns(tbl)
+
         finally:
             tbl.setUpdatesEnabled(True)
             tbl.blockSignals(False)
+
         if group_type == "Debtor" and hasattr(self, 'debtor_footer'):
             self._update_conf_totals(self.debtor_table, self.debtor_footer, getattr(self, 'lbl_debtor_count', None))
-        elif group_type == "Creditor" and hasattr(self, 'creditor_footer'):
-            self._update_conf_totals(self.creditor_table, self.creditor_footer, getattr(self, 'lbl_creditor_count', None))
 
     def _update_vat_conf_row_style(self, tbl: QTableWidget, row: int):
         """If expected amount does not match actual amount or either is empty, paint the FULL ROW in RED."""
-        act_op_item = tbl.item(row, 3)
-        act_cl_item = tbl.item(row, 4)
-        exp_op_item = tbl.item(row, 9)
-        exp_cl_item = tbl.item(row, 10)
+        col_op = -1
+        col_cl = -1
+        col_eop = -1
+        col_ecl = -1
+        col_np = -1
+        for c in range(tbl.columnCount()):
+            hi = tbl.horizontalHeaderItem(c)
+            ht = hi.text().strip().lower() if hi else ""
+            if ht == "opening amount": col_op = c
+            elif ht == "closing amount": col_cl = c
+            elif ht == "opening ?": col_eop = c
+            elif ht == "closing ?": col_ecl = c
+            elif ht == "need print ?": col_np = c
+
+        act_op_item = tbl.item(row, col_op) if col_op >= 0 else None
+        act_cl_item = tbl.item(row, col_cl) if col_cl >= 0 else None
+        exp_op_item = tbl.item(row, col_eop) if col_eop >= 0 else None
+        exp_cl_item = tbl.item(row, col_ecl) if col_ecl >= 0 else None
 
         try:
             act_op_val = float(act_op_item.text().replace(",", "").strip()) if act_op_item else 0.0
@@ -3564,7 +4283,7 @@ class BalanceUI(QWidget):
                 it.setForeground(red_fg)
             else:
                 it.setBackground(normal_bg)
-                if c == 5 and it.text() == "Yes":
+                if c == col_np and it.text() == "Yes":
                     it.setForeground(QColor("#059669"))
                 else:
                     it.setForeground(normal_fg)
@@ -4232,7 +4951,21 @@ class BalanceUI(QWidget):
         """User modified an editable cell in Vat Conf (Debtor/Creditor)."""
         col = item.column()
         row = item.row()
-        name_item = tbl.item(row, 1)
+        hi = tbl.horizontalHeaderItem(col)
+        header_text = hi.text().strip().lower() if hi else ""
+
+        # Dynamically locate Name and SN columns
+        name_col = 1
+        sn_col = 0
+        for c in range(tbl.columnCount()):
+            h = tbl.horizontalHeaderItem(c)
+            ht = h.text().strip().lower() if h else ""
+            if ht == "name":
+                name_col = c
+            elif ht == "sn.":
+                sn_col = c
+
+        name_item = tbl.item(row, name_col)
         if not name_item:
             return
         ledger_name = str(name_item.data(Qt.ItemDataRole.UserRole) or name_item.text()).strip()
@@ -4246,8 +4979,8 @@ class BalanceUI(QWidget):
             logger.warning(f"[_on_vat_conf_item_changed] No active VAT company configured for db '{self.db_name}'")
             return
 
-        # 0: Cartoon Number (SN.) Validation, Swap on Duplicate & Persistence
-        if col == 0:
+        # Cartoon Number (SN.) Validation, Swap on Duplicate & Persistence
+        if header_text == "sn.":
             old_val = getattr(item, '_prev_sn', '')
             if val == old_val:
                 return
@@ -4267,16 +5000,16 @@ class BalanceUI(QWidget):
                 for r in range(tbl.rowCount()):
                     if r == row:
                         continue
-                    other_it = tbl.item(r, 0)
+                    other_it = tbl.item(r, sn_col)
                     if other_it and other_it.text().strip() == val:
                         duplicate_row = r
-                        other_name_it = tbl.item(r, 1)
+                        other_name_it = tbl.item(r, name_col)
                         other_ledger_name = str(other_name_it.data(Qt.ItemDataRole.UserRole) or other_name_it.text()).strip() if other_name_it else ""
                         break
 
             if duplicate_row >= 0:
                 # Target CN is already assigned to another ledger — swap CNs to maintain uniqueness
-                other_it = tbl.item(duplicate_row, 0)
+                other_it = tbl.item(duplicate_row, sn_col)
                 swap_sn = old_val
                 if not swap_sn or (swap_sn.isdigit() and int(swap_sn) in _EXCLUDED_CNS):
                     # Find next available non-reserved CN
@@ -4284,7 +5017,7 @@ class BalanceUI(QWidget):
                     for r in range(tbl.rowCount()):
                         if r in (row, duplicate_row):
                             continue
-                        it_tmp = tbl.item(r, 0)
+                        it_tmp = tbl.item(r, sn_col)
                         t_tmp = it_tmp.text().strip() if it_tmp else ""
                         if t_tmp.isdigit() and int(t_tmp) > 0:
                             used.add(int(t_tmp))
@@ -4316,21 +5049,51 @@ class BalanceUI(QWidget):
                 logger.error(f"Failed to save SN: {e}")
             return
 
-        # 6 & 8: Normalize Yes/No input
-        if col in (6, 8):
+        # Normalize Yes/No input
+        if header_text in ("did you print", "get back"):
             val = normalize_yes_no(val)
             tbl.blockSignals(True)
             item.setText(val)
             tbl.blockSignals(False)
 
+        # Dynamic cascade: if Did You Print is updated, check Get Back
+        if header_text == "did you print":
+            gb_col = -1
+            for c in range(tbl.columnCount()):
+                h_gb = tbl.horizontalHeaderItem(c)
+                if h_gb and h_gb.text().strip().lower() == "get back":
+                    gb_col = c
+                    break
+            if gb_col >= 0:
+                gb_item = tbl.item(row, gb_col)
+                if gb_item:
+                    cur_gb = gb_item.text().strip()
+                    if val == "No Need" and cur_gb in ("", "No"):
+                        tbl.blockSignals(True)
+                        gb_item.setText("N/A")
+                        tbl.blockSignals(False)
+                        try:
+                            save_vat_conf_field(self.db_name, active_comp, group_type, ledger_name, "get_back", "N/A")
+                        except Exception:
+                            pass
+                    elif val != "No Need" and cur_gb == "N/A":
+                        tbl.blockSignals(True)
+                        gb_item.setText("")
+                        tbl.blockSignals(False)
+                        try:
+                            save_vat_conf_field(self.db_name, active_comp, group_type, ledger_name, "get_back", "")
+                        except Exception:
+                            pass
+
         field_map = {
-            6: "did_you_print",
-            7: "crm",
-            8: "get_back",
-            9: "expected_opening",
-            10: "expected_closing",
+            "sn.": "sn",
+            "did you print": "did_you_print",
+            "crm": "crm",
+            "get back": "get_back",
+            "opening ?": "expected_opening",
+            "closing ?": "expected_closing",
         }
-        field_name = field_map.get(col)
+        field_name = field_map.get(header_text)
         if not field_name:
             return
 
@@ -4338,7 +5101,7 @@ class BalanceUI(QWidget):
             save_vat_conf_field(self.db_name, active_comp, group_type, ledger_name, field_name, val)
 
             # Update comparison highlight across the full row whenever Opening ? or Closing ? is modified
-            if col in (9, 10):
+            if header_text in ("opening ?", "closing ?"):
                 tbl.blockSignals(True)
                 self._update_vat_conf_row_style(tbl, row)
                 tbl.blockSignals(False)
@@ -4652,15 +5415,20 @@ class BalanceUI(QWidget):
         # Propagate _can_edit to conf tables so VatConfDelegate can check it
         if hasattr(self, 'debtor_table'):
             self.debtor_table._can_edit = can_edit
+            for r in range(self.debtor_table.rowCount()):
+                for c in [0, 7, 9, 10, 11, 12]:
+                    it = self.debtor_table.item(r, c)
+                    if it:
+                        if can_edit:
+                            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsEditable)
+                        else:
+                            it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
         if hasattr(self, 'creditor_table'):
             self.creditor_table._can_edit = can_edit
-
-        # Lock vat conf tables editing (Col 0: SN, Col 6: Did You Print, Col 7: CRM, Col 8: Get Back, Col 9: Opening ?, Col 10: Closing ?)
-        conf_tables = [tbl for tbl in (getattr(self, 'debtor_table', None), getattr(self, 'creditor_table', None)) if tbl]
-        for tbl in conf_tables:
-            for r in range(tbl.rowCount()):
-                for c in [0, 6, 7, 8, 9, 10]:
-                    it = tbl.item(r, c)
+            for r in range(self.creditor_table.rowCount()):
+                for c in [4, 5, 6]:
+                    it = self.creditor_table.item(r, c)
                     if it:
                         if can_edit:
                             it.setFlags(it.flags() | Qt.ItemFlag.ItemIsEditable)

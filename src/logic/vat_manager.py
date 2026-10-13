@@ -264,12 +264,40 @@ def ensure_vat_tables(db, db_name: str):
         )
     """)
 
+    # 8. VAT Sub Group CRM Mapping (Debtor Sub Group -> CRM Name)
+    db.ensure_table(db_name, "vat_subgroup_crm_mapping", """
+        CREATE TABLE vat_subgroup_crm_mapping (
+            id INT IDENTITY PRIMARY KEY,
+            vat_company NVARCHAR(255) NOT NULL,
+            sub_group NVARCHAR(255) NOT NULL,
+            crm_name NVARCHAR(255) NOT NULL,
+            updated_at DATETIME DEFAULT GETDATE(),
+            CONSTRAINT UQ_vat_subgroup_crm UNIQUE (vat_company, sub_group)
+        )
+    """)
 
     # Migration guard: add missing columns if upgrading existing tables
     try:
         conn = db.get_connection(db_name)
         if conn:
             cur = conn.cursor()
+            cur.execute("""
+                IF NOT EXISTS (
+                    SELECT 1 FROM INFORMATION_SCHEMA.TABLES 
+                    WHERE TABLE_NAME = 'vat_subgroup_crm_mapping'
+                )
+                BEGIN
+                    CREATE TABLE dbo.vat_subgroup_crm_mapping (
+                        id INT IDENTITY PRIMARY KEY,
+                        vat_company NVARCHAR(255) NOT NULL,
+                        sub_group NVARCHAR(255) NOT NULL,
+                        crm_name NVARCHAR(255) NOT NULL,
+                        updated_at DATETIME DEFAULT GETDATE(),
+                        CONSTRAINT UQ_vat_subgroup_crm UNIQUE (vat_company, sub_group)
+                    );
+                END
+            """)
+
             cur.execute("""
                 IF NOT EXISTS (
                     SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
@@ -2755,16 +2783,166 @@ def clear_stock_mappings(db_name: str, company_name: str = None) -> bool:
 # ─── VAT CONF LOGIC ──────────────────────────────────────────────────────────
 
 def normalize_yes_no(value: str) -> str:
-    """Normalize user input to 'Yes' or 'No'.
-    Accepts: Y, Yes, 1, T, True -> 'Yes'
-    Accepts: N, No, 0, F, False -> 'No'
-    """
+    """Normalize user input to 'Yes', 'No', 'No Need', or 'N/A'."""
     v = (value or "").strip().lower()
     if v in ("y", "yes", "1", "t", "true"):
         return "Yes"
     elif v in ("n", "no", "0", "f", "false"):
         return "No"
+    elif v in ("no need", "noneed", "nn"):
+        return "No Need"
+    elif v in ("n/a", "na"):
+        return "N/A"
     return value.strip()
+
+
+def get_unique_vat_debtor_subgroups(db_name: str, vat_company: str) -> list[str]:
+    """Return sorted unique Sub_Group names for Debtor ledgers in vat_row_ledger_data."""
+    if not db_name or not vat_company:
+        return []
+    db = get_db_manager()
+    ensure_vat_tables(db, db_name)
+    conn = db.get_connection(db_name)
+    if not conn:
+        return []
+    try:
+        cur = conn.cursor()
+        group_filter = """
+            (
+                LOWER(LTRIM(RTRIM(r.[Group]))) = 'sundry debtors'
+                OR LOWER(LTRIM(RTRIM(r.Sub_Group))) = 'sundry debtors'
+                OR LOWER(r.[Group]) LIKE '%debtor%'
+                OR LOWER(r.Sub_Group) LIKE '%debtor%'
+            )
+        """
+        query = f"""
+            SELECT DISTINCT LTRIM(RTRIM(r.Sub_Group)) AS sub_group
+            FROM dbo.vat_row_ledger_data r
+            WHERE r.vat_company = ? AND {group_filter}
+              AND r.Sub_Group IS NOT NULL
+              AND LTRIM(RTRIM(r.Sub_Group)) != ''
+              AND LOWER(LTRIM(RTRIM(r.Sub_Group))) NOT IN ('othere account', 'other account', 'othere accounts', 'other accounts')
+              AND LOWER(r.Sub_Group) NOT LIKE '%other%account%'
+              AND LOWER(r.Sub_Group) NOT LIKE '%othere%account%'
+            ORDER BY 1
+        """
+        cur.execute(query, (vat_company,))
+        rows = cur.fetchall()
+        subgroups = [r[0].strip() for r in rows if r[0] and r[0].strip()]
+        cur.close()
+        return subgroups
+    except Exception as e:
+        logger.error(f"[get_unique_vat_debtor_subgroups] error: {e}")
+        return []
+
+
+def get_unique_vat_creditor_subgroups(db_name: str, vat_company: str) -> list[str]:
+    """Return sorted unique Sub_Group names for Creditor ledgers in vat_row_ledger_data."""
+    if not db_name or not vat_company:
+        return []
+    db = get_db_manager()
+    ensure_vat_tables(db, db_name)
+    conn = db.get_connection(db_name)
+    if not conn:
+        return []
+    try:
+        cur = conn.cursor()
+        group_filter = """
+            (
+                LOWER(LTRIM(RTRIM(r.[Group]))) = 'sundry creditors'
+                OR LOWER(LTRIM(RTRIM(r.Sub_Group))) = 'sundry creditors'
+                OR LOWER(r.[Group]) LIKE '%creditor%'
+                OR LOWER(r.Sub_Group) LIKE '%creditor%'
+            )
+        """
+        query = f"""
+            SELECT DISTINCT LTRIM(RTRIM(r.Sub_Group)) AS sub_group
+            FROM dbo.vat_row_ledger_data r
+            WHERE r.vat_company = ? AND {group_filter}
+              AND r.Sub_Group IS NOT NULL
+              AND LTRIM(RTRIM(r.Sub_Group)) != ''
+              AND LOWER(LTRIM(RTRIM(r.Sub_Group))) NOT IN ('othere account', 'other account', 'othere accounts', 'other accounts')
+              AND LOWER(r.Sub_Group) NOT LIKE '%other%account%'
+              AND LOWER(r.Sub_Group) NOT LIKE '%othere%account%'
+            ORDER BY 1
+        """
+        cur.execute(query, (vat_company,))
+        rows = cur.fetchall()
+        subgroups = [r[0].strip() for r in rows if r[0] and r[0].strip()]
+        cur.close()
+        return subgroups
+    except Exception as e:
+        logger.error(f"[get_unique_vat_creditor_subgroups] error: {e}")
+        return []
+
+
+def load_vat_subgroup_crm_mappings(db_name: str, vat_company: str) -> dict[str, str]:
+    """Load dict of {sub_group: crm_name} from dbo.vat_subgroup_crm_mapping."""
+    if not db_name or not vat_company:
+        return {}
+    db = get_db_manager()
+    ensure_vat_tables(db, db_name)
+    conn = db.get_connection(db_name)
+    if not conn:
+        return {}
+    try:
+        cur = conn.cursor()
+        query = """
+            SELECT LTRIM(RTRIM(sub_group)), LTRIM(RTRIM(crm_name))
+            FROM dbo.vat_subgroup_crm_mapping
+            WHERE vat_company = ?
+        """
+        cur.execute(query, (vat_company,))
+        rows = cur.fetchall()
+        mappings = {}
+        for r in rows:
+            sg = (r[0] or "").strip()
+            crm = (r[1] or "").strip()
+            if sg:
+                mappings[sg] = crm
+        cur.close()
+        return mappings
+    except Exception as e:
+        logger.error(f"[load_vat_subgroup_crm_mappings] error: {e}")
+        return {}
+
+
+def save_vat_subgroup_crm_mappings(db_name: str, vat_company: str, mappings: dict[str, str]) -> bool:
+    """Save or update subgroup -> crm mappings in dbo.vat_subgroup_crm_mapping."""
+    if not db_name or not vat_company:
+        return False
+    db = get_db_manager()
+    ensure_vat_tables(db, db_name)
+    conn = db.get_connection(db_name)
+    if not conn:
+        return False
+    try:
+        cur = conn.cursor()
+        for sub_group, crm_name in mappings.items():
+            sg = (sub_group or "").strip()
+            crm = (crm_name or "").strip()
+            if not sg:
+                continue
+            upsert_query = """
+                IF EXISTS (SELECT 1 FROM dbo.vat_subgroup_crm_mapping WHERE vat_company = ? AND sub_group = ?)
+                    UPDATE dbo.vat_subgroup_crm_mapping
+                    SET crm_name = ?, updated_at = GETDATE()
+                    WHERE vat_company = ? AND sub_group = ?
+                ELSE
+                    INSERT INTO dbo.vat_subgroup_crm_mapping (vat_company, sub_group, crm_name, updated_at)
+                    VALUES (?, ?, ?, GETDATE())
+            """
+            cur.execute(upsert_query, (vat_company, sg, crm, vat_company, sg, vat_company, sg, crm))
+        conn.commit()
+        cur.close()
+        return True
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.error(f"[save_vat_subgroup_crm_mappings] error: {e}")
+        return False
 
 
 # Cartoon numbers that must never be assigned to any row (culturally/business reserved)
@@ -2802,8 +2980,9 @@ def calculate_need_print(opening: float, closing: float, cash_in: float, cash_ou
     return "No"
 
 
-def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str) -> list[dict]:
-    """Load 10-column data for Vat Conf (Debtor or Creditor).
+def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str = "debtor",
+                             company_path: str = None) -> list[dict]:
+    """Load row ledger data joined with vat_conf_data for Debtor or Creditor Vat Conf table.
     
     group_type: 'Debtor' (Sundry Debtors) or 'Creditor' (Sundry Creditors)
     """
@@ -2815,7 +2994,8 @@ def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str) ->
     if not conn:
         return []
 
-    if group_type == "Debtor":
+    group_type_norm = str(group_type or "debtor").strip().lower()
+    if group_type_norm == "debtor":
         group_filter = """
             (
                 LOWER(LTRIM(RTRIM(r.[Group]))) = 'sundry debtors'
@@ -2836,6 +3016,8 @@ def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str) ->
 
     try:
         cur = conn.cursor()
+        subgroup_crm_map = load_vat_subgroup_crm_mappings(db_name, vat_company) if group_type_norm == "debtor" else {}
+
         # Join imported VAT ledgers with user-entered conf data
         query = f"""
             SELECT 
@@ -2844,17 +3026,19 @@ def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str) ->
                 r.Closing_Balance,
                 r.CashInFlow,
                 r.CashOutFlow,
-                ISNULL(c.did_you_print, 'No') AS did_you_print,
+                ISNULL(c.did_you_print, '') AS did_you_print,
                 ISNULL(c.crm, '') AS crm,
-                ISNULL(c.get_back, 'No') AS get_back,
+                ISNULL(c.get_back, '') AS get_back,
                 ISNULL(c.expected_opening, '') AS expected_opening,
                 ISNULL(c.expected_closing, '') AS expected_closing,
                 ISNULL(c.sn, '') AS sn,
-                ISNULL(r.Alias, '') AS Alias
+                ISNULL(r.Alias, '') AS Alias,
+                ISNULL(r.[Pan_No.], '') AS pan_no,
+                ISNULL(r.Sub_Group, '') AS sub_group
             FROM dbo.vat_row_ledger_data r
             LEFT JOIN dbo.vat_conf_data c 
                 ON c.vat_company = r.vat_company 
-                AND c.group_type = ? 
+                AND LOWER(LTRIM(RTRIM(c.group_type))) = ? 
                 AND c.ledger_name = r.Name
             WHERE r.vat_company = ? AND {group_filter}
               AND LOWER(LTRIM(RTRIM(ISNULL(r.Sub_Group, '')))) NOT IN ('othere account', 'other account', 'othere accounts', 'other accounts')
@@ -2862,7 +3046,7 @@ def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str) ->
               AND LOWER(ISNULL(r.Sub_Group, '')) NOT LIKE '%othere%account%'
             ORDER BY r.Name
         """
-        cur.execute(query, (group_type, vat_company))
+        cur.execute(query, (group_type_norm, vat_company))
         rows = cur.fetchall()
 
         # Collect any custom assigned SNs to avoid reusing them
@@ -2892,9 +3076,7 @@ def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str) ->
             cl_amt = None if (cl_raw is None or (isinstance(cl_raw, float) and cl_raw != cl_raw)) else (0.0 if abs(float(cl_raw)) < 1e-9 else float(cl_raw))
             c_in = 0.0 if (r[3] is None or (isinstance(r[3], float) and r[3] != r[3])) else (0.0 if abs(float(r[3])) < 1e-9 else float(r[3]))
             c_out = 0.0 if (r[4] is None or (isinstance(r[4], float) and r[4] != r[4])) else (0.0 if abs(float(r[4])) < 1e-9 else float(r[4]))
-            did_print = r[5].strip() if r[5] else "No"
-            crm_val = r[6].strip() if r[6] else ""
-            get_back = r[7].strip() if r[7] else "No"
+
             exp_op = r[8].strip() if r[8] else ""
             exp_cl = r[9].strip() if r[9] else ""
             saved_sn = r[10].strip() if len(r) > 10 and r[10] else ""
@@ -2904,19 +3086,53 @@ def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str) ->
             if alias_val.lower() in ("none", "nan", "null"):
                 alias_val = ""
 
+            pan_no = r[12].strip() if len(r) > 12 and r[12] else ""
+            if pan_no.lower() in ("none", "nan", "null"):
+                pan_no = ""
+
+            sub_group = r[13].strip() if len(r) > 13 and r[13] else ""
+            if sub_group.lower() in ("none", "nan", "null"):
+                sub_group = ""
+
             # Use saved SN if user edited it; otherwise use generated cartoon number
             final_sn = saved_sn if saved_sn else (cns[idx] if idx < len(cns) else str(idx + 1))
 
             need_print = calculate_need_print(op_amt or 0.0, cl_amt or 0.0, c_in, c_out)
 
+            # Dynamic Did You Print: saved edit > ("No Need" if need_print == "No" else "")
+            saved_did_print = r[5].strip() if r[5] else ""
+            if saved_did_print:
+                did_print = saved_did_print
+            else:
+                did_print = "No Need" if need_print == "No" else ""
+
+            # Dynamic Get Back: saved edit > ("N/A" if did_print == "No Need" else "")
+            saved_get_back = r[7].strip() if r[7] else ""
+            if saved_get_back:
+                get_back = saved_get_back
+            else:
+                get_back = "N/A" if did_print == "No Need" else ""
+
+            # Dynamic CRM: manual user edit in vat_conf_data > Sub Group mapped CRM > ""
+            saved_crm = r[6].strip() if r[6] else ""
+            if saved_crm:
+                crm_val = saved_crm
+            else:
+                crm_val = subgroup_crm_map.get(sub_group, "")
+
             results.append({
                 "sn": final_sn,
                 "name": name,
+                "pan_no": pan_no,
                 "alias": alias_val,
                 "opening_amount": op_amt,
                 "closing_amount": cl_amt,
+                "cash_in": c_in,
+                "cash_out": c_out,
                 "need_print": need_print,
+                "need_confirmation": need_print,
                 "did_you_print": did_print,
+                "sub_group": sub_group,
                 "crm": crm_val,
                 "get_back": get_back,
                 "expected_opening": exp_op,
