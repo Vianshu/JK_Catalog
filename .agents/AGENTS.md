@@ -51,24 +51,57 @@ Approach this as a senior architect with decades of experience doing a thorough,
 
 **The checklist below is a floor, not a ceiling.** It names the categories most likely to bite in this codebase, but it is not the boundary of the audit. Read the actual logic of each function/screen and question whether it does what it's supposed to do — report anything that looks wrong even if it doesn't fit neatly into one of the named categories below. Don't let "I checked every item on the list" substitute for "I understood what this code is trying to do and verified it does that correctly."
 
-Work through this checklist, then keep going beyond it:
+Work through the **7 Universal Invariant Domains** below, then keep going beyond them:
 
-- **General logic & business rules** — wrong or inverted conditionals, off-by-one errors, incorrect calculations (especially payment amounts, totals, discounts, tax, rounding/currency precision), wrong state/workflow transitions, mismatched assumptions between what the UI shows and what the backend actually does, stale or incorrect cached values, incorrect date/time handling (timezones, fiscal periods, DST).
-- **Edge cases & data validation** — empty lists/None/zero-quantity inputs, duplicate records, missing input validation before it hits the DB or a calculation, boundary values (first/last item, min/max amounts).
-- **Static / syntax integrity** — compile-check modified and core files; flag syntax errors, undefined names, unreachable code, unused imports.
-- **Exception handling** — bare `except:` blocks, silently swallowed exceptions, missing logging on failure paths, unclosed resources (file handles, DB connections, cursors).
-- **Multi-user / concurrency integrity** — shared mutable state, race conditions, DB connection pooling misuse, transaction boundaries, file/record locking around shared data.
-- **Database layer** — SQL injection risk (string-built vs. parameterized queries), missing commits/rollbacks, leaked connections, long-held locks.
-- **Paths & data loading** — hardcoded local paths vs. shared/multi-user paths, path-separator issues, unsafe assumptions about permissions or drive letters.
-- **UI layer** — unhandled exceptions in callbacks/event handlers, missing `None`/null checks, theme consistency (see Section 5) across payment-related screens.
-- **Packaging** — hidden imports missing from the `.spec` file, data files not bundled, version-string mismatches between the app and the installer.
-- **Logging** — confirm errors are actually written to `error.log` in a way that supports the client-side debugging protocol in Section 3, rather than failing silently.
-- **Security** — hardcoded credentials/secrets, disabled certificate validation, unsafe deserialization.
-- **Anything else** — if something reads as logically inconsistent, fragile, or surprising and it doesn't fit any category above, report it anyway under "Other."
+#### Domain 1: State Synchronization & Lifecycle (Reality vs. Representation)
+- **Split-brain & stale context**: When an entity (role, user, company, mapping, stock item) is altered in one dialog/thread, do all other open screens and active sessions update immediately in memory, or do they hold stale references until restart?
+- **Zombie callbacks & destruction races**: Audit all `QTimer.singleShot()` and worker thread lambdas. Can the parent widget or table cell be destroyed/closed while the timer/thread is pending, causing "wrapped C/C++ object deleted" crashes?
+- **Recursion storms & signal feedback loops**: In `itemChanged`, `currentIndexChanged`, or text handlers, are signals properly blocked (`blockSignals(True)`) during programmatic updates, or do they trigger uncontrolled event feedback loops and secondary saves?
+- **Ghost calls & defensive swallowing**: Search for `hasattr(obj, 'method')`, `getattr(obj, 'method', None)`, and bare `except: pass`. Are these defensive guards hiding incomplete interface contracts, missing methods, or misspelled signals? Flag any missing methods as Critical.
+
+#### Domain 2: Authorization & Permission Orthogonality (Intent vs. Enforcement)
+- **Gating orthogonality**: Sub-permissions (e.g. `clear_mapping`, `export`, `print`, `reshuffle`) must NEVER be conflated or subordinated to parent edit permissions (`_can_edit` / `tab.*`) via `and`. If an admin grants permission X in User Roles, verify that NO unrelated permission Y is silently required for X to function.
+- **Live session propagation**: When permissions change in Settings, does the running `UserSession` and UI sync instantly across active windows without requiring a logout or 60s background delay?
+- **Two-tier gate parity**: Is every feature protected at BOTH levels:
+  1. *Display-time*: UI control enabled/disabled with clear affordance.
+  2. *Execution-time*: handler asserts `session.can()` before executing the DB/file action.
+
+#### Domain 3: Visual Contrast & Dual-Engine Rendering (The Perception Domain)
+- **QSS vs QPainter inversion**: Audit all custom rendering: `QHeaderView`, `QStyledItemDelegate`, `paintSection()`, `paintEvent()`. Cross-reference imperative drawing (`painter.setPen()`, `painter.setBrush()`, `it.setForeground()`) against declarative stylesheet rules in `style.qss`. Catch dark-on-dark (e.g. dark slate `#0f172a` on dark navy `#1A2035`) and light-on-light (white on light gray) text/border combinations.
+- **High-DPI & dynamic geometry truncation**: Look for hardcoded pixel dimensions (`setFixedWidth`, `setRowHeight`) on labels, buttons, or headers that contain localized or dynamic text. Check whether word wrap (`TextWordWrap`) or minimum column widths prevent text clipping on smaller resolution displays or varied Windows scaling (125%/150%).
+- **State contrast consistency**: Verify that `:disabled`, `:hover`, and `:selected` states maintain legible contrast ratios (minimum 4.5:1 for normal text, 3:1 for bold/headers).
+
+#### Domain 4: Interaction Affordance & Keyboard Navigation (The Ergonomics Domain)
+- **Negative affordance & initial-state deadlocks**: Inspect buttons initialized as `setEnabled(False)` or gated by selection (`has_sel`). Ensure buttons don't appear permanently broken/permission-denied when entering a screen; prefer keeping permission-backed buttons active and providing clear instructional feedback (e.g. "Select a row first") if clicked without selection.
+- **Hotkey collisions & phonetic naturalness**: Audit all `&Letter` hotkey assignments across all menus for buried mid-word letters (e.g. `C&hq`, `Pa&yment`, `Bra&nch` when first letters were available) and duplicate Alt keys within the same menu.
+- **Operational in-screen hotkeys**: Check all data-heavy screens for essential operational shortcuts: Search focus (`Ctrl+F` or `/`), Reset/Back (`Esc`), Refresh (`F5` or `Ctrl+R`), Export (`Ctrl+E`), Print (`Ctrl+P`), Tab switching (`Ctrl+Tab` or `Ctrl+PgUp/Dn`).
+- **Event filter key swallowing**: In custom `eventFilter()` handlers on tables, delegates, and dialogs, verify that keys (Return, Tab, Esc, Alt+Key) are consumed ONLY when an active editor or popup actually requires them, and are passed up to parent shortcuts otherwise. Audit focus-out editor destruction.
+
+#### Domain 5: Data Integrity, Aggregation & Numeric Precision (The Truth Domain)
+- **View vs mutation isolation**: Verify that filtering, searching, or column sorting NEVER alters the underlying source dataset, row indices, or database record IDs.
+- **Netting & multi-row aggregation**: Audit group-level vs row-level calculations (e.g. VAT vs Internal mapping groups, credit/debit balances, negative indicator netting). Ensure multi-row groups aggregate before difference calculation, not row-by-row.
+- **Floating-point & currency precision**: Check that amounts are never rounded prematurely before arithmetic. Flag any currency comparison using raw `float == float` without an epsilon guard (`1e-9`).
+- **Null & boundary fragility**: Test behavior with empty lists, `None`/`NULL` SQL values, zero-quantity inputs, single-row, and max-row boundaries. Ensure SQL `NULL` values never render as literal `"None"` strings in tables.
+
+#### Domain 6: Concurrency, Database & Resource Integrity (The Stability Domain)
+- **GUI thread affinity**: Verify that background threads (`QThread`, `ThreadPool`) NEVER touch GUI widgets directly. All UI updates must cross thread boundaries exclusively via `pyqtSignal`.
+- **Connection & cursor lifecycles**: Check that database connections and cursors are strictly scoped: opened, executed, committed/rolled back, and closed in `try...finally` blocks. Flag leaked connections, long-held locks, and unclosed file handles (Excel exports, backups).
+- **SQL injection & parameterization**: Audit all SQL statements. Flag any query built via Python f-strings or string concatenation instead of parameterized placeholders (`?`).
+- **Paths & data loading**: Hardcoded local paths vs shared/multi-user paths, path-separator issues, unsafe assumptions about permissions or drive letters.
+
+#### Domain 7: Diagnostic Integrity & Client-Side Supportability (The Observability Domain)
+- **The silent failure rule**: Flag any `except:` or `except Exception:` block that does not log to `error.log` via `logger.error()`. Confirm errors are actually written in a way that supports the client-side debugging protocol in Section 3, rather than failing silently.
+- **False-positive feedback**: Verify that success notifications ("Saved successfully") fire ONLY after the underlying database transaction actually committed, never before or inside an unverified try block.
+
+#### Other Flaws
+- **Static / syntax integrity**: Compile-check modified and core files; flag syntax errors, undefined names, unreachable code, unused imports.
+- **Packaging**: Hidden imports missing from `.spec`, data files not bundled, version-string mismatches between app and installer.
+- **Security**: Hardcoded credentials/secrets, disabled certificate validation, unsafe deserialization.
+- **Anything else**: If something reads as logically inconsistent, fragile, or surprising and it doesn't fit any domain above, report it anyway under "Other."
 
 **Output format:**
 - Group findings by severity: **Critical / High / Medium / Low**.
-- For each finding: file + line reference, what's wrong, why it matters, and a suggested fix.
+- For each finding: file + line reference, the exact failure mechanism, why it matters, and a suggested fix.
 - End with a short summary count by severity.
 
 ## 5. Theme Rules

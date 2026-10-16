@@ -2967,14 +2967,22 @@ def validate_cartoon_number(new_sn: str) -> tuple[bool, str]:
         return False, "Please enter a valid numeric cartoon number."
 
 
-def calculate_need_print(opening: float, closing: float, cash_in: float, cash_out: float) -> str:
-    """Return 'Yes' if abs(val) > 100,000 for any of [Opening, Closing, CashInFlow, CashOutFlow, Total Transactions].
+def calculate_need_print(opening: float = 0.0, closing: float = 0.0,
+                         cash_in: float = 0.0, cash_out: float = 0.0,
+                         debit_totals: float = 0.0, credit_totals: float = 0.0) -> str:
+    """Return 'Yes' if abs(val) > 100,000 for any of [Opening, Closing, CashInFlow, CashOutFlow, Debit_Totals, Credit_Totals].
     
     100,000 -> 'No'
     100,001 -> 'Yes'
     """
-    total_tx = abs(cash_in or 0) + abs(cash_out or 0)
-    values = [abs(opening or 0), abs(closing or 0), abs(cash_in or 0), abs(cash_out or 0), total_tx]
+    values = [
+        abs(opening or 0),
+        abs(closing or 0),
+        abs(cash_in or 0),
+        abs(cash_out or 0),
+        abs(debit_totals or 0),
+        abs(credit_totals or 0)
+    ]
     if any(v > 100000.0 for v in values):
         return "Yes"
     return "No"
@@ -3034,7 +3042,9 @@ def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str = "
                 ISNULL(c.sn, '') AS sn,
                 ISNULL(r.Alias, '') AS Alias,
                 ISNULL(r.[Pan_No.], '') AS pan_no,
-                ISNULL(r.Sub_Group, '') AS sub_group
+                ISNULL(r.Sub_Group, '') AS sub_group,
+                ISNULL(r.Debit_Totals, 0.0) AS debit_totals,
+                ISNULL(r.Credit_Totals, 0.0) AS credit_totals
             FROM dbo.vat_row_ledger_data r
             LEFT JOIN dbo.vat_conf_data c 
                 ON c.vat_company = r.vat_company 
@@ -3076,6 +3086,8 @@ def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str = "
             cl_amt = None if (cl_raw is None or (isinstance(cl_raw, float) and cl_raw != cl_raw)) else (0.0 if abs(float(cl_raw)) < 1e-9 else float(cl_raw))
             c_in = 0.0 if (r[3] is None or (isinstance(r[3], float) and r[3] != r[3])) else (0.0 if abs(float(r[3])) < 1e-9 else float(r[3]))
             c_out = 0.0 if (r[4] is None or (isinstance(r[4], float) and r[4] != r[4])) else (0.0 if abs(float(r[4])) < 1e-9 else float(r[4]))
+            deb_tot = 0.0 if (len(r) <= 14 or r[14] is None or (isinstance(r[14], float) and r[14] != r[14])) else (0.0 if abs(float(r[14])) < 1e-9 else float(r[14]))
+            cred_tot = 0.0 if (len(r) <= 15 or r[15] is None or (isinstance(r[15], float) and r[15] != r[15])) else (0.0 if abs(float(r[15])) < 1e-9 else float(r[15]))
 
             exp_op = r[8].strip() if r[8] else ""
             exp_cl = r[9].strip() if r[9] else ""
@@ -3097,7 +3109,14 @@ def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str = "
             # Use saved SN if user edited it; otherwise use generated cartoon number
             final_sn = saved_sn if saved_sn else (cns[idx] if idx < len(cns) else str(idx + 1))
 
-            need_print = calculate_need_print(op_amt or 0.0, cl_amt or 0.0, c_in, c_out)
+            need_print = calculate_need_print(
+                opening=op_amt or 0.0,
+                closing=cl_amt or 0.0,
+                cash_in=c_in,
+                cash_out=c_out,
+                debit_totals=deb_tot,
+                credit_totals=cred_tot
+            )
 
             # Dynamic Did You Print: saved edit > ("No Need" if need_print == "No" else "")
             saved_did_print = r[5].strip() if r[5] else ""
@@ -3129,6 +3148,8 @@ def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str = "
                 "closing_amount": cl_amt,
                 "cash_in": c_in,
                 "cash_out": c_out,
+                "debit_totals": deb_tot,
+                "credit_totals": cred_tot,
                 "need_print": need_print,
                 "need_confirmation": need_print,
                 "did_you_print": did_print,

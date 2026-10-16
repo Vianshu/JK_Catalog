@@ -3,7 +3,7 @@ import json
 import pyodbc
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, 
-    QHeaderView, QMessageBox, QLabel, QLineEdit, QFrame
+    QHeaderView, QMessageBox, QLabel, QLineEdit, QFrame, QAbstractItemView
 )
 from PyQt6.QtCore import Qt, QEvent
 from src.logic.db_manager import get_db_manager, DB_SUPER, build_shared_db_name
@@ -20,7 +20,20 @@ class SuperMasterUI(ExcelTableMixin, QWidget):
         self.data_path = ""  # Set when company is loaded
         self.company_path = ""
         self._super_db = ""  # Set by setup_db() with path-aware name
+        self._can_edit = True
         self.init_ui()
+
+    def apply_edit_mode(self, can_edit: bool):
+        self._can_edit = can_edit
+        if hasattr(self, 'table'):
+            if can_edit:
+                self.table.setEditTriggers(
+                    QAbstractItemView.EditTrigger.DoubleClicked |
+                    QAbstractItemView.EditTrigger.AnyKeyPressed |
+                    QAbstractItemView.EditTrigger.EditKeyPressed
+                )
+            else:
+                self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
 
     def setup_db(self):
         """Create super_master table in SQL Server."""
@@ -126,6 +139,7 @@ class SuperMasterUI(ExcelTableMixin, QWidget):
 
     def sync_all_to_db(self):
         """Sync all table rows to SQL Server using MERGE (upsert)."""
+        if not getattr(self, '_can_edit', True): return
         if not self._super_db:
             return  # setup_db hasn't run yet
         try:
@@ -159,6 +173,7 @@ class SuperMasterUI(ExcelTableMixin, QWidget):
 
     def save_single_row_to_db(self, row):
         """Save a single row to SQL Server using MERGE (upsert)."""
+        if not getattr(self, '_can_edit', True): return
         try:
             conn = self.db.get_connection(self._super_db)
             if not conn:
@@ -186,6 +201,7 @@ class SuperMasterUI(ExcelTableMixin, QWidget):
             logger.error(f"SuperMaster save_single_row error: {e}")
 
     def on_item_changed(self, item):
+        if not getattr(self, '_can_edit', True): return
         if item.column() == 0: return
         row = item.row()
         col = item.column()

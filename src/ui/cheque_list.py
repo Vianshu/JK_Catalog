@@ -194,6 +194,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
         self.name_to_guid = {}         # canonical_name (lower) -> GUID
         self.bref_to_name = {}         # bank_ref UUID -> bank display name
         self.bank_name_to_ref = {}     # bank display name (lower) -> bank_ref UUID
+        self._can_edit = True
         # _is_edit_mode is initialised by ExcelTableMixin._init_excel_table()
         self.columns = [
             "S.N", "Date", "Party Name", "Bank",
@@ -392,9 +393,30 @@ class ChequeListUI(ExcelTableMixin, QWidget):
             name = name.replace(w, "")
         return "".join(ch for ch in name if ch.isalpha() or ch == " ").strip()
 
+    def apply_edit_mode(self, can_edit: bool):
+        self._can_edit = can_edit
+        if hasattr(self, 'table'):
+            if can_edit:
+                self.table.setEditTriggers(
+                    QAbstractItemView.EditTrigger.DoubleClicked |
+                    QAbstractItemView.EditTrigger.AnyKeyPressed |
+                    QAbstractItemView.EditTrigger.EditKeyPressed
+                )
+            else:
+                self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        if hasattr(self, 'bank_table'):
+            if can_edit:
+                self.bank_table.setEditTriggers(
+                    QAbstractItemView.EditTrigger.DoubleClicked |
+                    QAbstractItemView.EditTrigger.EditKeyPressed
+                )
+            else:
+                self.bank_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+
     def is_similar_bank(self, a: str, b: str, threshold=0.85) -> bool:
         return SequenceMatcher(None, a, b).ratio() >= threshold
     def on_item_changed(self, item):
+        if not getattr(self, '_can_edit', True): return
         if self.table.signalsBlocked(): return
         
         col = item.column()
@@ -504,6 +526,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
     
     # ================= DB =================
     def save_cheques_to_db(self):
+        if not getattr(self, '_can_edit', True): return
         if not self.cheque_db_name: return
         conn = self.db.get_connection(self.cheque_db_name)
         if not conn: return
@@ -545,6 +568,7 @@ class ChequeListUI(ExcelTableMixin, QWidget):
 
     # ================= BANK LIST =================
     def handle_bank_change(self, item):
+        if not getattr(self, '_can_edit', True): return
         if item.column() != 1: return
 
         total_row_idx = self.bank_table.rowCount() - 1

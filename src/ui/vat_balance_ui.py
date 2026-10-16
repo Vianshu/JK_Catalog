@@ -281,6 +281,284 @@ class LedgerColumnSettingsDialog(QDialog):
         return selected
 
 
+VAT_CONF_DEBTOR_COLUMNS = [
+    ("sn", "SN.", True),
+    ("name", "Name", True),
+    ("pan_no", "Pan No.", True),
+    ("alias", "Alias", True),
+    ("opening_amount", "Opening Amount", True),
+    ("debit_totals", "Debit Total", False),
+    ("credit_totals", "Credit Total", False),
+    ("cash_in", "Cash Inflow", False),
+    ("cash_out", "Cash Outflow", False),
+    ("closing_amount", "Closing Amount", True),
+    ("need_print", "Need Print ?", True),
+    ("did_you_print", "Did You Print", True),
+    ("sub_group", "Sub Group", True),
+    ("crm", "CRM", True),
+    ("get_back", "Get Back", True),
+    ("expected_opening", "Opening ?", True),
+    ("expected_closing", "Closing ?", True),
+]
+
+
+class VatConfColumnSettingsDialog(QDialog):
+    """Allows user to select which columns to display in the VAT Conf Debtor table."""
+
+    def __init__(self, current_visible: set, on_autofit_callback=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Configure Visible Columns")
+        self.setMinimumWidth(380)
+        self.on_autofit_callback = on_autofit_callback
+        self.setStyleSheet("""
+            QDialog { background: #ffffff; }
+            QLabel { font-size: 13px; color: #0f172a; }
+            QCheckBox { font-size: 12px; color: #334155; padding: 4px 0; }
+            QCheckBox:hover { color: #059669; }
+            QPushButton {
+                font-size: 12px; font-weight: 600; border-radius: 4px; padding: 6px 14px;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        title = QLabel("Select Columns to Display:")
+        title.setStyleSheet("font-weight: bold; font-size: 14px; color: #0f172a;")
+        layout.addWidget(title)
+
+        # Quick preset buttons
+        preset_bar = QHBoxLayout()
+        btn_preset_def = QPushButton("Default View")
+        btn_preset_def.setStyleSheet("background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1;")
+        btn_preset_fin = QPushButton("Show Financials")
+        btn_preset_fin.setStyleSheet("background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1;")
+        btn_preset_all = QPushButton("Show All")
+        btn_preset_all.setStyleSheet("background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1;")
+        preset_bar.addWidget(btn_preset_def)
+        preset_bar.addWidget(btn_preset_fin)
+        preset_bar.addWidget(btn_preset_all)
+        preset_bar.addStretch()
+        layout.addLayout(preset_bar)
+
+        # Scroll area with checkboxes
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: 1px solid #e2e8f0; border-radius: 4px; }")
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setSpacing(6)
+
+        self.checkboxes = {}
+        for col_key, col_title, _ in VAT_CONF_DEBTOR_COLUMNS:
+            cb = QCheckBox(col_title)
+            cb.setChecked(col_key in current_visible)
+            if col_key == "name":
+                cb.setChecked(True)
+                cb.setEnabled(False)
+            self.checkboxes[col_key] = cb
+            scroll_layout.addWidget(cb)
+
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        layout.addWidget(scroll, stretch=1)
+
+        # Bottom buttons: Auto-fit, Cancel, Save
+        btn_box = QHBoxLayout()
+        btn_autofit = QPushButton("Auto-Fit Widths")
+        btn_autofit.setStyleSheet("background: #f8fafc; color: #0284c7; border: 1px solid #bae6fd;")
+        btn_autofit.clicked.connect(self._do_autofit)
+        btn_box.addWidget(btn_autofit)
+        btn_box.addStretch()
+
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.setStyleSheet("background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1;")
+        btn_cancel.clicked.connect(self.reject)
+        btn_box.addWidget(btn_cancel)
+
+        btn_save = QPushButton("Apply")
+        btn_save.setStyleSheet("background: #059669; color: white; border: none;")
+        btn_save.clicked.connect(self.accept)
+        btn_box.addWidget(btn_save)
+
+        layout.addLayout(btn_box)
+
+        btn_preset_def.clicked.connect(self._select_default)
+        btn_preset_fin.clicked.connect(self._select_financials)
+        btn_preset_all.clicked.connect(self._select_all)
+
+    def _select_default(self):
+        for col_key, _, def_vis in VAT_CONF_DEBTOR_COLUMNS:
+            if col_key in self.checkboxes:
+                self.checkboxes[col_key].setChecked(def_vis)
+        self.checkboxes["name"].setChecked(True)
+
+    def _select_financials(self):
+        fin_keys = {"opening_amount", "debit_totals", "credit_totals", "cash_in", "cash_out", "closing_amount"}
+        for col_key, cb in self.checkboxes.items():
+            if col_key in fin_keys or col_key in ("sn", "name", "need_print"):
+                cb.setChecked(True)
+
+    def _select_all(self):
+        for cb in self.checkboxes.values():
+            cb.setChecked(True)
+
+    def _do_autofit(self):
+        if callable(self.on_autofit_callback):
+            self.on_autofit_callback()
+
+    def get_selected_columns(self) -> set:
+        selected = {k for k, cb in self.checkboxes.items() if cb.isChecked()}
+        selected.add("name")
+        return selected
+
+
+class CreditorSubgroupDialog(QDialog):
+    """Clean multi-select dialog for Creditor Sub Groups with live search, checkboxes, and extra addition."""
+
+    def __init__(self, available_subgroups: list[str], selected_subgroups: set, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Creditor Sub Groups")
+        self.resize(440, 500)
+        self.setMinimumSize(380, 420)
+        self.setStyleSheet("""
+            QDialog { background: #ffffff; }
+            QLabel { font-size: 13px; color: #0f172a; }
+            QLineEdit {
+                border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff;
+                padding: 6px 10px; font-size: 12px; color: #0f172a;
+            }
+            QLineEdit:focus { border: 1px solid #059669; }
+            QCheckBox { font-size: 12px; color: #334155; padding: 4px 0; }
+            QCheckBox:hover { color: #059669; }
+            QPushButton {
+                font-size: 12px; font-weight: 600; border-radius: 4px; padding: 6px 14px;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        title = QLabel("Filter Creditor Ledgers by Sub Group:")
+        title.setStyleSheet("font-weight: bold; font-size: 14px; color: #0f172a;")
+        layout.addWidget(title)
+
+        # Search Bar
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("Search sub groups...")
+        self.search_box.setClearButtonEnabled(True)
+        self.search_box.textChanged.connect(self._filter_items)
+        layout.addWidget(self.search_box)
+
+        # Quick preset buttons
+        preset_bar = QHBoxLayout()
+        btn_sel_all = QPushButton("Select All")
+        btn_sel_all.setStyleSheet("background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1;")
+        btn_clear = QPushButton("Clear All")
+        btn_clear.setStyleSheet("background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1;")
+        preset_bar.addWidget(btn_sel_all)
+        preset_bar.addWidget(btn_clear)
+        preset_bar.addStretch()
+        layout.addLayout(preset_bar)
+
+        # Scroll Area for checkable sub groups
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: 1px solid #e2e8f0; border-radius: 4px; }")
+        self.scroll_content = QWidget()
+        self.scroll_layout = QVBoxLayout(self.scroll_content)
+        self.scroll_layout.setSpacing(4)
+        self.scroll_layout.setContentsMargins(8, 8, 8, 8)
+
+        self.checkboxes = {}
+        all_sgs = list(available_subgroups)
+        for s in selected_subgroups:
+            if s and s not in all_sgs:
+                all_sgs.append(s)
+        all_sgs.sort(key=lambda x: x.lower())
+
+        sel_lower = {x.lower() for x in selected_subgroups if x}
+        for sg in all_sgs:
+            self._add_checkbox(sg, checked=(sg.lower() in sel_lower))
+
+        self.scroll_layout.addStretch()
+        scroll.setWidget(self.scroll_content)
+        layout.addWidget(scroll, stretch=1)
+
+        # Add Extra Custom Sub Group
+        extra_layout = QHBoxLayout()
+        self.extra_input = QLineEdit()
+        self.extra_input.setPlaceholderText("Add extra sub group name...")
+        btn_add = QPushButton("Add")
+        btn_add.setStyleSheet("""
+            QPushButton {
+                background: #059669; color: white; font-weight: 600; padding: 6px 14px; border: none;
+            }
+            QPushButton:hover { background: #047857; }
+        """)
+        btn_add.clicked.connect(self._add_custom_subgroup)
+        self.extra_input.returnPressed.connect(self._add_custom_subgroup)
+        extra_layout.addWidget(self.extra_input, stretch=1)
+        extra_layout.addWidget(btn_add)
+        layout.addLayout(extra_layout)
+
+        # Bottom Buttons
+        btn_box = QHBoxLayout()
+        btn_box.addStretch()
+
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.setStyleSheet("background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1;")
+        btn_cancel.clicked.connect(self.reject)
+        btn_box.addWidget(btn_cancel)
+
+        btn_apply = QPushButton("Apply Filter")
+        btn_apply.setStyleSheet("background: #059669; color: white; border: none;")
+        btn_apply.clicked.connect(self.accept)
+        btn_box.addWidget(btn_apply)
+
+        layout.addLayout(btn_box)
+
+        btn_sel_all.clicked.connect(self._select_all)
+        btn_clear.clicked.connect(self._clear_all)
+
+    def _add_checkbox(self, sg: str, checked: bool = False):
+        if sg in self.checkboxes:
+            self.checkboxes[sg].setChecked(checked)
+            return
+        cb = QCheckBox(sg)
+        cb.setChecked(checked)
+        self.checkboxes[sg] = cb
+        idx = max(0, self.scroll_layout.count() - 1)
+        self.scroll_layout.insertWidget(idx, cb)
+
+    def _add_custom_subgroup(self):
+        text = self.extra_input.text().strip()
+        if not text:
+            return
+        self._add_checkbox(text, checked=True)
+        self.extra_input.clear()
+
+    def _filter_items(self, text: str):
+        q = (text or "").strip().lower()
+        for sg, cb in self.checkboxes.items():
+            match = not q or q in sg.lower()
+            cb.setVisible(match)
+
+    def _select_all(self):
+        for cb in self.checkboxes.values():
+            if cb.isVisible():
+                cb.setChecked(True)
+
+    def _clear_all(self):
+        for cb in self.checkboxes.values():
+            cb.setChecked(False)
+
+    def get_selected_subgroups(self) -> set:
+        return {sg for sg, cb in self.checkboxes.items() if cb.isChecked()}
+
+
 class AdminPasswordConfirmDialog(QDialog):
     """Confirmation dialog requiring admin password before proceeding with sensitive actions like Clear Mapping."""
 
@@ -792,7 +1070,7 @@ class WordWrapHeaderView(QHeaderView):
             val = model.headerData(logicalIndex, self.orientation(), Qt.ItemDataRole.DisplayRole)
             if val:
                 text_rect = rect.adjusted(4, 2, -4, -2)
-                painter.setPen(QColor("#0f172a"))
+                painter.setPen(QColor("#ffffff"))
                 font = self.font()
                 font.setBold(True)
                 painter.setFont(font)
@@ -2260,7 +2538,7 @@ class BalanceUI(QWidget):
         self.debtor_search.setFixedWidth(240)
         self.debtor_search.textChanged.connect(lambda txt: self._filter_conf_table(self.debtor_table, txt))
 
-        self.btn_crm_mapping = QPushButton("🔗 CRM Mapping")
+        self.btn_crm_mapping = QPushButton("CRM Mapping")
         self.btn_crm_mapping.setStyleSheet("""
             QPushButton {
                 background: #059669; color: white; font-weight: 600; font-size: 11px;
@@ -2270,7 +2548,17 @@ class BalanceUI(QWidget):
         """)
         self.btn_crm_mapping.clicked.connect(self._open_crm_mapping_dialog)
 
-        self.btn_toggle_debtor_alias = QPushButton("👁️ Hide Alias")
+        self.btn_debtor_columns = QPushButton("Columns")
+        self.btn_debtor_columns.setStyleSheet("""
+            QPushButton {
+                background: #f1f5f9; color: #334155; font-weight: 600; font-size: 12px;
+                padding: 5px 12px; border-radius: 4px; border: 1px solid #cbd5e1;
+            }
+            QPushButton:hover { background: #e2e8f0; }
+        """)
+        self.btn_debtor_columns.clicked.connect(self._open_debtor_columns_dialog)
+
+        self.btn_toggle_debtor_alias = QPushButton("Hide Alias")
         self.btn_toggle_debtor_alias.setStyleSheet("""
             QPushButton {
                 background: #f1f5f9; color: #334155; font-weight: 600; font-size: 12px;
@@ -2285,6 +2573,7 @@ class BalanceUI(QWidget):
         top_bar.addWidget(self.lbl_debtor_count)
         top_bar.addStretch()
         top_bar.addWidget(self.btn_crm_mapping)
+        top_bar.addWidget(self.btn_debtor_columns)
         top_bar.addWidget(self.debtor_search)
         top_bar.addWidget(self.btn_toggle_debtor_alias)
         vbox.addLayout(top_bar)
@@ -2333,51 +2622,56 @@ class BalanceUI(QWidget):
         lbl.setStyleSheet("font-weight: bold; font-size: 14px; color: #0f172a;")
 
         self.lbl_creditor_count = QLabel("")
+        self.lbl_creditor_count = QLabel("")
         self.lbl_creditor_count.setStyleSheet(
             "font-size: 12px; font-weight: 600; color: #475569; "
             "padding: 3px 10px; background: #f8fafc; border-radius: 4px; border: 1px solid #cbd5e1;"
         )
 
-        lbl_sg = QLabel("Sub Groups:")
-        lbl_sg.setStyleSheet("font-size: 12px; font-weight: 600; color: #334155;")
-
-        self.creditor_subgroup_edit = QLineEdit()
-        self.creditor_subgroup_edit.setPlaceholderText("Enter 3–4 Sub Groups (comma-separated)...")
-        self.creditor_subgroup_edit.setClearButtonEnabled(True)
-        self.creditor_subgroup_edit.setFixedWidth(280)
-        # Restore persisted subgroups from QSettings
-        settings = QSettings("JKCatalog", "VatConfCreditorSubgroups")
-        saved_sg = settings.value("subgroups", "")
-        if saved_sg:
-            self.creditor_subgroup_edit.setText(str(saved_sg))
-        self.creditor_subgroup_edit.textChanged.connect(lambda _t: self._apply_creditor_filters())
-
-        self.btn_creditor_subgroups = QPushButton("📋 Select Sub Groups")
+        self.btn_creditor_subgroups = QPushButton("Select Sub Groups")
         self.btn_creditor_subgroups.setStyleSheet("""
             QPushButton {
                 background: #f1f5f9; color: #334155; font-weight: 600; font-size: 12px;
-                padding: 5px 12px; border-radius: 4px; border: 1px solid #cbd5e1;
+                padding: 5px 14px; border-radius: 4px; border: 1px solid #cbd5e1;
             }
             QPushButton:hover { background: #e2e8f0; }
         """)
-        self.btn_creditor_subgroups.clicked.connect(self._show_creditor_subgroups_menu)
+        self.btn_creditor_subgroups.clicked.connect(self._open_creditor_subgroups_dialog)
+
+        self.lbl_creditor_subgroup_summary = QLabel("All Sub Groups")
+        self.lbl_creditor_subgroup_summary.setStyleSheet(
+            "font-size: 11px; color: #059669; font-weight: 600; padding: 2px 6px;"
+        )
+
+        self.btn_clear_creditor_subgroups = QPushButton("Clear")
+        self.btn_clear_creditor_subgroups.setStyleSheet("""
+            QPushButton {
+                background: transparent; color: #ef4444; font-size: 11px; font-weight: 600;
+                padding: 2px 6px; border: none; text-decoration: underline;
+            }
+            QPushButton:hover { color: #dc2626; }
+        """)
+        self.btn_clear_creditor_subgroups.clicked.connect(self._clear_creditor_subgroups)
+        self.btn_clear_creditor_subgroups.setVisible(False)
 
         self.creditor_search = QLineEdit()
         self.creditor_search.setPlaceholderText("Search all columns...")
         self.creditor_search.setClearButtonEnabled(True)
-        self.creditor_search.setFixedWidth(200)
+        self.creditor_search.setFixedWidth(220)
         self.creditor_search.textChanged.connect(lambda _t: self._apply_creditor_filters())
 
         top_bar.addWidget(lbl)
         top_bar.addSpacing(6)
         top_bar.addWidget(self.lbl_creditor_count)
-        top_bar.addSpacing(14)
-        top_bar.addWidget(lbl_sg)
-        top_bar.addWidget(self.creditor_subgroup_edit)
+        top_bar.addSpacing(12)
         top_bar.addWidget(self.btn_creditor_subgroups)
+        top_bar.addWidget(self.lbl_creditor_subgroup_summary)
+        top_bar.addWidget(self.btn_clear_creditor_subgroups)
         top_bar.addStretch()
         top_bar.addWidget(self.creditor_search)
         vbox.addLayout(top_bar)
+
+        self._update_creditor_subgroup_button()
 
         self.creditor_table = self._build_creditor_table()
 
@@ -2447,63 +2741,83 @@ class BalanceUI(QWidget):
         tbl.itemChanged.connect(lambda item, t=tbl: self._on_creditor_item_changed(item, t))
         return tbl
 
-    def _show_creditor_subgroups_menu(self):
-        """Show checkable popup menu with unique creditor Sub Groups from DB."""
+    def get_creditor_selected_subgroups(self) -> set:
+        s = QSettings("JKCatalog", "VatConfCreditorSubgroups")
+        val = s.value("subgroups", "")
+        if not val:
+            return set()
+        if isinstance(val, str):
+            # Support both old comma-separated and new ||-separated format
+            parts = val.split("||") if "||" in val else val.split(",")
+            return {x.strip() for x in parts if x.strip()}
+        if isinstance(val, (list, set)):
+            return {str(x).strip() for x in val if str(x).strip()}
+        return set()
+
+    def save_creditor_selected_subgroups(self, sgs: set):
+        s = QSettings("JKCatalog", "VatConfCreditorSubgroups")
+        s.setValue("subgroups", "||".join(sorted(sgs)))
+
+    def _update_creditor_subgroup_button(self):
+        selected = self.get_creditor_selected_subgroups()
+        if hasattr(self, 'btn_creditor_subgroups'):
+            if selected:
+                cnt = len(selected)
+                self.btn_creditor_subgroups.setText(f"Sub Groups ({cnt})")
+                names_preview = ", ".join(sorted(selected))
+                if len(names_preview) > 35:
+                    names_preview = names_preview[:32] + "..."
+                if hasattr(self, 'lbl_creditor_subgroup_summary'):
+                    self.lbl_creditor_subgroup_summary.setText(f"Active: {names_preview}")
+                if hasattr(self, 'btn_clear_creditor_subgroups'):
+                    self.btn_clear_creditor_subgroups.setVisible(True)
+            else:
+                self.btn_creditor_subgroups.setText("Select Sub Groups")
+                if hasattr(self, 'lbl_creditor_subgroup_summary'):
+                    self.lbl_creditor_subgroup_summary.setText("All Sub Groups")
+                if hasattr(self, 'btn_clear_creditor_subgroups'):
+                    self.btn_clear_creditor_subgroups.setVisible(False)
+
+    def _clear_creditor_subgroups(self):
+        self.save_creditor_selected_subgroups(set())
+        self._update_creditor_subgroup_button()
+        self._apply_creditor_filters()
+
+    def _open_creditor_subgroups_dialog(self):
         if not self.db_name or not self.active_vat_company:
             QMessageBox.information(self, "No Active VAT Company", "Please select an active VAT Company first.")
             return
 
-        subgroups = get_unique_vat_creditor_subgroups(self.db_name, self.active_vat_company)
-        if not subgroups:
-            QMessageBox.information(self, "No Sub Groups", "No Sub Groups found for Sundry Creditors in this VAT Company.")
-            return
+        available_subgroups = get_unique_vat_creditor_subgroups(self.db_name, self.active_vat_company)
+        current_selected = self.get_creditor_selected_subgroups()
 
-        menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #ffffff; border: 1px solid #cbd5e1;
-                border-radius: 6px; padding: 4px;
-            }
-            QMenu::item {
-                padding: 6px 24px 6px 12px; font-size: 12px; color: #1e293b;
-            }
-            QMenu::item:selected {
-                background-color: #f1f5f9; color: #0f172a; border-radius: 4px;
-            }
-        """)
-
-        cur_text = self.creditor_subgroup_edit.text().strip()
-        cur_selected = [s.strip().lower() for s in re.split(r'[,;]+', cur_text) if s.strip()]
-
-        actions = []
-        for sg in subgroups:
-            act = menu.addAction(sg)
-            act.setCheckable(True)
-            act.setChecked(sg.lower() in cur_selected)
-            actions.append((sg, act))
-
-        menu.addSeparator()
-        act_clear = menu.addAction("Clear All")
-
-        chosen = menu.exec(QCursor.pos())
-        if chosen == act_clear:
-            self.creditor_subgroup_edit.setText("")
-        elif chosen is not None:
-            checked_sgs = [sg for sg, act in actions if act.isChecked()]
-            self.creditor_subgroup_edit.setText(", ".join(checked_sgs))
+        dlg = CreditorSubgroupDialog(
+            available_subgroups=available_subgroups,
+            selected_subgroups=current_selected,
+            parent=self
+        )
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            new_selected = dlg.get_selected_subgroups()
+            self.save_creditor_selected_subgroups(new_selected)
+            self._update_creditor_subgroup_button()
+            self._apply_creditor_filters()
 
     def _apply_creditor_filters(self):
-        """Filter Creditor table by entered Sub Groups and search query."""
+        """Filter Creditor table by selected Sub Groups and search query."""
         tbl = getattr(self, 'creditor_table', None)
         if not tbl:
             return
 
-        sg_text = self.creditor_subgroup_edit.text().strip() if hasattr(self, 'creditor_subgroup_edit') else ""
-        QSettings("JKCatalog", "VatConfCreditorSubgroups").setValue("subgroups", sg_text)
-        sg_tokens = [tok.strip().lower() for tok in re.split(r'[,;]+', sg_text) if tok.strip()]
+        selected_sgs = self.get_creditor_selected_subgroups()
+        sg_tokens = [s.strip().lower() for s in selected_sgs if s.strip()]
+
+        def _clean_alnum(s: str) -> str:
+            return re.sub(r'[^a-z0-9]', '', (s or "").lower())
 
         search_query = self.creditor_search.text().strip().lower() if hasattr(self, 'creditor_search') else ""
         search_tokens = search_query.split() if search_query else []
+        norm_search_q = _clean_alnum(search_query)
+        norm_search_tokens = [_clean_alnum(t) for t in search_tokens if _clean_alnum(t)]
 
         total_rows = tbl.rowCount()
         visible_count = 0
@@ -2545,15 +2859,18 @@ class BalanceUI(QWidget):
                                 row_words.extend(u_str.split())
 
                 full_row_str = " ".join(full_cell_strings)
+                norm_full_row = _clean_alnum(full_row_str)
 
-                # Tier 1: Substring match
-                if search_query in full_row_str:
+                # Tier 1: Substring match (raw or normalized alphanumeric)
+                if search_query in full_row_str or (norm_search_q and norm_search_q in norm_full_row):
                     tbl.setRowHidden(r, False)
                     visible_count += 1
                     continue
 
-                # Tier 2: All tokens present in row
-                if all(tok in full_row_str for tok in search_tokens):
+                # Tier 2: All tokens present in row (raw or normalized alphanumeric)
+                if all(tok in full_row_str for tok in search_tokens) or (
+                    norm_search_tokens and all(nt in norm_full_row for nt in norm_search_tokens)
+                ):
                     tbl.setRowHidden(r, False)
                     visible_count += 1
                     continue
@@ -2562,9 +2879,10 @@ class BalanceUI(QWidget):
                 is_fuzzy_match = True
                 for tok in search_tokens:
                     tok_len = len(tok)
+                    tok_alnum = _clean_alnum(tok)
                     token_matched = False
                     for w in row_words:
-                        if tok in w or w in tok:
+                        if tok in w or (tok_alnum and tok_alnum in _clean_alnum(w)):
                             token_matched = True
                             break
                         if tok_len >= 3 and abs(tok_len - len(w)) <= 3:
@@ -2660,10 +2978,12 @@ class BalanceUI(QWidget):
                 need_conf = r.get("need_confirmation") or r.get("need_print")
                 if not need_conf:
                     need_conf = calculate_need_print(
-                        f_op if not is_op_blank else 0.0,
-                        f_cl if not is_cl_blank else 0.0,
-                        r.get("cash_in", 0.0),
-                        r.get("cash_out", 0.0)
+                        opening=f_op if not is_op_blank else 0.0,
+                        closing=f_cl if not is_cl_blank else 0.0,
+                        cash_in=r.get("cash_in", 0.0),
+                        cash_out=r.get("cash_out", 0.0),
+                        debit_totals=r.get("debit_totals", 0.0),
+                        credit_totals=r.get("credit_totals", 0.0),
                     )
                 it_nc = YesNoTableWidgetItem(need_conf)
                 it_nc.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -2802,13 +3122,19 @@ class BalanceUI(QWidget):
             self._update_creditor_row_style(tbl, row)
 
     def _filter_conf_table(self, tbl: QTableWidget, query: str):
-        """Multi-column search across all columns with multi-token and fuzzy matching."""
+        """Multi-column search across all columns with multi-token, alphanumeric normalization, and fuzzy matching."""
         q = (query or "").strip().lower()
         if not q:
             for r in range(tbl.rowCount()):
                 tbl.setRowHidden(r, False)
         else:
             tokens = q.split()
+            def _clean_alnum(s: str) -> str:
+                return re.sub(r'[^a-z0-9]', '', (s or "").lower())
+
+            norm_q = _clean_alnum(q)
+            norm_tokens = [_clean_alnum(t) for t in tokens if _clean_alnum(t)]
+
             for r in range(tbl.rowCount()):
                 row_words = []
                 full_cell_strings = []
@@ -2830,14 +3156,17 @@ class BalanceUI(QWidget):
                                 row_words.extend(u_str.split())
 
                 full_row_str = " ".join(full_cell_strings)
+                norm_full_row = _clean_alnum(full_row_str)
 
-                # Tier 1: Substring match
-                if q in full_row_str:
+                # Tier 1: Substring match (raw or normalized alphanumeric)
+                if q in full_row_str or (norm_q and norm_q in norm_full_row):
                     tbl.setRowHidden(r, False)
                     continue
 
-                # Tier 2: All tokens present in row
-                if all(tok in full_row_str for tok in tokens):
+                # Tier 2: All tokens present in row (raw or normalized alphanumeric)
+                if all(tok in full_row_str for tok in tokens) or (
+                    norm_tokens and all(nt in norm_full_row for nt in norm_tokens)
+                ):
                     tbl.setRowHidden(r, False)
                     continue
 
@@ -2845,9 +3174,13 @@ class BalanceUI(QWidget):
                 is_fuzzy_match = True
                 for tok in tokens:
                     tok_len = len(tok)
+                    tok_alnum = _clean_alnum(tok)
                     token_matched = False
                     for w in row_words:
-                        if tok in w or w in tok:
+                        if tok in w:
+                            token_matched = True
+                            break
+                        if tok_alnum and tok_alnum in _clean_alnum(w):
                             token_matched = True
                             break
                         if tok_len >= 3 and abs(tok_len - len(w)) <= 3:
@@ -2864,37 +3197,99 @@ class BalanceUI(QWidget):
         if tbl == getattr(self, 'debtor_table', None) and hasattr(self, 'debtor_footer'):
             self._update_conf_totals(self.debtor_table, self.debtor_footer, getattr(self, 'lbl_debtor_count', None))
 
-    def _auto_fit_conf_columns(self, tbl: QTableWidget):
-        """Auto-adjust column widths to fit content while respecting readable min bounds."""
-        min_widths = {
-            "sn.": 55,
-            "name": 220,
-            "pan no.": 110,
-            "alias": 110,
-            "opening amount": 120,
-            "closing amount": 120,
-            "need print ?": 95,
-            "did you print": 95,
-            "sub group": 140,
-            "crm": 130,
-            "get back": 85,
-            "opening ?": 105,
-            "closing ?": 105,
-            "ledger name": 240,
-            "opening": 120,
-            "closing": 120,
-            "need confirmation": 115,
-            "get confirmation": 115,
-            "his opening": 120,
-            "his closing": 120,
-        }
-        tbl.resizeColumnsToContents()
-        for c in range(tbl.columnCount()):
-            hi = tbl.horizontalHeaderItem(c)
-            ht = hi.text().strip().lower() if hi else ""
-            min_w = min_widths.get(ht, 80)
-            cw = tbl.columnWidth(c)
-            tbl.setColumnWidth(c, max(cw + 14, min_w))
+    MAX_CONF_COLUMN_WIDTHS = {
+        "sn.": 70,
+        "name": 420,
+        "pan no.": 130,
+        "alias": 240,
+        "opening amount": 150,
+        "debit total": 150,
+        "credit total": 150,
+        "cash inflow": 150,
+        "cash outflow": 150,
+        "closing amount": 150,
+        "need print ?": 115,
+        "did you print": 115,
+        "sub group": 260,
+        "crm": 200,
+        "get back": 100,
+        "opening ?": 130,
+        "closing ?": 130,
+        "ledger name": 300,
+        "opening": 150,
+        "closing": 150,
+        "need confirmation": 130,
+        "get confirmation": 130,
+        "his opening": 150,
+        "his closing": 150,
+    }
+
+    def _auto_fit_conf_columns(self, tbl: QTableWidget, force: bool = False):
+        """Real content-aware auto-fit with column header name minimum width and safe maximums."""
+        if not tbl or tbl.columnCount() == 0:
+            return
+
+        # Check for user-persisted widths in QSettings
+        saved_widths = {}
+        s = QSettings("JKCatalog", "VatConfDebtorColumnWidths")
+        if not force:
+            saved_str = str(s.value("widths", "") or "")
+            if saved_str:
+                try:
+                    for part in saved_str.split(";"):
+                        if ":" in part:
+                            k, w = part.split(":", 1)
+                            saved_widths[k.strip().lower()] = int(w.strip())
+                except Exception:
+                    saved_widths = {}
+
+        header = tbl.horizontalHeader()
+        header_fm = header.fontMetrics() if header else tbl.fontMetrics()
+        tbl_fm = tbl.fontMetrics()
+
+        self._is_programmatic_col_resize = True
+        new_widths_to_save = {}
+
+        try:
+            row_limit = min(tbl.rowCount(), 300)
+            for c in range(tbl.columnCount()):
+                hi = tbl.horizontalHeaderItem(c)
+                if not hi:
+                    continue
+                h_text = hi.text().strip()
+                h_key = h_text.lower()
+
+                # Minimum width is width of column name + padding so text never clips
+                header_text_w = header_fm.horizontalAdvance(h_text) + 28
+                min_w = max(header_text_w, 55)
+
+                # Maximum width threshold
+                max_w = self.MAX_CONF_COLUMN_WIDTHS.get(h_key, 280)
+                if max_w < min_w:
+                    max_w = min_w + 40
+
+                if h_key in saved_widths and saved_widths[h_key] > 0:
+                    final_w = max(saved_widths[h_key], min_w)
+                else:
+                    max_content_w = min_w
+                    for r in range(row_limit):
+                        it = tbl.item(r, c)
+                        if it and it.text():
+                            txt = it.text().strip()
+                            txt_w = tbl_fm.horizontalAdvance(txt) + 24
+                            if txt_w > max_content_w:
+                                max_content_w = txt_w
+
+                    final_w = max(min_w, min(max_content_w, max_w))
+
+                tbl.setColumnWidth(c, final_w)
+                new_widths_to_save[h_key] = final_w
+
+            serialized = ";".join(f"{k}:{w}" for k, w in new_widths_to_save.items())
+            s.setValue("widths", serialized)
+
+        finally:
+            self._is_programmatic_col_resize = False
 
     def _build_vat_conf_table(self, group_type: str) -> QTableWidget:
         tbl = VatConfTableWidget()
@@ -2903,8 +3298,12 @@ class BalanceUI(QWidget):
         tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectItems)
         tbl.verticalHeader().setVisible(False)
 
+        wrap_header = WordWrapHeaderView(Qt.Orientation.Horizontal, tbl)
+        tbl.setHorizontalHeader(wrap_header)
+
         headers = [
-            "SN.", "Name", "Pan No.", "Alias", "Opening Amount", "Closing Amount",
+            "SN.", "Name", "Pan No.", "Alias",
+            "Opening Amount", "Debit Total", "Credit Total", "Cash Inflow", "Cash Outflow", "Closing Amount",
             "Need Print ?", "Did You Print", "Sub Group", "CRM", "Get Back",
             "Opening ?", "Closing ?"
         ]
@@ -2923,19 +3322,17 @@ class BalanceUI(QWidget):
                 )
             )
         )
-        tbl.setColumnWidth(0, 55)   # SN.
-        tbl.setColumnWidth(1, 230)  # Name
-        tbl.setColumnWidth(2, 110)  # Pan No.
-        tbl.setColumnWidth(3, 110)  # Alias
-        tbl.setColumnWidth(4, 120)  # Opening Amount
-        tbl.setColumnWidth(5, 120)  # Closing Amount
-        tbl.setColumnWidth(6, 95)   # Need Print ?
-        tbl.setColumnWidth(7, 95)   # Did You Print
-        tbl.setColumnWidth(8, 140)  # Sub Group
-        tbl.setColumnWidth(9, 130)  # CRM
-        tbl.setColumnWidth(10, 85)  # Get Back
-        tbl.setColumnWidth(11, 105) # Opening ?
-        tbl.setColumnWidth(12, 105) # Closing ?
+        if group_type == "Debtor":
+            header.sectionResized.connect(self._on_debtor_header_resized)
+
+        # Baseline starting column widths
+        default_widths = [
+            55, 230, 110, 110, 120, 120, 120, 120, 120, 120,
+            95, 95, 140, 130, 85, 105, 105
+        ]
+        for c, w in enumerate(default_widths):
+            if c < tbl.columnCount():
+                tbl.setColumnWidth(c, w)
 
         tbl.setItemDelegate(
             VatConfDelegate(lambda: load_crm_list(self.current_company_path), tbl)
@@ -2984,7 +3381,7 @@ class BalanceUI(QWidget):
         self.empty_ledger_table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.empty_ledger_table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
 
-        headers = ["Vat Ledger", "From", "Year"]
+        headers = ["Vat Ledger", "From", "To"]
         self.empty_ledger_table.setColumnCount(len(headers))
         self.empty_ledger_table.setHorizontalHeaderLabels(headers)
 
@@ -3077,11 +3474,11 @@ class BalanceUI(QWidget):
             item_from.setFlags(item_from.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.empty_ledger_table.setItem(row, 1, item_from)
 
-            # Col 2: Year (Taken from current company open in Tally)
-            item_year = QTableWidgetItem(year_str)
-            item_year.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            item_year.setFlags(item_year.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.empty_ledger_table.setItem(row, 2, item_year)
+            # Col 2: To (Taken from current company open in Tally)
+            item_to = QTableWidgetItem(year_str)
+            item_to.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_to.setFlags(item_to.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.empty_ledger_table.setItem(row, 2, item_to)
 
         self.empty_ledger_table.setUpdatesEnabled(True)
         self.empty_ledger_table.blockSignals(False)
@@ -3110,14 +3507,14 @@ class BalanceUI(QWidget):
             else:
                 name_item = self.empty_ledger_table.item(r, 0)
                 from_item = self.empty_ledger_table.item(r, 1)
-                year_item = self.empty_ledger_table.item(r, 2)
+                to_item = self.empty_ledger_table.item(r, 2)
 
                 name_txt = (name_item.text() if name_item else "").lower()
                 alias_txt = str(name_item.data(Qt.ItemDataRole.UserRole + 1) or "").lower() if name_item else ""
                 from_txt = (from_item.text() if from_item else "").lower()
-                year_txt = (year_item.text() if year_item else "").lower()
+                to_txt = (to_item.text() if to_item else "").lower()
 
-                match = (q in name_txt) or (q in alias_txt) or (q in from_txt) or (q in year_txt)
+                match = (q in name_txt) or (q in alias_txt) or (q in from_txt) or (q in to_txt)
                 self.empty_ledger_table.setRowHidden(r, not match)
                 if match:
                     visible_count += 1
@@ -3230,6 +3627,7 @@ class BalanceUI(QWidget):
                         self.debtor_table, "Debtor", self._cached_data.get("debtor_conf", [])
                     )
                     self._rendered_tabs.add("debtor_conf")
+                QTimer.singleShot(0, lambda: self._auto_fit_conf_columns(self.debtor_table, force=False))
             elif conf_idx == 1:
                 if "creditor_conf" not in self._rendered_tabs:
                     self._populate_creditor_table_from_data(
@@ -3247,6 +3645,8 @@ class BalanceUI(QWidget):
 
     def _on_conf_tab_changed(self, index: int):
         self._render_current_tab()
+        if index == 0 and hasattr(self, 'debtor_table'):
+            QTimer.singleShot(0, lambda: self._auto_fit_conf_columns(self.debtor_table, force=False))
 
     def _on_load_error(self, msg: str):
         """Handle background load failure gracefully."""
@@ -3515,29 +3915,42 @@ class BalanceUI(QWidget):
             return
 
         col_op = -1
+        col_deb = -1
+        col_cred = -1
+        col_cin = -1
+        col_cout = -1
         col_cl = -1
         col_eop = -1
         col_ecl = -1
-        col_alias = -1
         col_name = 1
         for c in range(tbl.columnCount()):
             hi = tbl.horizontalHeaderItem(c)
             ht = hi.text().strip().lower() if hi else ""
             if ht == "opening amount":
                 col_op = c
+            elif ht == "debit total":
+                col_deb = c
+            elif ht == "credit total":
+                col_cred = c
+            elif ht == "cash inflow":
+                col_cin = c
+            elif ht == "cash outflow":
+                col_cout = c
             elif ht == "closing amount":
                 col_cl = c
             elif ht == "opening ?":
                 col_eop = c
             elif ht == "closing ?":
                 col_ecl = c
-            elif ht == "alias":
-                col_alias = c
             elif ht == "name":
                 col_name = c
 
         visible_count = 0
         tot_op = 0.0
+        tot_deb = 0.0
+        tot_cred = 0.0
+        tot_cin = 0.0
+        tot_cout = 0.0
         tot_cl = 0.0
         tot_exp_op = 0.0
         tot_exp_cl = 0.0
@@ -3545,34 +3958,26 @@ class BalanceUI(QWidget):
         for r in range(tbl.rowCount()):
             if not tbl.isRowHidden(r):
                 visible_count += 1
-                if col_op >= 0:
-                    it_op = tbl.item(r, col_op)
-                    if it_op and it_op.text().strip():
-                        try:
-                            tot_op += float(it_op.text().replace(",", ""))
-                        except Exception:
-                            pass
-                if col_cl >= 0:
-                    it_cl = tbl.item(r, col_cl)
-                    if it_cl and it_cl.text().strip():
-                        try:
-                            tot_cl += float(it_cl.text().replace(",", ""))
-                        except Exception:
-                            pass
-                if col_eop >= 0:
-                    it_eop = tbl.item(r, col_eop)
-                    if it_eop and it_eop.text().strip():
-                        try:
-                            tot_exp_op += float(it_eop.text().replace(",", ""))
-                        except Exception:
-                            pass
-                if col_ecl >= 0:
-                    it_ecl = tbl.item(r, col_ecl)
-                    if it_ecl and it_ecl.text().strip():
-                        try:
-                            tot_exp_cl += float(it_ecl.text().replace(",", ""))
-                        except Exception:
-                            pass
+                for c_idx, val_key in [
+                    (col_op, 'op'), (col_deb, 'deb'), (col_cred, 'cred'),
+                    (col_cin, 'cin'), (col_cout, 'cout'), (col_cl, 'cl'),
+                    (col_eop, 'eop'), (col_ecl, 'ecl')
+                ]:
+                    if c_idx >= 0:
+                        it = tbl.item(r, c_idx)
+                        if it and it.text().strip():
+                            try:
+                                v = float(it.text().replace(",", ""))
+                                if val_key == 'op': tot_op += v
+                                elif val_key == 'deb': tot_deb += v
+                                elif val_key == 'cred': tot_cred += v
+                                elif val_key == 'cin': tot_cin += v
+                                elif val_key == 'cout': tot_cout += v
+                                elif val_key == 'cl': tot_cl += v
+                                elif val_key == 'eop': tot_exp_op += v
+                                elif val_key == 'ecl': tot_exp_cl += v
+                            except Exception:
+                                pass
 
         def _fmt(val):
             if abs(val) < 1e-9:
@@ -3582,6 +3987,14 @@ class BalanceUI(QWidget):
         totals_dict = {}
         if col_op >= 0:
             totals_dict[col_op] = _fmt(tot_op)
+        if col_deb >= 0:
+            totals_dict[col_deb] = _fmt(tot_deb)
+        if col_cred >= 0:
+            totals_dict[col_cred] = _fmt(tot_cred)
+        if col_cin >= 0:
+            totals_dict[col_cin] = _fmt(tot_cin)
+        if col_cout >= 0:
+            totals_dict[col_cout] = _fmt(tot_cout)
         if col_cl >= 0:
             totals_dict[col_cl] = _fmt(tot_cl)
         if col_eop >= 0 and tot_exp_op != 0.0:
@@ -3589,8 +4002,8 @@ class BalanceUI(QWidget):
         if col_ecl >= 0 and tot_exp_cl != 0.0:
             totals_dict[col_ecl] = _fmt(tot_exp_cl)
 
-        if col_alias >= 0:
-            footer.setColumnHidden(col_alias, tbl.isColumnHidden(col_alias))
+        for c in range(tbl.columnCount()):
+            footer.setColumnHidden(c, tbl.isColumnHidden(c))
         footer.update_totals(totals_dict, label_col=col_name, label_text="Grand Total")
         if lbl_count:
             total_rows = tbl.rowCount()
@@ -3599,30 +4012,129 @@ class BalanceUI(QWidget):
             else:
                 lbl_count.setText(f"<b>{visible_count}</b> records")
 
-    def _toggle_conf_alias_visibility(self):
-        """Toggle visibility of Alias column in Debtor and Creditor Vat Conf tables."""
-        self._hide_conf_alias = not getattr(self, '_hide_conf_alias', False)
-        for tbl, footer, lbl in [
-            (getattr(self, 'debtor_table', None), getattr(self, 'debtor_footer', None), getattr(self, 'lbl_debtor_count', None)),
-            (getattr(self, 'creditor_table', None), getattr(self, 'creditor_footer', None), getattr(self, 'lbl_creditor_count', None))
-        ]:
-            if tbl:
-                col_alias = -1
-                for c in range(tbl.columnCount()):
-                    hi = tbl.horizontalHeaderItem(c)
-                    if hi and hi.text().strip().lower() == "alias":
-                        col_alias = c
-                        break
-                if col_alias >= 0:
-                    tbl.setColumnHidden(col_alias, self._hide_conf_alias)
-                if footer:
-                    self._update_conf_totals(tbl, footer, lbl)
+    def _header_text_to_col_key(self, header_text: str) -> str:
+        ht = (header_text or "").strip().lower()
+        mapping = {
+            "sn.": "sn",
+            "name": "name",
+            "pan no.": "pan_no",
+            "alias": "alias",
+            "opening amount": "opening_amount",
+            "debit total": "debit_totals",
+            "credit total": "credit_totals",
+            "cash inflow": "cash_in",
+            "cash outflow": "cash_out",
+            "closing amount": "closing_amount",
+            "need print ?": "need_print",
+            "did you print": "did_you_print",
+            "sub group": "sub_group",
+            "crm": "crm",
+            "get back": "get_back",
+            "opening ?": "expected_opening",
+            "closing ?": "expected_closing",
+        }
+        return mapping.get(ht, ht)
 
-        txt = "👁️ Show Alias" if self._hide_conf_alias else "👁️ Hide Alias"
+    def get_vat_conf_visible_columns(self) -> set:
+        s = QSettings("JKCatalog", "VatConfDebtorColumns")
+        val = s.value("visible_columns", None)
+        if val is None:
+            return {c[0] for c in VAT_CONF_DEBTOR_COLUMNS if c[2]}
+        if isinstance(val, str):
+            res = set(x.strip() for x in val.split(",") if x.strip())
+        elif isinstance(val, (list, set)):
+            res = set(val)
+        else:
+            res = {c[0] for c in VAT_CONF_DEBTOR_COLUMNS if c[2]}
+        res.add("name")
+        return res
+
+    def save_vat_conf_visible_columns(self, cols: set):
+        s = QSettings("JKCatalog", "VatConfDebtorColumns")
+        s.setValue("visible_columns", ",".join(sorted(cols)))
+
+    def apply_vat_conf_column_visibility(self):
+        if not hasattr(self, 'debtor_table') or not self.debtor_table:
+            return
+        visible_keys = self.get_vat_conf_visible_columns()
+        tbl = self.debtor_table
+        for c in range(tbl.columnCount()):
+            hi = tbl.horizontalHeaderItem(c)
+            ht = hi.text().strip().lower() if hi else ""
+            col_key = self._header_text_to_col_key(ht)
+            is_hidden = col_key not in visible_keys
+            tbl.setColumnHidden(c, is_hidden)
+            if hasattr(self, 'debtor_footer') and self.debtor_footer:
+                self.debtor_footer.setColumnHidden(c, is_hidden)
+
+        is_alias_hidden = "alias" not in visible_keys
         if hasattr(self, 'btn_toggle_debtor_alias'):
-            self.btn_toggle_debtor_alias.setText(txt)
-        if hasattr(self, 'btn_toggle_creditor_alias'):
-            self.btn_toggle_creditor_alias.setText(txt)
+            self.btn_toggle_debtor_alias.setText("Show Alias" if is_alias_hidden else "Hide Alias")
+
+        if hasattr(self, 'debtor_footer'):
+            self._update_conf_totals(self.debtor_table, self.debtor_footer, getattr(self, 'lbl_debtor_count', None))
+
+    def _open_debtor_columns_dialog(self):
+        cur_visible = self.get_vat_conf_visible_columns()
+        dlg = VatConfColumnSettingsDialog(
+            current_visible=cur_visible,
+            on_autofit_callback=lambda: self._auto_fit_conf_columns(self.debtor_table, force=True),
+            parent=self
+        )
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            new_cols = dlg.get_selected_columns()
+            self.save_vat_conf_visible_columns(new_cols)
+            self.apply_vat_conf_column_visibility()
+            self._auto_fit_conf_columns(self.debtor_table, force=False)
+
+    def _on_debtor_header_resized(self, logical_index: int, old_size: int, new_size: int):
+        if getattr(self, '_is_programmatic_col_resize', False):
+            return
+        tbl = getattr(self, 'debtor_table', None)
+        if not tbl:
+            return
+        hi = tbl.horizontalHeaderItem(logical_index)
+        if not hi:
+            return
+        h_key = hi.text().strip().lower()
+        s = QSettings("JKCatalog", "VatConfDebtorColumnWidths")
+        saved_str = str(s.value("widths", "") or "")
+        saved_widths = {}
+        if saved_str:
+            try:
+                for part in saved_str.split(";"):
+                    if ":" in part:
+                        k, w = part.split(":", 1)
+                        saved_widths[k.strip().lower()] = int(w.strip())
+            except Exception:
+                saved_widths = {}
+        saved_widths[h_key] = new_size
+        s.setValue("widths", ";".join(f"{k}:{w}" for k, w in saved_widths.items()))
+
+    def _make_conf_amount_item(self, amt) -> NumericTableWidgetItem:
+        is_blank = (
+            amt is None
+            or (isinstance(amt, float) and amt != amt)
+            or str(amt).strip().lower() in ("", "nan", "none", "null")
+        )
+        if is_blank:
+            it = NumericTableWidgetItem("", 0.0)
+        else:
+            f = 0.0 if abs(float(amt)) < 1e-9 else float(amt)
+            it = NumericTableWidgetItem(f"{f:,.2f}", f)
+        it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        return it
+
+    def _toggle_conf_alias_visibility(self):
+        """Toggle visibility of Alias column in Debtor Vat Conf table."""
+        visible_cols = self.get_vat_conf_visible_columns()
+        if "alias" in visible_cols:
+            visible_cols.remove("alias")
+        else:
+            visible_cols.add("alias")
+        self.save_vat_conf_visible_columns(visible_cols)
+        self.apply_vat_conf_column_visibility()
 
     def _toggle_mapping_alias_visibility(self):
         """Toggle visibility of VAT Alias (Col 2) and Internal Alias (Col 4) in Mapping table."""
@@ -3776,6 +4288,30 @@ class BalanceUI(QWidget):
             else:
                 bg_color = QColor("#ffffff") if (grp_idx % 2 == 1) else QColor("#f8fafc")
                 fg_color = QColor("#0f172a")
+            # Option A: Group Total Comparison for multi-ledger mappings (1*N, N*1, N*M)
+            grp_vat_closing = sum(float(v.get("closing", 0.0) or 0.0) for v in vat_items)
+            grp_int_closing = sum(float(i.get("closing", 0.0) or 0.0) for i in internal_items)
+
+            grp_bal_str = ""
+            grp_bal_val = 0.0
+            grp_neg_str = ""
+            grp_neg_val = 0.0
+
+            if grp_vat_closing < -1e-9:
+                # Rule 1: Vat closing is negative -> balance blank, negative shows abs(vat closing)
+                v_int = abs(int(round(grp_vat_closing)))
+                grp_neg_str = f"{v_int:,}"
+                grp_neg_val = float(v_int)
+            elif grp_int_closing > grp_vat_closing + 1e-9:
+                # Rule 2: Int closing > Vat closing -> balance blank, negative shows abs(vat - int)
+                diff_neg = abs(int(round(grp_vat_closing - grp_int_closing)))
+                grp_neg_str = f"{diff_neg:,}"
+                grp_neg_val = float(diff_neg)
+            elif grp_vat_closing >= 0 and grp_int_closing >= 0 and grp_vat_closing > grp_int_closing + 1e-9:
+                # Rule 3: Both positive, Vat closing > Int closing -> balance shows (vat - int), negative blank
+                diff_bal = int(round(grp_vat_closing - grp_int_closing))
+                grp_bal_str = f"{diff_bal:,}"
+                grp_bal_val = float(diff_bal)
 
             for k in range(n_rows):
                 r = start_row + k
@@ -3906,33 +4442,10 @@ class BalanceUI(QWidget):
                 it_ic.setFlags(it_ic.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.mapping_table.setItem(r, 4, it_ic)
 
-                # TODO: Multi-item/merged group logic to be confirmed by user.
-                # Evaluated row-by-row on this row's v_closing and i_closing.
-                # 1) If value of vat closing balance is negative, balance is blank and vat closing is shown in negative column (as positive absolute number).
-                # 2) If int closing balance > vat closing balance, balance is blank and (vat - int) difference is shown in negative column (as positive absolute number).
-                # 3) If vat closing and int closing are positive (or >= 0) and vat closing > int closing, (vat - int) is shown in balance.
-                bal_str = ""
-                bal_val = 0.0
-                neg_str = ""
-                neg_val = 0.0
+                # 5: Balance (Option A: Shown on primary row k == 0; sub-rows left blank)
+                bal_str = grp_bal_str if k == 0 else ""
+                bal_val = grp_bal_val if k == 0 else 0.0
 
-                if v_closing < -1e-9:
-                    # Rule 1: Vat closing is negative
-                    v_int = abs(int(round(v_closing)))
-                    neg_str = f"{v_int:,}"
-                    neg_val = float(v_int)
-                elif i_closing > v_closing + 1e-9:
-                    # Rule 2: Int closing > Vat closing
-                    diff_neg = abs(int(round(v_closing - i_closing)))
-                    neg_str = f"{diff_neg:,}"
-                    neg_val = float(diff_neg)
-                elif v_closing >= 0 and i_closing >= 0 and v_closing > i_closing + 1e-9:
-                    # Rule 3: Both positive, Vat closing > Int closing
-                    diff_bal = int(round(v_closing - i_closing))
-                    bal_str = f"{diff_bal:,}"
-                    bal_val = float(diff_bal)
-
-                # 5: Balance
                 it_bal = NumericTableWidgetItem(bal_str, bal_val)
                 it_bal.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 it_bal.setBackground(bg_color)
@@ -3941,7 +4454,10 @@ class BalanceUI(QWidget):
                 it_bal.setFlags(it_bal.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.mapping_table.setItem(r, 5, it_bal)
 
-                # 6: Negative
+                # 6: Negative (Option A: Shown on primary row k == 0; sub-rows left blank)
+                neg_str = grp_neg_str if k == 0 else ""
+                neg_val = grp_neg_val if k == 0 else 0.0
+
                 it_neg = NumericTableWidgetItem(neg_str, neg_val)
                 it_neg.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 it_neg.setBackground(bg_color)
@@ -4125,39 +4641,25 @@ class BalanceUI(QWidget):
                 it_alias.setFlags(it_alias.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 tbl.setItem(r_idx, 3, it_alias)
 
-                # 4: Opening Amount (Read-only, right-aligned numeric item)
-                op_amt = r.get("opening_amount")
-                is_op_blank = (
-                    op_amt is None
-                    or (isinstance(op_amt, float) and op_amt != op_amt)
-                    or str(op_amt).strip().lower() in ("", "nan", "none", "null")
-                )
-                if is_op_blank:
-                    it_op = NumericTableWidgetItem("", 0.0)
-                else:
-                    f_op = 0.0 if abs(float(op_amt)) < 1e-9 else float(op_amt)
-                    it_op = NumericTableWidgetItem(f"{f_op:,.2f}", f_op)
-                it_op.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                it_op.setFlags(it_op.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(r_idx, 4, it_op)
+                # 4: Opening Amount (Read-only, right-aligned)
+                tbl.setItem(r_idx, 4, self._make_conf_amount_item(r.get("opening_amount")))
 
-                # 5: Closing Amount (Read-only, right-aligned numeric item)
-                cl_amt = r.get("closing_amount")
-                is_cl_blank = (
-                    cl_amt is None
-                    or (isinstance(cl_amt, float) and cl_amt != cl_amt)
-                    or str(cl_amt).strip().lower() in ("", "nan", "none", "null")
-                )
-                if is_cl_blank:
-                    it_cl = NumericTableWidgetItem("", 0.0)
-                else:
-                    f_cl = 0.0 if abs(float(cl_amt)) < 1e-9 else float(cl_amt)
-                    it_cl = NumericTableWidgetItem(f"{f_cl:,.2f}", f_cl)
-                it_cl.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                it_cl.setFlags(it_cl.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(r_idx, 5, it_cl)
+                # 5: Debit Total (Read-only, right-aligned)
+                tbl.setItem(r_idx, 5, self._make_conf_amount_item(r.get("debit_totals")))
 
-                # 6: Need Print ? (Read-only, centered, Yes-first sort)
+                # 6: Credit Total (Read-only, right-aligned)
+                tbl.setItem(r_idx, 6, self._make_conf_amount_item(r.get("credit_totals")))
+
+                # 7: Cash Inflow (Read-only, right-aligned)
+                tbl.setItem(r_idx, 7, self._make_conf_amount_item(r.get("cash_in")))
+
+                # 8: Cash Outflow (Read-only, right-aligned)
+                tbl.setItem(r_idx, 8, self._make_conf_amount_item(r.get("cash_out")))
+
+                # 9: Closing Amount (Read-only, right-aligned)
+                tbl.setItem(r_idx, 9, self._make_conf_amount_item(r.get("closing_amount")))
+
+                # 10: Need Print ? (Read-only, centered, Yes-first sort)
                 it_np = YesNoTableWidgetItem(r.get("need_print", ""))
                 it_np.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 if r.get("need_print") == "Yes":
@@ -4166,62 +4668,56 @@ class BalanceUI(QWidget):
                     font.setBold(True)
                     it_np.setFont(font)
                 it_np.setFlags(it_np.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(r_idx, 6, it_np)
+                tbl.setItem(r_idx, 10, it_np)
 
-                # 7: Did You Print (Editable Yes/No/No Need)
+                # 11: Did You Print (Editable Yes/No/No Need)
                 it_dyp = YesNoTableWidgetItem(r.get("did_you_print", ""))
                 it_dyp.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 if not self._can_edit:
                     it_dyp.setFlags(it_dyp.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(r_idx, 7, it_dyp)
+                tbl.setItem(r_idx, 11, it_dyp)
 
-                # 8: Sub Group (Read-only)
+                # 12: Sub Group (Read-only)
                 raw_sg = (r.get("sub_group") or "").strip()
                 if raw_sg.lower() in ("none", "nan", "null"):
                     raw_sg = ""
                 it_sg = QTableWidgetItem(raw_sg)
                 it_sg.setFlags(it_sg.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(r_idx, 8, it_sg)
+                tbl.setItem(r_idx, 12, it_sg)
 
-                # 9: CRM (Editable autocomplete)
+                # 13: CRM (Editable autocomplete)
                 it_crm = QTableWidgetItem(r.get("crm", ""))
                 if not self._can_edit:
                     it_crm.setFlags(it_crm.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(r_idx, 9, it_crm)
+                tbl.setItem(r_idx, 13, it_crm)
 
-                # 10: Get Back (Editable Yes/No/N/A)
+                # 14: Get Back (Editable Yes/No/N/A)
                 it_gb = YesNoTableWidgetItem(r.get("get_back", ""))
                 it_gb.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 if not self._can_edit:
                     it_gb.setFlags(it_gb.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(r_idx, 10, it_gb)
+                tbl.setItem(r_idx, 14, it_gb)
 
-                # 11: Opening ? (Editable numeric, compared against Opening Amount)
+                # 15: Opening ? (Editable numeric, compared against Opening Amount)
                 it_exp_op = ExpAmountTableWidgetItem(r.get("expected_opening", ""))
                 it_exp_op.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 if not self._can_edit:
                     it_exp_op.setFlags(it_exp_op.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(r_idx, 11, it_exp_op)
+                tbl.setItem(r_idx, 15, it_exp_op)
 
-                # 12: Closing ? (Editable numeric, compared against Closing Amount)
+                # 16: Closing ? (Editable numeric, compared against Closing Amount)
                 it_exp_cl = ExpAmountTableWidgetItem(r.get("expected_closing", ""))
                 it_exp_cl.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 if not self._can_edit:
                     it_exp_cl.setFlags(it_exp_cl.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                tbl.setItem(r_idx, 12, it_exp_cl)
+                tbl.setItem(r_idx, 16, it_exp_cl)
 
                 # Apply full row solid red highlight if mismatched
                 self._update_vat_conf_row_style(tbl, r_idx)
 
-            # Maintain alias column visibility dynamically
-            for c in range(tbl.columnCount()):
-                hi = tbl.horizontalHeaderItem(c)
-                if hi and hi.text().strip().lower() == "alias":
-                    tbl.setColumnHidden(c, getattr(self, '_hide_conf_alias', False))
-                    break
-
-            # Auto-fit column widths
-            self._auto_fit_conf_columns(tbl)
+            # Apply user column visibility preferences and content-aware auto-fit
+            self.apply_vat_conf_column_visibility()
+            self._auto_fit_conf_columns(tbl, force=False)
 
         finally:
             tbl.setUpdatesEnabled(True)
@@ -4295,8 +4791,8 @@ class BalanceUI(QWidget):
         selected_indexes = self.mapping_table.selectedIndexes()
         has_sel = bool(selected_indexes)
         if hasattr(self, 'btn_unmap_mapping'):
-            can_clear = getattr(self, '_can_clear_mapping', True) and getattr(self, '_can_edit', True)
-            self.btn_unmap_mapping.setEnabled(has_sel and can_clear)
+            can_clear = getattr(self, '_can_clear_mapping', True)
+            self.btn_unmap_mapping.setEnabled(can_clear)
 
         has_unassigned_sel = bool(self.unassigned_list.selectedItems()) if hasattr(self, 'unassigned_list') else False
         if hasattr(self, 'btn_assign_internal'):
@@ -4414,7 +4910,7 @@ class BalanceUI(QWidget):
         """Clear/unmap internal ledgers from the selected group(s), returning them to unassigned list.
         Requires 'vat_balance.clear_mapping' permission and admin password confirmation.
         """
-        if not getattr(self, '_can_edit', True) or not getattr(self, '_can_clear_mapping', True):
+        if not getattr(self, '_can_clear_mapping', True):
             QMessageBox.warning(self, "Permission Denied", "You do not have permission to clear mappings.")
             return
 
@@ -4427,6 +4923,7 @@ class BalanceUI(QWidget):
                 group_ids.append(gid)
 
         if not group_ids:
+            QMessageBox.information(self, "Select Row", "Please select one or more rows in the Mapping table to clear.")
             return
 
         # Security confirmation dialog requiring Admin Password
@@ -4832,19 +5329,33 @@ class BalanceUI(QWidget):
         elif logical_index == 2:
             mappings.sort(key=lambda m: (m.get("internal_ledger") or "").lower(), reverse=reverse)
         elif logical_index == 3:
-            mappings.sort(key=lambda m: sum(float(v.get("closing", 0.0) or 0.0) for v in m.get("vat_items", [])), reverse=reverse)
+            def _get_v(m):
+                v_items = m.get("vat_items", [])
+                if v_items:
+                    return sum(float(v.get("closing", 0.0) or 0.0) for v in v_items)
+                return float(m.get("vat_closing", 0.0) or 0.0)
+            mappings.sort(key=_get_v, reverse=reverse)
         elif logical_index == 4:
-            mappings.sort(key=lambda m: sum(float(i.get("closing", 0.0) or 0.0) for i in m.get("internal_items", [])), reverse=reverse)
+            def _get_i(m):
+                i_items = m.get("internal_items", [])
+                if i_items:
+                    return sum(float(i.get("closing", 0.0) or 0.0) for i in i_items)
+                return float(m.get("internal_closing", 0.0) or 0.0)
+            mappings.sort(key=_get_i, reverse=reverse)
         elif logical_index == 5:
             def _get_bal(m):
-                v = sum(float(x.get("closing", 0.0) or 0.0) for x in m.get("vat_items", []))
-                i = sum(float(x.get("closing", 0.0) or 0.0) for x in m.get("internal_items", []))
-                return max(0.0, v - i) if (v >= 0 and i >= 0) else 0.0
+                v_items = m.get("vat_items", [])
+                v = sum(float(x.get("closing", 0.0) or 0.0) for x in v_items) if v_items else float(m.get("vat_closing", 0.0) or 0.0)
+                i_items = m.get("internal_items", [])
+                i = sum(float(x.get("closing", 0.0) or 0.0) for x in i_items) if i_items else float(m.get("internal_closing", 0.0) or 0.0)
+                return max(0.0, v - i) if (v >= 0 and i >= 0 and v > i) else 0.0
             mappings.sort(key=_get_bal, reverse=reverse)
         elif logical_index == 6:
             def _get_neg(m):
-                v = sum(float(x.get("closing", 0.0) or 0.0) for x in m.get("vat_items", []))
-                i = sum(float(x.get("closing", 0.0) or 0.0) for x in m.get("internal_items", []))
+                v_items = m.get("vat_items", [])
+                v = sum(float(x.get("closing", 0.0) or 0.0) for x in v_items) if v_items else float(m.get("vat_closing", 0.0) or 0.0)
+                i_items = m.get("internal_items", [])
+                i = sum(float(x.get("closing", 0.0) or 0.0) for x in i_items) if i_items else float(m.get("internal_closing", 0.0) or 0.0)
                 if v < 0:
                     return abs(v)
                 if i > v:
@@ -5400,18 +5911,6 @@ class BalanceUI(QWidget):
                         else:
                             it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
-        if hasattr(self, 'btn_unmap_mapping'):
-            can_clear = getattr(self, '_can_clear_mapping', True) and can_edit
-            self.btn_unmap_mapping.setEnabled(can_clear and bool(self.mapping_table.selectedItems()))
-
-    def apply_clear_mapping_permission(self, can_clear: bool):
-        """Update permission to clear mapping."""
-        self._can_clear_mapping = can_clear
-        if hasattr(self, 'btn_unmap_mapping'):
-            has_sel = bool(self.mapping_table.selectedIndexes()) if hasattr(self, 'mapping_table') else False
-            can_edit = getattr(self, '_can_edit', True)
-            self.btn_unmap_mapping.setEnabled(can_clear and can_edit and has_sel)
-
         # Propagate _can_edit to conf tables so VatConfDelegate can check it
         if hasattr(self, 'debtor_table'):
             self.debtor_table._can_edit = can_edit
@@ -5434,6 +5933,12 @@ class BalanceUI(QWidget):
                             it.setFlags(it.flags() | Qt.ItemFlag.ItemIsEditable)
                         else:
                             it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
+    def apply_clear_mapping_permission(self, can_clear: bool):
+        """Update permission to clear mapping."""
+        self._can_clear_mapping = can_clear
+        if hasattr(self, 'btn_unmap_mapping'):
+            self.btn_unmap_mapping.setEnabled(can_clear)
 
     # ── EXPORT / PRINT INTEGRATION HELPER ────────────────────────────
 

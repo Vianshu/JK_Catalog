@@ -15,7 +15,23 @@ class CalendarMappingUI(QWidget):
         super().__init__(parent)
         self.db = get_db_manager()
         self.data_path = ""  # Set when company loads
+        self._can_edit = True
         self.setup_ui()
+
+    def apply_edit_mode(self, can_edit: bool):
+        self._can_edit = can_edit
+        if hasattr(self, 'table'):
+            if can_edit:
+                self.table.setEditTriggers(
+                    QTableWidget.EditTrigger.DoubleClicked |
+                    QTableWidget.EditTrigger.EditKeyPressed
+                )
+            else:
+                self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        if hasattr(self, 'btn_generate'):
+            self.btn_generate.setEnabled(can_edit)
+        if hasattr(self, 'btn_save'):
+            self.btn_save.setEnabled(can_edit)
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -63,6 +79,7 @@ class CalendarMappingUI(QWidget):
         self.init_db()
 
     def generate_calendar_data(self):
+        if not getattr(self, '_can_edit', True): return
         try:
             import nepali_datetime
         except ImportError:
@@ -195,6 +212,7 @@ class CalendarMappingUI(QWidget):
                 self.table.setItem(r, c, QTableWidgetItem(str(val) if val else ""))
 
     def save_manual_edits(self):
+        if not getattr(self, '_can_edit', True): return
         conn = self.db.get_connection(self._cal_db)
         if not conn:
             QMessageBox.critical(self, "Error", "Could not connect to Calendar database.")

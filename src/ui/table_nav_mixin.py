@@ -284,6 +284,9 @@ class UniversalCellDelegate(QStyledItemDelegate):
             painter.restore()
 
     def createEditor(self, parent, option, index):
+        if self._owner and not getattr(self._owner, '_can_edit', True):
+            return None
+
         cell_type = index.data(CELL_TYPE_ROLE)
         if cell_type not in ("date", "number", "autocomplete"):
             cell_type = self._cell_type
@@ -555,9 +558,12 @@ class ExcelTableMixin:
         self._excel_table = table
         self._is_edit_mode = False
 
-        table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | 
-                              QAbstractItemView.EditTrigger.AnyKeyPressed | 
-                              QAbstractItemView.EditTrigger.EditKeyPressed)
+        if getattr(self, '_can_edit', True):
+            table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | 
+                                  QAbstractItemView.EditTrigger.AnyKeyPressed | 
+                                  QAbstractItemView.EditTrigger.EditKeyPressed)
+        else:
+            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.setStyleSheet(UNIVERSAL_TABLE_STYLE)
         
@@ -568,9 +574,10 @@ class ExcelTableMixin:
         t = self._excel_table
         t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         t.setCurrentCell(row, col)
-        t.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | 
-                          QAbstractItemView.EditTrigger.AnyKeyPressed | 
-                          QAbstractItemView.EditTrigger.EditKeyPressed)
+        if getattr(self, '_can_edit', True):
+            t.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | 
+                              QAbstractItemView.EditTrigger.AnyKeyPressed | 
+                              QAbstractItemView.EditTrigger.EditKeyPressed)
 
     def eventFilter(self, source, event):
         t = self._excel_table
@@ -582,6 +589,8 @@ class ExcelTableMixin:
 
                 # F2 = Edit Mode: open editor without clearing text, cursor at end
                 if key == Qt.Key.Key_F2:
+                    if not getattr(self, '_can_edit', True):
+                        return True
                     self._is_edit_mode = True
                     # Fall through to Qt's default which opens the editor via EditKeyPressed
 

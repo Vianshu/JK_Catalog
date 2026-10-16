@@ -464,6 +464,8 @@ class GodownListUI(ExcelTableMixin, QWidget):
             self._pre_cn = item.text().strip() if item else ""
             
     def handle_item_changed(self, item):
+        if not getattr(self, '_can_edit', True):
+            return
         from PyQt6.QtCore import QTimer  # needed by col-1 and col-6 deferred dialogs
         row = item.row()
         col = item.column()
@@ -657,6 +659,8 @@ class GodownListUI(ExcelTableMixin, QWidget):
         self._fill_all_cn_gaps()
         
     def save_data_to_db(self):
+        if not getattr(self, '_can_edit', True):
+            return
         conn = self.db.get_connection(self.godown_db_name)
         if not conn:
             return
@@ -825,6 +829,8 @@ class GodownListUI(ExcelTableMixin, QWidget):
         self._save_timer.start()
 
     def manual_save_and_sort(self, silent=False):
+        if not getattr(self, '_can_edit', True):
+            return
         """Save & Sort:
         1. Refresh Part No from stock_items (live DB lookup).
         2. Sort named rows by Part No A→Z, then empty rows by CN ascending.

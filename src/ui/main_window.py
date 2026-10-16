@@ -286,14 +286,14 @@ class MenuButtonWidget(QFrame):
             return
 
         if self._alt_held:
-            # Active Alt mode — electric sky blue with glowing underline
-            color = "#38bdf8"
+            # Active Alt mode — vivid red with glowing background
+            color = "#ef4444"
             self.lbl.setText(
-                f"{self.prefix_text}<span style='color: {color}; text-decoration: underline; font-weight: 800; background-color: rgba(56, 189, 248, 0.2); border-radius: 3px;'>{self.char_text}</span>{self.suffix_text}"
+                f"{self.prefix_text}<span style='color: {color}; text-decoration: underline; font-weight: 800; background-color: rgba(239, 68, 68, 0.25); border-radius: 3px;'>{self.char_text}</span>{self.suffix_text}"
             )
         else:
-            # Normal state — vivid amber/gold with bold underline for instant mnemonic recall
-            color = "#fbbf24"
+            # Normal state — always highlighted in vivid red with bold underline
+            color = "#ef4444"
             self.lbl.setText(
                 f"{self.prefix_text}<span style='color: {color}; text-decoration: underline; font-weight: 800;'>{self.char_text}</span>{self.suffix_text}"
             )
@@ -1577,34 +1577,46 @@ class MainWindow(QWidget):
         if hasattr(self, 'super_master_page'):
             page = self.super_master_page
             can_edit = s.can("super_master.edit")
-            if hasattr(page, 'table'):
-                if can_edit:
-                    page.table.setEditTriggers(
-                        page.table.EditTrigger.CurrentChanged | page.table.EditTrigger.EditKeyPressed)
-                else:
-                    page.table.setEditTriggers(page.table.EditTrigger.NoEditTriggers)
+            if hasattr(page, 'apply_edit_mode'):
+                page.apply_edit_mode(can_edit)
+            else:
+                page._can_edit = can_edit
+                if hasattr(page, 'table'):
+                    if can_edit:
+                        page.table.setEditTriggers(
+                            page.table.EditTrigger.CurrentChanged | page.table.EditTrigger.EditKeyPressed)
+                    else:
+                        page.table.setEditTriggers(page.table.EditTrigger.NoEditTriggers)
         
         # Cheque List — editing
         if hasattr(self, 'cheque_list_page'):
             page = self.cheque_list_page
             can_edit = s.can("cheque_list.edit")
-            if hasattr(page, 'table'):
-                if can_edit:
-                    page.table.setEditTriggers(
-                        page.table.EditTrigger.CurrentChanged | page.table.EditTrigger.EditKeyPressed)
-                else:
-                    page.table.setEditTriggers(page.table.EditTrigger.NoEditTriggers)
+            if hasattr(page, 'apply_edit_mode'):
+                page.apply_edit_mode(can_edit)
+            else:
+                page._can_edit = can_edit
+                if hasattr(page, 'table'):
+                    if can_edit:
+                        page.table.setEditTriggers(
+                            page.table.EditTrigger.CurrentChanged | page.table.EditTrigger.EditKeyPressed)
+                    else:
+                        page.table.setEditTriggers(page.table.EditTrigger.NoEditTriggers)
         
         # Calendar — editing
         if hasattr(self, 'calendar_page'):
             page = self.calendar_page
             can_edit = s.can("calendar.edit")
-            if hasattr(page, 'table'):
-                if can_edit:
-                    page.table.setEditTriggers(
-                        page.table.EditTrigger.CurrentChanged | page.table.EditTrigger.EditKeyPressed)
-                else:
-                    page.table.setEditTriggers(page.table.EditTrigger.NoEditTriggers)
+            if hasattr(page, 'apply_edit_mode'):
+                page.apply_edit_mode(can_edit)
+            else:
+                page._can_edit = can_edit
+                if hasattr(page, 'table'):
+                    if can_edit:
+                        page.table.setEditTriggers(
+                            page.table.EditTrigger.CurrentChanged | page.table.EditTrigger.EditKeyPressed)
+                    else:
+                        page.table.setEditTriggers(page.table.EditTrigger.NoEditTriggers)
 
         # Godown — editing, autocomplete search, and action buttons
         if hasattr(self, 'godown_page'):
@@ -1648,6 +1660,17 @@ class MainWindow(QWidget):
 
         logger.info(f"Permissions applied: user='{s.username}', "
                      f"role='{s.role_name}', admin={s.is_admin}")
+
+    def refresh_user_permissions(self):
+        """Immediately re-read user permissions from SQL and re-apply to UI when roles/users are updated."""
+        if not self.user_session or not self._security_mgr:
+            return
+        try:
+            self._security_mgr.refresh_session_permissions(self.user_session)
+            self._apply_permissions()
+            logger.info("Immediate user permissions refreshed and applied.")
+        except Exception as e:
+            logger.error(f"Error in refresh_user_permissions: {e}")
 
     def _poll_permissions(self):
         """Called every 60s to silently refresh permissions from SQL.
