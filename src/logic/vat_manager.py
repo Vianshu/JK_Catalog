@@ -2845,8 +2845,8 @@ def get_unique_vat_creditor_subgroups(db_name: str, vat_company: str) -> list[st
     conn = db.get_connection(db_name)
     if not conn:
         return []
+    cur = conn.cursor()
     try:
-        cur = conn.cursor()
         group_filter = """
             (
                 LOWER(LTRIM(RTRIM(r.[Group]))) = 'sundry creditors'
@@ -2856,24 +2856,29 @@ def get_unique_vat_creditor_subgroups(db_name: str, vat_company: str) -> list[st
             )
         """
         query = f"""
-            SELECT DISTINCT LTRIM(RTRIM(r.Sub_Group)) AS sub_group
+            SELECT DISTINCT LTRIM(RTRIM(ISNULL(NULLIF(LTRIM(RTRIM(r.Sub_Group)), ''), ISNULL(r.[Group], '')))) AS sub_group
             FROM dbo.vat_row_ledger_data r
             WHERE r.vat_company = ? AND {group_filter}
-              AND r.Sub_Group IS NOT NULL
-              AND LTRIM(RTRIM(r.Sub_Group)) != ''
-              AND LOWER(LTRIM(RTRIM(r.Sub_Group))) NOT IN ('othere account', 'other account', 'othere accounts', 'other accounts')
-              AND LOWER(r.Sub_Group) NOT LIKE '%other%account%'
-              AND LOWER(r.Sub_Group) NOT LIKE '%othere%account%'
+              AND (
+                  (r.Sub_Group IS NOT NULL AND LTRIM(RTRIM(r.Sub_Group)) != '')
+                  OR (r.[Group] IS NOT NULL AND LTRIM(RTRIM(r.[Group])) != '')
+              )
+              AND LOWER(LTRIM(RTRIM(ISNULL(r.Sub_Group, '')))) NOT IN ('othere account', 'other account', 'othere accounts', 'other accounts')
+              AND LOWER(ISNULL(r.Sub_Group, '')) NOT LIKE '%other%account%'
+              AND LOWER(ISNULL(r.Sub_Group, '')) NOT LIKE '%othere%account%'
             ORDER BY 1
         """
         cur.execute(query, (vat_company,))
         rows = cur.fetchall()
-        subgroups = [r[0].strip() for r in rows if r[0] and r[0].strip()]
-        cur.close()
-        return subgroups
+        return [r[0].strip() for r in rows if r[0] and r[0].strip()]
     except Exception as e:
         logger.error(f"[get_unique_vat_creditor_subgroups] error: {e}")
         return []
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
 
 
 def load_vat_subgroup_crm_mappings(db_name: str, vat_company: str) -> dict[str, str]:
@@ -2908,7 +2913,9 @@ def load_vat_subgroup_crm_mappings(db_name: str, vat_company: str) -> dict[str, 
 
 
 def save_vat_subgroup_crm_mappings(db_name: str, vat_company: str, mappings: dict[str, str]) -> bool:
-    """Save or update subgroup -> crm mappings in dbo.vat_subgroup_crm_mapping."""
+    """Save or update subgroup -> crm mappings in dbo.vat_subgroup_crm_mapping.
+    Also cascades the mapped CRM to vat_conf_data for all existing debtor ledgers in each sub group.
+    """
     if not db_name or not vat_company:
         return False
     db = get_db_manager()
@@ -2916,8 +2923,8 @@ def save_vat_subgroup_crm_mappings(db_name: str, vat_company: str, mappings: dic
     conn = db.get_connection(db_name)
     if not conn:
         return False
+    cur = conn.cursor()
     try:
-        cur = conn.cursor()
         for sub_group, crm_name in mappings.items():
             sg = (sub_group or "").strip()
             crm = (crm_name or "").strip()
@@ -2933,8 +2940,21 @@ def save_vat_subgroup_crm_mappings(db_name: str, vat_company: str, mappings: dic
                     VALUES (?, ?, ?, GETDATE())
             """
             cur.execute(upsert_query, (vat_company, sg, crm, vat_company, sg, vat_company, sg, crm))
+
+            # Cascade updated mapping to vat_conf_data for ledgers in this sub group
+            cascade_query = """
+                UPDATE c
+                SET c.crm = ?, c.updated_at = GETDATE()
+                FROM dbo.vat_conf_data c
+                INNER JOIN dbo.vat_row_ledger_data r 
+                    ON r.vat_company = c.vat_company AND r.Name = c.ledger_name
+                WHERE c.vat_company = ? 
+                  AND LOWER(LTRIM(RTRIM(c.group_type))) = 'debtor'
+                  AND LOWER(LTRIM(RTRIM(r.Sub_Group))) = ?
+            """
+            cur.execute(cascade_query, (crm, vat_company, sg.lower()))
+
         conn.commit()
-        cur.close()
         return True
     except Exception as e:
         try:
@@ -2943,6 +2963,11 @@ def save_vat_subgroup_crm_mappings(db_name: str, vat_company: str, mappings: dic
             pass
         logger.error(f"[save_vat_subgroup_crm_mappings] error: {e}")
         return False
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
 
 
 # Cartoon numbers that must never be assigned to any row (culturally/business reserved)
@@ -3025,6 +3050,7 @@ def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str = "
     try:
         cur = conn.cursor()
         subgroup_crm_map = load_vat_subgroup_crm_mappings(db_name, vat_company) if group_type_norm == "debtor" else {}
+        norm_sg_map = {str(k).strip().lower(): str(v).strip() for k, v in subgroup_crm_map.items() if k}
 
         # Join imported VAT ledgers with user-entered conf data
         query = f"""
@@ -3042,7 +3068,7 @@ def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str = "
                 ISNULL(c.sn, '') AS sn,
                 ISNULL(r.Alias, '') AS Alias,
                 ISNULL(r.[Pan_No.], '') AS pan_no,
-                ISNULL(r.Sub_Group, '') AS sub_group,
+                ISNULL(NULLIF(LTRIM(RTRIM(r.Sub_Group)), ''), ISNULL(r.[Group], '')) AS sub_group,
                 ISNULL(r.Debit_Totals, 0.0) AS debit_totals,
                 ISNULL(r.Credit_Totals, 0.0) AS credit_totals
             FROM dbo.vat_row_ledger_data r
@@ -3134,10 +3160,12 @@ def load_vat_conf_table_data(db_name: str, vat_company: str, group_type: str = "
 
             # Dynamic CRM: manual user edit in vat_conf_data > Sub Group mapped CRM > ""
             saved_crm = r[6].strip() if r[6] else ""
+            clean_sg = sub_group.strip().lower()
+            mapped_crm = norm_sg_map.get(clean_sg, "")
             if saved_crm:
                 crm_val = saved_crm
             else:
-                crm_val = subgroup_crm_map.get(sub_group, "")
+                crm_val = mapped_crm
 
             results.append({
                 "sn": final_sn,
@@ -3214,6 +3242,11 @@ def save_vat_conf_field(db_name: str, vat_company: str, group_type: str, ledger_
         conn.rollback()
         logger.error(f"[save_vat_conf_field] error: {e}")
         raise
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
 
 
 def check_amount_match(actual_amount: float, expected_text: str) -> bool:

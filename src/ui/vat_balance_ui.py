@@ -558,6 +558,14 @@ class CreditorSubgroupDialog(QDialog):
     def get_selected_subgroups(self) -> set:
         return {sg for sg, cb in self.checkboxes.items() if cb.isChecked()}
 
+    def accept(self):
+        # Auto-commit any text typed into extra_input before applying
+        text = self.extra_input.text().strip()
+        if text:
+            self._add_checkbox(text, checked=True)
+            self.extra_input.clear()
+        super().accept()
+
 
 class AdminPasswordConfirmDialog(QDialog):
     """Confirmation dialog requiring admin password before proceeding with sensitive actions like Clear Mapping."""
@@ -2607,8 +2615,12 @@ class BalanceUI(QWidget):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             # Reload debtor conf table so new mappings appear immediately
             d_rows = load_vat_conf_table_data(self.db_name, self.active_vat_company, "debtor", self.current_company_path)
+            if not hasattr(self, '_cached_data') or self._cached_data is None:
+                self._cached_data = {}
             self._cached_data["debtor_conf"] = d_rows
             self._populate_vat_conf_table_from_data(self.debtor_table, "Debtor", d_rows)
+            if hasattr(self, 'debtor_search') and self.debtor_search.text():
+                self._filter_conf_table(self.debtor_table, self.debtor_search.text())
 
     def _create_creditor_tab(self) -> QWidget:
         widget = QWidget()
@@ -2621,7 +2633,6 @@ class BalanceUI(QWidget):
         lbl = QLabel("Creditor")
         lbl.setStyleSheet("font-weight: bold; font-size: 14px; color: #0f172a;")
 
-        self.lbl_creditor_count = QLabel("")
         self.lbl_creditor_count = QLabel("")
         self.lbl_creditor_count.setStyleSheet(
             "font-size: 12px; font-weight: 600; color: #475569; "
@@ -2638,7 +2649,7 @@ class BalanceUI(QWidget):
         """)
         self.btn_creditor_subgroups.clicked.connect(self._open_creditor_subgroups_dialog)
 
-        self.lbl_creditor_subgroup_summary = QLabel("All Sub Groups")
+        self.lbl_creditor_subgroup_summary = QLabel("No Sub Group Selected")
         self.lbl_creditor_subgroup_summary.setStyleSheet(
             "font-size: 11px; color: #059669; font-weight: 600; padding: 2px 6px;"
         )
@@ -2707,6 +2718,7 @@ class BalanceUI(QWidget):
         tbl.verticalHeader().setVisible(False)
 
         wrap_header = WordWrapHeaderView(Qt.Orientation.Horizontal, tbl)
+        wrap_header.setMinimumHeight(38)
         tbl.setHorizontalHeader(wrap_header)
 
         headers = [
@@ -2742,8 +2754,11 @@ class BalanceUI(QWidget):
         return tbl
 
     def get_creditor_selected_subgroups(self) -> set:
+        comp = getattr(self, 'active_vat_company', '') or ""
         s = QSettings("JKCatalog", "VatConfCreditorSubgroups")
-        val = s.value("subgroups", "")
+        val = s.value(f"subgroups_{comp}", None) if comp else None
+        if val is None:
+            val = s.value("subgroups", "")
         if not val:
             return set()
         if isinstance(val, str):
@@ -2755,8 +2770,12 @@ class BalanceUI(QWidget):
         return set()
 
     def save_creditor_selected_subgroups(self, sgs: set):
+        comp = getattr(self, 'active_vat_company', '') or ""
         s = QSettings("JKCatalog", "VatConfCreditorSubgroups")
-        s.setValue("subgroups", "||".join(sorted(sgs)))
+        val_str = "||".join(sorted(sgs))
+        s.setValue("subgroups", val_str)
+        if comp:
+            s.setValue(f"subgroups_{comp}", val_str)
 
     def _update_creditor_subgroup_button(self):
         selected = self.get_creditor_selected_subgroups()
@@ -2774,7 +2793,7 @@ class BalanceUI(QWidget):
             else:
                 self.btn_creditor_subgroups.setText("Select Sub Groups")
                 if hasattr(self, 'lbl_creditor_subgroup_summary'):
-                    self.lbl_creditor_subgroup_summary.setText("All Sub Groups")
+                    self.lbl_creditor_subgroup_summary.setText("No Sub Group Selected")
                 if hasattr(self, 'btn_clear_creditor_subgroups'):
                     self.btn_clear_creditor_subgroups.setVisible(False)
 
@@ -2822,18 +2841,35 @@ class BalanceUI(QWidget):
         total_rows = tbl.rowCount()
         visible_count = 0
 
+        # If no sub groups are selected, show "No Creditor Fund" (hide all ledgers)
+        if not sg_tokens:
+            tbl.blockSignals(True)
+            tbl.setUpdatesEnabled(False)
+            try:
+                for r in range(total_rows):
+                    tbl.setRowHidden(r, True)
+            finally:
+                tbl.setUpdatesEnabled(True)
+                tbl.blockSignals(False)
+
+            if hasattr(self, 'lbl_creditor_count'):
+                self.lbl_creditor_count.setText("No Creditor Fund")
+            if hasattr(self, 'lbl_creditor_empty'):
+                self.lbl_creditor_empty.setVisible(True)
+                self.lbl_creditor_empty.setGeometry(0, 46, tbl.width(), max(tbl.height() - 46, 100))
+            return
+
         tbl.blockSignals(True)
         tbl.setUpdatesEnabled(False)
         try:
             for r in range(total_rows):
-                # 1. Sub Group filtering: If entered, ONLY matching ledgers appear
-                if sg_tokens:
-                    item_name = tbl.item(r, 0)
-                    row_sg = str(item_name.data(Qt.ItemDataRole.UserRole + 1) or "").strip().lower() if item_name else ""
-                    matches_sg = any(tok == row_sg or tok in row_sg for tok in sg_tokens)
-                    if not matches_sg:
-                        tbl.setRowHidden(r, True)
-                        continue
+                # 1. Sub Group filtering: ONLY matching ledgers appear
+                item_name = tbl.item(r, 0)
+                row_sg = str(item_name.data(Qt.ItemDataRole.UserRole + 1) or "").strip().lower() if item_name else ""
+                matches_sg = any(tok == row_sg or tok in row_sg or (row_sg and row_sg in tok) for tok in sg_tokens)
+                if not matches_sg:
+                    tbl.setRowHidden(r, True)
+                    continue
 
                 # 2. Search query filtering
                 if not search_tokens:
@@ -3079,6 +3115,8 @@ class BalanceUI(QWidget):
 
     def _on_creditor_item_changed(self, item: QTableWidgetItem, tbl: QTableWidget):
         """User modified an editable cell in Creditor tab (Get Confirmation, His Opening, His Closing)."""
+        if not getattr(self, '_can_edit', True):
+            return
         col = item.column()
         row = item.row()
         name_item = tbl.item(row, 0)
@@ -5368,7 +5406,7 @@ class BalanceUI(QWidget):
     def _update_mapping_totals(self):
         """Recalculate pinned grand totals for visible rows in mapping table.
         - Values in columns 3, 4, 5, 6 displayed in lakhs (divided by 1,00,000).
-        - Under column 2 (Internal Ledger Name), displays 'Actual Rs.' followed by unrounded (total_vat - total_int).
+        - Under column 2 (Internal Ledger Name), displays label 'Actual Rs.'.
         """
         if not hasattr(self, 'mapping_footer'):
             return
@@ -5427,13 +5465,8 @@ class BalanceUI(QWidget):
             else:
                 return f"{sign}{lakhs:,} lakhs"
 
-        # Point 5: "Actual Rs." which shows (vatclosing - intclosing)
-        actual_diff = total_vat - total_int
-        actual_diff_int = int(round(actual_diff))
-        if actual_diff_int < 0:
-            actual_str = f"Actual Rs. -{abs(actual_diff_int):,}"
-        else:
-            actual_str = f"Actual Rs. {actual_diff_int:,}"
+        # Point 5: "Actual Rs." label without numeric value
+        actual_str = "Actual Rs."
 
         self.mapping_footer.sync_columns()
         self.mapping_footer.update_totals({

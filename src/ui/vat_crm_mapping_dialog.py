@@ -66,7 +66,7 @@ class _CrmMappingDelegate(QStyledItemDelegate):
         def _on_crm_activated(selected, e=ed, c=completer):
             c._typed_text = selected
             e.setText(selected)
-            QTimer.singleShot(0, lambda: self._commit_and_close(e))
+            self._commit_and_close(e)
 
         completer.activated.connect(_on_crm_activated)
         return ed
@@ -292,6 +292,16 @@ class VatSubgroupCrmMappingDialog(QDialog):
 
     def _save_mappings(self):
         """Persist all mappings in the table to SQL Server."""
+        # Force commit of any active editor in the table before reading
+        for ed in self.table.findChildren(QLineEdit):
+            idx = self.table.indexAt(ed.pos())
+            if idx.isValid() and idx.column() == 1:
+                it = self.table.item(idx.row(), 1)
+                if it:
+                    it.setText(ed.text().strip())
+        if self.table.state() == QAbstractItemView.State.EditingState:
+            self.table.setCurrentItem(None)
+
         mappings = {}
         for r in range(self.table.rowCount()):
             it_sg = self.table.item(r, 0)
