@@ -125,6 +125,16 @@ def ensure_vat_tables(db, db_name: str):
                 END
             """)
             cur.execute("""
+                IF NOT EXISTS (
+                    SELECT 1 FROM sys.columns 
+                    WHERE object_id = OBJECT_ID('dbo.vat_ledger_mapping') 
+                      AND name = 'narration'
+                )
+                BEGIN
+                    ALTER TABLE dbo.vat_ledger_mapping ADD narration NVARCHAR(MAX) NOT NULL DEFAULT '';
+                END
+            """)
+            cur.execute("""
                 UPDATE dbo.vat_ledger_mapping 
                 SET group_id = id 
                 WHERE group_id IS NULL;
@@ -797,7 +807,7 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
         # 5. Fetch all stored mapping rows
         cur.execute("""
             SELECT id, vat_ledger_name, internal_ledger_name, ISNULL(manual_name, ''), 
-                   is_manual, group_id, serial_no, ISNULL(classification, '')
+                   is_manual, group_id, serial_no, ISNULL(classification, ''), ISNULL(narration, '')
             FROM dbo.vat_ledger_mapping
             WHERE vat_company = ?
               AND vat_ledger_name IS NOT NULL AND LTRIM(RTRIM(vat_ledger_name)) <> ''
@@ -807,12 +817,13 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
 
         groups_dict = {}
         for r in rows:
-            rec_id, v_name, i_name, m_name, is_man, gid, sn, cls = r
+            rec_id, v_name, i_name, m_name, is_man, gid, sn, cls, narr = r
             gid = gid or rec_id
             v_name = (v_name or "").strip()
             i_name = (i_name or "").strip()
             m_name = (m_name or "").strip()
             cls = (cls or "").strip()
+            narr = (narr or "").strip()
             sn = int(sn) if sn is not None else 0
 
             if gid not in groups_dict:
@@ -827,6 +838,7 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
                     "internal_aliases": [],
                     "manual_names": [],
                     "classification": cls,
+                    "narration": narr,
                     "is_manual": bool(is_man),
                     "db_ids": [],
                 }
@@ -836,6 +848,8 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
                 g["serial_no"] = sn
             if cls and not g["classification"]:
                 g["classification"] = cls
+            if narr and not g.get("narration"):
+                g["narration"] = narr
 
             # VAT ledger item
             if v_name:
@@ -929,6 +943,7 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
                 "is_merged": is_merged,
                 "is_none_vat": is_none_vat,
                 "classification": g["classification"],
+                "narration": g.get("narration", ""),
                 "db_ids": g["db_ids"],
             })
 
@@ -1347,7 +1362,15 @@ def remove_internal_ledger_from_group(db_name: str, vat_company: str, group_id: 
                     SET internal_ledger_name = '', classification = '', is_manual = 1, updated_at = GETDATE()
                     WHERE id = ?
                 """, (rec_id,))
-                rows = [(r[0], r[1], "") if r[0] == rec_id else r for r in rows]
+        # If no internal ledgers remain in the group, demerge distinct VAT ledgers
+        has_internal = any((r[2] or "").strip() for r in rows)
+        if not has_internal and len(rows) > 1:
+            for r in rows:
+                cur.execute("""
+                    UPDATE dbo.vat_ledger_mapping
+                    SET group_id = ?, manual_name = '', updated_at = GETDATE()
+                    WHERE id = ?
+                """, (r[0], r[0]))
 
         logger.info(f"User changed mapping in remove_internal_ledger_from_group")
         conn.commit()
@@ -1724,7 +1747,7 @@ def set_group_vat_ledgers(db_name: str, vat_company: str, group_id: int, vat_led
                     for ogid in other_gids:
                         cur.execute("""
                             UPDATE dbo.vat_ledger_mapping
-                            SET group_id = ?, updated_at = GETDATE()
+                            SET group_id = ?, is_manual = 1, updated_at = GETDATE()
                             WHERE vat_company = ? AND group_id = ?
                         """, (group_id, vat_company, ogid))
                 else:
@@ -1794,10 +1817,10 @@ def unmap_vat_group(db_name: str, vat_company: str, group_id: int) -> bool:
         for rec_id in to_keep:
             cur.execute("""
                 UPDATE dbo.vat_ledger_mapping
-                SET internal_ledger_name = '', classification = '', is_manual = 1, updated_at = GETDATE()
+                SET internal_ledger_name = '', classification = '', manual_name = '', is_manual = 1, group_id = ?, updated_at = GETDATE()
                 WHERE id = ?
-            """, (rec_id,))
-        logger.info(f"User changed mapping in unmap_vat_group")
+            """, (rec_id, rec_id))
+        logger.info(f"User changed mapping in unmap_vat_group (demerged {len(to_keep)} VAT ledger(s))")
         conn.commit()
         return True
     except Exception as e:
@@ -1837,7 +1860,7 @@ def merge_mapping_groups(db_name: str, vat_company: str, group_ids: list[int]) -
         placeholders = ",".join("?" for _ in clean_gids)
         cur.execute(f"""
             UPDATE dbo.vat_ledger_mapping
-            SET group_id = ?, updated_at = GETDATE()
+            SET group_id = ?, is_manual = 1, updated_at = GETDATE()
             WHERE vat_company = ? AND group_id IN ({placeholders})
         """, [target_gid, vat_company] + clean_gids)
 
@@ -2099,7 +2122,7 @@ def merge_vat_ledger_into_group(db_name: str, vat_company: str, target_group_id:
         if existing_rows:
             cur.execute("""
                 UPDATE dbo.vat_ledger_mapping
-                SET group_id = ?, updated_at = GETDATE()
+                SET group_id = ?, is_manual = 1, updated_at = GETDATE()
                 WHERE vat_company = ? AND LOWER(REPLACE(LTRIM(RTRIM(vat_ledger_name)), ' ', '')) = LOWER(REPLACE(?, ' ', ''))
             """, (real_target_gid, vat_company, vat_ledger_name))
         else:
@@ -2259,6 +2282,34 @@ def set_mapping_classification(db_name: str, vat_company: str, group_id: int, va
     except Exception as e:
         conn.rollback()
         logger.error(f"[set_mapping_classification] error: {e}", exc_info=True)
+        return False
+
+
+def save_mapping_narration(db_name: str, vat_company: str, group_id: int, narration: str) -> bool:
+    """Save user-entered narration text for a VAT mapping group."""
+    if not db_name or not vat_company or not group_id:
+        return False
+    db = get_db_manager()
+    ensure_vat_tables(db, db_name)
+    conn = db.get_connection(db_name)
+    if not conn:
+        return False
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE dbo.vat_ledger_mapping
+            SET narration = ?, updated_at = GETDATE()
+            WHERE vat_company = ? AND (group_id = ? OR id = ?)
+        """, (narration.strip(), vat_company, group_id, group_id))
+        conn.commit()
+        cur.close()
+        return True
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.error(f"[save_mapping_narration] error: {e}", exc_info=True)
         return False
 
 
@@ -2444,7 +2495,7 @@ def run_auto_mapping_on_sync(db_name: str, vat_company: str):
                 if matched_int:
                     cur.execute("""
                         UPDATE dbo.vat_ledger_mapping
-                        SET internal_ledger_name = ?, classification = '', updated_at = GETDATE()
+                        SET internal_ledger_name = ?, classification = '', is_manual = 0, updated_at = GETDATE()
                         WHERE id = ?
                     """, (matched_int, r_id))
                     assigned_ints.add(" ".join(matched_int.split()).lower())

@@ -585,7 +585,7 @@ class CompanyLoginUI(QWidget):
             item.setData(Qt.ItemDataRole.UserRole, role)
             if role == "error": item.setForeground(QColor("red"))
             if role == "setup": item.setForeground(QColor("gray"))
-            if role == "create": item.setForeground(QColor("#28a745")); item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+            if role == "create": item.setForeground(QColor("#28a745")); item.setFont(QFont("Noto Sans Devanagari", 10, QFont.Weight.Bold))
 
         self.list.addItem(item)
         return item

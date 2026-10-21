@@ -209,7 +209,7 @@ QTableWidget {
     alternate-background-color: #f8fafc;
     border: 1px solid #e2e8f0;
     border-radius: 6px;
-    font-family: 'Segoe UI';
+    font-family: 'Noto Sans Devanagari', 'Segoe UI', sans-serif;
     font-size: 10pt;
 }
 QTableWidget::item {

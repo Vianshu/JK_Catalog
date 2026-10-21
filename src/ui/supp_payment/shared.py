@@ -723,14 +723,14 @@ class ModernTableDelegate(UniversalCellDelegate):
 # ---------------------------------------------------------------------------
 def _bold_font(size=10):
     f = QFont()
-    f.setFamilies(["Segoe UI", "Noto Sans Devanagari", "Mangal", "Arial Unicode MS"])
+    f.setFamilies(["Noto Sans Devanagari", "Segoe UI", "Mangal", "Arial Unicode MS"])
     f.setPointSize(size)
     f.setWeight(QFont.Weight.Bold)
     return f
 
 def _norm_font(size=10):
     f = QFont()
-    f.setFamilies(["Segoe UI", "Noto Sans Devanagari", "Mangal", "Arial Unicode MS"])
+    f.setFamilies(["Noto Sans Devanagari", "Segoe UI", "Mangal", "Arial Unicode MS"])
     f.setPointSize(size)
     return f
 

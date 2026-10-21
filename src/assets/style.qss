@@ -616,7 +616,7 @@ QTabBar::tab:disabled {
 }
 *[cssClass="CatalogMetaLabel"] {
     border: none;
-    font-family: "Arial";
+    font-family: 'Noto Sans Devanagari', 'Segoe UI', sans-serif;
     font-size: 9px;
 }
 

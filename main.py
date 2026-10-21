@@ -294,7 +294,7 @@ def main():
     app.setPalette(light_palette)
 
     # --- Register Noto Sans Devanagari (bundled font for clear Hindi/Nepali text) ---
-    from PyQt6.QtGui import QFontDatabase
+    from PyQt6.QtGui import QFontDatabase, QFont
     _font_path = get_asset_path("fonts/NotoSansDevanagari.ttf")
     if os.path.exists(_font_path):
         _fid = QFontDatabase.addApplicationFont(_font_path)
@@ -302,6 +302,11 @@ def main():
             print(f"Warning: Could not load Noto Sans Devanagari from {_font_path}")
     else:
         print(f"Warning: Font file not found: {_font_path}")
+
+    # Set Noto Sans Devanagari as global application default font
+    app_font = QFont("Noto Sans Devanagari", 10)
+    app_font.setFamilies(["Noto Sans Devanagari", "Inter", "Segoe UI", "sans-serif"])
+    app.setFont(app_font)
 
     # --- Load stylesheet with absolute path (works in EXE too) ---
     style_path = get_asset_path("style.qss")

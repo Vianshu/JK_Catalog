@@ -70,6 +70,7 @@ Work through the **7 Universal Invariant Domains** below, then keep going beyond
 - **QSS vs QPainter inversion**: Audit all custom rendering: `QHeaderView`, `QStyledItemDelegate`, `paintSection()`, `paintEvent()`. Cross-reference imperative drawing (`painter.setPen()`, `painter.setBrush()`, `it.setForeground()`) against declarative stylesheet rules in `style.qss`. Catch dark-on-dark (e.g. dark slate `#0f172a` on dark navy `#1A2035`) and light-on-light (white on light gray) text/border combinations.
 - **High-DPI & dynamic geometry truncation**: Look for hardcoded pixel dimensions (`setFixedWidth`, `setRowHeight`) on labels, buttons, or headers that contain localized or dynamic text. Check whether word wrap (`TextWordWrap`) or minimum column widths prevent text clipping on smaller resolution displays or varied Windows scaling (125%/150%).
 - **State contrast consistency**: Verify that `:disabled`, `:hover`, and `:selected` states maintain legible contrast ratios (minimum 4.5:1 for normal text, 3:1 for bold/headers).
+- **Unified Devanagari & Latin Typography (Common Font Invariant)**: The entire application must uniformly use the bundled `'Noto Sans Devanagari'` font family (as established in `godown_list.py`) across all UI widgets, tables, dialogs, printers, and delegates. The system processes multilingual data containing Hindi/Devanagari alongside English. Audit all stylesheets, `UNIVERSAL_TABLE_STYLE`, and `QFont` declarations: flag any hardcoded overrides of `'Segoe UI'`, `'Arial'`, or system defaults that bypass or subordinate `'Noto Sans Devanagari'`, as they produce broken conjuncts, missing glyphs ("tofu" boxes), or baseline jitter on Hindi text.
 
 #### Domain 4: Interaction Affordance & Keyboard Navigation (The Ergonomics Domain)
 - **Negative affordance & initial-state deadlocks**: Inspect buttons initialized as `setEnabled(False)` or gated by selection (`has_sel`). Ensure buttons don't appear permanently broken/permission-denied when entering a screen; prefer keeping permission-backed buttons active and providing clear instructional feedback (e.g. "Select a row first") if clicked without selection.
@@ -109,6 +110,7 @@ Work through the **7 Universal Invariant Domains** below, then keep going beyond
 - *Suggestion (not a mandate — flag only):* if these colors are scattered as literals across the file, consider centralizing them as named constants so future palette changes are a one-line edit. Only do this if the user asks.
 
 ## 6. UI & Interaction Guidelines
+- **Unified Application Font**: Always use `'Noto Sans Devanagari'` (bundled in `src/assets/fonts/NotoSansDevanagari.ttf`) as the primary font family for all UI controls, tables, dialogs, reports, and delegates. Never hardcode English-only fonts like `'Segoe UI'` or `'Arial'` as primary, because they break Hindi/Devanagari text rendering.
 - **No hover tooltips / hint boxes**: Do not add `setToolTip` or hover tooltip boxes explaining what buttons or UI controls do, unless explicitly requested by the user. Keep the interface clean, fast, and free of unsolicited popup hints.
 
 ## 7. Engineering Discipline & Guardrails

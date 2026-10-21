@@ -1019,7 +1019,7 @@ class A4PageRenderer(QWidget):
         name.setAlignment(Qt.AlignmentFlag.AlignCenter)
         name.setStyleSheet(
             f"font-size:{self.title_fs}pt; font-weight:700; color:{self.data_name_text}; background:{self.data_name_bg};"
-            "font-family:'Nirmala UI','Mangal','Arial Unicode MS';"
+            "font-family:'Noto Sans Devanagari','Nirmala UI','Mangal','Arial Unicode MS';"
             f"padding:{self.pad_title_v}px {self.pad_title_h}px;"
             f"border-bottom:{self.border_width}px solid {self.data_border_color};"
         )
@@ -1034,7 +1034,7 @@ class A4PageRenderer(QWidget):
             base_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             base_lbl.setStyleSheet(
                 f"font-size:{self.fs_base_units}pt; font-weight:500; color:#000; background:#ffffff;"
-                "font-family:'Nirmala UI','Mangal','Arial Unicode MS';"
+                "font-family:'Noto Sans Devanagari','Nirmala UI','Mangal','Arial Unicode MS';"
                 f"padding:{self.pad_base_v}px {self.pad_base_h}px;"
                 f"border-bottom:{self.border_width}px solid {self.data_border_color};"
             )
@@ -1058,13 +1058,13 @@ class A4PageRenderer(QWidget):
         cat_text = prod.get("category", "")
         cat_lbl = QLabel(str(cat_text) if cat_text else "")
         cat_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        cat_lbl.setStyleSheet(f"font-size:{self.fs_category}pt; font-weight:bold; color:#000; border:none; font-family:'Nirmala UI','Mangal','Arial Unicode MS';")
+        cat_lbl.setStyleSheet(f"font-size:{self.fs_category}pt; font-weight:bold; color:#000; border:none; font-family:'Noto Sans Devanagari','Nirmala UI','Mangal','Arial Unicode MS';")
         blay.addWidget(cat_lbl, 1)
 
         mp_text = prod.get("master_packing", "") if self.show_master_packing else ""
         mp_lbl = QLabel(str(mp_text) if mp_text else "")
         mp_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        mp_lbl.setStyleSheet(f"font-size:{self.fs_master_packing}pt; color:#000; border:none; font-family:'Nirmala UI','Mangal','Arial Unicode MS';")
+        mp_lbl.setStyleSheet(f"font-size:{self.fs_master_packing}pt; color:#000; border:none; font-family:'Noto Sans Devanagari','Nirmala UI','Mangal','Arial Unicode MS';")
         blay.addWidget(mp_lbl, 1)
 
         lay.addWidget(bottom, 0)

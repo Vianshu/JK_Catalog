@@ -274,12 +274,14 @@ class VatSubgroupCrmMappingDialog(QDialog):
 
     def _filter_table(self, query: str):
         q = (query or "").strip().lower()
+        tokens = [t for t in q.split() if t]
         for r in range(self.table.rowCount()):
             it_sg = self.table.item(r, 0)
             it_crm = self.table.item(r, 1)
             sg_text = (it_sg.text() if it_sg else "").lower()
             crm_text = (it_crm.text() if it_crm else "").lower()
-            match = (not q) or (q in sg_text) or (q in crm_text)
+            corpus = f"{sg_text} {crm_text}"
+            match = all(tok in corpus for tok in tokens) if tokens else True
             self.table.setRowHidden(r, not match)
         self._update_count()
 

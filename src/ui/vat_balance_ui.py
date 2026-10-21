@@ -10,6 +10,7 @@ Contains 4 views switchable via sidebar Left Panel:
 
 import os
 import re
+import math
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget, QTabWidget, QPushButton,
     QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QProgressDialog,
@@ -18,7 +19,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QStyle, QStyleOptionViewItem, QStyleOptionHeader
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QSettings, QEvent, QRect, QPoint
-from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QBrush, QCursor
+from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QBrush, QCursor, QKeySequence, QShortcut
 
 from src.logic.db_manager import get_db_manager, build_logical_name
 from src.logic.vat_manager import (
@@ -33,7 +34,7 @@ from src.logic.vat_manager import (
     set_group_manual_name, update_group_internal_ledger, update_group_vat_ledger,
     merge_vat_ledger_into_group, remove_vat_ledger_from_group,
     set_mapping_classification, set_unassigned_classification, run_auto_mapping_on_sync,
-    calculate_need_print, get_unique_vat_creditor_subgroups
+    calculate_need_print, get_unique_vat_creditor_subgroups, save_mapping_narration
 )
 from src.services.tally_sync import fetch_tally_vat_internal_data, fetch_tally_vat_ledger_data, TallyService
 from src.ui.vat_company_dialog import VatCompanyDialog
@@ -45,6 +46,17 @@ from src.utils.app_logger import get_logger
 from src.utils.path_utils import get_icon
 
 logger = get_logger(__name__)
+
+
+def round_nearest_1000(val: float) -> int:
+    """Round value to the nearest 1,000 following Excel-style rounding (=ROUND(val, -3)).
+    - Values below 500 round to 0 (e.g. 499 -> 0, 1499 -> 1000).
+    - Values of 500 or above round to 1,000 (e.g. 500 -> 1000, 1500 -> 2000).
+    """
+    if not val:
+        return 0
+    sign = 1 if val >= 0 else -1
+    return int(math.floor(abs(float(val)) / 1000.0 + 0.5) * 1000) * sign
 
 
 def extract_company_year(name: str) -> str:
@@ -86,6 +98,213 @@ def extract_company_year(name: str) -> str:
         return m.group(1).strip()
 
     return ""
+
+_GENERIC_BUSINESS_WORDS = {
+    "traders", "trader", "enterprise", "enterprises", "corporation", "corp",
+    "industries", "industry", "brothers", "bros", "co", "company", "limited",
+    "ltd", "pvt", "private", "holdings", "agency", "agencies", "stores", "store",
+    "mart", "bazaar", "bazar", "depot", "shop", "centre", "center", "house",
+    "point", "hub", "associates", "associate", "and", "sons", "son", "services",
+    "service", "works", "work", "steel", "steels", "metals", "metal", "sales"
+}
+
+def _extract_core_tokens(cleaned_name: str) -> list[str]:
+    tokens = cleaned_name.split()
+    core = [t for t in tokens if t not in _GENERIC_BUSINESS_WORDS]
+    return core if core else tokens
+
+
+def _clean_party_name_for_similarity(name: str) -> str:
+    """Normalize a ledger party name for similarity comparison.
+    Strips parenthetical/bracketed content (e.g. city, branch, GSTIN),
+    standardizes legal prefixes/suffixes and common business words,
+    removes punctuation, and collapses whitespace.
+    """
+    if not name:
+        return ""
+    s = str(name).strip().lower()
+    # 1. Remove bracketed / parenthetical annotations: (Delhi), [Old], (07AAAA...), (Branch-1)
+    s = re.sub(r'\(.*?\)', ' ', s)
+    s = re.sub(r'\[.*?\]', ' ', s)
+    # 2. Normalize prefixes: m/s, m/s., ms, messrs, shri, shree
+    s = re.sub(r'\bm/s\.?\b', ' ', s)
+    s = re.sub(r'\bm/s\b', ' ', s)
+    s = re.sub(r'\bms\.?\b', ' ', s)
+    s = re.sub(r'\bmessrs\b', ' ', s)
+    s = re.sub(r'\bshree\b', ' shri ', s)
+    # 3. Standardize common business terms & abbreviations
+    s = re.sub(r'\b&\b', ' and ', s)
+    s = re.sub(r'\bpvt\.?\s*ltd\.?\b', ' pvt ltd ', s)
+    s = re.sub(r'\bprivate\s+limited\b', ' pvt ltd ', s)
+    s = re.sub(r'\bltd\.?\b', ' ltd ', s)
+    s = re.sub(r'\blimited\b', ' ltd ', s)
+    s = re.sub(r'\bco\.?\b', ' co ', s)
+    s = re.sub(r'\bcompany\b', ' co ', s)
+    s = re.sub(r'\bbros\.?\b', ' brothers ', s)
+    s = re.sub(r'\bcorp\.?\b', ' corporation ', s)
+    s = re.sub(r'\benterprises\b', ' enterprise ', s)
+    s = re.sub(r'\btrading\s+co\.?\b', ' traders ', s)
+    s = re.sub(r'\btrading\s+company\b', ' traders ', s)
+    # 4. Strip all remaining punctuation
+    s = re.sub(r'[^\w\s]', ' ', s)
+    # 5. Collapse spaces
+    return " ".join(s.split())
+
+
+def _are_single_names_similar(vname: str, iname: str, v_aliases: list = None, i_aliases: list = None) -> bool:
+    """Check if a VAT ledger name and an Internal ledger name are sufficiently similar
+    or almost identical, taking into account aliases and business variations.
+    """
+    v_raw = (vname or "").strip()
+    i_raw = (iname or "").strip()
+    if not v_raw or not i_raw:
+        return False
+
+    v_lower = v_raw.lower()
+    i_lower = i_raw.lower()
+
+    # Rule 0: Placeholders (Cash Sales, Old Party) are NEVER considered similar
+    # unless the VAT ledger itself is actually named Cash Sales / Old Party
+    if i_lower in ("cash sales", "old party"):
+        return i_lower in v_lower
+
+    if v_lower in ("cash sales", "old party"):
+        return v_lower in i_lower
+
+    # Rule 1: Case-insensitive exact match
+    if v_lower == i_lower:
+        return True
+
+    # Rule 2: Cleaned names match
+    v_clean = _clean_party_name_for_similarity(v_raw)
+    i_clean = _clean_party_name_for_similarity(i_raw)
+    if not v_clean or not i_clean:
+        return False
+
+    if v_clean == i_clean:
+        return True
+
+    # Rule 3: Compressed match (ignoring whitespace differences like "j k" vs "jk")
+    if v_clean.replace(" ", "") == i_clean.replace(" ", ""):
+        return True
+
+    # Rule 4: Token re-ordering (e.g. "KUMAR RAMESH" vs "RAMESH KUMAR")
+    v_tokens = set(v_clean.split())
+    i_tokens = set(i_clean.split())
+    if v_tokens == i_tokens:
+        return True
+
+    # Rule 5: Check aliases if provided
+    # If VAT name/alias matches internal alias/name
+    candidates_v = [v_raw, v_clean]
+    if v_aliases:
+        for a in v_aliases:
+            if a:
+                candidates_v.extend([a.strip(), _clean_party_name_for_similarity(a)])
+
+    candidates_i = [i_raw, i_clean]
+    if i_aliases:
+        for a in i_aliases:
+            if a:
+                candidates_i.extend([a.strip(), _clean_party_name_for_similarity(a)])
+
+    for cv in candidates_v:
+        cv_s = cv.strip().lower()
+        if not cv_s or cv_s in ("none", "nan", "null"):
+            continue
+        for ci in candidates_i:
+            ci_s = ci.strip().lower()
+            if not ci_s or ci_s in ("none", "nan", "null"):
+                continue
+            if cv_s == ci_s or cv_s.replace(" ", "") == ci_s.replace(" ", ""):
+                return True
+
+    # Rule 6: Core entity tokens analysis (eliminates false positives like "RAMESH TRADERS" vs "SURESH TRADERS")
+    v_core = _extract_core_tokens(v_clean)
+    i_core = _extract_core_tokens(i_clean)
+
+    # 6a. Core tokens exact match or re-ordered
+    # e.g. "BHARAT HARDWARE" (core: bharat hardware) vs "BHARAT HARDWARE STORES" (core: bharat hardware)
+    if set(v_core) == set(i_core):
+        return True
+
+    # 6b. Core tokens typo tolerance via SequenceMatcher on joined core names
+    # e.g. "AGARWAL" vs "AGRAWAL" ratio is 0.86 >= 0.85; "KHANDELWAL" vs "KHANDALWAL" ratio is 0.90 >= 0.85
+    v_core_str = " ".join(sorted(v_core))
+    i_core_str = " ".join(sorted(i_core))
+    core_ratio = difflib.SequenceMatcher(None, v_core_str, i_core_str).ratio()
+    if core_ratio >= 0.85:
+        return True
+
+    # 6c. High overall cleaned ratio ONLY IF core tokens have significant overlap
+    full_ratio = difflib.SequenceMatcher(None, v_clean, i_clean).ratio()
+    common_core = set(v_core).intersection(set(i_core))
+    if common_core and full_ratio >= 0.90:
+        return True
+
+    return False
+
+
+def _are_group_names_sufficiently_similar(vat_items: list, internal_items: list, m: dict) -> bool:
+    """Determine if all mapped ledgers in a group have almost identical / sufficiently similar names.
+    Returns False if any ledger was mapped to a completely different party or to Cash Sales / Old Party.
+    """
+    if not vat_items or not internal_items:
+        return False
+
+    # Check for placeholder assignment (Cash Sales, Old Party)
+    for ii in internal_items:
+        iname = str(ii.get("name", "")).strip().lower()
+        if iname in ("cash sales", "old party"):
+            if not any(iname in str(vi.get("name", "")).strip().lower() for vi in vat_items):
+                return False
+
+    cls = str(m.get("classification", "")).strip().lower()
+    if cls in ("cash sales", "old party"):
+        if not any(cls in str(vi.get("name", "")).strip().lower() for vi in vat_items):
+            return False
+
+    # Extract all names and aliases
+    v_names = [str(v.get("name", "")).strip() for v in vat_items if v.get("name")]
+    if not v_names and m.get("vat_ledger"):
+        v_names = [str(m.get("vat_ledger")).strip()]
+
+    i_names = [str(i.get("name", "")).strip() for i in internal_items if i.get("name")]
+    if not i_names and m.get("internal_ledger"):
+        i_names = [str(m.get("internal_ledger")).strip()]
+
+    if not v_names or not i_names:
+        return False
+
+    v_aliases = [str(v.get("alias", "")).strip() for v in vat_items if v.get("alias")]
+    if not v_aliases and m.get("vat_aliases"):
+        v_aliases = [str(a).strip() for a in m.get("vat_aliases") if a]
+
+    i_aliases = [str(i.get("alias", "")).strip() for i in internal_items if i.get("alias")]
+    if not i_aliases and m.get("internal_aliases"):
+        i_aliases = [str(a).strip() for a in m.get("internal_aliases") if a]
+
+    # Check every internal ledger matches at least one VAT ledger
+    for iname in i_names:
+        matched = False
+        for vname in v_names:
+            if _are_single_names_similar(vname, iname, v_aliases, i_aliases):
+                matched = True
+                break
+        if not matched:
+            return False
+
+    # Check every VAT ledger matches at least one internal ledger
+    for vname in v_names:
+        matched = False
+        for iname in i_names:
+            if _are_single_names_similar(vname, iname, v_aliases, i_aliases):
+                matched = True
+                break
+        if not matched:
+            return False
+
+    return True
 
 
 # ── Background Worker for non-blocking data load ─────────────────────
@@ -584,7 +803,7 @@ class AdminPasswordConfirmDialog(QDialog):
                 background: #ffffff;
             }
             QLabel {
-                font-family: 'Segoe UI', system-ui, sans-serif;
+                font-family: 'Noto Sans Devanagari', 'Segoe UI', system-ui, sans-serif;
             }
             QLineEdit {
                 border: 1.5px solid #cbd5e1;
@@ -1458,11 +1677,107 @@ class MappingCellDelegate(QStyledItemDelegate):
 
 
 class MappingTableWidget(QTableWidget):
-    """QTableWidget with keyboard shortcuts for Mapping table:
+    """QTableWidget with keyboard shortcuts and visual grouping for Mapping table:
     - Delete / Backspace on Col 2 (Internal Ledger): removes that internal ledger from group
     - Delete / Backspace on Col 1 (VAT Ledger): if merged, removes VAT ledger from group
     - Delete / Backspace on Col 0 / row selection: unmaps the entire group
+    - Renders combined VAT ledger names inside a unified box by erasing inner horizontal dividers
     """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.viewport().installEventFilter(self)
+        self._combined_group_ranges = []
+
+    def eventFilter(self, obj, event):
+        if obj == self.viewport() and event.type() == QEvent.Type.Paint:
+            res = super().eventFilter(obj, event)
+            if hasattr(self, '_combined_group_ranges') and self._combined_group_ranges:
+                painter = QPainter(self.viewport())
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+                v_rect = self.viewport().rect()
+                col_count = self.columnCount()
+
+                for item in self._combined_group_ranges:
+                    if len(item) == 5:
+                        start_row, n_rows, bg_col, border_col, accent_col = item
+                    else:
+                        start_row, n_rows, bg_col, border_col = item
+                        accent_col = border_col
+
+                    if n_rows <= 1 or self.isRowHidden(start_row) or col_count == 0:
+                        continue
+
+                    # 1. Geometry of the entire group card spanning Column 0 to Column col_count - 1
+                    top_rect_c0 = self.visualRect(self.model().index(start_row, 0))
+                    bot_rect_last = self.visualRect(self.model().index(start_row + n_rows - 1, col_count - 1))
+                    if not top_rect_c0.isValid() or not bot_rect_last.isValid():
+                        continue
+                    if top_rect_c0.width() == 0 or bot_rect_last.width() == 0:
+                        continue
+
+                    group_left = top_rect_c0.left()
+                    group_top = top_rect_c0.top()
+                    group_right = bot_rect_last.right()
+                    group_bottom = bot_rect_last.bottom()
+                    group_rect = QRect(group_left, group_top, group_right - group_left + 1, group_bottom - group_top + 1)
+
+                    if not group_rect.intersects(v_rect):
+                        continue
+
+                    # 2. Inner Dividers:
+                    # - Shared columns (0: S.No, 5: Balance, 6: Negative, 7: Narration):
+                    #   Erase inner horizontal dividers so these fields seamlessly span the full group height
+                    # - Split columns (1: VAT Ledger, 2: Int Ledger, 3: Vat Closing, 4: Int Closing):
+                    #   Draw subtle, clean 1px divider in #e2e8f0 so itemized lines are easy to read
+                    shared_cols = (0, 5, 6, 7)
+                    split_cols = (1, 2, 3, 4)
+
+                    for k in range(n_rows - 1):
+                        r = start_row + k
+                        next_r = r + 1
+
+                        is_r_sel = self.selectionModel().isRowSelected(r, self.rootIndex()) if self.selectionModel() else False
+                        is_next_sel = self.selectionModel().isRowSelected(next_r, self.rootIndex()) if self.selectionModel() else False
+
+                        if is_r_sel and is_next_sel:
+                            erase_fill = QColor("#e0f2fe")
+                        elif not is_r_sel and not is_next_sel:
+                            erase_fill = bg_col
+                        else:
+                            erase_fill = None
+
+                        # Erase on shared columns
+                        if erase_fill:
+                            for c in shared_cols:
+                                if c < col_count:
+                                    r_rect = self.visualRect(self.model().index(r, c))
+                                    if r_rect.isValid() and r_rect.width() > 0 and r_rect.intersects(v_rect):
+                                        erase_rect = QRect(r_rect.left(), r_rect.bottom() - 1, r_rect.width(), 2)
+                                        painter.fillRect(erase_rect, erase_fill)
+
+                        # Subtle clean divider on split columns
+                        divider_col = QColor("#bae6fd") if (is_r_sel and is_next_sel) else QColor("#e2e8f0")
+                        for c in split_cols:
+                            if c < col_count:
+                                r_rect = self.visualRect(self.model().index(r, c))
+                                if r_rect.isValid() and r_rect.width() > 0 and r_rect.intersects(v_rect):
+                                    divider_rect = QRect(r_rect.left() + 1, r_rect.bottom(), r_rect.width() - 2, 1)
+                                    painter.fillRect(divider_rect, divider_col)
+
+                    # 3. Draw Full-Width Group Outer Perimeter Frame across all columns
+                    painter.setPen(QPen(border_col, 2.0))
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.drawRect(group_rect.adjusted(0, 0, -1, -1))
+
+                    # 4. Draw 4px Left Accent Bar on Column 0
+                    accent_rect = QRect(group_rect.left(), group_rect.top(), 4, group_rect.height())
+                    if accent_rect.intersects(v_rect):
+                        painter.fillRect(accent_rect, accent_col)
+
+                painter.end()
+            return res
+        return super().eventFilter(obj, event)
+
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and self.state() != QTableWidget.State.EditingState:
             if getattr(self, '_can_edit', True):
@@ -1499,6 +1814,10 @@ class MappingTableWidget(QTableWidget):
                         if parent_ui and hasattr(parent_ui, '_unmap_selected_mapping'):
                             parent_ui._unmap_selected_mapping()
                             return
+        if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            if self.currentRow() < 0 and self.rowCount() > 0:
+                self.selectRow(0)
+                self.setCurrentCell(0, 0)
         super().keyPressEvent(event)
 
 
@@ -1520,7 +1839,7 @@ QTableWidget {
     border-bottom-left-radius: 6px;
     border-bottom-right-radius: 0px;
     gridline-color: #64748b;
-    font-family: 'Segoe UI';
+    font-family: 'Noto Sans Devanagari', 'Segoe UI', sans-serif;
     font-size: 10pt;
 }
 QTableWidget::item {
@@ -1600,7 +1919,7 @@ class TableFooterWidget(QTableWidget):
                 item = QTableWidgetItem()
                 self.setItem(0, c, item)
 
-            item.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+            item.setFont(QFont("Noto Sans Devanagari", 9, QFont.Weight.Bold))
 
             if c == label_col:
                 item.setText(label_text)
@@ -2319,10 +2638,26 @@ class BalanceUI(QWidget):
         # Top Bar: Search filter, Unmapped badge, Show 'None' VAT checkbox, Clear mapping, Toggle unassigned panel
         top_bar = QHBoxLayout()
         self.mapping_search = QLineEdit()
-        self.mapping_search.setPlaceholderText("Search name or alias...")
-        self.mapping_search.setFixedWidth(220)
+        self.mapping_search.setPlaceholderText("Search any cell, name, S.No, amount, narration...")
+        self.mapping_search.setClearButtonEnabled(True)
+        self.mapping_search.setFixedWidth(280)
         self.mapping_search.textChanged.connect(self._filter_mapping_table)
+
+        # Operational hotkey: Esc clears search and returns focus to table
+        orig_search_kpe = self.mapping_search.keyPressEvent
+        def _search_kpe(event):
+            if event.key() == Qt.Key.Key_Escape:
+                if self.mapping_search.text():
+                    self.mapping_search.clear()
+                self.mapping_table.setFocus()
+                return
+            orig_search_kpe(event)
+        self.mapping_search.keyPressEvent = _search_kpe
+
         top_bar.addWidget(self.mapping_search)
+
+        # Operational shortcut: Ctrl+F focuses the mapping search
+        QShortcut(QKeySequence("Ctrl+F"), widget, activated=self._focus_mapping_search)
 
         self.lbl_unmapped_badge = QLabel("")
         self.lbl_unmapped_badge.setStyleSheet(
@@ -2378,20 +2713,21 @@ class BalanceUI(QWidget):
         self.mapping_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.mapping_table.verticalHeader().setVisible(False)
 
-        headers = ["S.no", "VAT Ledger Name", "Internal Ledger Name", "Vat Closing", "Int. Closing", "Balance", "Negative"]
-        self.mapping_table.setColumnCount(7)
+        headers = ["S.no", "VAT Ledger Name", "Internal Ledger Name", "Vat Closing", "Int. Closing", "Balance", "Negative", "Narration"]
+        self.mapping_table.setColumnCount(8)
         self.mapping_table.setHorizontalHeaderLabels(headers)
 
         header = self.mapping_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(True)
-        self.mapping_table.setColumnWidth(0, 70)   # S.no
-        self.mapping_table.setColumnWidth(1, 270)  # VAT Ledger Name
-        self.mapping_table.setColumnWidth(2, 270)  # Internal Ledger Name
-        self.mapping_table.setColumnWidth(3, 120)  # Vat Closing
-        self.mapping_table.setColumnWidth(4, 120)  # Int. Closing
-        self.mapping_table.setColumnWidth(5, 115)  # Balance
-        self.mapping_table.setColumnWidth(6, 115)  # Negative
+        self.mapping_table.setColumnWidth(0, 65)   # S.no
+        self.mapping_table.setColumnWidth(1, 260)  # VAT Ledger Name
+        self.mapping_table.setColumnWidth(2, 260)  # Internal Ledger Name
+        self.mapping_table.setColumnWidth(3, 115)  # Vat Closing
+        self.mapping_table.setColumnWidth(4, 115)  # Int. Closing
+        self.mapping_table.setColumnWidth(5, 110)  # Balance
+        self.mapping_table.setColumnWidth(6, 110)  # Negative (reduced from stretching full screen)
+        self.mapping_table.setColumnWidth(7, 220)  # Narration (stretches to fill available width)
 
         # Double clicking column header sorts that column (Requirement 15)
         header.sectionDoubleClicked.connect(self._on_mapping_header_double_clicked)
@@ -2410,6 +2746,7 @@ class BalanceUI(QWidget):
         self.mapping_table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
 
         self.mapping_table.itemSelectionChanged.connect(self._on_mapping_selection_changed)
+        self.mapping_table.itemChanged.connect(self._on_mapping_item_changed)
         self.mapping_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.mapping_table.customContextMenuRequested.connect(self._show_mapping_context_menu)
 
@@ -3762,6 +4099,16 @@ class BalanceUI(QWidget):
         table.setUpdatesEnabled(True)
         table.blockSignals(False)
 
+        # Re-apply active search filter if present
+        if table is getattr(self, 'vat_table', None):
+            q = self.vat_search.text().strip() if hasattr(self, 'vat_search') else ""
+            if q:
+                self._filter_vat_table(q)
+        elif table is getattr(self, 'int_table', None):
+            q = self.int_search.text().strip() if hasattr(self, 'int_search') else ""
+            if q:
+                self._filter_int_table(q)
+
     # ── COLUMN VISIBILITY SETTINGS ───────────────────────────────────
 
     def get_visible_column_keys(self) -> set:
@@ -4225,23 +4572,32 @@ class BalanceUI(QWidget):
             self._cached_data = {}
         self._cached_data["mappings"] = mappings
         self._cached_data["unassigned_int"] = unassigned_int
-        self._populate_mapping_from_data(mappings)
-        self._populate_unassigned_list(unassigned_int)
-        if hasattr(self, '_rendered_tabs'):
-            self._rendered_tabs.add("mapping")
+        self._is_populating_mapping = True
+        try:
+            self._populate_mapping_from_data(mappings)
+            self._populate_unassigned_list(unassigned_int)
+            if hasattr(self, '_rendered_tabs'):
+                self._rendered_tabs.add("mapping")
 
-        if select_group_id:
-            found = False
-            for r in range(self.mapping_table.rowCount()):
-                it = self.mapping_table.item(r, 0)
-                if it and it.data(Qt.ItemDataRole.UserRole) == select_group_id:
-                    self.mapping_table.scrollToItem(it, QAbstractItemView.ScrollHint.PositionAtCenter)
-                    found = True
-                    break
-            if not found:
+            if select_group_id:
+                found = False
+                for r in range(self.mapping_table.rowCount()):
+                    if self.mapping_table.isRowHidden(r):
+                        continue
+                    it = self.mapping_table.item(r, 0)
+                    if it and it.data(Qt.ItemDataRole.UserRole) == select_group_id:
+                        self.mapping_table.scrollToItem(it, QAbstractItemView.ScrollHint.PositionAtCenter)
+                        self.mapping_table.selectRow(r)
+                        self.mapping_table.setCurrentCell(r, 0)
+                        self.mapping_table.setFocus()
+                        found = True
+                        break
+                if not found:
+                    self.mapping_table.verticalScrollBar().setValue(scroll_val)
+            else:
                 self.mapping_table.verticalScrollBar().setValue(scroll_val)
-        else:
-            self.mapping_table.verticalScrollBar().setValue(scroll_val)
+        finally:
+            self._is_populating_mapping = False
 
     def _populate_mapping_from_data(self, mappings: list):
         """Fill mapping table with 6 columns:
@@ -4258,6 +4614,38 @@ class BalanceUI(QWidget):
         self.mapping_table.clearSpans()
 
         filtered_mappings = list(mappings)
+
+        staged_gid = getattr(self, '_staged_group_id', None)
+        if staged_gid is not None:
+            staged_idx = -1
+            staged_m = None
+            for idx, m in enumerate(filtered_mappings):
+                if (m.get("group_id") or m.get("id")) == staged_gid:
+                    staged_idx = idx
+                    staged_m = m
+                    break
+
+            if staged_m is not None and not staged_m.get("is_none_vat", False):
+                filtered_mappings.pop(staged_idx)
+
+                staged_key = (staged_m.get("serial_no") or 999999, str(staged_m.get("vat_ledger", "")).lower())
+                target_insert_idx = 0
+                for idx, x in enumerate(filtered_mappings):
+                    is_x_unassigned = (x.get("is_unmapped", False) or not x.get("internal_items")) and not x.get("is_none_vat", False) and not (
+                        any(str(ii.get("name", "")).strip().lower() in ("cash sales", "old party") for ii in x.get("internal_items", []))
+                        or str(x.get("classification", "")).strip().lower() in ("cash sales", "old party")
+                    )
+                    if not is_x_unassigned:
+                        target_insert_idx = idx
+                        break
+                    x_key = (x.get("serial_no") or 999999, str(x.get("vat_ledger", "")).lower())
+                    if staged_key <= x_key:
+                        target_insert_idx = idx
+                        break
+                else:
+                    target_insert_idx = len(filtered_mappings)
+
+                filtered_mappings.insert(target_insert_idx, staged_m)
 
         total_rows = 0
         group_specs = []
@@ -4297,6 +4685,7 @@ class BalanceUI(QWidget):
                 unmapped_count += 1
 
         self.mapping_table.setRowCount(total_rows)
+        self.mapping_table._combined_group_ranges = []
 
         cur_row = 0
         for grp_idx, (m, vat_items, internal_items, n_rows) in enumerate(group_specs, start=1):
@@ -4308,6 +4697,7 @@ class BalanceUI(QWidget):
             is_unmapped = (m.get("is_unmapped", False) or not internal_items) and not is_placeholder_assigned
             is_merged = m.get("is_merged", False) or (len(vat_items) > 1)
             is_none_vat = m.get("is_none_vat", False) or (str(m.get("vat_ledger", "")).strip().lower() == "none")
+            is_staged = (group_id == staged_gid)
 
             # Collect all distinct positive serial numbers for this merged/single group
             sn_values = [v.get("serial_no") for v in vat_items if v.get("serial_no") and v.get("serial_no") > 0]
@@ -4316,16 +4706,62 @@ class BalanceUI(QWidget):
             primary_sn = sn_values[0] if sn_values else (m.get("serial_no") or 0)
             primary_vname = vat_items[0].get("name", "") if vat_items else m.get("vat_ledger", "")
 
-            # Soft background colors
-            if is_unmapped and not is_none_vat:
+            # Evaluate manual matching & name similarity
+            is_manual = bool(m.get("is_manual", False)) or is_placeholder_assigned
+            is_dissimilar = False
+            if not is_unmapped and not is_none_vat:
+                is_similar = _are_group_names_sufficiently_similar(vat_items, internal_items, m)
+                if not is_similar:
+                    is_dissimilar = True
+
+            # Colour coding logic:
+            # 1. Staged (newly mapped in-session, pending deselect): soft emerald
+            # 2. Combined VAT ledger names (multi-name merge): distinct soft violet/lavender container
+            # 3. Unmatched records: soft red
+            # 4. Reserved None VAT: soft slate
+            # 5. Records whose names are NOT sufficiently similar (e.g. cross-mapped or placeholder): soft amber / warm cream
+            # 6. Automatically matched records & manually matched records with almost identical names: clean white / alternating slate
+            if is_staged:
+                bg_color = QColor("#ecfdf5")
+                fg_color = QColor("#065f46")
+            elif is_merged:
+                # Combined VAT ledger names: distinct soft violet/lavender container
+                bg_color = QColor("#ede9fe")
+                fg_color = QColor("#4c1d95")
+            elif is_unmapped and not is_none_vat:
                 bg_color = QColor("#fef2f2")
                 fg_color = QColor("#991b1b")
             elif is_none_vat:
                 bg_color = QColor("#f8fafc")
                 fg_color = QColor("#64748b")
+            elif is_dissimilar:
+                # Soft amber highlight with high-contrast text (> 10:1)
+                bg_color = QColor("#fef3c7") if (grp_idx % 2 == 1) else QColor("#fffbeb")
+                fg_color = QColor("#78350f")
             else:
                 bg_color = QColor("#ffffff") if (grp_idx % 2 == 1) else QColor("#f8fafc")
                 fg_color = QColor("#0f172a")
+
+            if n_rows > 1:
+                # Any multi-row mapping group (merged VAT or multi-internal) gets the Card enclosure
+                if is_merged:
+                    # Combined VAT ledger names: rich violet frame with deep violet accent
+                    border_color = QColor("#7c3aed")
+                    accent_color = QColor("#6d28d9")
+                elif is_staged:
+                    border_color = QColor("#059669")
+                    accent_color = QColor("#047857")
+                elif is_dissimilar:
+                    border_color = QColor("#d97706")
+                    accent_color = QColor("#b45309")
+                else:
+                    # Multi-internal mapping: crisp ocean blue container
+                    border_color = QColor("#0284c7")
+                    accent_color = QColor("#0369a1")
+
+                self.mapping_table._combined_group_ranges.append(
+                    (start_row, n_rows, bg_color, border_color, accent_color)
+                )
             # Option A: Group Total Comparison for multi-ledger mappings (1*N, N*1, N*M)
             grp_vat_closing = sum(float(v.get("closing", 0.0) or 0.0) for v in vat_items)
             grp_int_closing = sum(float(i.get("closing", 0.0) or 0.0) for i in internal_items)
@@ -4336,32 +4772,44 @@ class BalanceUI(QWidget):
             grp_neg_val = 0.0
 
             if grp_vat_closing < -1e-9:
-                # Rule 1: Vat closing is negative -> balance blank, negative shows abs(vat closing)
-                v_int = abs(int(round(grp_vat_closing)))
-                grp_neg_str = f"{v_int:,}"
-                grp_neg_val = float(v_int)
+                # Rule 1: Vat closing is negative -> balance blank, negative shows nearest 1,000 of abs(vat closing)
+                raw_neg = abs(grp_vat_closing)
+                diff_neg_rounded = round_nearest_1000(raw_neg)
+                grp_neg_str = f"{diff_neg_rounded:,}"
+                grp_neg_val = float(diff_neg_rounded)
             elif grp_int_closing > grp_vat_closing + 1e-9:
-                # Rule 2: Int closing > Vat closing -> balance blank, negative shows abs(vat - int)
-                diff_neg = abs(int(round(grp_vat_closing - grp_int_closing)))
-                grp_neg_str = f"{diff_neg:,}"
-                grp_neg_val = float(diff_neg)
-            elif grp_vat_closing >= 0 and grp_int_closing >= 0 and grp_vat_closing > grp_int_closing + 1e-9:
-                # Rule 3: Both positive, Vat closing > Int closing -> balance shows (vat - int), negative blank
-                diff_bal = int(round(grp_vat_closing - grp_int_closing))
-                grp_bal_str = f"{diff_bal:,}"
-                grp_bal_val = float(diff_bal)
+                # Rule 2: Int closing > Vat closing -> balance blank, negative shows nearest 1,000 of abs(vat - int)
+                raw_neg = abs(grp_vat_closing - grp_int_closing)
+                diff_neg_rounded = round_nearest_1000(raw_neg)
+                grp_neg_str = f"{diff_neg_rounded:,}"
+                grp_neg_val = float(diff_neg_rounded)
+            elif grp_vat_closing >= 0:
+                # Rule 3: Balance calculation when Vat closing >= 0
+                if grp_int_closing < -1e-9:
+                    # Condition: If INT Closing < 0 (e.g. -1,000 or -2,000), treat as 0 for Balance calculation:
+                    # Balance = VAT Closing - 0
+                    raw_bal = grp_vat_closing
+                    diff_bal_rounded = round_nearest_1000(raw_bal)
+                    grp_bal_str = f"{diff_bal_rounded:,}"
+                    grp_bal_val = float(diff_bal_rounded)
+                elif grp_vat_closing > grp_int_closing + 1e-9:
+                    # Both non-negative, Vat closing > Int closing -> balance shows nearest 1,000 of (vat - int), negative blank
+                    raw_bal = grp_vat_closing - grp_int_closing
+                    diff_bal_rounded = round_nearest_1000(raw_bal)
+                    grp_bal_str = f"{diff_bal_rounded:,}"
+                    grp_bal_val = float(diff_bal_rounded)
 
             for k in range(n_rows):
                 r = start_row + k
 
-                # 0: Serial No. (Primary row shows single SN, merged sub-rows show ↳ sub_sn)
+                # 0: Serial No. (Primary row shows single SN, merged sub-rows show clean sub_sn)
                 if is_merged:
                     if k == 0:
                         sn_str = str(primary_sn) if primary_sn else ""
                         sn_val = float(primary_sn or 0)
                     else:
                         sub_sn = vat_items[k].get("serial_no") if k < len(vat_items) else 0
-                        sn_str = f"↳ {sub_sn}" if sub_sn else "↳"
+                        sn_str = str(sub_sn) if sub_sn else ""
                         sn_val = float(sub_sn or primary_sn or 0)
                 else:
                     if k < len(vat_items):
@@ -4384,7 +4832,7 @@ class BalanceUI(QWidget):
                 it_sn.setData(Qt.ItemDataRole.UserRole + 8, primary_sn)
                 it_sn._mapping_group = m
                 it_sn.setFlags(it_sn.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                if (is_unmapped and not is_none_vat) or is_merged:
+                if (is_unmapped and not is_none_vat) or is_merged or is_staged or is_dissimilar:
                     f = it_sn.font()
                     f.setBold(True)
                     it_sn.setFont(f)
@@ -4421,6 +4869,10 @@ class BalanceUI(QWidget):
                 it_vl.setData(Qt.ItemDataRole.UserRole + 8, primary_sn)
                 it_vl._mapping_group = m
                 it_vl.setFlags(it_vl.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                if is_merged and k == 0:
+                    f_vl = it_vl.font()
+                    f_vl.setBold(True)
+                    it_vl.setFont(f_vl)
                 self.mapping_table.setItem(r, 1, it_vl)
 
                 # 2: Internal Ledger Name (with '+' button)
@@ -4504,6 +4956,18 @@ class BalanceUI(QWidget):
                 it_neg.setFlags(it_neg.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.mapping_table.setItem(r, 6, it_neg)
 
+                # 7: Narration (Shown on primary row k == 0; sub-rows left blank)
+                narr_str = str(m.get("narration") or "").strip() if k == 0 else ""
+                it_narr = QTableWidgetItem(narr_str)
+                it_narr.setBackground(bg_color)
+                it_narr.setForeground(fg_color)
+                it_narr.setData(Qt.ItemDataRole.UserRole, group_id)
+                if k == 0 and self._can_edit:
+                    it_narr.setFlags(it_narr.flags() | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+                else:
+                    it_narr.setFlags(it_narr.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.mapping_table.setItem(r, 7, it_narr)
+
             cur_row += n_rows
 
         self.mapping_table.viewport().setUpdatesEnabled(True)
@@ -4519,11 +4983,15 @@ class BalanceUI(QWidget):
             else:
                 self.lbl_unmapped_badge.setVisible(False)
 
-        # Update Grand Total Footer
-        self._update_mapping_totals()
-
         # Update button states
         self._on_mapping_selection_changed()
+
+        # Re-apply active search filter if present (preserves filter state across data refreshes/sorts)
+        q = self.mapping_search.text().strip() if hasattr(self, 'mapping_search') else ""
+        if q:
+            self._filter_mapping_table(q)
+        else:
+            self._update_mapping_totals()
 
     def _populate_unassigned_list(self, unassigned_items: list = None):
         """Populate the right-side Unassigned Internal Ledgers list."""
@@ -4825,9 +5293,60 @@ class BalanceUI(QWidget):
     # ── MAPPING EVENT HANDLERS & PANEL CONTROLS ─────────────────────
 
     def _on_mapping_selection_changed(self):
-        """Update button enabled states based on current selection in Mapping table."""
+        """Update button enabled states based on current selection in Mapping table.
+        If a group was staged in-place after mapping, commit its move to the permanent sorted position
+        when the user selects another row or deselects.
+        """
+        if getattr(self, '_is_destaging', False):
+            return
+
         selected_indexes = self.mapping_table.selectedIndexes()
         has_sel = bool(selected_indexes)
+
+        if not getattr(self, '_is_populating_mapping', False) and not getattr(self, '_is_inline_editing', False):
+            staged_gid = getattr(self, '_staged_group_id', None)
+            if staged_gid is not None:
+                # Check if any selected cell belongs to the staged group
+                is_staged_selected = False
+                newly_selected_gid = None
+                for idx in selected_indexes:
+                    it = self.mapping_table.item(idx.row(), 0)
+                    gid = it.data(Qt.ItemDataRole.UserRole) if it else None
+                    if gid == staged_gid:
+                        is_staged_selected = True
+                    elif gid is not None and newly_selected_gid is None:
+                        newly_selected_gid = gid
+
+                if not is_staged_selected:
+                    # User clicked another row or deselected: commit the move to permanent sort position
+                    self._staged_group_id = None
+                    self._is_destaging = True
+                    try:
+                        cached_mappings = self._cached_data.get("mappings", []) if hasattr(self, '_cached_data') and self._cached_data else None
+                        if cached_mappings:
+                            scroll_val = self.mapping_table.verticalScrollBar().value()
+                            self._populate_mapping_from_data(cached_mappings)
+                            target_gid = newly_selected_gid if newly_selected_gid is not None else staged_gid
+                            if target_gid is not None:
+                                found = False
+                                for r in range(self.mapping_table.rowCount()):
+                                    if self.mapping_table.isRowHidden(r):
+                                        continue
+                                    it = self.mapping_table.item(r, 0)
+                                    if it and it.data(Qt.ItemDataRole.UserRole) == target_gid:
+                                        self.mapping_table.scrollToItem(it, QAbstractItemView.ScrollHint.PositionAtCenter)
+                                        self.mapping_table.selectRow(r)
+                                        self.mapping_table.setCurrentCell(r, 0)
+                                        self.mapping_table.setFocus()
+                                        found = True
+                                        break
+                                if not found:
+                                    self.mapping_table.verticalScrollBar().setValue(scroll_val)
+                    finally:
+                        self._is_destaging = False
+                    selected_indexes = self.mapping_table.selectedIndexes()
+                    has_sel = bool(selected_indexes)
+
         if hasattr(self, 'btn_unmap_mapping'):
             can_clear = getattr(self, '_can_clear_mapping', True)
             self.btn_unmap_mapping.setEnabled(can_clear)
@@ -4835,6 +5354,30 @@ class BalanceUI(QWidget):
         has_unassigned_sel = bool(self.unassigned_list.selectedItems()) if hasattr(self, 'unassigned_list') else False
         if hasattr(self, 'btn_assign_internal'):
             self.btn_assign_internal.setEnabled(has_unassigned_sel and has_sel)
+
+    def _on_mapping_item_changed(self, item: QTableWidgetItem):
+        """Handle in-place editing in Mapping table (Column 7: Narration)."""
+        if getattr(self, '_is_populating_mapping', False) or getattr(self, '_is_destaging', False):
+            return
+        if not item or item.column() != 7:
+            return
+
+        group_id = item.data(Qt.ItemDataRole.UserRole)
+        if not group_id or not self.db_name or not self.active_vat_company:
+            return
+
+        new_narration = item.text().strip()
+
+        # Update cache in memory so in-memory destaging / sorting retains it
+        if hasattr(self, '_cached_data') and self._cached_data and "mappings" in self._cached_data:
+            for m in self._cached_data["mappings"]:
+                if (m.get("group_id") or m.get("id")) == group_id:
+                    if str(m.get("narration") or "").strip() == new_narration:
+                        return
+                    m["narration"] = new_narration
+                    break
+
+        save_mapping_narration(self.db_name, self.active_vat_company, group_id, new_narration)
 
     def _on_unassigned_selection_changed(self):
         """Update assign button when an unassigned internal debtor is selected."""
@@ -4848,6 +5391,7 @@ class BalanceUI(QWidget):
         q = text.strip().lower()
         visible_cnt = 0
         total_cnt = self.unassigned_list.count()
+        tokens = [t for t in q.split() if t]
         for r in range(total_cnt):
             it = self.unassigned_list.item(r)
             if not it:
@@ -4856,7 +5400,8 @@ class BalanceUI(QWidget):
             alias = str(it.data(Qt.ItemDataRole.UserRole + 1) or "").lower()
             cls = str(it.data(Qt.ItemDataRole.UserRole + 2) or "").lower()
             txt = it.text().lower()
-            match = (not q) or (q in txt) or (q in name) or (q in alias) or (q in cls)
+            corpus = f"{txt} {name} {alias} {cls}"
+            match = all(tok in corpus for tok in tokens) if tokens else True
             it.setHidden(not match)
             if match:
                 visible_cnt += 1
@@ -4910,7 +5455,9 @@ class BalanceUI(QWidget):
             if int_name:
                 assign_internal_ledger_to_group(self.db_name, self.active_vat_company, target_group_id, int_name)
 
+        self._staged_group_id = target_group_id
         self.refresh_mapping_table(select_group_id=target_group_id)
+        self.mapping_table.setFocus()
 
     def _on_unassigned_item_double_clicked(self, item: QListWidgetItem):
         """Double-clicking an unassigned internal debtor assigns it to selected VAT group (or first unmapped)."""
@@ -4940,9 +5487,11 @@ class BalanceUI(QWidget):
             QMessageBox.information(self, "Select VAT Row", "Please select a VAT row in the mapping table to assign to.")
             return
 
+        self._staged_group_id = target_group_id
         ok = assign_internal_ledger_to_group(self.db_name, self.active_vat_company, target_group_id, int_name)
         if ok:
             self.refresh_mapping_table(select_group_id=target_group_id)
+            self.mapping_table.setFocus()
 
     def _unmap_selected_mapping(self):
         """Clear/unmap internal ledgers from the selected group(s), returning them to unassigned list.
@@ -4978,6 +5527,7 @@ class BalanceUI(QWidget):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
+        self._staged_group_id = None
         for gid in group_ids:
             unmap_vat_group(self.db_name, self.active_vat_company, gid)
 
@@ -5011,19 +5561,23 @@ class BalanceUI(QWidget):
 
         # 3. Insert temporary inline row directly below
         insert_row = row + 1
-        self.mapping_table.clearSelection()
-        self.mapping_table.setCurrentItem(None)
-        self.mapping_table.insertRow(insert_row)
-        self.mapping_table.setRowHeight(insert_row, 36)
+        self._is_inline_editing = True
+        try:
+            self.mapping_table.clearSelection()
+            self.mapping_table.setCurrentItem(None)
+            self.mapping_table.insertRow(insert_row)
+            self.mapping_table.setRowHeight(insert_row, 36)
+        finally:
+            self._is_inline_editing = False
 
         # 4. Fill cells with neutral, non-selectable items (prevent selection highlight)
-        for c in range(6):
+        for c in range(self.mapping_table.columnCount()):
             it = QTableWidgetItem("")
             it.setData(Qt.ItemDataRole.UserRole, target_gid)
             it.setFlags(Qt.ItemFlag.NoItemFlags)
             it.setBackground(QColor("#f8fafc"))
             if c == 0:
-                it.setText("↳")
+                it.setText("+")
                 it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 it.setForeground(QColor("#059669"))
             self.mapping_table.setItem(insert_row, c, it)
@@ -5037,7 +5591,7 @@ class BalanceUI(QWidget):
 
         # 5. Build QLineEdit with _TallyCompleter
         ed = QLineEdit()
-        ed.setStyleSheet("""
+        normal_style = """
             QLineEdit {
                 background: #ffffff;
                 border: 2px solid #059669;
@@ -5047,7 +5601,25 @@ class BalanceUI(QWidget):
                 font-weight: 500;
                 color: #0f172a;
             }
-        """)
+        """
+        error_style = """
+            QLineEdit {
+                background: #fef2f2;
+                border: 2px solid #ef4444;
+                border-radius: 4px;
+                padding: 2px 8px;
+                font-size: 12px;
+                font-weight: 500;
+                color: #991b1b;
+            }
+        """
+        ed.setStyleSheet(normal_style)
+
+        def _set_normal_style():
+            ed.setStyleSheet(normal_style)
+
+        def _set_error_style():
+            ed.setStyleSheet(error_style)
 
         if col == 1:
             ed.setPlaceholderText("Type or select VAT Ledger to merge and press Enter (Esc to cancel)...")
@@ -5066,11 +5638,74 @@ class BalanceUI(QWidget):
             else:
                 options = ["Cash Sales", "Old Party"] + [opt for opt in base_options if opt.lower() not in ("cash sales", "old party")]
 
+        opt_map = {opt.strip().lower(): opt for opt in options}
+
+        def _is_exact_valid_ledger(text: str) -> str | None:
+            if not text:
+                return None
+            t_clean = text.strip()
+            t_lower = t_clean.lower()
+            if t_lower in opt_map:
+                return opt_map[t_lower]
+            if col == 1:
+                canon = self.resolve_vat_ledger(t_clean)
+                if canon and canon.strip().lower() in opt_map:
+                    return opt_map[canon.strip().lower()]
+            elif col == 2:
+                canon = self.resolve_int_ledger(t_clean)
+                if canon and canon.strip().lower() in opt_map:
+                    return opt_map[canon.strip().lower()]
+            return None
+
+        def _find_closest_option(text: str) -> str | None:
+            if not text:
+                return None
+            t_clean = text.strip()
+            t_norm = _norm(t_clean)
+            if not t_norm:
+                return None
+
+            # 1. Check if completer proxy currently has a top matched row
+            try:
+                proxy = getattr(completer, '_proxy', None)
+                if proxy and proxy.rowCount() > 0:
+                    top_opt = proxy.data(proxy.index(0, 0), Qt.ItemDataRole.DisplayRole)
+                    if top_opt:
+                        return top_opt
+            except Exception:
+                pass
+
+            # 2. Check normalized prefix / contains matches in options
+            starts = []
+            contains = []
+            for opt in options:
+                onorm = _norm(opt)
+                if onorm.startswith(t_norm):
+                    starts.append(opt)
+                elif t_norm in onorm:
+                    contains.append(opt)
+
+            if starts:
+                starts.sort(key=lambda x: len(x))
+                return starts[0]
+            if contains:
+                contains.sort(key=lambda x: len(x))
+                return contains[0]
+
+            # 3. Fuzzy match via difflib
+            import difflib
+            matches = difflib.get_close_matches(t_clean, options, n=1, cutoff=0.35)
+            if matches:
+                return matches[0]
+
+            return None
+
         completer = _TallyCompleter(options, ed)
         completer.setMaxVisibleItems(12)
         completer.popup().setMinimumWidth(420)
         ed.setCompleter(completer)
         ed.textEdited.connect(completer.update_prefix)
+        ed.textEdited.connect(lambda: _set_normal_style())
 
         is_done = False
 
@@ -5086,11 +5721,14 @@ class BalanceUI(QWidget):
             except Exception:
                 pass
             # Remove cell widget first to prevent floating widget over viewport
-            self.mapping_table.removeCellWidget(insert_row, col)
-            if insert_row < self.mapping_table.rowCount():
-                self.mapping_table.removeRow(insert_row)
-            self.mapping_table.clearSelection()
-            self.mapping_table.setCurrentItem(None)
+            self._is_inline_editing = True
+            try:
+                self.mapping_table.removeCellWidget(insert_row, col)
+                if insert_row < self.mapping_table.rowCount():
+                    self.mapping_table.removeRow(insert_row)
+                self.mapping_table.setFocus()
+            finally:
+                self._is_inline_editing = False
 
         self._active_inline_cleanup = _cleanup
 
@@ -5098,12 +5736,21 @@ class BalanceUI(QWidget):
             nonlocal is_done
             if is_done:
                 return
-            val = (selected_val or ed.text()).strip()
+            raw_val = (selected_val or ed.text()).strip()
+            if not raw_val:
+                return
+
+            # Strictly validate against options list
+            exact_val = _is_exact_valid_ledger(raw_val)
+            if not exact_val:
+                # Guard: Do NOT accept non-existent ledgers into database!
+                _set_error_style()
+                return
+
+            val = exact_val
+
             # Clean up the temporary row immediately before running refresh!
             _cleanup()
-
-            if not val:
-                return
 
             if col == 1:
                 # Merge VAT Ledger
@@ -5111,16 +5758,62 @@ class BalanceUI(QWidget):
                 if canon_val.lower() == "none":
                     QMessageBox.warning(self, "Invalid Operation", "'None' VAT ledger cannot be merged.")
                     return
+                self._staged_group_id = target_gid
                 ok = merge_vat_ledger_into_group(self.db_name, self.active_vat_company, target_gid, canon_val, target_vat_name=target_vname)
                 self.refresh_mapping_table(select_group_id=target_gid)
+                self.mapping_table.setFocus()
             elif col == 2:
                 # Assign Internal Ledger
                 canon_val = self.resolve_int_ledger(val) or val
                 if target_is_none and canon_val.lower() in ("cash sales", "old party"):
                     QMessageBox.warning(self, "Invalid Operation", "'None' VAT cannot be mapped to Cash Sales or Old Party.")
                     return
+                self._staged_group_id = target_gid
                 ok = assign_internal_ledger_to_group(self.db_name, self.active_vat_company, target_gid, canon_val, target_vat_name=target_vname)
                 self.refresh_mapping_table(select_group_id=target_gid)
+                self.mapping_table.setFocus()
+
+        def _on_activated(chosen_text: str):
+            curr = ed.text().strip()
+            # If what user typed is already an exact match, commit immediately
+            if curr.lower() == chosen_text.strip().lower():
+                _commit(chosen_text)
+                return
+
+            # Otherwise, user typed something else: select closest match and add in field,
+            # but do NOT accept until Enter is pressed again!
+            ed.setText(chosen_text)
+            ed.selectAll()
+            _set_normal_style()
+            try:
+                completer.popup().hide()
+            except Exception:
+                pass
+
+        def _on_return_pressed():
+            val = ed.text().strip()
+            if not val:
+                return
+
+            # Check if text in field is already an exact match from the list
+            exact_match = _is_exact_valid_ledger(val)
+            if exact_match:
+                _commit(exact_match)
+                return
+
+            # User typed something else that does NOT exist in the list:
+            # Select the closest match and add that in the field, but do NOT accept until enter is pressed again!
+            closest = _find_closest_option(val)
+            if closest:
+                ed.setText(closest)
+                ed.selectAll()
+                _set_normal_style()
+                try:
+                    completer.popup().hide()
+                except Exception:
+                    pass
+            else:
+                _set_error_style()
 
         orig_kpe = ed.keyPressEvent
         def _ed_key(ev):
@@ -5130,8 +5823,8 @@ class BalanceUI(QWidget):
             orig_kpe(ev)
         ed.keyPressEvent = _ed_key
 
-        completer.activated.connect(lambda txt: _commit(txt))
-        ed.returnPressed.connect(lambda: _commit())
+        completer.activated.connect(_on_activated)
+        ed.returnPressed.connect(_on_return_pressed)
 
         self.mapping_table.setCellWidget(insert_row, col, ed)
         self.mapping_table.clearSelection()
@@ -5191,6 +5884,7 @@ class BalanceUI(QWidget):
         if is_merged and v_name:
             act_remove_vat = menu.addAction(f"Remove VAT Ledger '{v_name}' from Group")
             def _do_remove_vat():
+                self._staged_group_id = None
                 ok = remove_vat_ledger_from_group(self.db_name, self.active_vat_company, gid, v_name)
                 if ok:
                     self.refresh_mapping_table(select_group_id=gid)
@@ -5200,6 +5894,7 @@ class BalanceUI(QWidget):
         if is_merged:
             act_demerge = menu.addAction("⚡ Demerge Group (Separate VAT Ledgers)")
             def _do_demerge():
+                self._staged_group_id = None
                 ok = demerge_mapping_group(self.db_name, self.active_vat_company, gid)
                 if ok:
                     self.refresh_mapping_table()
@@ -5209,6 +5904,7 @@ class BalanceUI(QWidget):
         if i_name:
             act_remove_int = menu.addAction(f"Remove Internal Ledger '{i_name}' (Unmap)")
             def _do_remove_int():
+                self._staged_group_id = None
                 ok = remove_internal_ledger_from_group(self.db_name, self.active_vat_company, gid, i_name)
                 if ok:
                     self.refresh_mapping_table(select_group_id=gid)
@@ -5247,6 +5943,7 @@ class BalanceUI(QWidget):
             def _apply_placeholder(placeholder_name):
                 for tg_id, tg_vname, _ in target_unmapped:
                     assign_internal_ledger_to_group(self.db_name, self.active_vat_company, tg_id, placeholder_name, target_vat_name=tg_vname)
+                self._staged_group_id = gid
                 self.refresh_mapping_table(select_group_id=gid)
 
             act_cash.triggered.connect(lambda: _apply_placeholder("Cash Sales"))
@@ -5266,6 +5963,7 @@ class BalanceUI(QWidget):
         self.refresh_mapping_table(select_group_id=group_id)
 
     def _unmap_group(self, group_id: int):
+        self._staged_group_id = None
         unmap_vat_group(self.db_name, self.active_vat_company, group_id)
         self.refresh_mapping_table()
 
@@ -5342,6 +6040,7 @@ class BalanceUI(QWidget):
 
     def _on_mapping_header_double_clicked(self, logical_index: int):
         """Sort mapping groups A -> Z (ascending), toggling to descending on second click (Requirement 15)."""
+        self._staged_group_id = None
         if not hasattr(self, '_cached_data') or not self._cached_data:
             return
         mappings = list(self._cached_data.get("mappings", []))
@@ -5386,7 +6085,15 @@ class BalanceUI(QWidget):
                 v = sum(float(x.get("closing", 0.0) or 0.0) for x in v_items) if v_items else float(m.get("vat_closing", 0.0) or 0.0)
                 i_items = m.get("internal_items", [])
                 i = sum(float(x.get("closing", 0.0) or 0.0) for x in i_items) if i_items else float(m.get("internal_closing", 0.0) or 0.0)
-                return max(0.0, v - i) if (v >= 0 and i >= 0 and v > i) else 0.0
+                if v < -1e-9 or i > v + 1e-9:
+                    raw_bal = 0.0
+                elif i < -1e-9:
+                    raw_bal = v
+                elif v > i + 1e-9:
+                    raw_bal = v - i
+                else:
+                    raw_bal = 0.0
+                return float(round_nearest_1000(raw_bal)) if raw_bal > 0 else 0.0
             mappings.sort(key=_get_bal, reverse=reverse)
         elif logical_index == 6:
             def _get_neg(m):
@@ -5394,12 +6101,14 @@ class BalanceUI(QWidget):
                 v = sum(float(x.get("closing", 0.0) or 0.0) for x in v_items) if v_items else float(m.get("vat_closing", 0.0) or 0.0)
                 i_items = m.get("internal_items", [])
                 i = sum(float(x.get("closing", 0.0) or 0.0) for x in i_items) if i_items else float(m.get("internal_closing", 0.0) or 0.0)
-                if v < 0:
-                    return abs(v)
-                if i > v:
-                    return abs(v - i)
+                if v < -1e-9:
+                    return float(round_nearest_1000(abs(v)))
+                if i > v + 1e-9:
+                    return float(round_nearest_1000(abs(v - i)))
                 return 0.0
             mappings.sort(key=_get_neg, reverse=reverse)
+        elif logical_index == 7:
+            mappings.sort(key=lambda m: (str(m.get("narration") or "")).lower(), reverse=reverse)
 
         self._populate_mapping_from_data(mappings)
 
@@ -5702,6 +6411,12 @@ class BalanceUI(QWidget):
             self.vat_table.setUpdatesEnabled(True)
         self._update_vat_totals()
 
+    def _focus_mapping_search(self):
+        """Focus the mapping search input and select all text."""
+        if hasattr(self, 'mapping_search'):
+            self.mapping_search.setFocus()
+            self.mapping_search.selectAll()
+
     def _filter_mapping_table(self, query: str):
         q = query.strip().lower()
         total_rows = self.mapping_table.rowCount()
@@ -5723,6 +6438,10 @@ class BalanceUI(QWidget):
         if not self._vat_alias_map:
             self._get_vat_ledger_options()
 
+        # Tokenize query for multi-term AND search across fields (e.g. "Ramesh 50000" or "12 Delhi")
+        tokens = [t for t in q.split() if t]
+        tokens_no_commas = [t.replace(",", "") for t in tokens]
+
         # Group row indices by group_id
         groups = {}
         for r in range(total_rows):
@@ -5734,53 +6453,163 @@ class BalanceUI(QWidget):
         try:
             for gid, rows in groups.items():
                 first_it = self.mapping_table.item(rows[0], 0)
-                m = getattr(first_it, "_mapping_group", {}) if first_it else {}
-                
-                v_names_list = m.get("vat_ledgers", []) or [vi.get("name", "") for vi in m.get("vat_items", []) if vi.get("name")]
-                i_names_list = m.get("internal_ledgers", []) or [ii.get("name", "") for ii in m.get("internal_items", []) if ii.get("name")]
-                
-                v_aliases_set = set(m.get("vat_aliases", []) or [])
-                for vi in m.get("vat_items", []):
-                    if vi.get("alias"):
-                        v_aliases_set.add(vi.get("alias"))
-                for vn in v_names_list:
-                    vk = " ".join(str(vn).split()).lower()
-                    if vk in self._vat_alias_map:
-                        v_aliases_set.add(self._vat_alias_map[vk])
-
-                i_aliases_set = set(m.get("internal_aliases", []) or [])
-                for ii in m.get("internal_items", []):
-                    if ii.get("alias"):
-                        i_aliases_set.add(ii.get("alias"))
-                for iname in i_names_list:
-                    ik = " ".join(str(iname).split()).lower()
-                    if ik in self._int_alias_map:
-                        i_aliases_set.add(self._int_alias_map[ik])
-
-                v_names = " ".join(v_names_list).lower()
-                v_aliases = " ".join(v_aliases_set).lower()
-                i_names = " ".join(i_names_list).lower()
-                i_aliases = " ".join(i_aliases_set).lower()
-                m_names = str(m.get("manual_name") or "").lower()
-
-                group_match = (
-                    (q in v_names) or (q in v_aliases) or
-                    (q in i_names) or (q in i_aliases) or (q in m_names)
-                )
-
-                if not group_match:
-                    for r in rows:
-                        for c in range(self.mapping_table.columnCount()):
-                            it = self.mapping_table.item(r, c)
-                            if it:
-                                val_txt = it.text().lower()
-                                u1_txt = str(it.data(Qt.ItemDataRole.UserRole + 1) or "").lower()
-                                u2_txt = str(it.data(Qt.ItemDataRole.UserRole + 2) or "").lower()
-                                if (q in val_txt) or (q in u1_txt) or (q in u2_txt):
-                                    group_match = True
-                                    break
-                        if group_match:
+                m = getattr(first_it, "_mapping_group", None)
+                if not m:
+                    for r_check in rows:
+                        for c_check in (0, 1, 2):
+                            it_chk = self.mapping_table.item(r_check, c_check)
+                            if it_chk and getattr(it_chk, "_mapping_group", None):
+                                m = it_chk._mapping_group
+                                break
+                        if m:
                             break
+                if not m:
+                    m = {}
+
+                # Collect searchable strings from group dict
+                group_strings = set()
+
+                # 1. VAT names, aliases, and constituent items
+                v_names_list = m.get("vat_ledgers", []) or [vi.get("name", "") for vi in m.get("vat_items", []) if vi.get("name")]
+                for vn in v_names_list:
+                    if vn:
+                        group_strings.add(str(vn))
+                        vk = " ".join(str(vn).split()).lower()
+                        if vk in self._vat_alias_map:
+                            group_strings.add(self._vat_alias_map[vk])
+
+                for vi in m.get("vat_items", []):
+                    if vi.get("name"):
+                        group_strings.add(str(vi["name"]))
+                    if vi.get("alias"):
+                        group_strings.add(str(vi["alias"]))
+                    if vi.get("serial_no"):
+                        group_strings.add(str(vi["serial_no"]))
+                    if vi.get("closing") is not None:
+                        c_val = float(vi.get("closing", 0) or 0)
+                        c_int = int(round(c_val))
+                        group_strings.add(str(c_int))
+                        group_strings.add(f"{c_int:,}")
+                        group_strings.add(f"{c_val:.2f}")
+                        group_strings.add(str(c_val))
+                        if c_val < 0:
+                            group_strings.add(str(abs(c_int)))
+                            group_strings.add(f"{abs(c_int):,}")
+                            group_strings.add(f"{abs(c_val):.2f}")
+
+                # 2. Internal names, aliases, and constituent items
+                i_names_list = m.get("internal_ledgers", []) or [ii.get("name", "") for ii in m.get("internal_items", []) if ii.get("name")]
+                for iname in i_names_list:
+                    if iname:
+                        group_strings.add(str(iname))
+                        ik = " ".join(str(iname).split()).lower()
+                        if ik in self._int_alias_map:
+                            group_strings.add(self._int_alias_map[ik])
+
+                for ii in m.get("internal_items", []):
+                    if ii.get("name"):
+                        group_strings.add(str(ii["name"]))
+                    if ii.get("alias"):
+                        group_strings.add(str(ii["alias"]))
+                    if ii.get("closing") is not None:
+                        c_val = float(ii.get("closing", 0) or 0)
+                        c_int = int(round(c_val))
+                        group_strings.add(str(c_int))
+                        group_strings.add(f"{c_int:,}")
+                        group_strings.add(f"{c_val:.2f}")
+                        group_strings.add(str(c_val))
+                        if c_val < 0:
+                            group_strings.add(str(abs(c_int)))
+                            group_strings.add(f"{abs(c_int):,}")
+                            group_strings.add(f"{abs(c_val):.2f}")
+
+                # 3. Aliases, manual names, classifications, narration, and status keywords
+                for a in m.get("vat_aliases", []) or []:
+                    if a: group_strings.add(str(a))
+                for a in m.get("internal_aliases", []) or []:
+                    if a: group_strings.add(str(a))
+                for mn in m.get("manual_names", []) or []:
+                    if mn: group_strings.add(str(mn))
+                if m.get("manual_name"):
+                    group_strings.add(str(m["manual_name"]))
+                if m.get("classification"):
+                    group_strings.add(str(m["classification"]))
+                if m.get("narration"):
+                    group_strings.add(str(m["narration"]))
+                if m.get("serial_no"):
+                    group_strings.add(str(m["serial_no"]))
+                if m.get("is_unmapped"):
+                    group_strings.add("unmapped")
+                if m.get("is_merged") or len(v_names_list) > 1:
+                    group_strings.add("merged")
+                    group_strings.add("combined")
+                if m.get("is_none_vat"):
+                    group_strings.add("none")
+
+                # 4. Collect from ALL table cells in this group across all rows and all columns
+                for r in rows:
+                    for c in range(self.mapping_table.columnCount()):
+                        it = self.mapping_table.item(r, c)
+                        if it:
+                            txt = it.text().strip()
+                            if txt:
+                                group_strings.add(txt)
+                                if txt.startswith("↳ "):
+                                    group_strings.add(txt[2:].strip())
+                                if "," in txt:
+                                    group_strings.add(txt.replace(",", ""))
+
+                            # NumericTableWidgetItem values (Col 0, 3, 4, 5, 6)
+                            if hasattr(it, "num_value") and it.num_value is not None:
+                                nv = float(it.num_value)
+                                int_val = int(round(nv))
+                                group_strings.add(str(int_val))
+                                group_strings.add(f"{int_val:,}")
+                                group_strings.add(f"{nv:.2f}")
+                                group_strings.add(str(nv))
+                                if nv < 0:
+                                    abs_int = abs(int_val)
+                                    group_strings.add(str(abs_int))
+                                    group_strings.add(f"{abs_int:,}")
+                                    group_strings.add(f"{abs(nv):.2f}")
+
+                            # UserRole metadata across roles
+                            for role_offset in (0, 1, 2, 3, 5, 7, 8):
+                                udata = it.data(Qt.ItemDataRole.UserRole + role_offset)
+                                if udata is not None:
+                                    s_udata = str(udata).strip()
+                                    if s_udata:
+                                        group_strings.add(s_udata)
+                                        if "," in s_udata:
+                                            group_strings.add(s_udata.replace(",", ""))
+
+                        # Active cellWidget (e.g. inline editor)
+                        cw = self.mapping_table.cellWidget(r, c)
+                        if cw and hasattr(cw, "text"):
+                            cw_txt = cw.text().strip()
+                            if cw_txt:
+                                group_strings.add(cw_txt)
+                                if "," in cw_txt:
+                                    group_strings.add(cw_txt.replace(",", ""))
+
+                # Build combined lower-case corpus
+                corpus_text = " ".join(group_strings).lower()
+                corpus_no_commas = corpus_text.replace(",", "")
+                corpus_no_punct = corpus_text.replace(".", "").replace("-", "").replace("/", "")
+
+                # Check if all query tokens match this group
+                group_match = True
+                for i, tok in enumerate(tokens):
+                    tok_no_comma = tokens_no_commas[i]
+                    tok_no_punct = tok.replace(".", "").replace("-", "").replace("/", "")
+
+                    if (tok in corpus_text) or \
+                       (tok_no_comma in corpus_no_commas) or \
+                       (tok_no_punct in corpus_no_punct):
+                        continue
+                    else:
+                        group_match = False
+                        break
 
                 for r in rows:
                     self.mapping_table.setRowHidden(r, not group_match)
