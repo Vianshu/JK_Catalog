@@ -1681,102 +1681,100 @@ class MappingTableWidget(QTableWidget):
     - Delete / Backspace on Col 2 (Internal Ledger): removes that internal ledger from group
     - Delete / Backspace on Col 1 (VAT Ledger): if merged, removes VAT ledger from group
     - Delete / Backspace on Col 0 / row selection: unmaps the entire group
-    - Renders combined VAT ledger names inside a unified box by erasing inner horizontal dividers
+    - Renders combined VAT ledger names inside a unified box with dark borders
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.viewport().installEventFilter(self)
         self._combined_group_ranges = []
 
-    def eventFilter(self, obj, event):
-        if obj == self.viewport() and event.type() == QEvent.Type.Paint:
-            res = super().eventFilter(obj, event)
-            if hasattr(self, '_combined_group_ranges') and self._combined_group_ranges:
-                painter = QPainter(self.viewport())
-                painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-                v_rect = self.viewport().rect()
-                col_count = self.columnCount()
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if hasattr(self, '_combined_group_ranges') and self._combined_group_ranges:
+            painter = QPainter(self.viewport())
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+            v_rect = self.viewport().rect()
+            col_count = self.columnCount()
 
-                for item in self._combined_group_ranges:
-                    if len(item) == 5:
-                        start_row, n_rows, bg_col, border_col, accent_col = item
+            for item in self._combined_group_ranges:
+                if len(item) == 5:
+                    start_row, n_rows, bg_col, border_col, accent_col = item
+                else:
+                    start_row, n_rows, bg_col, border_col = item
+                    accent_col = border_col
+
+                if n_rows <= 1 or self.isRowHidden(start_row) or col_count == 0:
+                    continue
+
+                # 1. Geometry of the entire group card spanning Column 0 to Column col_count - 1
+                top_rect_c0 = self.visualRect(self.model().index(start_row, 0))
+                bot_rect_last = self.visualRect(self.model().index(start_row + n_rows - 1, col_count - 1))
+                if not top_rect_c0.isValid() or not bot_rect_last.isValid():
+                    continue
+                if top_rect_c0.width() == 0 or bot_rect_last.width() == 0:
+                    continue
+
+                group_left = top_rect_c0.left()
+                group_top = top_rect_c0.top()
+                group_right = bot_rect_last.right()
+                group_bottom = bot_rect_last.bottom()
+                group_rect = QRect(group_left, group_top, group_right - group_left + 1, group_bottom - group_top + 1)
+
+                if not group_rect.intersects(v_rect):
+                    continue
+
+                # 2. Inner Dividers:
+                # - Shared columns (0: S.No, 5: Balance, 6: Negative, 7: Narration):
+                #   Erase inner horizontal dividers so these fields seamlessly span the full group height
+                # - Split columns (1: VAT Ledger, 2: Int Ledger, 3: Vat Closing, 4: Int Closing):
+                #   Draw subtle, clean 1px divider in #cbd5e1 so itemized lines are easy to read
+                shared_cols = (0, 5, 6, 7)
+                split_cols = (1, 2, 3, 4)
+
+                for k in range(n_rows - 1):
+                    r = start_row + k
+                    next_r = r + 1
+
+                    is_r_sel = self.selectionModel().isRowSelected(r, self.rootIndex()) if self.selectionModel() else False
+                    is_next_sel = self.selectionModel().isRowSelected(next_r, self.rootIndex()) if self.selectionModel() else False
+
+                    if is_r_sel and is_next_sel:
+                        erase_fill = QColor("#e0f2fe")
+                    elif not is_r_sel and not is_next_sel:
+                        erase_fill = bg_col
                     else:
-                        start_row, n_rows, bg_col, border_col = item
-                        accent_col = border_col
+                        erase_fill = None
 
-                    if n_rows <= 1 or self.isRowHidden(start_row) or col_count == 0:
-                        continue
-
-                    # 1. Geometry of the entire group card spanning Column 0 to Column col_count - 1
-                    top_rect_c0 = self.visualRect(self.model().index(start_row, 0))
-                    bot_rect_last = self.visualRect(self.model().index(start_row + n_rows - 1, col_count - 1))
-                    if not top_rect_c0.isValid() or not bot_rect_last.isValid():
-                        continue
-                    if top_rect_c0.width() == 0 or bot_rect_last.width() == 0:
-                        continue
-
-                    group_left = top_rect_c0.left()
-                    group_top = top_rect_c0.top()
-                    group_right = bot_rect_last.right()
-                    group_bottom = bot_rect_last.bottom()
-                    group_rect = QRect(group_left, group_top, group_right - group_left + 1, group_bottom - group_top + 1)
-
-                    if not group_rect.intersects(v_rect):
-                        continue
-
-                    # 2. Inner Dividers:
-                    # - Shared columns (0: S.No, 5: Balance, 6: Negative, 7: Narration):
-                    #   Erase inner horizontal dividers so these fields seamlessly span the full group height
-                    # - Split columns (1: VAT Ledger, 2: Int Ledger, 3: Vat Closing, 4: Int Closing):
-                    #   Draw subtle, clean 1px divider in #e2e8f0 so itemized lines are easy to read
-                    shared_cols = (0, 5, 6, 7)
-                    split_cols = (1, 2, 3, 4)
-
-                    for k in range(n_rows - 1):
-                        r = start_row + k
-                        next_r = r + 1
-
-                        is_r_sel = self.selectionModel().isRowSelected(r, self.rootIndex()) if self.selectionModel() else False
-                        is_next_sel = self.selectionModel().isRowSelected(next_r, self.rootIndex()) if self.selectionModel() else False
-
-                        if is_r_sel and is_next_sel:
-                            erase_fill = QColor("#e0f2fe")
-                        elif not is_r_sel and not is_next_sel:
-                            erase_fill = bg_col
-                        else:
-                            erase_fill = None
-
-                        # Erase on shared columns
-                        if erase_fill:
-                            for c in shared_cols:
-                                if c < col_count:
-                                    r_rect = self.visualRect(self.model().index(r, c))
-                                    if r_rect.isValid() and r_rect.width() > 0 and r_rect.intersects(v_rect):
-                                        erase_rect = QRect(r_rect.left(), r_rect.bottom() - 1, r_rect.width(), 2)
-                                        painter.fillRect(erase_rect, erase_fill)
-
-                        # Subtle clean divider on split columns
-                        divider_col = QColor("#bae6fd") if (is_r_sel and is_next_sel) else QColor("#e2e8f0")
-                        for c in split_cols:
+                    # Erase on shared columns
+                    if erase_fill:
+                        for c in shared_cols:
                             if c < col_count:
                                 r_rect = self.visualRect(self.model().index(r, c))
                                 if r_rect.isValid() and r_rect.width() > 0 and r_rect.intersects(v_rect):
-                                    divider_rect = QRect(r_rect.left() + 1, r_rect.bottom(), r_rect.width() - 2, 1)
-                                    painter.fillRect(divider_rect, divider_col)
+                                    erase_rect = QRect(r_rect.left(), r_rect.bottom() - 1, r_rect.width(), 2)
+                                    painter.fillRect(erase_rect, erase_fill)
 
-                    # 3. Draw Full-Width Group Outer Perimeter Frame across all columns
-                    painter.setPen(QPen(border_col, 2.0))
-                    painter.setBrush(Qt.BrushStyle.NoBrush)
-                    painter.drawRect(group_rect.adjusted(0, 0, -1, -1))
+                    # Subtle clean divider on split columns
+                    divider_col = QColor("#bae6fd") if (is_r_sel and is_next_sel) else QColor("#cbd5e1")
+                    for c in split_cols:
+                        if c < col_count:
+                            r_rect = self.visualRect(self.model().index(r, c))
+                            if r_rect.isValid() and r_rect.width() > 0 and r_rect.intersects(v_rect):
+                                divider_rect = QRect(r_rect.left() + 1, r_rect.bottom(), r_rect.width() - 2, 1)
+                                painter.fillRect(divider_rect, divider_col)
 
-                    # 4. Draw 4px Left Accent Bar on Column 0
-                    accent_rect = QRect(group_rect.left(), group_rect.top(), 4, group_rect.height())
-                    if accent_rect.intersects(v_rect):
-                        painter.fillRect(accent_rect, accent_col)
+                # 3. Draw Full-Width Group Outer Perimeter Frame across all columns (2.5px solid dark border)
+                pen = QPen(border_col, 2.5)
+                pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+                painter.setPen(pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRect(group_rect.adjusted(1, 1, -1, -1))
 
-                painter.end()
-            return res
-        return super().eventFilter(obj, event)
+                # 4. Draw 5px Left Accent Bar on Column 0
+                accent_rect = QRect(group_rect.left() + 1, group_rect.top() + 1, 5, group_rect.height() - 2)
+                if accent_rect.intersects(v_rect):
+                    painter.fillRect(accent_rect, accent_col)
+
+            painter.end()
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and self.state() != QTableWidget.State.EditingState:
@@ -4615,38 +4613,6 @@ class BalanceUI(QWidget):
 
         filtered_mappings = list(mappings)
 
-        staged_gid = getattr(self, '_staged_group_id', None)
-        if staged_gid is not None:
-            staged_idx = -1
-            staged_m = None
-            for idx, m in enumerate(filtered_mappings):
-                if (m.get("group_id") or m.get("id")) == staged_gid:
-                    staged_idx = idx
-                    staged_m = m
-                    break
-
-            if staged_m is not None and not staged_m.get("is_none_vat", False):
-                filtered_mappings.pop(staged_idx)
-
-                staged_key = (staged_m.get("serial_no") or 999999, str(staged_m.get("vat_ledger", "")).lower())
-                target_insert_idx = 0
-                for idx, x in enumerate(filtered_mappings):
-                    is_x_unassigned = (x.get("is_unmapped", False) or not x.get("internal_items")) and not x.get("is_none_vat", False) and not (
-                        any(str(ii.get("name", "")).strip().lower() in ("cash sales", "old party") for ii in x.get("internal_items", []))
-                        or str(x.get("classification", "")).strip().lower() in ("cash sales", "old party")
-                    )
-                    if not is_x_unassigned:
-                        target_insert_idx = idx
-                        break
-                    x_key = (x.get("serial_no") or 999999, str(x.get("vat_ledger", "")).lower())
-                    if staged_key <= x_key:
-                        target_insert_idx = idx
-                        break
-                else:
-                    target_insert_idx = len(filtered_mappings)
-
-                filtered_mappings.insert(target_insert_idx, staged_m)
-
         total_rows = 0
         group_specs = []
         unmapped_count = 0
@@ -4697,7 +4663,7 @@ class BalanceUI(QWidget):
             is_unmapped = (m.get("is_unmapped", False) or not internal_items) and not is_placeholder_assigned
             is_merged = m.get("is_merged", False) or (len(vat_items) > 1)
             is_none_vat = m.get("is_none_vat", False) or (str(m.get("vat_ledger", "")).strip().lower() == "none")
-            is_staged = (group_id == staged_gid)
+            is_staged = False
 
             # Collect all distinct positive serial numbers for this merged/single group
             sn_values = [v.get("serial_no") for v in vat_items if v.get("serial_no") and v.get("serial_no") > 0]
@@ -4715,16 +4681,12 @@ class BalanceUI(QWidget):
                     is_dissimilar = True
 
             # Colour coding logic:
-            # 1. Staged (newly mapped in-session, pending deselect): soft emerald
-            # 2. Combined VAT ledger names (multi-name merge): distinct soft violet/lavender container
-            # 3. Unmatched records: soft red
-            # 4. Reserved None VAT: soft slate
-            # 5. Records whose names are NOT sufficiently similar (e.g. cross-mapped or placeholder): soft amber / warm cream
-            # 6. Automatically matched records & manually matched records with almost identical names: clean white / alternating slate
-            if is_staged:
-                bg_color = QColor("#ecfdf5")
-                fg_color = QColor("#065f46")
-            elif is_merged:
+            # 1. Combined VAT ledger names (multi-name merge): distinct soft violet/lavender container
+            # 2. Unmatched records: soft red
+            # 3. Reserved None VAT: soft slate
+            # 4. Records whose names are NOT sufficiently similar (e.g. cross-mapped or placeholder): soft amber / warm cream
+            # 5. Automatically matched records & manually matched records with almost identical names: clean white / alternating slate
+            if is_merged:
                 # Combined VAT ledger names: distinct soft violet/lavender container
                 bg_color = QColor("#ede9fe")
                 fg_color = QColor("#4c1d95")
@@ -4743,21 +4705,18 @@ class BalanceUI(QWidget):
                 fg_color = QColor("#0f172a")
 
             if n_rows > 1:
-                # Any multi-row mapping group (merged VAT or multi-internal) gets the Card enclosure
+                # Any multi-row mapping group (merged VAT or multi-internal) gets the Card enclosure with dark borders
                 if is_merged:
-                    # Combined VAT ledger names: rich violet frame with deep violet accent
-                    border_color = QColor("#7c3aed")
+                    # Combined VAT ledger names: prominent dark violet border with deep purple accent
+                    border_color = QColor("#4c1d95")
                     accent_color = QColor("#6d28d9")
-                elif is_staged:
-                    border_color = QColor("#059669")
-                    accent_color = QColor("#047857")
                 elif is_dissimilar:
-                    border_color = QColor("#d97706")
-                    accent_color = QColor("#b45309")
+                    border_color = QColor("#b45309")
+                    accent_color = QColor("#d97706")
                 else:
-                    # Multi-internal mapping: crisp ocean blue container
-                    border_color = QColor("#0284c7")
-                    accent_color = QColor("#0369a1")
+                    # Multi-internal mapping: prominent dark blue border with ocean accent
+                    border_color = QColor("#0369a1")
+                    accent_color = QColor("#0284c7")
 
                 self.mapping_table._combined_group_ranges.append(
                     (start_row, n_rows, bg_color, border_color, accent_color)
@@ -5293,59 +5252,9 @@ class BalanceUI(QWidget):
     # ── MAPPING EVENT HANDLERS & PANEL CONTROLS ─────────────────────
 
     def _on_mapping_selection_changed(self):
-        """Update button enabled states based on current selection in Mapping table.
-        If a group was staged in-place after mapping, commit its move to the permanent sorted position
-        when the user selects another row or deselects.
-        """
-        if getattr(self, '_is_destaging', False):
-            return
-
+        """Update button enabled states based on current selection in Mapping table."""
         selected_indexes = self.mapping_table.selectedIndexes()
         has_sel = bool(selected_indexes)
-
-        if not getattr(self, '_is_populating_mapping', False) and not getattr(self, '_is_inline_editing', False):
-            staged_gid = getattr(self, '_staged_group_id', None)
-            if staged_gid is not None:
-                # Check if any selected cell belongs to the staged group
-                is_staged_selected = False
-                newly_selected_gid = None
-                for idx in selected_indexes:
-                    it = self.mapping_table.item(idx.row(), 0)
-                    gid = it.data(Qt.ItemDataRole.UserRole) if it else None
-                    if gid == staged_gid:
-                        is_staged_selected = True
-                    elif gid is not None and newly_selected_gid is None:
-                        newly_selected_gid = gid
-
-                if not is_staged_selected:
-                    # User clicked another row or deselected: commit the move to permanent sort position
-                    self._staged_group_id = None
-                    self._is_destaging = True
-                    try:
-                        cached_mappings = self._cached_data.get("mappings", []) if hasattr(self, '_cached_data') and self._cached_data else None
-                        if cached_mappings:
-                            scroll_val = self.mapping_table.verticalScrollBar().value()
-                            self._populate_mapping_from_data(cached_mappings)
-                            target_gid = newly_selected_gid if newly_selected_gid is not None else staged_gid
-                            if target_gid is not None:
-                                found = False
-                                for r in range(self.mapping_table.rowCount()):
-                                    if self.mapping_table.isRowHidden(r):
-                                        continue
-                                    it = self.mapping_table.item(r, 0)
-                                    if it and it.data(Qt.ItemDataRole.UserRole) == target_gid:
-                                        self.mapping_table.scrollToItem(it, QAbstractItemView.ScrollHint.PositionAtCenter)
-                                        self.mapping_table.selectRow(r)
-                                        self.mapping_table.setCurrentCell(r, 0)
-                                        self.mapping_table.setFocus()
-                                        found = True
-                                        break
-                                if not found:
-                                    self.mapping_table.verticalScrollBar().setValue(scroll_val)
-                    finally:
-                        self._is_destaging = False
-                    selected_indexes = self.mapping_table.selectedIndexes()
-                    has_sel = bool(selected_indexes)
 
         if hasattr(self, 'btn_unmap_mapping'):
             can_clear = getattr(self, '_can_clear_mapping', True)
