@@ -359,7 +359,13 @@ class _MappingRefreshWorker(QThread):
         super().__init__(parent)
         self.db_name = db_name
         self.vat_company = vat_company
-        self.select_group_id = select_group_id
+        safe_select_gid = 0
+        if select_group_id is not None:
+            try:
+                safe_select_gid = int(select_group_id)
+            except (ValueError, TypeError):
+                safe_select_gid = 0
+        self.select_group_id = safe_select_gid
 
     def run(self):
         try:
@@ -1776,7 +1782,87 @@ class MappingTableWidget(QTableWidget):
 
             painter.end()
 
+    def mousePressEvent(self, event):
+        parent_ui = getattr(self, '_parent_ui', None)
+        staged_gid = getattr(parent_ui, '_staged_group_id', None) if parent_ui else None
+        if staged_gid is not None:
+            pos = event.position().toPoint()
+            idx = self.indexAt(pos)
+            if idx.isValid():
+                it = self.item(idx.row(), 0)
+                clicked_gid = it.data(Qt.ItemDataRole.UserRole) if it else None
+                try:
+                    is_diff = (clicked_gid is not None) and (int(clicked_gid) != int(staged_gid))
+                except (ValueError, TypeError):
+                    is_diff = (clicked_gid != staged_gid)
+
+                if is_diff and parent_ui and hasattr(parent_ui, 'destage_and_select'):
+                    parent_ui.destage_and_select(clicked_gid, idx.column())
+                    return
+            else:
+                if parent_ui and hasattr(parent_ui, 'destage_and_select'):
+                    parent_ui.destage_and_select(None)
+                    return
+        super().mousePressEvent(event)
+
     def keyPressEvent(self, event):
+        parent_ui = getattr(self, '_parent_ui', None)
+        staged_gid = getattr(parent_ui, '_staged_group_id', None) if parent_ui else None
+
+        if staged_gid is not None and event.key() in (
+            Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_PageUp, Qt.Key.Key_PageDown,
+            Qt.Key.Key_Home, Qt.Key.Key_End
+        ):
+            cur_r = self.currentRow()
+            if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                step = 1 if event.key() == Qt.Key.Key_Down else -1
+                target_r = cur_r + step
+                while 0 <= target_r < self.rowCount() and self.isRowHidden(target_r):
+                    target_r += step
+
+                target_gid = None
+                if 0 <= target_r < self.rowCount():
+                    it = self.item(target_r, 0)
+                    target_gid = it.data(Qt.ItemDataRole.UserRole) if it else None
+
+                try:
+                    is_same_group = (target_gid is not None) and (int(target_gid) == int(staged_gid))
+                except (ValueError, TypeError):
+                    is_same_group = (target_gid == staged_gid)
+
+                # If moving inside the same multi-row group, allow normal row movement
+                if is_same_group:
+                    super().keyPressEvent(event)
+                    return
+
+                # Navigating outside the staged group: commit move to permanent sorted position
+                if parent_ui and hasattr(parent_ui, 'destage_and_select'):
+                    parent_ui.destage_and_select(target_gid)
+                    return
+            else:
+                # PageUp / PageDown / Home / End navigates away from the staged group
+                if parent_ui and hasattr(parent_ui, 'destage_and_select'):
+                    parent_ui.destage_and_select(None)
+                    super().keyPressEvent(event)
+                    return
+
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.state() != QTableWidget.State.EditingState:
+            if parent_ui and getattr(self, '_can_edit', True):
+                cur_r = self.currentRow()
+                cur_c = self.currentColumn()
+                if cur_r >= 0 and cur_c != 7:
+                    it0 = self.item(cur_r, 0)
+                    gid = it0.data(Qt.ItemDataRole.UserRole) if it0 else 0
+                    if gid:
+                        col_to_open = 1 if cur_c == 1 else 2
+                        parent_ui._on_mapping_plus_clicked(cur_r, col_to_open, gid)
+                        return
+
+        if event.key() == Qt.Key.Key_Escape and staged_gid is not None:
+            if parent_ui and hasattr(parent_ui, 'destage_and_select'):
+                parent_ui.destage_and_select(None)
+                return
+
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and self.state() != QTableWidget.State.EditingState:
             if getattr(self, '_can_edit', True):
                 selected_indexes = self.selectedIndexes()
@@ -2640,6 +2726,7 @@ class BalanceUI(QWidget):
         self.mapping_search.setClearButtonEnabled(True)
         self.mapping_search.setFixedWidth(280)
         self.mapping_search.textChanged.connect(self._filter_mapping_table)
+        self.mapping_search.textEdited.connect(self._on_mapping_search_user_edited)
 
         # Operational hotkey: Esc clears search and returns focus to table
         orig_search_kpe = self.mapping_search.keyPressEvent
@@ -2846,6 +2933,7 @@ class BalanceUI(QWidget):
             }
         """)
         self.unassigned_list.itemDoubleClicked.connect(self._on_unassigned_item_double_clicked)
+        self.unassigned_list.itemClicked.connect(self._on_unassigned_item_user_clicked)
         self.unassigned_list.itemSelectionChanged.connect(self._on_unassigned_selection_changed)
         self.unassigned_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.unassigned_list.customContextMenuRequested.connect(self._show_unassigned_context_menu)
@@ -3930,6 +4018,9 @@ class BalanceUI(QWidget):
         ensure_vat_tables(self.db, self.db_name)
         self.active_vat_company = get_active_vat_company(self.db_name)
         self.lbl_active_vat.setText(f"Active VAT Company: {self.active_vat_company or 'None (Click Configure)'}")
+        # Reset transient mapping staging state across company switch/reload
+        self._staged_group_id = None
+        self._staged_prior_index = None
 
         # ── Cancel any in-flight worker for previous company or forced reload ──
         if self._load_worker is not None and self._load_worker.isRunning():
@@ -4014,6 +4105,8 @@ class BalanceUI(QWidget):
                 self._rendered_tabs.add("empty_ledger")
 
     def _on_tab_changed(self, index: int):
+        if getattr(self, '_staged_group_id', None) is not None and not getattr(self, '_is_destaging', False):
+            self.destage_and_select()
         self._render_current_tab()
 
     def _on_conf_tab_changed(self, index: int):
@@ -4583,10 +4676,23 @@ class BalanceUI(QWidget):
                     if self.mapping_table.isRowHidden(r):
                         continue
                     it = self.mapping_table.item(r, 0)
-                    if it and it.data(Qt.ItemDataRole.UserRole) == select_group_id:
-                        self.mapping_table.scrollToItem(it, QAbstractItemView.ScrollHint.PositionAtCenter)
-                        self.mapping_table.selectRow(r)
-                        self.mapping_table.setCurrentCell(r, 0)
+                    if it:
+                        r_gid = it.data(Qt.ItemDataRole.UserRole)
+                        is_match = False
+                        try:
+                            is_match = (r_gid is not None) and (int(r_gid) == int(select_group_id))
+                        except (ValueError, TypeError):
+                            is_match = (r_gid == select_group_id)
+
+                        if is_match:
+                            if getattr(self, '_staged_group_id', None) is not None:
+                                self.mapping_table.selectRow(r)
+                                self.mapping_table.setCurrentCell(r, 0)
+                                self.mapping_table.verticalScrollBar().setValue(scroll_val)
+                            else:
+                                self.mapping_table.scrollToItem(it, QAbstractItemView.ScrollHint.PositionAtCenter)
+                                self.mapping_table.selectRow(r)
+                                self.mapping_table.setCurrentCell(r, 0)
                         self.mapping_table.setFocus()
                         found = True
                         break
@@ -4612,6 +4718,25 @@ class BalanceUI(QWidget):
         self.mapping_table.clearSpans()
 
         filtered_mappings = list(mappings)
+
+        staged_gid = getattr(self, '_staged_group_id', None)
+        staged_prior_idx = getattr(self, '_staged_prior_index', None)
+        if staged_gid is not None and staged_prior_idx is not None:
+            staged_curr_idx = None
+            for idx, m in enumerate(filtered_mappings):
+                m_gid = m.get("group_id") or m.get("id")
+                try:
+                    if (m_gid is not None) and (int(m_gid) == int(staged_gid)):
+                        staged_curr_idx = idx
+                        break
+                except (ValueError, TypeError):
+                    if str(m_gid) == str(staged_gid):
+                        staged_curr_idx = idx
+                        break
+            if staged_curr_idx is not None:
+                staged_m = filtered_mappings.pop(staged_curr_idx)
+                target_insert_idx = min(max(0, staged_prior_idx), len(filtered_mappings))
+                filtered_mappings.insert(target_insert_idx, staged_m)
 
         total_rows = 0
         group_specs = []
@@ -4663,7 +4788,13 @@ class BalanceUI(QWidget):
             is_unmapped = (m.get("is_unmapped", False) or not internal_items) and not is_placeholder_assigned
             is_merged = m.get("is_merged", False) or (len(vat_items) > 1)
             is_none_vat = m.get("is_none_vat", False) or (str(m.get("vat_ledger", "")).strip().lower() == "none")
+            staged_check_gid = getattr(self, '_staged_group_id', None)
             is_staged = False
+            if staged_check_gid is not None:
+                try:
+                    is_staged = (int(group_id) == int(staged_check_gid))
+                except (ValueError, TypeError):
+                    is_staged = (str(group_id) == str(staged_check_gid))
 
             # Collect all distinct positive serial numbers for this merged/single group
             sn_values = [v.get("serial_no") for v in vat_items if v.get("serial_no") and v.get("serial_no") > 0]
@@ -5251,6 +5382,55 @@ class BalanceUI(QWidget):
 
     # ── MAPPING EVENT HANDLERS & PANEL CONTROLS ─────────────────────
 
+    def destage_and_select(self, target_gid: int = None, target_col: int = 0):
+        """Commit staged in-place group to its permanent sorted location and land selection on target_gid."""
+        if hasattr(self, '_active_inline_cleanup') and callable(self._active_inline_cleanup):
+            try:
+                self._active_inline_cleanup()
+            except Exception:
+                pass
+            self._active_inline_cleanup = None
+
+        staged_gid = getattr(self, '_staged_group_id', None)
+        self._staged_group_id = None
+        self._staged_prior_index = None
+
+        if not hasattr(self, '_cached_data') or not self._cached_data or "mappings" not in self._cached_data:
+            return
+
+        self._is_destaging = True
+        try:
+            self._populate_mapping_from_data(self._cached_data["mappings"])
+
+            desired_gid = target_gid if target_gid is not None else staged_gid
+            if desired_gid is not None:
+                found_row = None
+                for r in range(self.mapping_table.rowCount()):
+                    if self.mapping_table.isRowHidden(r):
+                        continue
+                    it = self.mapping_table.item(r, 0)
+                    if it:
+                        r_gid = it.data(Qt.ItemDataRole.UserRole)
+                        is_match = False
+                        try:
+                            is_match = (r_gid is not None) and (int(r_gid) == int(desired_gid))
+                        except (ValueError, TypeError):
+                            is_match = (r_gid == desired_gid)
+                        if is_match:
+                            found_row = r
+                            break
+
+                if found_row is not None:
+                    it_target = self.mapping_table.item(found_row, target_col) or self.mapping_table.item(found_row, 0)
+                    self.mapping_table.scrollToItem(it_target, QAbstractItemView.ScrollHint.EnsureVisible)
+                    self.mapping_table.selectRow(found_row)
+                    self.mapping_table.setCurrentCell(found_row, target_col)
+                    self.mapping_table.setFocus()
+        except Exception as e:
+            logger.error(f"[destage_and_select] error committing staged group (staged_gid={staged_gid}, target_gid={target_gid}): {e}", exc_info=True)
+        finally:
+            self._is_destaging = False
+
     def _on_mapping_selection_changed(self):
         """Update button enabled states based on current selection in Mapping table."""
         selected_indexes = self.mapping_table.selectedIndexes()
@@ -5287,6 +5467,11 @@ class BalanceUI(QWidget):
                     break
 
         save_mapping_narration(self.db_name, self.active_vat_company, group_id, new_narration)
+
+    def _on_unassigned_item_user_clicked(self, item):
+        """User explicitly clicked an unassigned item with mouse: destage any staged group."""
+        if getattr(self, '_staged_group_id', None) is not None and not getattr(self, '_is_destaging', False):
+            self.destage_and_select()
 
     def _on_unassigned_selection_changed(self):
         """Update assign button when an unassigned internal debtor is selected."""
@@ -5359,14 +5544,34 @@ class BalanceUI(QWidget):
             QMessageBox.information(self, "Select Internal Ledger", "Please select one or more internal ledgers from the unassigned list.")
             return
 
+        assigned_any = False
         for item in unassigned_items:
             int_name = str(item.data(Qt.ItemDataRole.UserRole) or item.text()).strip()
             if int_name:
-                assign_internal_ledger_to_group(self.db_name, self.active_vat_company, target_group_id, int_name)
+                ok = assign_internal_ledger_to_group(self.db_name, self.active_vat_company, target_group_id, int_name)
+                if ok:
+                    assigned_any = True
 
-        self._staged_group_id = target_group_id
-        self.refresh_mapping_table(select_group_id=target_group_id)
-        self.mapping_table.setFocus()
+        if assigned_any:
+            prior_idx = None
+            if hasattr(self, '_cached_data') and self._cached_data and "mappings" in self._cached_data:
+                for idx, m in enumerate(self._cached_data["mappings"]):
+                    m_gid = m.get("group_id") or m.get("id")
+                    try:
+                        if (m_gid is not None) and (int(m_gid) == int(target_group_id)):
+                            prior_idx = idx
+                            break
+                    except (ValueError, TypeError):
+                        if str(m_gid) == str(target_group_id):
+                            prior_idx = idx
+                            break
+            self._staged_group_id = target_group_id
+            self._staged_prior_index = prior_idx
+            self.refresh_mapping_table(select_group_id=target_group_id)
+            self.mapping_table.setFocus()
+        else:
+            self._staged_group_id = None
+            self._staged_prior_index = None
 
     def _on_unassigned_item_double_clicked(self, item: QListWidgetItem):
         """Double-clicking an unassigned internal debtor assigns it to selected VAT group (or first unmapped)."""
@@ -5396,11 +5601,27 @@ class BalanceUI(QWidget):
             QMessageBox.information(self, "Select VAT Row", "Please select a VAT row in the mapping table to assign to.")
             return
 
-        self._staged_group_id = target_group_id
+        prior_idx = None
+        if hasattr(self, '_cached_data') and self._cached_data and "mappings" in self._cached_data:
+            for idx, m in enumerate(self._cached_data["mappings"]):
+                m_gid = m.get("group_id") or m.get("id")
+                try:
+                    if (m_gid is not None) and (int(m_gid) == int(target_group_id)):
+                        prior_idx = idx
+                        break
+                except (ValueError, TypeError):
+                    if str(m_gid) == str(target_group_id):
+                        prior_idx = idx
+                        break
         ok = assign_internal_ledger_to_group(self.db_name, self.active_vat_company, target_group_id, int_name)
         if ok:
+            self._staged_group_id = target_group_id
+            self._staged_prior_index = prior_idx
             self.refresh_mapping_table(select_group_id=target_group_id)
             self.mapping_table.setFocus()
+        else:
+            self._staged_group_id = None
+            self._staged_prior_index = None
 
     def _unmap_selected_mapping(self):
         """Clear/unmap internal ledgers from the selected group(s), returning them to unassigned list.
@@ -5437,6 +5658,7 @@ class BalanceUI(QWidget):
             return
 
         self._staged_group_id = None
+        self._staged_prior_index = None
         for gid in group_ids:
             unmap_vat_group(self.db_name, self.active_vat_company, gid)
 
@@ -5462,6 +5684,43 @@ class BalanceUI(QWidget):
         target_vname = str((it1.data(Qt.ItemDataRole.UserRole + 7) if it1 else "") or (it1.data(Qt.ItemDataRole.UserRole + 2) if it1 else "") or (it1.text() if it1 else "")).strip()
         if target_vname.startswith("↳ "):
             target_vname = target_vname[2:].strip()
+
+        # If another group was currently staged, destage it first so its permanent location is settled
+        staged_gid = getattr(self, '_staged_group_id', None)
+        if staged_gid is not None:
+            is_diff = False
+            try:
+                is_diff = int(staged_gid) != int(target_gid)
+            except (ValueError, TypeError):
+                is_diff = (staged_gid != target_gid)
+            if is_diff:
+                self._staged_group_id = None
+                self._staged_prior_index = None
+                if hasattr(self, '_cached_data') and self._cached_data and "mappings" in self._cached_data:
+                    self._populate_mapping_from_data(self._cached_data["mappings"])
+
+        # Record prior index so row remains exactly in place after assignment
+        prior_idx = None
+        if hasattr(self, '_cached_data') and self._cached_data and "mappings" in self._cached_data:
+            for idx, m in enumerate(self._cached_data["mappings"]):
+                m_gid = m.get("group_id") or m.get("id")
+                try:
+                    if (m_gid is not None) and (int(m_gid) == int(target_gid)):
+                        prior_idx = idx
+                        break
+                except (ValueError, TypeError):
+                    if str(m_gid) == str(target_gid):
+                        prior_idx = idx
+                        break
+        if prior_idx is None:
+            seen_gids = set()
+            prior_idx = 0
+            for r in range(row):
+                it = self.mapping_table.item(r, 0)
+                gid = it.data(Qt.ItemDataRole.UserRole) if it else None
+                if gid and gid not in seen_gids:
+                    seen_gids.add(gid)
+                    prior_idx += 1
 
         # Guard: 'None' VAT ledger cannot be merged with other ledgers
         if col == 1 and target_vname.lower() == "none":
@@ -5667,20 +5926,30 @@ class BalanceUI(QWidget):
                 if canon_val.lower() == "none":
                     QMessageBox.warning(self, "Invalid Operation", "'None' VAT ledger cannot be merged.")
                     return
-                self._staged_group_id = target_gid
                 ok = merge_vat_ledger_into_group(self.db_name, self.active_vat_company, target_gid, canon_val, target_vat_name=target_vname)
-                self.refresh_mapping_table(select_group_id=target_gid)
-                self.mapping_table.setFocus()
+                if ok:
+                    self._staged_group_id = target_gid
+                    self._staged_prior_index = prior_idx
+                    self.refresh_mapping_table(select_group_id=target_gid)
+                    self.mapping_table.setFocus()
+                else:
+                    self._staged_group_id = None
+                    self._staged_prior_index = None
             elif col == 2:
                 # Assign Internal Ledger
                 canon_val = self.resolve_int_ledger(val) or val
                 if target_is_none and canon_val.lower() in ("cash sales", "old party"):
                     QMessageBox.warning(self, "Invalid Operation", "'None' VAT cannot be mapped to Cash Sales or Old Party.")
                     return
-                self._staged_group_id = target_gid
                 ok = assign_internal_ledger_to_group(self.db_name, self.active_vat_company, target_gid, canon_val, target_vat_name=target_vname)
-                self.refresh_mapping_table(select_group_id=target_gid)
-                self.mapping_table.setFocus()
+                if ok:
+                    self._staged_group_id = target_gid
+                    self._staged_prior_index = prior_idx
+                    self.refresh_mapping_table(select_group_id=target_gid)
+                    self.mapping_table.setFocus()
+                else:
+                    self._staged_group_id = None
+                    self._staged_prior_index = None
 
         def _on_activated(chosen_text: str):
             curr = ed.text().strip()
@@ -6325,6 +6594,11 @@ class BalanceUI(QWidget):
         if hasattr(self, 'mapping_search'):
             self.mapping_search.setFocus()
             self.mapping_search.selectAll()
+
+    def _on_mapping_search_user_edited(self, text):
+        """User typed into search input with keyboard: destage any staged group."""
+        if getattr(self, '_staged_group_id', None) is not None and not getattr(self, '_is_destaging', False):
+            self.destage_and_select()
 
     def _filter_mapping_table(self, query: str):
         q = query.strip().lower()
