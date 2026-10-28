@@ -663,6 +663,92 @@ def cleanup_invalid_mappings(db_name: str, vat_company: str) -> None:
         logger.error(f"[cleanup_invalid_mappings] error: {e}", exc_info=True)
 
 
+def load_pending_cheques_by_party(db_name: str) -> dict[str, float]:
+    """Load total pending cheque amounts per internal debtor from cheques table.
+    
+    A cheque is pending if clear_date is NULL or empty/whitespace.
+    Maps canonical debtor names, aliases, and GUIDs to aggregate pending amounts.
+    """
+    if not db_name:
+        return {}
+    db = get_db_manager()
+    conn = db.get_connection(db_name)
+    if not conn:
+        return {}
+    try:
+        cur = conn.cursor()
+        # 1. Build debtor name/alias/guid lookup map
+        cur.execute("""
+            SELECT LTRIM(RTRIM(Name)) AS Name, 
+                   LTRIM(RTRIM(ISNULL(Alias, ''))) AS Alias,
+                   LTRIM(RTRIM(ISNULL(GUID, ''))) AS GUID
+            FROM dbo.row_ledger_data
+            WHERE (
+                LOWER(LTRIM(RTRIM([Group]))) = 'sundry debtors'
+                OR LOWER(LTRIM(RTRIM(Sub_Group))) = 'sundry debtors'
+                OR LOWER([Group]) LIKE '%debtor%'
+                OR LOWER(Sub_Group) LIKE '%debtor%'
+            )
+        """)
+        guid_to_canon = {}
+        alias_to_canon = {}
+        for r in cur.fetchall():
+            nm = (r[0] or "").strip()
+            al = (r[1] or "").strip()
+            gd = (r[2] or "").strip().lower()
+            if nm:
+                canon = " ".join(nm.split()).lower()
+                if gd:
+                    guid_to_canon[gd] = canon
+                if al:
+                    alias_to_canon[" ".join(al.split()).lower()] = canon
+                alias_to_canon[canon] = canon
+
+        # 2. Check if cheques table exists
+        cur.execute("""
+            SELECT 1 FROM INFORMATION_SCHEMA.TABLES 
+            WHERE TABLE_NAME = 'cheques'
+        """)
+        if not cur.fetchone():
+            return {}
+
+        # 3. Fetch pending cheques (where clear_date is NULL or blank)
+        cur.execute("""
+            SELECT party, party_guid, amount, clear_date 
+            FROM dbo.cheques 
+            WHERE clear_date IS NULL OR LTRIM(RTRIM(clear_date)) = ''
+        """)
+        rows = cur.fetchall()
+        pending_map = {}
+        for r in rows:
+            p_name = (r[0] or "").strip()
+            p_guid = (r[1] or "").strip().lower()
+            amt_raw = r[2]
+            if not amt_raw:
+                continue
+            try:
+                amt = float(str(amt_raw).replace(",", "").strip())
+            except (ValueError, TypeError):
+                continue
+            if amt == 0.0:
+                continue
+
+            canon = None
+            if p_guid and p_guid in guid_to_canon:
+                canon = guid_to_canon[p_guid]
+            elif p_name:
+                p_norm = " ".join(p_name.split()).lower()
+                canon = alias_to_canon.get(p_norm, p_norm)
+
+            if canon:
+                pending_map[canon] = pending_map.get(canon, 0.0) + amt
+
+        return pending_map
+    except Exception as e:
+        logger.warning(f"[load_pending_cheques_by_party] Failed: {e}")
+        return {}
+
+
 def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
     """Load all mapping groups for the given VAT company.
     
@@ -682,6 +768,9 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
         return []
     try:
         cur = conn.cursor()
+
+        # 0. Load pending cheques by debtor from cheques table
+        pending_cheques_map = load_pending_cheques_by_party(db_name)
 
         # 1. Load closing balances and aliases for VAT debtors (fast lookup)
         cur.execute("""
@@ -711,11 +800,12 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
                     "Closing": float(r[2] or 0.0)
                 }
 
-        # 4. Load closing balances and aliases for Internal debtors (fast lookup)
+        # 4. Load closing balances, aliases, and GUID for Internal debtors (fast lookup)
         cur.execute("""
             SELECT LTRIM(RTRIM(Name)) AS Name, 
                    LTRIM(RTRIM(ISNULL(Alias, ''))) AS Alias,
-                   ISNULL(Closing_Balance, 0) AS Closing_Balance
+                   ISNULL(Closing_Balance, 0) AS Closing_Balance,
+                   LTRIM(RTRIM(ISNULL(GUID, ''))) AS GUID
             FROM dbo.row_ledger_data
             WHERE (
                 LOWER(LTRIM(RTRIM([Group]))) = 'sundry debtors'
@@ -735,7 +825,8 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
                 int_info[k] = {
                     "Name": nm,
                     "Alias": (r[1] or "").strip(),
-                    "Closing": float(r[2] or 0.0)
+                    "Closing": float(r[2] or 0.0),
+                    "GUID": (r[3] or "").strip().lower() if len(r) > 3 else ""
                 }
 
         # Clean up any duplicate unmapped rows for this company before reading
@@ -839,6 +930,7 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
                     "manual_names": [],
                     "classification": cls,
                     "narration": narr,
+                    "pending_chq": 0.0,
                     "is_manual": bool(is_man),
                     "db_ids": [],
                 }
@@ -875,15 +967,31 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
                 i_meta = int_info.get(ik, {})
                 i_alias = i_meta.get("Alias", "")
                 i_closing = i_meta.get("Closing", 0.0)
+                i_guid = i_meta.get("GUID", "")
+
+                # Look up pending cheque for this internal ledger
+                i_chq = 0.0
+                if i_guid and i_guid in pending_cheques_map:
+                    i_chq = pending_cheques_map[i_guid]
+                elif ik in pending_cheques_map:
+                    i_chq = pending_cheques_map[ik]
+                elif i_alias:
+                    ak = " ".join(i_alias.split()).lower()
+                    if ak in pending_cheques_map:
+                        i_chq = pending_cheques_map[ak]
+
                 if not any(" ".join(ii["name"].split()).lower() == ik for ii in g["internal_items"]):
                     g["internal_items"].append({
                         "id": rec_id,
                         "name": i_name,
                         "alias": i_alias,
                         "closing": i_closing,
+                        "guid": i_guid,
+                        "pending_chq": i_chq,
                     })
                     g["internal_ledgers"].append(i_name)
                     g["internal_aliases"].append(i_alias)
+                    g["pending_chq"] = sum(float(ii.get("pending_chq", 0.0) or 0.0) for ii in g["internal_items"])
 
             if m_name and m_name not in g["manual_names"]:
                 g["manual_names"].append(m_name)
@@ -944,6 +1052,7 @@ def load_vat_mappings(db_name: str, vat_company: str) -> list[dict]:
                 "is_none_vat": is_none_vat,
                 "classification": g["classification"],
                 "narration": g.get("narration", ""),
+                "pending_chq": g.get("pending_chq", 0.0),
                 "db_ids": g["db_ids"],
             })
 

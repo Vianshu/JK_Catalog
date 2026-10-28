@@ -2778,6 +2778,21 @@ class BalanceUI(QWidget):
         self.btn_toggle_unassigned.clicked.connect(self._toggle_unassigned_panel)
         top_bar.addWidget(self.btn_toggle_unassigned)
 
+        # Toggle button for Pending Chq. column (User can hide if needed)
+        _chq_settings = QSettings("JKCatalog", "VatBalanceMappingColumns")
+        self._hide_pending_chq = _chq_settings.value("hide_pending_chq", False, type=bool)
+        chq_btn_label = "👁️ Show Pending Chq." if self._hide_pending_chq else "👁️ Hide Pending Chq."
+        self.btn_toggle_pending_chq = QPushButton(chq_btn_label)
+        self.btn_toggle_pending_chq.setStyleSheet("""
+            QPushButton {
+                background: #f8fafc; color: #334155; font-weight: 600; font-size: 11px;
+                padding: 4px 10px; border-radius: 4px; border: 1px solid #e2e8f0;
+            }
+            QPushButton:hover { background: #f1f5f9; border-color: #cbd5e1; }
+        """)
+        self.btn_toggle_pending_chq.clicked.connect(self._toggle_pending_chq_visibility)
+        top_bar.addWidget(self.btn_toggle_pending_chq)
+
         vbox.addLayout(top_bar)
 
         # Splitter: Left is Main Mapping Table, Right is Minimizable Unassigned Internal List
@@ -2798,24 +2813,31 @@ class BalanceUI(QWidget):
         self.mapping_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.mapping_table.verticalHeader().setVisible(False)
 
-        headers = ["S.no", "VAT Ledger Name", "Internal Ledger Name", "Vat Closing", "Int. Closing", "Balance", "Negative", "Narration"]
-        self.mapping_table.setColumnCount(8)
+        headers = ["S.no", "VAT Ledger Name", "Internal Ledger Name", "Vat Closing", "Int. Closing", "Pending Chq.", "Balance", "Negative", "Narration"]
+        self.mapping_table.setColumnCount(9)
         self.mapping_table.setHorizontalHeaderLabels(headers)
 
         header = self.mapping_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(True)
-        self.mapping_table.setColumnWidth(0, 65)   # S.no
-        self.mapping_table.setColumnWidth(1, 260)  # VAT Ledger Name
-        self.mapping_table.setColumnWidth(2, 260)  # Internal Ledger Name
-        self.mapping_table.setColumnWidth(3, 115)  # Vat Closing
-        self.mapping_table.setColumnWidth(4, 115)  # Int. Closing
-        self.mapping_table.setColumnWidth(5, 110)  # Balance
-        self.mapping_table.setColumnWidth(6, 110)  # Negative (reduced from stretching full screen)
-        self.mapping_table.setColumnWidth(7, 220)  # Narration (stretches to fill available width)
+        self.mapping_table.setColumnWidth(0, 60)   # S.no
+        self.mapping_table.setColumnWidth(1, 240)  # VAT Ledger Name
+        self.mapping_table.setColumnWidth(2, 240)  # Internal Ledger Name
+        self.mapping_table.setColumnWidth(3, 110)  # Vat Closing
+        self.mapping_table.setColumnWidth(4, 110)  # Int. Closing
+        self.mapping_table.setColumnWidth(5, 110)  # Pending Chq.
+        self.mapping_table.setColumnWidth(6, 110)  # Balance
+        self.mapping_table.setColumnWidth(7, 110)  # Negative
+        self.mapping_table.setColumnWidth(8, 200)  # Narration (stretches to fill available width)
+
+        # Apply saved column 5 visibility
+        if self._hide_pending_chq:
+            self.mapping_table.setColumnHidden(5, True)
 
         # Double clicking column header sorts that column (Requirement 15)
         header.sectionDoubleClicked.connect(self._on_mapping_header_double_clicked)
+        header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        header.customContextMenuRequested.connect(self._show_mapping_header_context_menu)
 
         # Zero-allocation high-FPS delegate for columns 1 & 2 (VAT & Internal Ledgers)
         self._mapping_delegate = MappingCellDelegate(
@@ -4622,6 +4644,28 @@ class BalanceUI(QWidget):
         if hasattr(self, 'btn_toggle_mapping_alias'):
             self.btn_toggle_mapping_alias.setText(txt)
 
+    def _toggle_pending_chq_visibility(self):
+        """Toggle visibility of Pending Chq. (Column 5) in Mapping table."""
+        self._hide_pending_chq = not getattr(self, '_hide_pending_chq', False)
+        if hasattr(self, 'mapping_table'):
+            self.mapping_table.setColumnHidden(5, self._hide_pending_chq)
+        if hasattr(self, 'mapping_footer'):
+            self.mapping_footer.sync_columns()
+        txt = "👁️ Show Pending Chq." if self._hide_pending_chq else "👁️ Hide Pending Chq."
+        if hasattr(self, 'btn_toggle_pending_chq'):
+            self.btn_toggle_pending_chq.setText(txt)
+        settings = QSettings("JKCatalog", "VatBalanceMappingColumns")
+        settings.setValue("hide_pending_chq", self._hide_pending_chq)
+
+    def _show_mapping_header_context_menu(self, pos):
+        """Right-click context menu on Mapping table header to toggle column visibility."""
+        menu = QMenu(self)
+        act_toggle_chq = menu.addAction(
+            "👁️ Show Pending Chq. Column" if getattr(self, '_hide_pending_chq', False) else "👁️ Hide Pending Chq. Column"
+        )
+        act_toggle_chq.triggered.connect(self._toggle_pending_chq_visibility)
+        menu.exec(self.mapping_table.horizontalHeader().viewport().mapToGlobal(pos))
+
     def refresh_mapping_table(self, select_group_id: int = 0, async_load: bool = True):
         """Populate Mapping table and Unassigned Internal Ledgers panel for active VAT company."""
         if hasattr(self, '_active_inline_cleanup') and callable(self._active_inline_cleanup):
@@ -4760,7 +4804,8 @@ class BalanceUI(QWidget):
                     "id": m.get("id"),
                     "name": m.get("internal_ledger"),
                     "alias": "",
-                    "closing": 0.0
+                    "closing": 0.0,
+                    "pending_chq": float(m.get("pending_chq", 0.0) or 0.0),
                 }]
 
             n_rows = max(len(vat_items), len(internal_items), 1)
@@ -4855,37 +4900,48 @@ class BalanceUI(QWidget):
             # Option A: Group Total Comparison for multi-ledger mappings (1*N, N*1, N*M)
             grp_vat_closing = sum(float(v.get("closing", 0.0) or 0.0) for v in vat_items)
             grp_int_closing = sum(float(i.get("closing", 0.0) or 0.0) for i in internal_items)
+            grp_pending_chq = sum(float(i.get("pending_chq", 0.0) or 0.0) for i in internal_items)
 
             grp_bal_str = ""
             grp_bal_val = 0.0
             grp_neg_str = ""
             grp_neg_val = 0.0
 
-            if grp_vat_closing < -1e-9:
-                # Rule 1: Vat closing is negative -> balance blank, negative shows nearest 1,000 of abs(vat closing)
+            raw_bal = 0.0
+            raw_neg = 0.0
+
+            if grp_vat_closing < -1e-9 and grp_int_closing < -1e-9:
+                # Rule 0: Both columns negative -> sum (A + B) displayed in Negative column, balance blank
+                raw_neg = abs(grp_vat_closing + grp_int_closing)
+                diff_neg_rounded = round_nearest_1000(raw_neg)
+                grp_neg_str = f"{diff_neg_rounded:,}"
+                grp_neg_val = float(diff_neg_rounded)
+            elif grp_vat_closing < -1e-9:
+                # Rule 1: Only Vat closing is negative -> balance blank, negative shows nearest 1,000 of abs(vat closing)
                 raw_neg = abs(grp_vat_closing)
                 diff_neg_rounded = round_nearest_1000(raw_neg)
                 grp_neg_str = f"{diff_neg_rounded:,}"
                 grp_neg_val = float(diff_neg_rounded)
+            elif grp_int_closing < -1e-9:
+                # Rule 2: Vat closing >= 0 and Int closing < 0 -> treat int as 0, balance shows vat closing
+                raw_bal = grp_vat_closing
             elif grp_int_closing > grp_vat_closing + 1e-9:
-                # Rule 2: Int closing > Vat closing -> balance blank, negative shows nearest 1,000 of abs(vat - int)
+                # Rule 3: Both non-negative, Int closing > Vat closing -> negative shows nearest 1,000 of abs(vat - int)
                 raw_neg = abs(grp_vat_closing - grp_int_closing)
                 diff_neg_rounded = round_nearest_1000(raw_neg)
                 grp_neg_str = f"{diff_neg_rounded:,}"
                 grp_neg_val = float(diff_neg_rounded)
-            elif grp_vat_closing >= 0:
-                # Rule 3: Balance calculation when Vat closing >= 0
-                if grp_int_closing < -1e-9:
-                    # Condition: If INT Closing < 0 (e.g. -1,000 or -2,000), treat as 0 for Balance calculation:
-                    # Balance = VAT Closing - 0
-                    raw_bal = grp_vat_closing
-                    diff_bal_rounded = round_nearest_1000(raw_bal)
-                    grp_bal_str = f"{diff_bal_rounded:,}"
-                    grp_bal_val = float(diff_bal_rounded)
-                elif grp_vat_closing > grp_int_closing + 1e-9:
-                    # Both non-negative, Vat closing > Int closing -> balance shows nearest 1,000 of (vat - int), negative blank
-                    raw_bal = grp_vat_closing - grp_int_closing
-                    diff_bal_rounded = round_nearest_1000(raw_bal)
+            elif grp_vat_closing > grp_int_closing + 1e-9:
+                # Rule 4: Both non-negative, Vat closing > Int closing -> balance shows nearest 1,000 of (vat - int)
+                raw_bal = grp_vat_closing - grp_int_closing
+
+            # Add pending cheques to Balance matched with int ledger (as confirmed by user)
+            if not is_unmapped and grp_pending_chq > 0:
+                raw_bal += grp_pending_chq
+
+            if raw_bal > 0:
+                diff_bal_rounded = round_nearest_1000(raw_bal)
+                if diff_bal_rounded > 0:
                     grp_bal_str = f"{diff_bal_rounded:,}"
                     grp_bal_val = float(diff_bal_rounded)
 
@@ -5022,7 +5078,24 @@ class BalanceUI(QWidget):
                 it_ic.setFlags(it_ic.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.mapping_table.setItem(r, 4, it_ic)
 
-                # 5: Balance (Option A: Shown on primary row k == 0; sub-rows left blank)
+                # 5: Pending Chq.
+                if k < len(internal_items):
+                    i_chq = float(internal_items[k].get("pending_chq", 0.0) or 0.0)
+                    chq_str = f"{int(round(i_chq)):,}" if i_chq > 0 else ""
+                    chq_val = i_chq
+                else:
+                    chq_str = ""
+                    chq_val = 0.0
+
+                it_chq = NumericTableWidgetItem(chq_str, chq_val)
+                it_chq.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                it_chq.setBackground(bg_color)
+                it_chq.setForeground(fg_color)
+                it_chq.setData(Qt.ItemDataRole.UserRole, group_id)
+                it_chq.setFlags(it_chq.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.mapping_table.setItem(r, 5, it_chq)
+
+                # 6: Balance (Option A: Shown on primary row k == 0; sub-rows left blank)
                 bal_str = grp_bal_str if k == 0 else ""
                 bal_val = grp_bal_val if k == 0 else 0.0
 
@@ -5032,9 +5105,9 @@ class BalanceUI(QWidget):
                 it_bal.setForeground(fg_color)
                 it_bal.setData(Qt.ItemDataRole.UserRole, group_id)
                 it_bal.setFlags(it_bal.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.mapping_table.setItem(r, 5, it_bal)
+                self.mapping_table.setItem(r, 6, it_bal)
 
-                # 6: Negative (Option A: Shown on primary row k == 0; sub-rows left blank)
+                # 7: Negative (Option A: Shown on primary row k == 0; sub-rows left blank)
                 neg_str = grp_neg_str if k == 0 else ""
                 neg_val = grp_neg_val if k == 0 else 0.0
 
@@ -5044,9 +5117,9 @@ class BalanceUI(QWidget):
                 it_neg.setForeground(fg_color)
                 it_neg.setData(Qt.ItemDataRole.UserRole, group_id)
                 it_neg.setFlags(it_neg.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.mapping_table.setItem(r, 6, it_neg)
+                self.mapping_table.setItem(r, 7, it_neg)
 
-                # 7: Narration (Shown on primary row k == 0; sub-rows left blank)
+                # 8: Narration (Shown on primary row k == 0; sub-rows left blank)
                 narr_str = str(m.get("narration") or "").strip() if k == 0 else ""
                 it_narr = QTableWidgetItem(narr_str)
                 it_narr.setBackground(bg_color)
@@ -5056,9 +5129,13 @@ class BalanceUI(QWidget):
                     it_narr.setFlags(it_narr.flags() | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
                 else:
                     it_narr.setFlags(it_narr.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.mapping_table.setItem(r, 7, it_narr)
+                self.mapping_table.setItem(r, 8, it_narr)
 
             cur_row += n_rows
+
+        self.mapping_table.setColumnHidden(5, getattr(self, '_hide_pending_chq', False))
+        if hasattr(self, 'mapping_footer'):
+            self.mapping_footer.sync_columns()
 
         self.mapping_table.viewport().setUpdatesEnabled(True)
         self.mapping_table.setUpdatesEnabled(True)
@@ -5445,10 +5522,10 @@ class BalanceUI(QWidget):
             self.btn_assign_internal.setEnabled(has_unassigned_sel and has_sel)
 
     def _on_mapping_item_changed(self, item: QTableWidgetItem):
-        """Handle in-place editing in Mapping table (Column 7: Narration)."""
+        """Handle in-place editing in Mapping table (Narration)."""
         if getattr(self, '_is_populating_mapping', False) or getattr(self, '_is_destaging', False):
             return
-        if not item or item.column() != 7:
+        if not item or item.column() != (self.mapping_table.columnCount() - 1):
             return
 
         group_id = item.data(Qt.ItemDataRole.UserRole)
@@ -6134,7 +6211,13 @@ class BalanceUI(QWidget):
             act_unmap_all.triggered.connect(lambda: self._unmap_group(gid))
 
         if not menu.isEmpty():
-            menu.exec(self.mapping_table.viewport().mapToGlobal(pos))
+            menu.addSeparator()
+        act_toggle_chq = menu.addAction(
+            "👁️ Show Pending Chq. Column" if getattr(self, '_hide_pending_chq', False) else "👁️ Hide Pending Chq. Column"
+        )
+        act_toggle_chq.triggered.connect(self._toggle_pending_chq_visibility)
+
+        menu.exec(self.mapping_table.viewport().mapToGlobal(pos))
 
     def _set_mapping_cls(self, group_id: int, vat_ledger_name: str, cls: str):
         set_mapping_classification(self.db_name, self.active_vat_company, group_id, vat_ledger_name, cls)
@@ -6258,47 +6341,66 @@ class BalanceUI(QWidget):
                 return float(m.get("internal_closing", 0.0) or 0.0)
             mappings.sort(key=_get_i, reverse=reverse)
         elif logical_index == 5:
+            # Sort by Pending Chq.
+            def _get_chq(m):
+                i_items = m.get("internal_items", [])
+                return sum(float(x.get("pending_chq", 0.0) or 0.0) for x in i_items) if i_items else float(m.get("pending_chq", 0.0) or 0.0)
+            mappings.sort(key=_get_chq, reverse=reverse)
+        elif logical_index == 6:
+            # Sort by Balance (including pending chq)
             def _get_bal(m):
                 v_items = m.get("vat_items", [])
                 v = sum(float(x.get("closing", 0.0) or 0.0) for x in v_items) if v_items else float(m.get("vat_closing", 0.0) or 0.0)
                 i_items = m.get("internal_items", [])
                 i = sum(float(x.get("closing", 0.0) or 0.0) for x in i_items) if i_items else float(m.get("internal_closing", 0.0) or 0.0)
-                if v < -1e-9 or i > v + 1e-9:
+                chq = sum(float(x.get("pending_chq", 0.0) or 0.0) for x in i_items) if i_items else float(m.get("pending_chq", 0.0) or 0.0)
+                raw_bal = 0.0
+                if v < -1e-9 and i < -1e-9:
+                    raw_bal = 0.0
+                elif v < -1e-9:
                     raw_bal = 0.0
                 elif i < -1e-9:
                     raw_bal = v
+                elif i > v + 1e-9:
+                    raw_bal = 0.0
                 elif v > i + 1e-9:
                     raw_bal = v - i
-                else:
-                    raw_bal = 0.0
+                if i_items and chq > 0:
+                    raw_bal += chq
                 return float(round_nearest_1000(raw_bal)) if raw_bal > 0 else 0.0
             mappings.sort(key=_get_bal, reverse=reverse)
-        elif logical_index == 6:
+        elif logical_index == 7:
+            # Sort by Negative
             def _get_neg(m):
                 v_items = m.get("vat_items", [])
                 v = sum(float(x.get("closing", 0.0) or 0.0) for x in v_items) if v_items else float(m.get("vat_closing", 0.0) or 0.0)
                 i_items = m.get("internal_items", [])
                 i = sum(float(x.get("closing", 0.0) or 0.0) for x in i_items) if i_items else float(m.get("internal_closing", 0.0) or 0.0)
+                if v < -1e-9 and i < -1e-9:
+                    return float(round_nearest_1000(abs(v + i)))
                 if v < -1e-9:
                     return float(round_nearest_1000(abs(v)))
+                if i < -1e-9:
+                    return 0.0
                 if i > v + 1e-9:
                     return float(round_nearest_1000(abs(v - i)))
                 return 0.0
             mappings.sort(key=_get_neg, reverse=reverse)
-        elif logical_index == 7:
+        elif logical_index == 8:
             mappings.sort(key=lambda m: (str(m.get("narration") or "")).lower(), reverse=reverse)
 
         self._populate_mapping_from_data(mappings)
 
     def _update_mapping_totals(self):
         """Recalculate pinned grand totals for visible rows in mapping table.
-        - Values in columns 3, 4, 5, 6 displayed in lakhs (divided by 1,00,000).
+        - Values in columns 3, 4, 5, 6, 7 displayed in lakhs (divided by 1,00,000).
         - Under column 2 (Internal Ledger Name), displays label 'Actual Rs.'.
         """
         if not hasattr(self, 'mapping_footer'):
             return
         total_vat = 0.0
         total_int = 0.0
+        total_chq = 0.0
         total_bal = 0.0
         total_neg = 0.0
         for r in range(self.mapping_table.rowCount()):
@@ -6308,6 +6410,7 @@ class BalanceUI(QWidget):
             it4 = self.mapping_table.item(r, 4)
             it5 = self.mapping_table.item(r, 5)
             it6 = self.mapping_table.item(r, 6)
+            it7 = self.mapping_table.item(r, 7)
 
             if it3 and hasattr(it3, 'num_value'):
                 total_vat += it3.num_value
@@ -6326,18 +6429,26 @@ class BalanceUI(QWidget):
                     pass
 
             if it5 and hasattr(it5, 'num_value'):
-                total_bal += it5.num_value
+                total_chq += it5.num_value
             elif it5 and it5.text():
                 try:
-                    total_bal += float(it5.text().replace(",", "").strip())
+                    total_chq += float(it5.text().replace(",", "").strip())
                 except Exception:
                     pass
 
             if it6 and hasattr(it6, 'num_value'):
-                total_neg += it6.num_value
+                total_bal += it6.num_value
             elif it6 and it6.text():
                 try:
-                    total_neg += float(it6.text().replace(",", "").strip())
+                    total_bal += float(it6.text().replace(",", "").strip())
+                except Exception:
+                    pass
+
+            if it7 and hasattr(it7, 'num_value'):
+                total_neg += it7.num_value
+            elif it7 and it7.text():
+                try:
+                    total_neg += float(it7.text().replace(",", "").strip())
                 except Exception:
                     pass
 
@@ -6360,8 +6471,9 @@ class BalanceUI(QWidget):
             2: actual_str,
             3: _format_lakhs(total_vat),
             4: _format_lakhs(total_int),
-            5: _format_lakhs(total_bal),
-            6: _format_lakhs(total_neg),
+            5: _format_lakhs(total_chq),
+            6: _format_lakhs(total_bal),
+            7: _format_lakhs(total_neg),
         }, label_col=0, label_text="Total")
 
     def _on_generic_header_double_clicked(self, table: QTableWidget, col_idx: int, update_totals_fn=None):

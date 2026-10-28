@@ -25,7 +25,9 @@ company_history.json
 ignore/
 temp_data/
 scratch/
+documents/
 build_all.bat
 table_standardization_spec.md
 supp_payment_ui_ux_design.md
+
 

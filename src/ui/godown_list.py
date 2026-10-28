@@ -1121,7 +1121,7 @@ class GodownListUI(ExcelTableMixin, QWidget):
         # --- Fonts ---
         header_font = QFont("Noto Sans Devanagari", 13, QFont.Weight.Normal)
         cell_font   = QFont("Noto Sans Devanagari", 11)
-        footer_font = QFont("Noto Sans Devanagari", 9)
+        footer_font = QFont("Noto Sans Devanagari", 10, QFont.Weight.Bold)
 
         painter.setFont(header_font)
         fm_header = painter.fontMetrics()
@@ -1148,20 +1148,6 @@ class GodownListUI(ExcelTableMixin, QWidget):
 
         # Reserve bottom of each page for the footer
         usable_h = page_h - footer_height
-
-        # --- Collect data rows (skip fully empty) ---
-        data_rows = []
-        for r in range(self.table.rowCount()):
-            row_data = []
-            has_data = False
-            for c in range(col_count):
-                item = self.table.item(r, c)
-                text = item.text() if item else ""
-                if text.strip():
-                    has_data = True
-                row_data.append(text)
-            if has_data:
-                data_rows.append(row_data)
 
         # --- Alignment per column (जम्मा कार्टुन col 3 is left-aligned to match screen) ---
         alignments = [
@@ -1203,10 +1189,10 @@ class GodownListUI(ExcelTableMixin, QWidget):
                 x += col_widths[c]
             return y + row_height
 
-        def draw_footer(page_num):
-            """Item 10: footer with page number and print date on every page."""
+        def draw_footer(page_num, total_pages):
+            """Bold footer with page number and print date on every page."""
             painter.setFont(footer_font)
-            painter.setPen(QPen(QColor(100, 100, 100), 1))
+            painter.setPen(QPen(QColor(0, 0, 0), 1.5))
             footer_y = page_h - footer_height
             # Left: print date
             painter.drawText(
@@ -1218,23 +1204,51 @@ class GodownListUI(ExcelTableMixin, QWidget):
             painter.drawText(
                 QRect(page_w // 2, footer_y, page_w // 2, footer_height),
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                f"Page {page_num}"
+                f"Page {page_num} of {total_pages}"
             )
 
-        # --- Pre-calculate pages (pass 1) ---
-        pages = []
-        current_page = []
+        # --- Determine pagination and pages to print ---
+        # A row contains data if any product columns (0 to 5) are non-empty
+        # (excluding column 6 which holds the pre-assigned sequential CN).
+        def row_has_data(r):
+            return any(
+                (self.table.item(r, c).text().strip() if self.table.item(r, c) else "")
+                for c in range(min(6, col_count))
+            )
+
+        total_table_rows = self.table.rowCount()
+        last_data_row = -1
+        for r in range(total_table_rows):
+            if row_has_data(r):
+                last_data_row = r
+
+        # Calculate rows that fit on a single page
         avail_h = usable_h - header_height
-        used = 0
-        for row_data in data_rows:
-            if used + row_height > avail_h:
-                pages.append(current_page)
-                current_page = []
-                used = 0
-            current_page.append(row_data)
-            used += row_height
-        if current_page or not pages:
-            pages.append(current_page)
+        rows_per_page = max(1, avail_h // row_height)
+
+        if last_data_row == -1:
+            last_data_page_idx = 0
+        else:
+            last_data_page_idx = last_data_row // rows_per_page
+
+        # Print exactly one additional page after the last page containing data
+        total_pages = last_data_page_idx + 2
+
+        # Build pages with full rows_per_page grid rows each (empty rows retain CN from table)
+        pages = []
+        for pg_idx in range(total_pages):
+            page_rows = []
+            for i in range(rows_per_page):
+                r = pg_idx * rows_per_page + i
+                if r < total_table_rows:
+                    row_data = [
+                        self.table.item(r, c).text() if self.table.item(r, c) else ""
+                        for c in range(col_count)
+                    ]
+                else:
+                    row_data = [""] * col_count
+                page_rows.append(row_data)
+            pages.append(page_rows)
 
         total_pages = len(pages)
         # Store for _custom_print_godown to know total count
@@ -1258,6 +1272,6 @@ class GodownListUI(ExcelTableMixin, QWidget):
             y = draw_header(y)
             for row_data in pages[pg_idx]:
                 y = draw_row(y, row_data)
-            draw_footer(page_num)
+            draw_footer(page_num, total_pages)
 
         painter.end()
